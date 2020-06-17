@@ -5,7 +5,6 @@ AES Cipher class for encrypting and decrypting string data.
 
 import base64
 import hashlib
-import logging
 
 from Cryptodome.Cipher import AES
 from Cryptodome.Random import get_random_bytes
