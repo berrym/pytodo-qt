@@ -72,7 +72,7 @@ class CreateTodoDataBase:
                 self.config.write(f)
         except IOError as e:
             msg = f"Unable to write default config: {e}"
-            logging.exception(msg)
+            logger.log.exception(msg)
             sys.exit(1)
 
     def write_config(self):
