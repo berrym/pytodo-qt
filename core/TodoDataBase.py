@@ -21,7 +21,6 @@ class CreateTodoDataBase:
     def __init__(self):
         """Create a working database."""
         logger.log.info("Building the todo database")
-        # database is not initialized until a successful call to read_todo_xml
         self.initialized = False
         self.server_up = False
 
