@@ -22,7 +22,7 @@ def read_json_data(fn=core.lists_fn):
     """Read in todo lists from a JSON file."""
     if not os.path.exists(fn):
         msg = f"JSON file {fn} does not exist"
-        logging.warning(msg)
+        logger.log.warning(msg)
         return False, msg
 
     logger.log.info(f"Reading JSON file {fn}")
