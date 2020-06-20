@@ -6,6 +6,7 @@ This module implements the GUI for Todo.
 import os
 
 from PyQt5 import QtGui, QtWidgets, QtPrintSupport
+from PyQt5.QtCore import QPersistentModelIndex
 
 from core import core, json_helpers
 from core.Logger import Logger
@@ -599,15 +600,23 @@ class CreateMainWindow(QtWidgets.QMainWindow):
         """Delete the currently selected todo."""
         self.update_progress_bar(0)
 
-        for index in self.table.selectedIndexes():
-            item = self.table.cellWidget(index.row(), 1)
-            text = item.text()
-            todo = core.db.todo_index(text)
-            del core.db.todo_lists[core.db.active_list][todo]
-            core.db.todo_count -= 1
-            core.db.todo_total -= 1
-            self.write_todo_data()
+        if self.table.selectionModel().hasSelection():
+            indices = [
+                QPersistentModelIndex(index)
+                for index in self.table.selectionModel().selectedIndexes()
+            ]
+            for index in indices:
+                item = self.table.cellWidget(index.row(), 1)
+                text = item.text()
+                todo = core.db.todo_index(text)
+                del core.db.todo_lists[core.db.active_list][todo]
+                core.db.todo_count -= 1
+                core.db.todo_total -= 1
+                self.write_todo_data()
+                self.table.removeRow(index.row())
             self.refresh()
+        else:
+            QtWidgets.QMessageBox.warning(self, "No reminders selected.")
 
     def toggle_todo(self):
         """Toggle a todo complete / incomplete."""
