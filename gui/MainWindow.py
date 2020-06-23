@@ -616,7 +616,9 @@ class CreateMainWindow(QtWidgets.QMainWindow):
                 self.table.removeRow(index.row())
             self.refresh()
         else:
-            QtWidgets.QMessageBox.warning(self, "Delete To-DO", "No reminders selected.")
+            QtWidgets.QMessageBox.warning(
+                self, "Delete To-Do", "No reminders selected."
+            )
 
     def toggle_todo(self):
         """Toggle a todo complete / incomplete."""
