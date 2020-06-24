@@ -1,6 +1,6 @@
 """core.py
 
-This module creates todo core global variables and functions.
+This module creates To-Do core global variables and functions.
 """
 
 import os
@@ -17,7 +17,6 @@ if not os.path.exists(todo_dir):
     except OSError as e:
         print(f"Error: {e}")
         exit(1)
-
 
 ini_fn = os.path.join(todo_dir, "todo.ini")
 lists_fn = os.path.join(todo_dir, "todo_lists.json")

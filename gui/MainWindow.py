@@ -11,6 +11,7 @@ from PyQt5.QtCore import QPersistentModelIndex
 from core import core, json_helpers
 from core.Logger import Logger
 from gui.AddTodoDialog import AddTodoDialog
+from gui.SyncDialog import SyncDialog
 
 logger = Logger(__name__)
 
@@ -238,26 +239,8 @@ class CreateMainWindow(QtWidgets.QMainWindow):
     def db_sync_pull(self):
         """Pull lists from another net_server."""
         self.update_progress_bar(0)
-        self.update_status_bar("Waiting for input")
-
-        host, ok = QtWidgets.QInputDialog.getText(
-            self, "Synchronize with host", "Host to pull from:"
-        )
-        if not ok:
-            self.update_progress_bar()
-            self.update_status_bar()
-            return
-
-        self.update_status_bar(f"Synchronizing with {host}")
-
-        # try the pull, inform user of the results
-        result, msg = core.db.sync_pull((host, core.options["port"]))
-        QtWidgets.QMessageBox.information(self, "Sync Pull", msg)
-        if not result:
-            self.update_progress_bar()
-            self.update_status_bar()
-            return
-
+        self.update_status_bar("Sync Pull")
+        SyncDialog("PULL").exec_()
         self.write_todo_data()
         self.refresh()
 
@@ -265,33 +248,7 @@ class CreateMainWindow(QtWidgets.QMainWindow):
         """Push lists to another computer."""
         self.update_progress_bar(0)
         self.update_status_bar("Waiting for input")
-
-        host, ok = QtWidgets.QInputDialog.getText(
-            self, "Synchronize with host", "Host to push to:"
-        )
-        if not ok:
-            self.update_progress_bar()
-            self.update_status_bar()
-            return
-
-        self.update_status_bar(f"Synchronizing with {host}")
-
-        # temporarily enable pulling for the push
-        pull_ok = core.options["pull"]
-        if not pull_ok:
-            core.options["pull"] = True
-
-        # try the push, inform user of results
-        result, msg = core.db.sync_push((host, core.options["port"]))
-        QtWidgets.QMessageBox.information(self, "Sync Push", msg)
-        if not pull_ok:
-            core.options["pull"] = False
-
-        if not result:
-            self.update_progress_bar()
-            self.update_status_bar()
-            return
-
+        SyncDialog("PUSH").exec_()
         self.refresh()
 
     def db_update_active_list(self, list_name):

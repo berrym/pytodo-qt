@@ -84,10 +84,16 @@ class DataBaseClient:
             return False, msg
 
     def synchronize(self, host, request):
-        """Synchronize todo lists with other hosts."""
+        """Synchronize to-do lists with other hosts."""
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.connect(host)
+                sock.settimeout(3)
+                try:
+                    sock.connect(host)
+                except socket.error as err:
+                    msg = f"Unable to connect to host: {err}"
+                    logger.log.exception(msg)
+                    return False, msg
                 self.send_request(host, sock, request)
                 response = self.get_response(sock)
                 return self.process_response(host, sock, request, response)
@@ -106,7 +112,7 @@ class DataBaseClient:
 
         To-Do doesn't really support pushing because that is rude.
         In our terminology, if you do a push, it really means asking
-        the device you want your todo lists on to pull from you.
+        the device you want your to-do lists on to pull from you.
         """
         logger.log.info("Performing a Sync Push")
         return self.synchronize(host, "PUSH_REQUEST")
