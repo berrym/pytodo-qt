@@ -33,6 +33,7 @@ class SyncDialog(QtWidgets.QDialog):
         # port
         port_label = QtWidgets.QLabel("Port", self)
         self.port_field = QtWidgets.QLineEdit(self)
+        self.port_field.setText(str(core.options["port"]))
         self.port_field.setValidator(QIntValidator())
 
         # add button
