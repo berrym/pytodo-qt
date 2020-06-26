@@ -87,7 +87,7 @@ class DataBaseClient:
         """Synchronize to-do lists with other hosts."""
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.settimeout(3)
+                sock.settimeout(30)
                 try:
                     sock.connect(host)
                 except socket.error as err:
