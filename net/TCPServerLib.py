@@ -5,6 +5,7 @@ This module implements a threaded tcp socket server and request handler for To-D
 
 import os
 import socketserver
+import sys
 import time
 
 from core import core
@@ -30,6 +31,7 @@ class TCPRequestHandler(socketserver.StreamRequestHandler):
         self.peer_name = None
         self.host = None
         self.data = None
+        self.encrypted_header = None
         self.encrypted_data = None
         self.decrypted_data = None
         self.command = None
@@ -67,13 +69,25 @@ class TCPRequestHandler(socketserver.StreamRequestHandler):
         if self.data is not None:
             logger.log.info("PULL_REQUEST ACCEPTED")
             self.encrypted_reply = self.aes_cipher.encrypt("ACCEPT")
-            self.request.send(self.encrypted_reply)
-            time.sleep(0.1)
-            self.encrypted_data = self.aes_cipher.encrypt(self.data)
-            self.request.sendall(self.encrypted_data)
+            self.request.sendall(self.encrypted_reply)
+            time.sleep(1)
+            self.send_size_header()
         else:
             self.encrypted_reply = self.aes_cipher.encrypt("NO_DATA")
             self.request.send(self.encrypted_reply)
+
+    def send_size_header(self):
+        """Send the size of the to-do lists."""
+        size = sys.getsizeof(self.data)
+        self.encrypted_header = self.aes_cipher.encrypt(str(size))
+        self.request.sendall(self.encrypted_header)
+        time.sleep(1)
+        self.send_data()
+
+    def send_data(self):
+        """Send to-do list data."""
+        self.encrypted_data = self.aes_cipher.encrypt(self.data)
+        self.request.sendall(self.encrypted_data)
 
     def push(self):
         """Push todo lists to remote hosts."""

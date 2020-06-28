@@ -5,6 +5,10 @@ This module implements the To-Do database network client.
 
 import os
 import socket
+import time
+
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QProgressDialog
 
 from core import core, json_helpers
 from core.Logger import Logger
@@ -41,7 +45,12 @@ class DataBaseClient:
 
         if response == "ACCEPT":
             if request == "PULL_REQUEST":
-                data = self.recv_all(sock)
+                hdr = sock.recv(4096)
+                decrypted_header = self.aes_cipher.decrypt(hdr)
+                size = int(decrypted_header)
+                logger.log.info(f"remote lists is {size} bytes")
+                time.sleep(1)
+                data = self.recv_all(sock, size)
                 return self.process_data(host, data)
             elif request == "PUSH_REQUEST":
                 return True, msg
@@ -50,14 +59,19 @@ class DataBaseClient:
         else:
             return False, msg
 
-    def recv_all(self, sock):
+    def recv_all(self, sock, size):
         """Read data from a socket until it's finished."""
+        pd = QProgressDialog("Sync To-Do lists", "Abort sync", 0, size, None)
+        pd.setWindowModality(Qt.WindowModal)
+        pd.forceShow()
+        pd.setValue(0)
         data = bytearray()
         while True:
-            chunk = sock.recv(self.buf_size)
+            chunk = sock.recv(1)
             if not chunk:
                 break
             data.extend(chunk)
+            pd.setValue(len(data))
         return data
 
     def process_data(self, host, data):
