@@ -2,7 +2,7 @@
 
 This module implements the To-Do database network client.
 """
-
+import json
 import os
 import socket
 import time
@@ -45,8 +45,8 @@ class DataBaseClient:
 
         if response == "ACCEPT":
             if request == "PULL_REQUEST":
-                hdr = sock.recv(4096)
-                decrypted_header = self.aes_cipher.decrypt(hdr)
+                size_header = sock.recv(self.buf_size)
+                decrypted_header = self.aes_cipher.decrypt(size_header)
                 size = int(decrypted_header)
                 logger.log.info(f"remote lists is {size} bytes")
                 time.sleep(1)
@@ -62,14 +62,12 @@ class DataBaseClient:
     def recv_all(self, sock, size):
         """Read data from a socket until it's finished."""
         pd = QProgressDialog("Sync To-Do lists", "Abort sync", 0, size, None)
+        pd.setMinimumWidth(375)
         pd.setWindowModality(Qt.WindowModal)
-        pd.forceShow()
         pd.setValue(0)
+        pd.forceShow()
         data = bytearray()
-        while True:
-            chunk = sock.recv(1)
-            if not chunk:
-                break
+        while chunk := sock.recv(1):
             data.extend(chunk)
             pd.setValue(len(data))
         return data
@@ -78,13 +76,18 @@ class DataBaseClient:
         """Process encrypted data received."""
         # decrypt and decode received data
         decrypted_data = self.aes_cipher.decrypt(data)
-        text = decrypted_data.decode("utf-8")
+        try:
+            deserialized = json.loads(decrypted_data)
+        except OSError as e:
+            logger.log.exception(e)
+            return False, e
+        # text = deserialized.decode("utf-8")
 
         # write data to a temporary file, then read it in
         tmp = os.path.join(os.getenv("HOME"), ".todo_lists.tmp")
         try:
             with open(tmp, "w", encoding="utf-8") as f:
-                f.write(text)
+                f.write(deserialized)
             msg = f"Pull from {host} successful."
             logger.log.info(msg)
             result, e = json_helpers.read_json_data(tmp)

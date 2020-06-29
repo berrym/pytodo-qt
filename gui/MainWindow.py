@@ -622,7 +622,7 @@ class CreateMainWindow(QtWidgets.QMainWindow):
 
     def about_todo(self):
         """Display an about message box with Program/Author information."""
-        text = """<b><u>To-Do v0.1.0</u></b>
+        text = """<b><u>To-Do v0.1.1</u></b>
         <br><br>To-Do list program that works with multiple To-Do
         lists locally and over a network.
         <br><br>License: <a href="http://www.fsf.org/licenses/gpl.html">GPLv3</a>

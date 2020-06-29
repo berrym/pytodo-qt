@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name="To-Do",
-    version="0.1.0",
+    version="0.1.1",
     packages=["gui", "net", "core", "crypto"],
     url="https://github.com/berrym/pytodo",
     license="GPLv3",

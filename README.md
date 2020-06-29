@@ -10,7 +10,7 @@ A small application to manage multiple to-do lists written in Python 3 and Qt5
 
 * Clone the git repository from https://github.com/berrym/todo.git
 
-* Install a recent version of Python, tested 3.8+, 3.6+ should work.
+* Install a recent version of Python, needs version 3.8+.
 
 * A requirements.txt is provided in the repository so required packages can be installed using pip.
     * pip install -r requirements.txt --user
@@ -31,6 +31,10 @@ Copyright 2020
 Michael Berry <trismegustis@gmail.com>
 
 ## Version History
+* 0.1.1
+    * Needs Python 3.8 for walrus operator.
+    * Improved dialogs for syncing.
+    * Serialize network I/O with json.
 
 * 0.1.0
     * Initial Release

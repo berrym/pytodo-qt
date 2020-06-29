@@ -2,13 +2,13 @@
 
 This module implements a threaded tcp socket server and request handler for To-Do.
 """
-
+import json
 import os
 import socketserver
 import sys
 import time
 
-from core import core
+from core import core, json_helpers
 from core.Logger import Logger
 from crypto.AESCipher import AESCipher
 
@@ -52,7 +52,7 @@ class TCPRequestHandler(socketserver.StreamRequestHandler):
             pass
 
     def pull(self):
-        """Pull todo lists from remote host."""
+        """Pull to-do lists from remote host."""
         logger.log.info(f"received PULL_REQUEST from {self.peer_name}")
         if not core.options["pull"]:
             logger.log.info("PULL_REQUEST denied")
@@ -86,11 +86,16 @@ class TCPRequestHandler(socketserver.StreamRequestHandler):
 
     def send_data(self):
         """Send to-do list data."""
-        self.encrypted_data = self.aes_cipher.encrypt(self.data)
+        try:
+            serialized = json.dumps(self.data)
+        except OSError as e:
+            logger.log.exception(e)
+            return False, e
+        self.encrypted_data = self.aes_cipher.encrypt(serialized)
         self.request.sendall(self.encrypted_data)
 
     def push(self):
-        """Push todo lists to remote hosts."""
+        """Push to-do lists to remote hosts."""
         logger.log.info(f"PUSH_REQUEST from {self.peer_name}")
         if not core.options["push"]:
             logger.log.info("PUSH_REQUEST denied")

@@ -6,7 +6,7 @@ This module creates To-Do core global variables and functions.
 import os
 
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 options = {}
 db = None
 todo_dir = os.path.join(os.getenv("HOME"), ".todo")
