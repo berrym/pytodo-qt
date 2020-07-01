@@ -11,6 +11,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QProgressDialog
 
 from core import core, json_helpers
+from core.core import SyncOperations
 from core.Logger import Logger
 from crypto.AESCipher import AESCipher
 
@@ -43,8 +44,8 @@ class DataBaseClient:
         msg = f"{host} responded to {request} with {response}"
         logger.log.info(msg)
 
-        if response == "ACCEPT":
-            if request == "PULL_REQUEST":
+        if response == SyncOperations["ACCEPT"].name:
+            if request == SyncOperations["PULL_REQUEST"].name:
                 size_header = sock.recv(self.buf_size)
                 decrypted_header = self.aes_cipher.decrypt(size_header)
                 size = int(decrypted_header)
@@ -52,7 +53,7 @@ class DataBaseClient:
                 time.sleep(1)
                 data = self.recv_all(sock, size)
                 return self.process_data(host, data)
-            elif request == "PUSH_REQUEST":
+            elif request == SyncOperations["PUSH_REQUEST"].name:
                 return True, msg
             else:
                 return False, msg
@@ -81,10 +82,9 @@ class DataBaseClient:
         except OSError as e:
             logger.log.exception(e)
             return False, e
-        # text = deserialized.decode("utf-8")
 
         # write data to a temporary file, then read it in
-        tmp = os.path.join(os.getenv("HOME"), ".todo_lists.tmp")
+        tmp = os.path.join(core.todo_dir, ".todo_lists.tmp")
         try:
             with open(tmp, "w", encoding="utf-8") as f:
                 f.write(deserialized)
@@ -122,7 +122,7 @@ class DataBaseClient:
     def sync_pull(self, host):
         """Synchronize database with another by pulling it from a host."""
         logger.log.info("Performing a Sync Pull")
-        return self.synchronize(host, "PULL_REQUEST")
+        return self.synchronize(host, SyncOperations["PULL_REQUEST"].name)
 
     def sync_push(self, host):
         """Synchronize lists between devices by pushing them to a host.
@@ -132,4 +132,4 @@ class DataBaseClient:
         the device you want your to-do lists on to pull from you.
         """
         logger.log.info("Performing a Sync Push")
-        return self.synchronize(host, "PUSH_REQUEST")
+        return self.synchronize(host, SyncOperations["PUSH_REQUEST"].name)

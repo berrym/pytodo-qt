@@ -9,6 +9,7 @@ from PyQt5 import QtGui, QtWidgets, QtPrintSupport
 from PyQt5.QtCore import QPersistentModelIndex
 
 from core import core, json_helpers
+from core.core import SyncOperations
 from core.Logger import Logger
 from gui.AddTodoDialog import AddTodoDialog
 from gui.SyncDialog import SyncDialog
@@ -240,7 +241,7 @@ class CreateMainWindow(QtWidgets.QMainWindow):
         """Pull lists from another net_server."""
         self.update_progress_bar(0)
         self.update_status_bar("Sync Pull")
-        SyncDialog("PULL").exec_()
+        SyncDialog(SyncOperations["PULL_REQUEST"].name).exec_()
         self.write_todo_data()
         self.refresh()
 
@@ -248,7 +249,7 @@ class CreateMainWindow(QtWidgets.QMainWindow):
         """Push lists to another computer."""
         self.update_progress_bar(0)
         self.update_status_bar("Waiting for input")
-        SyncDialog("PUSH").exec_()
+        SyncDialog(SyncOperations["PUSH_REQUEST"].name).exec_()
         self.refresh()
 
     def db_update_active_list(self, list_name):

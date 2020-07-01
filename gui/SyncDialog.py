@@ -7,6 +7,7 @@ from PyQt5 import QtWidgets
 from PyQt5.QtGui import QIntValidator
 
 from core import core
+from core.core import SyncOperations
 from core.Logger import Logger
 
 logger = Logger(__name__)
@@ -75,13 +76,13 @@ class SyncDialog(QtWidgets.QDialog):
         port = int(port)
 
         logger.log.info("Got host information for sync operation")
-        if self.operation == "PULL":
+        if self.operation == SyncOperations["PULL_REQUEST"].name:
             # try the pull, inform user of the results
             result, msg = core.db.sync_pull((address, port))
             QtWidgets.QMessageBox.information(self, "Sync Pull", msg)
             if not result:
                 return
-        elif self.operation == "PUSH":
+        elif self.operation == SyncOperations["PUSH_REQUEST"].name:
             # temporarily enable pulling for the push
             pull_ok = core.options["pull"]
             if not pull_ok:
