@@ -7,6 +7,7 @@ import os
 
 from PyQt5 import QtGui, QtWidgets, QtPrintSupport
 from PyQt5.QtCore import QPersistentModelIndex
+from PyQt5.QtWidgets import QDesktopWidget
 
 from core import core, json_helpers
 from core.core import SyncOperations
@@ -637,11 +638,10 @@ class CreateMainWindow(QtWidgets.QMainWindow):
 
     def center(self):
         """Place the main window in the center of the screen."""
-        screen = QtWidgets.QDesktopWidget().screenGeometry()
-        size = self.geometry()
-        self.move(
-            (screen.width() - size.width()) / 2, (screen.height() - size.height()) / 2
-        )
+        qt_rectangle = self.frameGeometry()
+        center_point = QDesktopWidget().availableGeometry().center()
+        qt_rectangle.moveCenter(center_point)
+        self.move(qt_rectangle.topLeft())
 
     def update_progress_bar(self, value=None):
         """Update the progress bar.
