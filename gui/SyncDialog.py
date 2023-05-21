@@ -6,16 +6,16 @@ Simple dialog to collect information needed to perform a sync operation.
 from PyQt5 import QtWidgets
 from PyQt5.QtGui import QIntValidator
 
-from core import core
-from core.core import SyncOperations
+from core import defaults
+from net import SyncOperations
 from core.Logger import Logger
+
 
 logger = Logger(__name__)
 
 
 class SyncDialog(QtWidgets.QDialog):
     """Synchronize lists with remotes."""
-
     def __init__(self, operation=None):
         """Create a simple dialog.
 
@@ -34,7 +34,7 @@ class SyncDialog(QtWidgets.QDialog):
         # port
         port_label = QtWidgets.QLabel("Port", self)
         self.port_field = QtWidgets.QLineEdit(self)
-        self.port_field.setText(str(core.options["port"]))
+        self.port_field.setText(str(defaults.options["port"]))
         self.port_field.setValidator(QIntValidator())
 
         # add button
@@ -76,23 +76,23 @@ class SyncDialog(QtWidgets.QDialog):
         port = int(port)
 
         logger.log.info("Got host information for sync operation")
-        if self.operation == SyncOperations["PULL_REQUEST"].name:
+        if self.operation == SyncOperations.SyncOperations["PULL_REQUEST"].name:
             # try the pull, inform user of the results
-            result, msg = core.db.sync_pull((address, port))
+            result, msg = defaults.db.sync_pull((address, port))
             QtWidgets.QMessageBox.information(self, "Sync Pull", msg)
             if not result:
                 return
-        elif self.operation == SyncOperations["PUSH_REQUEST"].name:
+        elif self.operation == SyncOperations.SyncOperations["PUSH_REQUEST"].name:
             # temporarily enable pulling for the push
-            pull_ok = core.options["pull"]
+            pull_ok = defaults.options["pull"]
             if not pull_ok:
-                core.options["pull"] = True
+                defaults.options["pull"] = True
 
             # try the push, inform user of results
-            result, msg = core.db.sync_push((address, port))
+            result, msg = defaults.db.sync_push((address, port))
             QtWidgets.QMessageBox.information(self, "Sync Push", msg)
             if not pull_ok:
-                core.options["pull"] = False
+                defaults.options["pull"] = False
 
             if not result:
                 return

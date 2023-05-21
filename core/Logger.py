@@ -4,8 +4,11 @@ A Generic logging class.
 """
 
 import logging
+import os
 
-from core.core import log_fn
+
+todo_dir = os.path.join(os.getenv("HOME"), ".todo")
+log_fn = os.path.join(todo_dir, "todo.log")
 
 
 class Logger:

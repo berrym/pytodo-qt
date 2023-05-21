@@ -27,7 +27,8 @@ import sys
 
 from PyQt5 import QtWidgets
 
-from core import core, TodoDataBase
+import core.defaults
+import core.TodoDatabase
 from gui import MainWindow
 
 
@@ -83,17 +84,17 @@ def main():
     )
 
     arg_parser.add_argument(
-        "-V", "--version", action="version", version=f"%(prog)s v{core.__version__}"
+        "-V", "--version", action="version", version=f"%(prog)s v{core.defaults.__version__}"
     )
 
     # parse args then convert to dict format
     args = arg_parser.parse_args()
     for k, v in vars(args).items():
         if v is not None:
-            core.options[k] = v
+            core.defaults.options[k] = v
 
-    # create a todo data base
-    core.db = TodoDataBase.CreateTodoDataBase()
+    # create a database
+    core.defaults.db = core.TodoDatabase.CreateTodoDatabase()
 
     # create a QApplication, the main window, then hand over control to Qt
     app = QtWidgets.QApplication(sys.argv)

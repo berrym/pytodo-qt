@@ -2,29 +2,38 @@
 
 This module implements the To-Do database network client.
 """
-import json
+
 import os
 import socket
 import time
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QProgressDialog
+import jsonpickle
 
-from core import core, json_helpers
-from core.core import SyncOperations
+from core import defaults, json_helpers
 from core.Logger import Logger
 from crypto.AESCipher import AESCipher
+from gui.MainWindow import
+from net.SyncOperations import SyncOperations
+
 
 logger = Logger(__name__)
 
 
+def recv_all(sock, progress):
+    """Read data from a socket until it's finished."""
+    data = bytearray()
+    while chunk := sock.recv(1):
+        data.extend(chunk)
+        progress.setValue(len(data))
+    return data
+
+
 class DataBaseClient:
     """To-Do database client class."""
-
     def __init__(self):
         """Initialize client."""
         self.buf_size = 4096
-        self.aes_cipher = AESCipher(core.options["key"])
+        self.aes_cipher = AESCipher(defaults.options["key"])
 
     def send_request(self, host, sock, request):
         """Send a request to remote connection."""
@@ -51,7 +60,8 @@ class DataBaseClient:
                 size = int(decrypted_header)
                 logger.log.info(f"remote lists is {size} bytes")
                 time.sleep(1)
-                data = self.recv_all(sock, size)
+                progress = SyncProgressDialog(size)
+                data = recv_all(sock, progress)
                 return self.process_data(host, data)
             elif request == SyncOperations["PUSH_REQUEST"].name:
                 return True, msg
@@ -60,31 +70,18 @@ class DataBaseClient:
         else:
             return False, msg
 
-    def recv_all(self, sock, size):
-        """Read data from a socket until it's finished."""
-        pd = QProgressDialog("Sync To-Do lists", "Abort sync", 0, size, None)
-        pd.setMinimumWidth(375)
-        pd.setWindowModality(Qt.WindowModal)
-        pd.setValue(0)
-        pd.forceShow()
-        data = bytearray()
-        while chunk := sock.recv(1):
-            data.extend(chunk)
-            pd.setValue(len(data))
-        return data
-
     def process_data(self, host, data):
         """Process encrypted data received."""
         # decrypt and decode received data
         decrypted_data = self.aes_cipher.decrypt(data)
         try:
-            deserialized = json.loads(decrypted_data)
+            deserialized = jsonpickle.decode(decrypted_data)
         except OSError as e:
             logger.log.exception(e)
             return False, e
 
         # write data to a temporary file, then read it in
-        tmp = os.path.join(core.todo_dir, ".todo_lists.tmp")
+        tmp = os.path.join(defaults.todo_dir, ".todo_lists.tmp")
         try:
             with open(tmp, "w", encoding="utf-8") as f:
                 f.write(deserialized)
