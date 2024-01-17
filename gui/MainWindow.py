@@ -1,20 +1,19 @@
 """MainWindow.py
 
-This module implements the GUI for To-Do.
+This module implements the GUI for Todo.
 """
 
 import os
 
 from PyQt5 import QtGui, QtWidgets, QtPrintSupport
 from PyQt5.QtCore import QPersistentModelIndex
+from PyQt5.QtWidgets import QDesktopWidget
 
-from core import defaults, json_helpers
-from core.TodoDatabase import todo_index, sort_active_list, TodoList
+from core import core, json_helpers
+from core.core import SyncOperations
 from core.Logger import Logger
 from gui.AddTodoDialog import AddTodoDialog
 from gui.SyncDialog import SyncDialog
-from net.SyncOperations import SyncOperations
-
 
 logger = Logger(__name__)
 
@@ -23,7 +22,7 @@ class CreateMainWindow(QtWidgets.QMainWindow):
     """This class implements the bulk of the gui functionality in PyTodo.
 
     It creates the main window, and helps to facilitate management of the
-    list database for the user.
+    list data base for the user.
     """
 
     def __init__(self, *args):
@@ -173,7 +172,7 @@ class CreateMainWindow(QtWidgets.QMainWindow):
         self.table.insertColumn(1)
         self.table.setHorizontalHeaderLabels(["Priority", "Reminder"])
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setToolTip("This is your <u>list</u> of to-do's.")
+        self.table.setToolTip("This is your <u>list</u> of todo's.")
         self.setCentralWidget(self.table)
 
         # create a status bar
@@ -213,7 +212,7 @@ class CreateMainWindow(QtWidgets.QMainWindow):
 
     def read_todo_data(self):
         """Read lists of todos from database."""
-        if os.path.exists(defaults.lists_fn):
+        if os.path.exists(core.lists_fn):
             self.update_progress_bar(0)
             self.update_status_bar("Reading in JSON data")
             result, msg = json_helpers.read_json_data()
@@ -227,8 +226,8 @@ class CreateMainWindow(QtWidgets.QMainWindow):
         self.refresh()
 
     def write_todo_data(self):
-        """Write to-do lists to a JSON file."""
-        if len(defaults.db.todo_lists.keys()) == 0:
+        """Write todo lists to a JSON file."""
+        if len(core.db.todo_lists.keys()) == 0:
             return
 
         self.update_progress_bar(0)
@@ -256,20 +255,20 @@ class CreateMainWindow(QtWidgets.QMainWindow):
 
     def db_update_active_list(self, list_name):
         """Update the active list, and save the configuration."""
-        defaults.options["active_list"] = list_name
-        defaults.db.active_list = list_name
-        result, msg = defaults.db.write_config()
+        core.options["active_list"] = list_name
+        core.db.active_list = list_name
+        result, msg = core.db.write_config()
         if not result:
             QtWidgets.QMessageBox.warning(self, "Write Error", msg)
 
     def db_start_server(self):
         """Start the database server."""
-        if defaults.db.server_running():
+        if core.db.server_running():
             QtWidgets.QMessageBox.information(
                 self, "Info", "The data base server is already running."
             )
         else:
-            defaults.db.start_server()
+            core.db.start_server()
             QtWidgets.QMessageBox.information(
                 self, "Info", "The data base server was started."
             )
@@ -277,12 +276,12 @@ class CreateMainWindow(QtWidgets.QMainWindow):
 
     def db_stop_server(self):
         """Stop the database server."""
-        if not defaults.db.server_running():
+        if not core.db.server_running():
             QtWidgets.QMessageBox.information(
                 self, "Info", "The data base server is not running."
             )
         else:
-            defaults.db.stop_server()
+            core.db.stop_server()
             QtWidgets.QMessageBox.information(
                 self, "Info", "The data base server was stopped."
             )
@@ -294,13 +293,13 @@ class CreateMainWindow(QtWidgets.QMainWindow):
         if not ok:
             return
 
-        if defaults.options["port"] == port:
+        if core.options["port"] == port:
             QtWidgets.QMessageBox.information(
                 self, "Info", f"Server port is already set to {port}"
             )
         else:
-            defaults.options["port"] = port
-            if defaults.db.server_running():
+            core.options["port"] = port
+            if core.db.server_running():
                 reply = QtWidgets.QMessageBox.question(
                     self,
                     "Restart Server?",
@@ -309,8 +308,8 @@ class CreateMainWindow(QtWidgets.QMainWindow):
                     QtWidgets.QMessageBox.No,
                 )
                 if reply == QtWidgets.QMessageBox.Yes:
-                    defaults.db.restart_server()
-                    defaults.db.write_config()
+                    core.db.restart_server()
+                    core.db.write_config()
                     self.refresh()
 
     def db_server_bind_address(self):
@@ -321,13 +320,13 @@ class CreateMainWindow(QtWidgets.QMainWindow):
         if not ok:
             return
 
-        if defaults.options["address"] == address:
+        if core.options["address"] == address:
             QtWidgets.QMessageBox.information(
                 self, "Info", f"Server address is already bound to {address}"
             )
         else:
-            defaults.options["address"] = address
-            if defaults.db.server_running():
+            core.options["address"] = address
+            if core.db.server_running():
                 reply = QtWidgets.QMessageBox.question(
                     self,
                     "Restart Server?",
@@ -336,8 +335,8 @@ class CreateMainWindow(QtWidgets.QMainWindow):
                     QtWidgets.QMessageBox.No,
                 )
                 if reply == QtWidgets.QMessageBox.Yes:
-                    defaults.db.restart_server()
-                    defaults.db.write_config()
+                    core.db.restart_server()
+                    core.db.write_config()
                     self.refresh()
 
     def add_list(self):
@@ -354,11 +353,11 @@ class CreateMainWindow(QtWidgets.QMainWindow):
                 self.update_status_bar()
                 return
 
-            if list_name not in defaults.db.todo_lists.keys():
-                defaults.db.todo_lists[list_name] = TodoList(todo_count=0, name=list_name, todo_list=[])
-                defaults.options["active_list"] = list_name
-                defaults.db.active_list = list_name
-                defaults.db.write_config()
+            if list_name not in core.db.todo_lists.keys():
+                core.db.todo_lists[list_name] = []
+                core.options["active_list"] = list_name
+                core.db.active_list = list_name
+                core.db.write_config()
                 self.write_todo_data()
             else:
                 QtWidgets.QMessageBox.warning(
@@ -372,22 +371,22 @@ class CreateMainWindow(QtWidgets.QMainWindow):
         self.update_progress_bar(0)
 
         # if there is more than one list, ask user which one to delete
-        if len(defaults.db.todo_lists.keys()) > 1:
+        if len(core.db.todo_lists.keys()) > 1:
             list_entry, ok = QtWidgets.QInputDialog.getItem(
-                self, "Select List", "Todo Lists: ", list(defaults.db.todo_lists.keys())
+                self, "Select List", "Todo Lists: ", list(core.db.todo_lists.keys())
             )
             if not ok:
                 self.update_progress_bar()
                 return
 
-            defaults.db.todo_total -= len(defaults.db.todo_lists[list_entry])
-            del defaults.db.todo_lists[list_entry]
+            core.db.todo_total -= len(core.db.todo_lists[list_entry])
+            del core.db.todo_lists[list_entry]
 
             # use list switcher if there is still more than one list
-            if len(defaults.db.todo_lists) > 1:
+            if len(core.db.todo_lists) > 1:
                 self.switch_list()
             else:
-                for list_entry in defaults.db.todo_lists.keys():
+                for list_entry in core.db.todo_lists.keys():
                     self.db_update_active_list(list_entry)
                     self.write_todo_data()
                     break
@@ -395,7 +394,7 @@ class CreateMainWindow(QtWidgets.QMainWindow):
             reply = QtWidgets.QMessageBox.question(
                 self,
                 "Confirm deletion",
-                f'Really delete list "{defaults.db.active_list}"?',
+                f'Really delete list "{core.db.active_list}"?',
                 QtWidgets.QMessageBox.Yes,
                 QtWidgets.QMessageBox.No,
             )
@@ -403,17 +402,17 @@ class CreateMainWindow(QtWidgets.QMainWindow):
                 self.update_progress_bar()
                 return
 
-            defaults.db.todo_total -= defaults.db.todo_count
-            del defaults.db.todo_lists[defaults.db.active_list]
-            defaults.db.list_count -= 1
+            core.db.todo_total -= core.db.todo_count
+            del core.db.todo_lists[core.db.active_list]
+            core.db.list_count -= 1
 
             # reset database
-            defaults.db.active_list = ""
-            defaults.options["active_list"] = defaults.db.active_list
-            defaults.db.todo_count = 0
-            defaults.db.write_config()
-            if os.path.exists(defaults.lists_fn):
-                os.remove(defaults.lists_fn)
+            core.db.active_list = ""
+            core.options["active_list"] = core.db.active_list
+            core.db.todo_count = 0
+            core.db.write_config()
+            if os.path.exists(core.lists_fn):
+                os.remove(core.lists_fn)
 
         self.refresh()
 
@@ -428,7 +427,7 @@ class CreateMainWindow(QtWidgets.QMainWindow):
             reply = QtWidgets.QMessageBox.question(
                 self,
                 "Confirm rename",
-                f"Are you sure you want to rename list {defaults.db.active_list} to {list_name}",
+                f"Are you sure you want to rename list {core.db.active_list} to {list_name}",
                 QtWidgets.QMessageBox.Yes,
                 QtWidgets.QMessageBox.No,
             )
@@ -436,26 +435,26 @@ class CreateMainWindow(QtWidgets.QMainWindow):
             if reply == QtWidgets.QMessageBox.No:
                 return
 
-            defaults.db.todo_lists[list_name] = defaults.db.todo_lists[defaults.db.active_list]
-            del defaults.db.todo_lists[defaults.db.active_list]
-            defaults.db.active_list = defaults.db.todo_lists[list_name]
-            defaults.db.write_config()
+            core.db.todo_lists[list_name] = core.db.todo_lists[core.db.active_list]
+            del core.db.todo_lists[core.db.active_list]
+            core.db.active_list = core.db.todo_lists[list_name]
+            core.db.write_config()
             self.write_todo_data()
             self.refresh()
 
     def switch_list(self):
         """Switch the active list.
 
-        Present user with a drop dialog of lists,
+        Present user with a drop down dialog of lists,
         set their choice as the active list.
         """
         self.update_progress_bar(0)
 
-        if len(defaults.db.todo_lists.keys()) < 1:
+        if len(core.db.todo_lists.keys()) < 1:
             return
 
         list_entry, ok = QtWidgets.QInputDialog.getItem(
-            self, "Select List", "Todo Lists: ", list(defaults.db.todo_lists.keys())
+            self, "Select List", "Todo Lists: ", list(core.db.todo_lists.keys())
         )
         if ok:
             self.db_update_active_list(list_entry)
@@ -467,7 +466,7 @@ class CreateMainWindow(QtWidgets.QMainWindow):
         """Export active list to text file."""
         self.update_progress_bar(0)
 
-        if defaults.db.todo_count == 0:
+        if core.db.todo_count == 0:
             return
 
         if not fn:
@@ -480,7 +479,7 @@ class CreateMainWindow(QtWidgets.QMainWindow):
                 return
 
         self.update_status_bar(f"Exporting to text file {fn}.")
-        defaults.db.write_text_file(fn)
+        core.db.write_text_file(fn)
         self.update_status_bar(f"finished exporting to {fn}.")
         self.update_progress_bar()
 
@@ -513,7 +512,7 @@ class CreateMainWindow(QtWidgets.QMainWindow):
             # Remove temporary file
             os.remove(tmp_fn)
 
-            # Open string as a QTextDocument and then print it
+            # Open string as a a QTextDocument and then print it
             doc = QtGui.QTextDocument(string)
             doc.print_(self.printer)
 
@@ -524,8 +523,8 @@ class CreateMainWindow(QtWidgets.QMainWindow):
         """Add a new todo to active list."""
         self.update_progress_bar(0)
 
-        if not defaults.db.active_list:
-            if defaults.db.list_count == 0:
+        if not core.db.active_list:
+            if core.db.list_count == 0:
                 QtWidgets.QMessageBox.information(
                     self,
                     "No list",
@@ -551,7 +550,7 @@ class CreateMainWindow(QtWidgets.QMainWindow):
                 else:
                     return
 
-        # Get a new to-do from user
+        # Get a new todo from user
         AddTodoDialog().exec_()
 
         self.refresh()
@@ -568,10 +567,10 @@ class CreateMainWindow(QtWidgets.QMainWindow):
             for index in indices:
                 item = self.table.cellWidget(index.row(), 1)
                 text = item.text()
-                todo = todo_index(text)
-                del defaults.db.todo_lists[defaults.db.active_list][todo]
-                defaults.db.todo_count -= 1
-                defaults.db.todo_total -= 1
+                todo = core.db.todo_index(text)
+                del core.db.todo_lists[core.db.active_list][todo]
+                core.db.todo_count -= 1
+                core.db.todo_total -= 1
                 self.write_todo_data()
                 self.table.removeRow(index.row())
             self.refresh()
@@ -581,22 +580,22 @@ class CreateMainWindow(QtWidgets.QMainWindow):
             )
 
     def toggle_todo(self):
-        """Toggle a to-do complete / incomplete."""
+        """Toggle a todo complete / incomplete."""
         self.update_progress_bar(0)
 
         for index in self.table.selectedIndexes():
             item = self.table.cellWidget(index.row(), 1)
             text = item.text()
-            todo = todo_index(text)
-            if not defaults.db.todo_lists[defaults.db.active_list]["todo_list"][todo]["complete"]:
-                defaults.db.todo_lists[defaults.db.active_list]["todo_list"][todo]["complete"] = True
+            todo = core.db.todo_index(text)
+            if not core.db.todo_lists[core.db.active_list][todo]["complete"]:
+                core.db.todo_lists[core.db.active_list][todo]["complete"] = True
             else:
-                defaults.db.todo_lists[defaults.db.active_list]["todo_list"][todo]["complete"] = False
+                core.db.todo_lists[core.db.active_list][todo]["complete"] = False
                 self.write_todo_data()
             self.refresh()
 
     def change_priority(self):
-        """Change a to-do's priority."""
+        """Change a todo's priority."""
         for index in self.table.selectedIndexes():
             item_p = self.table.cellWidget(index.row(), 0)
             item_r = self.table.cellWidget(index.row(), 1)
@@ -610,21 +609,21 @@ class CreateMainWindow(QtWidgets.QMainWindow):
                 priority = 1
 
             reminder = item_r.text()
-            todo = todo_index(reminder)
-            defaults.db.todo_lists[defaults.db.active_list]["todo_list"][todo]["priority"] = priority
+            todo = core.db.todo_index(reminder)
+            core.db.todo_lists[core.db.active_list][todo]["priority"] = priority
             self.write_todo_data()
             self.refresh()
 
     def edit_reminder(self):
-        """Edit the reminder of a to-do."""
+        """Edit the reminder of a todo."""
         for index in self.table.selectedIndexes():
             item = self.table.cellWidget(index.row(), 1)
             new_text = item.text()
-            defaults.db.todo_lists[defaults.db.active_list][index.row()]["reminder"] = new_text
+            core.db.todo_lists[core.db.active_list][index.row()]["reminder"] = new_text
             self.write_todo_data()
 
     def about_todo(self):
-        """Display a message box with Program/Author information."""
+        """Display an about message box with Program/Author information."""
         text = """<b><u>To-Do v0.1.1</u></b>
         <br><br>To-Do list program that works with multiple To-Do
         lists locally and over a network.
@@ -639,52 +638,42 @@ class CreateMainWindow(QtWidgets.QMainWindow):
 
     def center(self):
         """Place the main window in the center of the screen."""
-        screen = QtWidgets.QDesktopWidget().screenGeometry()
-        size = self.geometry()
-        self.move(
-            (screen.width() - size.width()) / 2, (screen.height() - size.height()) / 2
-        )
-
-    def set_progress_bar_max(self, maximum):
-        self.progressBar.setMaximum(maximum)
-
-    def increase_progress_bar(self, i):
-        self.progressBar.setValue(self.progressBar.value() + i)
-
-    def set_progress_bar_text(self, text):
-        self.progressBar.text()
+        qt_rectangle = self.frameGeometry()
+        center_point = QDesktopWidget().availableGeometry().center()
+        qt_rectangle.moveCenter(center_point)
+        self.move(qt_rectangle.topLeft())
 
     def update_progress_bar(self, value=None):
         """Update the progress bar.
 
-        Maximum value should be set to the total to-do count,
-        while value should be the number of completed to-dos.
+        Maximum value should be set to the total todo count,
+        while value should be the number of completed todos.
         This makes the progress bar show the total percentage
-        of completed to-dos.
+        of completed todos.
         """
         if value is None:
             return
 
         i = 0
-        # for list_name in defaults.db.todo_lists.keys():
-        #     for todo_entry in defaults.db.todo_lists[list_name]:
-        #         for todo in todo_entry:
-        #             if todo["complete"]:
-        #                 i += 1
+        for list_name in core.db.todo_lists:
+            for todo in core.db.todo_lists[list_name]:
+                if todo["complete"]:
+                    i += 1
+        value = i
 
         self.progressBar.reset()
-        self.progressBar.setMaximum(defaults.db.todo_total)
-        self.progressBar.setValue(i)
+        self.progressBar.setMaximum(core.db.todo_total)
+        self.progressBar.setValue(value)
 
     def update_status_bar(self, msg="Ready"):
         """Update the status bar, display some statistics."""
-        if defaults.db.server_running():
-            server_status = f"Up on {defaults.options['address']}: {defaults.options['port']}"
+        if core.db.server_running():
+            server_status = f"Up on {core.options['address']}: {core.options['port']}"
         else:
             server_status = "Down"
 
         # create our status bar text
-        text = f"{str(defaults.db)} Server: {server_status} Status: {msg}"
+        text = f"Lists: {core.db.list_count}  Shown: {core.db.active_list}  Todos: {core.db.todo_count} of {core.db.todo_total}  Status: {msg}  Server: {server_status}"
 
         self.statusBarLabel.setText(text)
 
@@ -699,30 +688,28 @@ class CreateMainWindow(QtWidgets.QMainWindow):
         self.table.setHorizontalHeaderLabels(["Priority", "Reminder"])
 
         # make sure we have a valid active list
-        todo_lists = tuple(defaults.db.todo_lists)
-        if defaults.db.active_list not in todo_lists:
+        if core.db.active_list not in core.db.todo_lists:
             self.update_status_bar()
             return
 
-        # add each to-do in the list to the table, show progress bar
+        # add each todo in the list to the table, show a progress bar
         i = 0
-        sort_active_list()
+        core.db.sort_active_list()
 
         # update the progress bar
         self.update_progress_bar(0)
 
-        for todo in defaults.db.todo_lists[defaults.db.active_list]["todo_list"]:
+        for todo in core.db.todo_lists[core.db.active_list]:
             # create priority table item
             item_p = QtWidgets.QComboBox(self)
             item_p.addItems(["Low", "Normal", "High"])
             item_p.currentIndexChanged.connect(self.change_priority)
-            match todo["priority"]:
-                case 1:
-                    item_p.setCurrentIndex(2)
-                case 2:
-                    item_p.setCurrentIndex(1)
-                case _:
-                    item_p.setCurrentIndex(0)
+            if todo["priority"] == 1:
+                item_p.setCurrentIndex(2)
+            elif todo["priority"] == 2:
+                item_p.setCurrentIndex(1)
+            else:
+                item_p.setCurrentIndex(0)
 
             # create reminder table item
             item_r = QtWidgets.QLineEdit(todo["reminder"])
@@ -743,11 +730,8 @@ class CreateMainWindow(QtWidgets.QMainWindow):
             i += 1
 
         # update the database todo_count
-        defaults.db.todo_count = 0
-        for todo_list in defaults.db.todo_lists:
-            for _ in todo_list:
-                defaults.db.todo_count += 1
-        defaults.db.list_count = len(defaults.db.todo_lists.keys())
+        core.db.todo_count = len(core.db.todo_lists[core.db.active_list])
+        core.db.list_count = len(core.db.todo_lists.keys())
 
         # update progress and status bars
         self.update_progress_bar()
@@ -764,7 +748,7 @@ class CreateMainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, event):
         """Take care of clean up details."""
         # save configuration
-        result, msg = defaults.db.write_config()
+        result, msg = core.db.write_config()
         if not result:
             QtWidgets.QMessageBox.warning(self, "Write Error", msg)
 
@@ -772,8 +756,8 @@ class CreateMainWindow(QtWidgets.QMainWindow):
         self.write_todo_data()
 
         # shutdown database net_server
-        if defaults.db.server_running():
-            defaults.db.net_server.shutdown()
+        if core.db.server_running():
+            core.db.net_server.shutdown()
 
         # hide the tray icon
         self.trayIcon.hide()

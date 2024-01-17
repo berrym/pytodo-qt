@@ -1,24 +1,23 @@
 """AddTodoDialog.py
 
-Simple dialog to create a to-do.
+Simple dialog to create a todo.
 """
 
 from PyQt5 import QtWidgets
 
-from core import defaults
+from core import core
 from core.Logger import Logger
-from core.TodoDatabase import Todo
 
 logger = Logger(__name__)
 
 
 class AddTodoDialog(QtWidgets.QDialog):
-    """Create a new to-do."""
+    """Create a new todo."""
 
     def __init__(self):
         """Create a simple dialog.
 
-        Get enough information to create a new to-do.
+        Get enough information to create a new todo.
         """
         logger.log.info("Creating an add todo dialog")
 
@@ -53,29 +52,28 @@ class AddTodoDialog(QtWidgets.QDialog):
         logger.log.info("Add todo dialog created")
 
     def get_todo(self):
-        """Get to-do information and append it to the current list."""
+        """Get todo information and append it to the current list."""
         reminder = self.reminder_field.text()
-        if not reminder:
+        if reminder == "":
             QtWidgets.QMessageBox.information(
                 self, "Empty reminder", "Reminder cannot be empty"
             )
             return
 
-        # get to-do information
+        # get todo information
+        todo = {"complete": False, "reminder": reminder}
         priority = self.priority_field.currentText()
-        match priority:
-            case "High":
-                priority = 1
-            case "Normal":
-                priority = 2
-            case _:
-                priority = 3
-        complete = False
-        todo = Todo(reminder=reminder, priority=priority, complete=complete)
+        if priority == "High":
+            todo["priority"] = 1
+        elif priority == "Normal":
+            todo["priority"] = 2
+        else:
+            todo["priority"] = 3
+
         # update the database
-        defaults.db.todo_lists[defaults.db.active_list]["todo_list"].append(todo)
-        defaults.db.todo_lists[defaults.db.active_list]["todo_count"] += 1
-        defaults.db.todo_total += 1
+        core.db.todo_lists[core.db.active_list].append(todo)
+        core.db.todo_count += 1
+        core.db.todo_total += 1
 
         logger.log.info(f"New todo created: {todo}")
 

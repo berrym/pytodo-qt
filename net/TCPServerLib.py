@@ -2,33 +2,32 @@
 
 This module implements a threaded tcp socket server and request handler for To-Do.
 """
-
+import json
 import os
 import socketserver
 import sys
 import time
 
-import jsonpickle
-
-from core import defaults
-from crypto.AESCipher import AESCipher
+from core import core
+from core.core import SyncOperations
 from core.Logger import Logger
-from net.SyncOperations import SyncOperations
-
+from crypto.AESCipher import AESCipher
 
 logger = Logger(__name__)
 
 
-class DatabaseServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+class DataBaseServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     """Threaded tcp server."""
+
     allow_reuse_address = True
 
 
 class TCPRequestHandler(socketserver.StreamRequestHandler):
     """Socket server request handler."""
+
     def __init__(self, request, client_address, server):
         """Initialize request handler."""
-        self.aes_cipher = AESCipher(defaults.options["key"])
+        self.aes_cipher = AESCipher(core.options["key"])
         self.buf_size = 4096
         self.peer_name = None
         self.host = None
@@ -56,7 +55,7 @@ class TCPRequestHandler(socketserver.StreamRequestHandler):
     def pull(self):
         """Pull to-do lists from remote host."""
         logger.log.info(f"received PULL_REQUEST from {self.peer_name}")
-        if not defaults.options["pull"]:
+        if not core.options["pull"]:
             logger.log.info("PULL_REQUEST denied")
             self.encrypted_reply = self.aes_cipher.encrypt(
                 SyncOperations["REJECT"].name
@@ -64,9 +63,9 @@ class TCPRequestHandler(socketserver.StreamRequestHandler):
             self.request.send(self.encrypted_reply)
             return
 
-        if os.path.exists(defaults.lists_fn):
+        if os.path.exists(core.lists_fn):
             self.data = ""
-            with open(defaults.lists_fn, encoding="utf-8") as f:
+            with open(core.lists_fn, encoding="utf-8") as f:
                 for line in f:
                     self.data += line
 
@@ -95,7 +94,7 @@ class TCPRequestHandler(socketserver.StreamRequestHandler):
     def send_data(self):
         """Send to-do list data."""
         try:
-            serialized = jsonpickle.encode(self.data, indent=2)
+            serialized = json.dumps(self.data)
         except OSError as e:
             logger.log.exception(e)
             return False, e
@@ -105,7 +104,7 @@ class TCPRequestHandler(socketserver.StreamRequestHandler):
     def push(self):
         """Push to-do lists to remote hosts."""
         logger.log.info(f"PUSH_REQUEST from {self.peer_name}")
-        if not defaults.options["push"]:
+        if not core.options["push"]:
             logger.log.info("PUSH_REQUEST denied")
             self.encrypted_reply = self.aes_cipher.encrypt(
                 SyncOperations["REJECT"].name
@@ -115,8 +114,8 @@ class TCPRequestHandler(socketserver.StreamRequestHandler):
         logger.log.info("PUSH_REQUEST accepted")
         self.encrypted_reply = self.aes_cipher.encrypt(SyncOperations["ACCEPT"].name)
         self.request.send(self.encrypted_reply)
-        self.host = (self.peer_name[0], defaults.options["port"])
-        defaults.db.sync_pull(self.host)
+        self.host = (self.peer_name[0], core.options["port"])
+        core.db.sync_pull(self.host)
 
     def handle(self):
         """Handle requests."""
