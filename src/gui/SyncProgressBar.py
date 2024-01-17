@@ -1,7 +1,7 @@
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QProgressDialog
 
-from core.Logger import Logger
+from src.core.Logger import Logger
 
 
 logger = Logger(__name__)

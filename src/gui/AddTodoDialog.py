@@ -5,8 +5,8 @@ Simple dialog to create a todo.
 
 from PyQt5 import QtWidgets
 
-from core import core
-from core.Logger import Logger
+from src.core import core
+from src.core.Logger import Logger
 
 logger = Logger(__name__)
 

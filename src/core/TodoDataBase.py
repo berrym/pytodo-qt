@@ -8,9 +8,10 @@ import os
 import sys
 import threading
 
-from core import core
-from core.Logger import Logger
-from net import TCPServerLib, TCPClientLib
+from src.core import core
+from src.core.Logger import Logger
+from src.net import TCPClientLib
+from src.net import TCPServerLib
 
 logger = Logger(__name__)
 

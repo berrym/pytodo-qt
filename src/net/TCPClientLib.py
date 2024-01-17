@@ -10,10 +10,10 @@ import time
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QProgressDialog
 
-from core import core, json_helpers
-from core.core import SyncOperations
-from core.Logger import Logger
-from crypto.AESCipher import AESCipher
+from src.core import core, json_helpers
+from src.core.core import SyncOperations
+from src.core.Logger import Logger
+from src.crypto.AESCipher import AESCipher
 
 logger = Logger(__name__)
 

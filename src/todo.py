@@ -27,8 +27,8 @@ import sys
 
 from PyQt5 import QtWidgets
 
-from core import core, TodoDataBase
-from gui import MainWindow
+from src.core import core, TodoDataBase
+from src.gui import MainWindow
 
 
 # Main function

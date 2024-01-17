@@ -5,7 +5,7 @@ A Generic logging class.
 
 import logging
 
-from core.core import log_fn
+from src.core.core import log_fn
 
 
 class Logger:

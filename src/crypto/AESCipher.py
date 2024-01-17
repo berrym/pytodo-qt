@@ -10,7 +10,7 @@ from Cryptodome.Cipher import AES
 from Cryptodome.Random import get_random_bytes
 from Cryptodome.Util.Padding import pad, unpad
 
-from core.Logger import Logger
+from src.core.Logger import Logger
 
 logger = Logger(__name__)
 

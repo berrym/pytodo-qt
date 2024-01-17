@@ -8,10 +8,10 @@ import socketserver
 import sys
 import time
 
-from core import core
-from core.core import SyncOperations
-from core.Logger import Logger
-from crypto.AESCipher import AESCipher
+from src.core import core
+from src.core.core import SyncOperations
+from src.core.Logger import Logger
+from src.crypto.AESCipher import AESCipher
 
 logger = Logger(__name__)
 

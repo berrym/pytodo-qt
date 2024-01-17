@@ -1,11 +1,11 @@
-"""defaults.py
+"""settings.py
 
 This module creates To-Do core global variables and functions.
 """
 
 import os
 
-from core.Logger import Logger
+from src.core.Logger import Logger
 
 
 logger = Logger(__name__)

@@ -9,11 +9,11 @@ from PyQt5 import QtGui, QtWidgets, QtPrintSupport
 from PyQt5.QtCore import QPersistentModelIndex
 from PyQt5.QtWidgets import QDesktopWidget
 
-from core import core, json_helpers
-from core.core import SyncOperations
-from core.Logger import Logger
-from gui.AddTodoDialog import AddTodoDialog
-from gui.SyncDialog import SyncDialog
+from src.core import core, json_helpers
+from src.core.core import SyncOperations
+from src.core.Logger import Logger
+from src.gui.AddTodoDialog import AddTodoDialog
+from src.gui.SyncDialog import SyncDialog
 
 logger = Logger(__name__)
 

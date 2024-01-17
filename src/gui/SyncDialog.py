@@ -6,9 +6,9 @@ Simple dialog to collect information needed to perform a sync operation.
 from PyQt5 import QtWidgets
 from PyQt5.QtGui import QIntValidator
 
-from core import core
-from core.core import SyncOperations
-from core.Logger import Logger
+from src.core import core
+from src.core.core import SyncOperations
+from src.core.Logger import Logger
 
 logger = Logger(__name__)
 
