@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+todo = ["*.png"]
+"todo.gui.icons" = ["*.png"]
+
+[project]
+name = "To-Do"
+version = "0.2.0"
+description = "A simple To-Do list app"
+readme = "README.md"
+authors = [
+    {name = "Michael Berry", email = "trismegustis@gmail.com"},
+]
+dependencies = [
+    "PyQt5",
+    "pycryptodomex",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent",
+]
+license = {text = "GPLv3"}
+requires-python = ">=3.8"
+
+[project.urls]
+Homepage = "https://github.com/berrym/todo"
+
+[project.scripts]
+todo = "todo.__main__:main"

@@ -4,8 +4,17 @@ A Generic logging class.
 """
 
 import logging
+import os
+import sys
 
-from src.core.core import log_fn
+home_dir = os.getenv("HOME")
+if home_dir is not None:
+    todo_dir = os.path.join(home_dir, ".todo")
+else:
+    print("Error: unable to write log file, exiting")
+    sys.exit(1)
+
+log_fn = os.path.join(todo_dir, "todo.log")
 
 
 class Logger:

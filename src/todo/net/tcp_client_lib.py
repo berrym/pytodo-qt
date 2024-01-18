@@ -1,19 +1,20 @@
-"""TCPClientLib.py
+"""tcp_client_lib.py
 
 This module implements the To-Do database network client.
 """
+
 import json
 import os
 import socket
 import time
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QProgressDialog
+from todo.core import settings, json_helpers
+from todo.core.Logger import Logger
+from todo.crypto.AESCipher import AESCipher
+from todo.net.sync_operations import sync_operations
 
-from src.core import core, json_helpers
-from src.core.core import SyncOperations
-from src.core.Logger import Logger
-from src.crypto.AESCipher import AESCipher
+from . import recv_all
+
 
 logger = Logger(__name__)
 
@@ -24,7 +25,7 @@ class DataBaseClient:
     def __init__(self):
         """Initialize client."""
         self.buf_size = 4096
-        self.aes_cipher = AESCipher(core.options["key"])
+        self.aes_cipher = AESCipher(settings.options["key"])
 
     def send_request(self, host, sock, request):
         """Send a request to remote connection."""
@@ -44,34 +45,21 @@ class DataBaseClient:
         msg = f"{host} responded to {request} with {response}"
         logger.log.info(msg)
 
-        if response == SyncOperations["ACCEPT"].name:
-            if request == SyncOperations["PULL_REQUEST"].name:
+        if response == sync_operations["ACCEPT"].name:
+            if request == sync_operations["PULL_REQUEST"].name:
                 size_header = sock.recv(self.buf_size)
                 decrypted_header = self.aes_cipher.decrypt(size_header)
                 size = int(decrypted_header)
-                logger.log.info(f"remote lists is {size} bytes")
+                logger.log.info("remote lists is %d bytes", size)
                 time.sleep(1)
-                data = self.recv_all(sock, size)
+                data = recv_all(sock, size)
                 return self.process_data(host, data)
-            elif request == SyncOperations["PUSH_REQUEST"].name:
+            elif request == sync_operations["PUSH_REQUEST"].name:
                 return True, msg
             else:
                 return False, msg
         else:
             return False, msg
-
-    def recv_all(self, sock, size):
-        """Read data from a socket until it's finished."""
-        pd = QProgressDialog("Sync To-Do lists", "Abort sync", 0, size, None)
-        pd.setMinimumWidth(375)
-        pd.setWindowModality(Qt.WindowModal)
-        pd.setValue(0)
-        pd.forceShow()
-        data = bytearray()
-        while chunk := sock.recv(1):
-            data.extend(chunk)
-            pd.setValue(len(data))
-        return data
 
     def process_data(self, host, data):
         """Process encrypted data received."""
@@ -84,7 +72,7 @@ class DataBaseClient:
             return False, e
 
         # write data to a temporary file, then read it in
-        tmp = os.path.join(core.todo_dir, ".todo_lists.tmp")
+        tmp = os.path.join(settings.todo_dir, ".todo_lists.tmp")
         try:
             with open(tmp, "w", encoding="utf-8") as f:
                 f.write(deserialized)
@@ -122,7 +110,7 @@ class DataBaseClient:
     def sync_pull(self, host):
         """Synchronize database with another by pulling it from a host."""
         logger.log.info("Performing a Sync Pull")
-        return self.synchronize(host, SyncOperations["PULL_REQUEST"].name)
+        return self.synchronize(host, sync_operations["PULL_REQUEST"].name)
 
     def sync_push(self, host):
         """Synchronize lists between devices by pushing them to a host.
@@ -132,4 +120,4 @@ class DataBaseClient:
         the device you want your to-do lists on to pull from you.
         """
         logger.log.info("Performing a Sync Push")
-        return self.synchronize(host, SyncOperations["PUSH_REQUEST"].name)
+        return self.synchronize(host, sync_operations["PUSH_REQUEST"].name)

@@ -1,25 +1,26 @@
 """AddTodoDialog.py
 
-Simple dialog to create a todo.
+Simple dialog to create a to-do.
 """
 
 from PyQt5 import QtWidgets
 
-from src.core import core
-from src.core.Logger import Logger
+from todo.core import error_on_none_db, settings
+from todo.core.Logger import Logger
+
 
 logger = Logger(__name__)
 
 
 class AddTodoDialog(QtWidgets.QDialog):
-    """Create a new todo."""
+    """Create a new to-do."""
 
     def __init__(self):
         """Create a simple dialog.
 
-        Get enough information to create a new todo.
+        Get enough information to create a new to-do.
         """
-        logger.log.info("Creating an add todo dialog")
+        logger.log.info("Creating an add to-do dialog")
 
         super().__init__()
 
@@ -33,7 +34,7 @@ class AddTodoDialog(QtWidgets.QDialog):
         self.priority_field.addItems(["Low", "Normal", "High"])
 
         # add button
-        self.add_button = QtWidgets.QPushButton("Add Todo", self)
+        self.add_button = QtWidgets.QPushButton("Add to-do", self)
         self.add_button.clicked.connect(self.get_todo)
 
         # create a vertical box layout
@@ -46,13 +47,14 @@ class AddTodoDialog(QtWidgets.QDialog):
 
         # set layout and window title
         self.setLayout(v_box)
-        self.setWindowTitle("Add New Todo")
+        self.setWindowTitle("Add New to-do")
         self.setMinimumWidth(500)
 
-        logger.log.info("Add todo dialog created")
+        logger.log.info("Add to-do dialog created")
 
+    @error_on_none_db
     def get_todo(self):
-        """Get todo information and append it to the current list."""
+        """Get to-do information and append it to the current list."""
         reminder = self.reminder_field.text()
         if reminder == "":
             QtWidgets.QMessageBox.information(
@@ -60,7 +62,7 @@ class AddTodoDialog(QtWidgets.QDialog):
             )
             return
 
-        # get todo information
+        # get to-do information
         todo = {"complete": False, "reminder": reminder}
         priority = self.priority_field.currentText()
         if priority == "High":
@@ -71,10 +73,15 @@ class AddTodoDialog(QtWidgets.QDialog):
             todo["priority"] = 3
 
         # update the database
-        core.db.todo_lists[core.db.active_list].append(todo)
-        core.db.todo_count += 1
-        core.db.todo_total += 1
+        if settings.db.todo_lists is not None and settings.db.active_list is not None:
+            settings.db.todo_lists[settings.db.active_list].append(todo)
+            settings.db.todo_count += 1
+            settings.db.todo_total += 1
+        else:
+            logger.log.exception(
+                "Error: settings.db.todo_list or setting.db.active list does not exist, exiting"
+            )
 
-        logger.log.info(f"New todo created: {todo}")
+        logger.log.info(f"New to-do created: {todo}")
 
         self.accept()
