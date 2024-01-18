@@ -10,9 +10,9 @@ todo = ["*.png"]
 "todo.gui.icons" = ["*.png"]
 
 [project]
-name = "To-Do"
+name = "pytodo"
 version = "0.2.0"
-description = "A simple To-Do list app"
+description = "A simple To-Do list app written in PyQt5"
 readme = "README.md"
 authors = [
     {name = "Michael Berry", email = "trismegustis@gmail.com"},
