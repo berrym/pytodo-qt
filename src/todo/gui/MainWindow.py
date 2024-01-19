@@ -341,9 +341,10 @@ class CreateMainWindow(QMainWindow):
         result, msg = settings.db.write_config()
         if not result:
             QMessageBox.critical(self, "Write Error", msg)
+            logger.log.critical(msg)
             sys.exit(1)
         else:
-            QMessageBox.information(self, "Write Success", msg)
+            logger.log.critical(msg)
 
     @error_on_none_db
     def db_start_server(self, *args, **kwargs):
