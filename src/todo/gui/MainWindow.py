@@ -668,7 +668,8 @@ class CreateMainWindow(QMainWindow):
 
         # Get a new to-do from user
         AddTodoDialog().exec()
-
+        self.write_todo_data()
+        settings.db.sort_active_list()
         self.refresh()
 
     @error_on_none_db
