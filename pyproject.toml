@@ -11,7 +11,7 @@ todo = ["*.png"]
 
 [project]
 name = "pytodo-qt"
-version = "0.2.2"
+version = "0.2.3"
 description = "A simple To-Do list app written in PyQt6"
 readme = "README.md"
 authors = [

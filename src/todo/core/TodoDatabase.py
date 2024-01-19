@@ -144,9 +144,12 @@ class CreateTodoDatabase:
             logger.log.exception("Port must be a number: %s", e)
             settings.options["port"] = 5364
 
-    def write_text_file(self, fn="todo_list.txt"):
+    def write_text_file(self, fn=None):
         """Write active list to plain text file."""
         if self.todo_count == 0:
+            return
+
+        if fn is None:
             return
 
         logger.log.info("Writing todo lists to file %s", fn)

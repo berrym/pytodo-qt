@@ -6,8 +6,10 @@ This module implements the GUI for To-Do.
 import os
 import sys
 
+from pathlib import Path
+
 from PyQt6.QtCore import QPersistentModelIndex
-from PyQt6.QtGui import QAction, QIcon, QFont
+from PyQt6.QtGui import QAction, QIcon, QFont, QTextDocument
 from PyQt6.QtWidgets import (
     QMainWindow,
     QMenu,
@@ -21,9 +23,9 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon,
     QInputDialog,
 )
-from PyQt6.QtPrintSupport import QPrinter
+from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 
-from ..core import error_on_none_db, settings, json_helpers
+from ..core import error_on_none_db, settings, json_helpers, TodoDatabase
 from ..core.Logger import Logger
 from ..gui.AddTodoDialog import AddTodoDialog
 from ..gui.SyncDialog import SyncDialog
@@ -67,10 +69,6 @@ class CreateMainWindow(QMainWindow):
         printer = QAction(QIcon(), "Print", self)
         printer.setShortcut("Ctrl+P")
         printer.triggered.connect(self.printlist)
-
-        export = QAction(QIcon(), "Export to Text File", self)
-        export.setShortcut("Ctrl+E")
-        export.triggered.connect(self.export_list)
 
         quit = QAction(QIcon(), "Exit", self)
         quit.setShortcut("Ctrl+Q")
@@ -141,7 +139,6 @@ class CreateMainWindow(QMainWindow):
             main_menu = menu_bar.addMenu("&Menu")
             if main_menu is not None:
                 main_menu.addAction(printer)
-                main_menu.addAction(export)
                 main_menu.addAction(quit)
             else:
                 msg = "Could not populate main menu, exiting"
@@ -563,23 +560,34 @@ class CreateMainWindow(QMainWindow):
         """Export active list to text file."""
         self.update_progress_bar(0)
 
-        if not settings.db.todo_count:
+        if settings.db.todo_count == 0:
+            msg = "No todos to export"
+            QMessageBox.warning(self, "Export List", msg)
+            logger.log.warning(msg)
             return
 
         if fn is None:
-            # prompt user for fn
+            # prompt user for filename
             self.update_status_bar("Waiting for input")
-            fn, ok = QInputDialog.getText(
+            ok, fn = QInputDialog.getText(
                 self,
                 "Save list to text file",
                 "Enter name of file to write as text:",
             )
+
             if not ok:
+                QMessageBox.warning(
+                    self, "Export List", "Did not finishing exporting list"
+                )
                 return
 
-        self.update_status_bar(f"Exporting to text file {fn}.")
-        settings.db.write_text_file(fn)
-        self.update_status_bar(f"finished exporting to {fn}.")
+        fp = Path.home().joinpath(fn)
+
+        self.update_status_bar(f"Exporting to text file {fp}.")
+        settings.db.write_text_file(fp)
+        msg = f"finished exporting to {fp}."
+        logger.log.info(msg)
+        self.update_status_bar(msg)
         self.update_progress_bar()
 
     def printlist(self):
@@ -591,7 +599,7 @@ class CreateMainWindow(QMainWindow):
             self.update_progress_bar()
             return
 
-        tmp_fn = ".todo_printer.tmp"
+        tmp_fn = Path.home().joinpath(settings.todo_dir, ".todo_printer.tmp")
 
         accept = QPrintDialog(self.printer).exec()
         if accept:
@@ -599,7 +607,10 @@ class CreateMainWindow(QMainWindow):
 
             # Write formatted list to temporary file
             self.export_list(tmp_fn)
-            if not os.path.exists(tmp_fn):
+            if not Path.exists(tmp_fn):
+                msg = f"Temporary file {tmp_fn} not created, not printing"
+                QMessageBox.warning(self, "Print List", msg)
+                logger.log.warning(msg)
                 return
 
             # Read in formatted list as one big string
@@ -615,8 +626,11 @@ class CreateMainWindow(QMainWindow):
             doc = QTextDocument(string)
             doc.print(self.printer)
 
+        msg = "Finished printing todo list"
+        QMessageBox.information(self, "Print List", msg)
+        logger.log.info(msg)
         self.update_progress_bar()
-        self.update_status_bar("finished printing")
+        self.update_status_bar(msg)
 
     @error_on_none_db
     def add_todo(self, *args, **kwargs):
@@ -737,7 +751,7 @@ class CreateMainWindow(QMainWindow):
 
     def about_todo(self):
         """Display a message box with Program/Author information."""
-        text = """<b><u>To-Do v0.2.2</u></b>
+        text = """<b><u>To-Do v0.2.3</u></b>
         <br><br>To-Do list program that works with multiple To-Do
         lists locally and over a network.
         <br><br>License: <a href="http://www.fsf.org/licenses/gpl.html">GPLv3</a>
