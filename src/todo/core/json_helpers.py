@@ -2,8 +2,8 @@ import json
 import os
 import sys
 
-from todo.core import error_on_none_db, settings
-from todo.core.Logger import Logger
+from ..core import error_on_none_db, settings
+from ..core.Logger import Logger
 
 
 logger = Logger(__name__)

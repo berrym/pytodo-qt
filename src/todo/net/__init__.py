@@ -3,7 +3,7 @@
 A small TCP socket reader with a simple progress bar.
 """
 
-from PyQt5 import QtWidgets, QtCore
+from PyQt6 import QtWidgets, QtCore
 
 
 def recv_all(sock, size):

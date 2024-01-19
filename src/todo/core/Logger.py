@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 
+
 home_dir = os.getenv("HOME")
 if home_dir is not None:
     todo_dir = os.path.join(home_dir, ".todo")

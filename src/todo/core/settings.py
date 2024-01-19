@@ -6,7 +6,7 @@ This module creates To-Do core global variables and functions.
 import sys
 import os
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 options = {}
 db = None
 

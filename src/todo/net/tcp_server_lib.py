@@ -9,11 +9,12 @@ import socketserver
 import sys
 import time
 
-from PyQt5 import QtWidgets
-from todo.core import error_on_none_db, settings
-from todo.core.Logger import Logger
-from todo.crypto.AESCipher import AESCipher
-from todo.net.sync_operations import sync_operations
+from PyQt6.QtWidgets import QMessageBox
+
+from ..core import error_on_none_db, settings
+from ..core.Logger import Logger
+from ..crypto.AESCipher import AESCipher
+from ..net.sync_operations import sync_operations
 
 
 logger = Logger(__name__)
@@ -115,7 +116,7 @@ class TCPRequestHandler(socketserver.StreamRequestHandler):
                 sync_operations["REJECT"].name
             )
             self.request.send(self.encrypted_reply)
-            QtWidgets.QMessageBox.warning(None, "Push Sync", msg)
+            QMessageBox.warning(None, "Push Sync", msg)
             logger.log.warning(msg)
             return
 
@@ -127,7 +128,7 @@ class TCPRequestHandler(socketserver.StreamRequestHandler):
             self.host = (self.peer_name[0], settings.options["port"])
         else:
             msg = "Not performing push sync, no host peer"
-            QtWidgets.QMessageBox.warning(None, "Push Sync", msg)
+            QMessageBox.warning(None, "Push Sync", msg)
             logger.log.warning(msg)
             return
 

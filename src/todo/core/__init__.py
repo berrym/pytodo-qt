@@ -5,10 +5,10 @@ todo.core: A decorator to make security checks on the to-do database.
 
 import sys
 
-from PyQt5 import QtWidgets
+from PyQt6.QtWidgets import QMessageBox
 
-from todo.core import settings
-from todo.core.Logger import Logger
+from ..core import settings
+from ..core.Logger import Logger
 
 
 def error_on_none_db(func):
@@ -28,7 +28,7 @@ def error_on_none_db(func):
                 return
         else:
             msg = "Database does not exist, exiting"
-            QtWidgets.QMessageBox.critical(None, "Database Error", msg)
+            QMessageBox.critical(None, "Database Error", msg)
             logger.log.exception(msg)
             sys.exit(1)
 

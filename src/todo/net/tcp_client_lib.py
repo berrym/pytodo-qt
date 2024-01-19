@@ -8,12 +8,11 @@ import os
 import socket
 import time
 
-from todo.core import settings, json_helpers
-from todo.core.Logger import Logger
-from todo.crypto.AESCipher import AESCipher
-from todo.net.sync_operations import sync_operations
-
-from . import recv_all
+from ..core import settings, json_helpers
+from ..core.Logger import Logger
+from ..crypto.AESCipher import AESCipher
+from ..net import recv_all
+from ..net.sync_operations import sync_operations
 
 
 logger = Logger(__name__)

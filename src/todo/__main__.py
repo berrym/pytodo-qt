@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 """__main__.py
 
 A to-do list program written in Python using Qt5
@@ -23,11 +21,12 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import argparse
 import os
 import sys
-from PyQt5 import QtWidgets
 
-from todo.core.Logger import Logger
-from todo.core import settings, TodoDataBase
-from todo.gui import MainWindow
+from PyQt6.QtWidgets import QApplication
+
+from .core.Logger import Logger
+from .core import settings, TodoDatabase
+from .gui import MainWindow
 
 
 logger = Logger(__name__)
@@ -50,8 +49,8 @@ def main():
     # create a command line arg_parser
     arg_parser = argparse.ArgumentParser(
         prog="To-Do",
-        description="To-Do List Program",
-        epilog="Copyright Michael Berry 2020",
+        description="To-Do List Application written in Python with Qt6",
+        epilog="Copyright Michael Berry 2024",
     )
 
     # add network server command group
@@ -107,10 +106,10 @@ def main():
             settings.options[k] = v
 
     # create a to-do database
-    settings.db = TodoDataBase.CreateTodoDataBase()
+    settings.db = TodoDatabase.CreateTodoDatabase()
 
     # create a QApplication, the main window, then hand over control to Qt
-    app = QtWidgets.QApplication(sys.argv)
+    app = QApplication(sys.argv)
     _ = MainWindow.CreateMainWindow()
     sys.exit(app.exec())
 

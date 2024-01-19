@@ -1,4 +1,4 @@
-"""TodoDataBase.py
+"""TodoDatabase.py
 
 This module implements the to-do database.
 """
@@ -8,15 +8,15 @@ import os
 import sys
 import threading
 
-from todo.core import settings
-from todo.core.Logger import Logger
-from todo.net import tcp_server_lib, tcp_client_lib
+from ..core import settings
+from ..core.Logger import Logger
+from ..net import tcp_server_lib, tcp_client_lib
 
 
 logger = Logger(__name__)
 
 
-class CreateTodoDataBase:
+class CreateTodoDatabase:
     """Maintains a database of to-do lists."""
 
     def __init__(self):

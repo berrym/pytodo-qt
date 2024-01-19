@@ -3,16 +3,24 @@
 Simple dialog to create a to-do.
 """
 
-from PyQt5 import QtWidgets
+from PyQt6.QtWidgets import (
+    QDialog,
+    QLabel,
+    QLineEdit,
+    QComboBox,
+    QPushButton,
+    QVBoxLayout,
+    QMessageBox,
+)
 
-from todo.core import error_on_none_db, settings
-from todo.core.Logger import Logger
+from ..core import error_on_none_db, settings
+from ..core.Logger import Logger
 
 
 logger = Logger(__name__)
 
 
-class AddTodoDialog(QtWidgets.QDialog):
+class AddTodoDialog(QDialog):
     """Create a new to-do."""
 
     def __init__(self):
@@ -25,20 +33,20 @@ class AddTodoDialog(QtWidgets.QDialog):
         super().__init__()
 
         # reminder
-        reminder_label = QtWidgets.QLabel("Reminder", self)
-        self.reminder_field = QtWidgets.QLineEdit(self)
+        reminder_label = QLabel("Reminder", self)
+        self.reminder_field = QLineEdit(self)
 
         # priority
-        priority_label = QtWidgets.QLabel("Priority", self)
-        self.priority_field = QtWidgets.QComboBox(self)
+        priority_label = QLabel("Priority", self)
+        self.priority_field = QComboBox(self)
         self.priority_field.addItems(["Low", "Normal", "High"])
 
         # add button
-        self.add_button = QtWidgets.QPushButton("Add to-do", self)
+        self.add_button = QPushButton("Add to-do", self)
         self.add_button.clicked.connect(self.get_todo)
 
         # create a vertical box layout
-        v_box = QtWidgets.QVBoxLayout()
+        v_box = QVBoxLayout()
         v_box.addWidget(reminder_label)
         v_box.addWidget(self.reminder_field)
         v_box.addWidget(priority_label)
@@ -53,13 +61,11 @@ class AddTodoDialog(QtWidgets.QDialog):
         logger.log.info("Add to-do dialog created")
 
     @error_on_none_db
-    def get_todo(self):
+    def get_todo(self, *args, **kwargs):
         """Get to-do information and append it to the current list."""
         reminder = self.reminder_field.text()
         if reminder == "":
-            QtWidgets.QMessageBox.information(
-                self, "Empty reminder", "Reminder cannot be empty"
-            )
+            QMessageBox.information(self, "Empty reminder", "Reminder cannot be empty")
             return
 
         # get to-do information

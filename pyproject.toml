@@ -10,15 +10,15 @@ todo = ["*.png"]
 "todo.gui.icons" = ["*.png"]
 
 [project]
-name = "pytodo"
-version = "0.2.0"
-description = "A simple To-Do list app written in PyQt5"
+name = "pytodo-qt"
+version = "0.2.1"
+description = "A simple To-Do list app written in PyQt6"
 readme = "README.md"
 authors = [
     {name = "Michael Berry", email = "trismegustis@gmail.com"},
 ]
 dependencies = [
-    "PyQt5",
+    "PyQt6",
     "pycryptodomex",
 ]
 classifiers = [
