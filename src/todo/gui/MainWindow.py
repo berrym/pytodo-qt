@@ -716,7 +716,8 @@ class CreateMainWindow(QMainWindow):
                 settings.db.todo_lists[settings.db.active_list][todo][
                     "complete"
                 ] = False
-                self.write_todo_data()
+
+            self.write_todo_data()
             self.refresh()
 
     @error_on_none_db
