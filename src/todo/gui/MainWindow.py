@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QSystemTrayIcon,
+    QInputDialog,
 )
 from PyQt6.QtPrintSupport import QPrinter
 
@@ -176,6 +177,18 @@ class CreateMainWindow(QMainWindow):
                 sync_menu.addAction(sync_push)
             else:
                 msg = "Could not populate sync menu, exiting"
+                QMessageBox.warning(self, "Creation Error", msg)
+                logger.log.exception(msg)
+                sys.exit(1)
+
+            server_menu = menu_bar.addMenu("&Server")
+            if server_menu is not None:
+                server_menu.addAction(start_server)
+                server_menu.addAction(stop_server)
+                server_menu.addAction(change_port)
+                server_menu.addAction(change_bind_address)
+            else:
+                msg = "Could not populate server menu, exiting"
                 QMessageBox.warning(self, "Creation Error", msg)
                 logger.log.exception(msg)
                 sys.exit(1)
@@ -724,7 +737,7 @@ class CreateMainWindow(QMainWindow):
 
     def about_todo(self):
         """Display a message box with Program/Author information."""
-        text = """<b><u>To-Do v0.2.0</u></b>
+        text = """<b><u>To-Do v0.2.2</u></b>
         <br><br>To-Do list program that works with multiple To-Do
         lists locally and over a network.
         <br><br>License: <a href="http://www.fsf.org/licenses/gpl.html">GPLv3</a>
