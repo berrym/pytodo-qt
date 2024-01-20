@@ -113,12 +113,12 @@ class CreateTodoDatabase:
 
         for k, v in self.config["database"].items():
             if k not in settings.options:
-                logger.log.info(f"%r = %r", k, v)
+                logger.log.info("%r = %r", k, v)
                 settings.options[k] = v
 
         for k, v in self.config["server"].items():
             if k not in settings.options:
-                logger.log.info(f"%r = %r", k, v)
+                logger.log.info("%r = %r", k, v)
                 settings.options[k] = v
 
         # fix some option types
@@ -165,8 +165,8 @@ class CreateTodoDatabase:
         """Determine if the server is running"""
         if self.server_up and self.net_server is not None:
             return True
-        else:
-            return False
+
+        return False
 
     def start_server(self):
         """Create and start the server."""
@@ -233,5 +233,6 @@ class CreateTodoDatabase:
         for todo in self.todo_lists[self.active_list]:
             if todo["reminder"] == reminder:
                 return i
-            else:
-                i += 1
+            i += 1
+
+        return None

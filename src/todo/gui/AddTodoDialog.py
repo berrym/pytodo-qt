@@ -79,15 +79,15 @@ class AddTodoDialog(QDialog):
             todo["priority"] = 3
 
         # update the database
-        if settings.db.todo_lists is not None and settings.db.active_list is not None:
-            settings.db.todo_lists[settings.db.active_list].append(todo)
-            settings.db.todo_count += 1
-            settings.db.todo_total += 1
+        if settings.DB.todo_lists is not None and settings.DB.active_list is not None:
+            settings.DB.todo_lists[settings.DB.active_list].append(todo)
+            settings.DB.todo_count += 1
+            settings.DB.todo_total += 1
         else:
             logger.log.exception(
                 "Error: settings.db.todo_list or setting.db.active list does not exist, exiting"
             )
 
-        logger.log.info(f"New to-do created: {todo}")
+        logger.log.info("New to-do created: %s", todo)
 
         self.accept()

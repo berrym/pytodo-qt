@@ -4,9 +4,9 @@ This module implements the To-Do database network client.
 """
 
 import json
-import os
 import socket
 import time
+
 from pathlib import Path
 
 from ..core import settings, json_helpers
@@ -29,7 +29,7 @@ class DataBaseClient:
 
     def send_request(self, host, sock, request):
         """Send a request to remote connection."""
-        logger.log.info(f"sending {request} to {host}")
+        logger.log.info("sending %s to %s", request, host)
         encrypted_request = self.aes_cipher.encrypt(request)
         sock.send(encrypted_request)
 
@@ -53,13 +53,13 @@ class DataBaseClient:
                 logger.log.info("remote lists is %d bytes", size)
                 time.sleep(1)
                 data = recv_all(sock, size)
-                return self.process_data(host, data)
+                self.process_data(host, data)
             elif request == sync_operations["PUSH_REQUEST"].name:
-                return True, msg
+                pass
             else:
                 return False, msg
-        else:
-            return False, msg
+
+        return True, msg
 
     def process_data(self, host, data):
         """Process encrypted data received."""

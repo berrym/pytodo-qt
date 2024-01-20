@@ -83,7 +83,7 @@ class SyncDialog(QDialog):
         logger.log.info("Got host information for sync operation")
         if self.operation == sync_operations["PULL_REQUEST"].name:
             # try the pull, inform user of the results
-            result, msg = settings.db.sync_pull((address, port))
+            result, msg = settings.DB.sync_pull((address, port))
             QMessageBox.information(self, "Sync Pull", msg)
             if not result:
                 return
@@ -94,8 +94,8 @@ class SyncDialog(QDialog):
                 settings.options["pull"] = True
 
             # try the push, inform user of results
-            logger.log.info(f"Sending a sync push request to {address}:{port}")
-            result, msg = settings.db.sync_push((address, port))
+            logger.log.info("Sending a sync push request to %s:%d", address, port)
+            result, msg = settings.DB.sync_push((address, port))
             QMessageBox.information(self, "Sync Push", msg)
             if not pull_ok:
                 settings.options["pull"] = False

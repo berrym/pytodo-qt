@@ -7,22 +7,28 @@ import sys
 
 from pathlib import Path
 
+from ..core.Logger import Logger
+
+
+logger = Logger(__name__)
+
+
 __version__ = "0.2.3"
 options = {}
-db = None
+DB = None
 
 home_dir = Path.home()
 if home_dir is not None:
     todo_dir = Path.joinpath(home_dir, ".todo")
 else:
-    print("Error: unable to write log file, exiting")
+    logger.log.exception("Unable to write log file, exiting")
     sys.exit(1)
 
 if not Path.exists(todo_dir):
     try:
         Path.mkdir(todo_dir)
     except OSError as e:
-        print(f"Error creating To-Do configuration directory: {e}")
+        logger.log.exception("Error creating To-Do configuration directory: %s", e)
         sys.exit(1)
 
 

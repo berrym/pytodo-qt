@@ -32,12 +32,12 @@ def read_json_data(fn=settings.lists_fn):
     try:
         with open(fn, "r", encoding="utf-8") as f:
             # Merge lists
-            if len(settings.db.todo_lists) > 0:
+            if len(settings.DB.todo_lists) > 0:
                 todo_lists = json.load(f)
-                new_lists = merge_todo_lists(settings.db.todo_lists, todo_lists)
-                settings.db.todo_lists = new_lists
+                new_lists = merge_todo_lists(settings.DB.todo_lists, todo_lists)
+                settings.DB.todo_lists = new_lists
             else:
-                settings.db.todo_lists = json.load(f)
+                settings.DB.todo_lists = json.load(f)
     except IOError as e:
         logger.log.exception("Error reading JSON file %s: %s", fn, e)
         return False, e
@@ -45,23 +45,23 @@ def read_json_data(fn=settings.lists_fn):
     # set active list
     if settings.options is not None and "active_list" in settings.options:
         if settings.options["active_list"]:
-            settings.db.active_list = settings.options["active_list"]
-        elif len(settings.db.todo_lists) == 0:
+            settings.DB.active_list = settings.options["active_list"]
+        elif len(settings.DB.todo_lists) == 0:
             msg = "No JSON data to read"
             logger.log.warning(f"{msg}")
             return False, msg
         else:
-            for list_entry in settings.db.todo_lists:
-                settings.db.active_list = list_entry
+            for list_entry in settings.DB.todo_lists:
+                settings.DB.active_list = list_entry
                 logger.log.info("%s set as active_list", list_entry)
     else:
         logger.log.exception("settings.options does not exist, exiting")
         sys.exit(1)
 
-    settings.db.list_count = len(settings.db.todo_lists.keys())
-    settings.db.todo_total = 0
-    for list_entry in settings.db.todo_lists.values():
-        settings.db.todo_total += len(list_entry)
+    settings.DB.list_count = len(settings.DB.todo_lists.keys())
+    settings.DB.todo_total = 0
+    for list_entry in settings.DB.todo_lists.values():
+        settings.DB.todo_total += len(list_entry)
 
     msg = f"Successfully read JSON file {fn}"
     logger.log.info(f"{msg}")
@@ -74,8 +74,8 @@ def write_json_data(fn=settings.lists_fn):
     logger.log.info("Writing JSON file %s", fn)
     try:
         with open(fn, "w+", encoding="utf-8") as f:
-            if settings.db.todo_lists is not None:
-                json.dump(settings.db.todo_lists, f, indent=2)
+            if settings.DB.todo_lists is not None:
+                json.dump(settings.DB.todo_lists, f, indent=2)
             else:
                 logger.log.exception("settings.db.todo_lists does not exist, exiting")
                 sys.exit(1)

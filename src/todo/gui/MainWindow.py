@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 
-from ..core import error_on_none_db, settings, json_helpers, TodoDatabase
+from ..core import error_on_none_db, settings, json_helpers
 from ..core.Logger import Logger
 from ..gui.AddTodoDialog import AddTodoDialog
 from ..gui.SyncDialog import SyncDialog
@@ -299,7 +299,7 @@ class MainWindow(QMainWindow):
     @error_on_none_db
     def write_todo_data(self, *args, **kwargs):
         """Write to-do lists to a JSON file."""
-        if len(settings.db.todo_lists.keys()) == 0:
+        if len(settings.DB.todo_lists.keys()) == 0:
             msg = "No to-do information, aborting write"
             QMessageBox.warning(self, "Write Error", msg)
             return
@@ -335,8 +335,8 @@ class MainWindow(QMainWindow):
         """Update the active list, and save the configuration."""
         settings.options["active_list"] = list_name
 
-        settings.db.active_list = list_name
-        result, msg = settings.db.write_config()
+        settings.DB.active_list = list_name
+        result, msg = settings.DB.write_config()
         if not result:
             QMessageBox.critical(self, "Write Error", msg)
             logger.log.critical(msg)
@@ -347,21 +347,21 @@ class MainWindow(QMainWindow):
     @error_on_none_db
     def db_start_server(self, *args, **kwargs):
         """Start the database server."""
-        if settings.db.server_running():
+        if settings.DB.server_running():
             QMessageBox.information(
                 self, "Info", "The database server is already running."
             )
         else:
-            settings.db.start_server()
+            settings.DB.start_server()
             QMessageBox.information(self, "Info", "The database server was started.")
 
     @error_on_none_db
     def db_stop_server(self, *args, **kwargs):
         """Stop the database server."""
-        if not settings.db.server_running():
+        if not settings.DB.server_running():
             QMessageBox.information(self, "Info", "The database server is not running.")
         else:
-            settings.db.stop_server()
+            settings.DB.stop_server()
             QMessageBox.information(self, "Info", "The database server was stopped.")
 
     @error_on_none_db
@@ -377,7 +377,7 @@ class MainWindow(QMainWindow):
             )
         else:
             settings.options["port"] = port
-            if settings.db.server_running():
+            if settings.DB.server_running():
                 reply = QMessageBox.question(
                     self,
                     "Restart Database Server?",
@@ -386,8 +386,8 @@ class MainWindow(QMainWindow):
                     QMessageBox.StandardButton.No,
                 )
                 if reply == QMessageBox.StandardButton.Yes:
-                    settings.db.restart_server()
-                    settings.db.write_config()
+                    settings.DB.restart_server()
+                    settings.DB.write_config()
 
     @error_on_none_db
     def db_server_bind_address(self, *args, **kwargs):
@@ -404,7 +404,7 @@ class MainWindow(QMainWindow):
             )
         else:
             settings.options["address"] = address
-            if settings.db.server_running():
+            if settings.DB.server_running():
                 reply = QMessageBox.question(
                     self,
                     "Restart Database Server?",
@@ -413,8 +413,8 @@ class MainWindow(QMainWindow):
                     QMessageBox.StandardButton.No,
                 )
                 if reply == QMessageBox.StandardButton.Yes:
-                    settings.db.restart_server()
-                    settings.db.write_config()
+                    settings.DB.restart_server()
+                    settings.DB.write_config()
 
     @error_on_none_db
     def add_list(self, *args, **kwargs):
@@ -431,11 +431,11 @@ class MainWindow(QMainWindow):
                 self.update_status_bar()
                 return
 
-            if list_name not in settings.db.todo_lists.keys():
-                settings.db.todo_lists[list_name] = []
+            if list_name not in settings.DB.todo_lists.keys():
+                settings.DB.todo_lists[list_name] = []
                 settings.options["active_list"] = list_name
-                settings.db.active_list = list_name
-                settings.db.write_config()
+                settings.DB.active_list = list_name
+                settings.DB.write_config()
                 self.write_todo_data()
             else:
                 QMessageBox.warning(
@@ -452,25 +452,25 @@ class MainWindow(QMainWindow):
         self.update_progress_bar(0)
 
         # if there is more than one list, ask user which one to delete
-        if len(settings.db.todo_lists.keys()) > 1:
+        if len(settings.DB.todo_lists.keys()) > 1:
             list_entry, ok = QInputDialog.getItem(
                 self,
                 "Select List",
                 "To-Do Lists: ",
-                list(settings.db.todo_lists.keys()),
+                list(settings.DB.todo_lists.keys()),
             )
             if not ok:
                 self.update_progress_bar()
                 return
 
-            settings.db.todo_total -= len(settings.db.todo_lists[list_entry])
-            del settings.db.todo_lists[list_entry]
+            settings.DB.todo_total -= len(settings.DB.todo_lists[list_entry])
+            del settings.DB.todo_lists[list_entry]
 
             # use list switcher if there is still more than one list
-            if len(settings.db.todo_lists) > 1:
+            if len(settings.DB.todo_lists) > 1:
                 self.switch_list()
             else:
-                for list_entry in settings.db.todo_lists.keys():
+                for list_entry in settings.DB.todo_lists.keys():
                     self.db_update_active_list(list_entry)
                     self.write_todo_data()
                     break
@@ -478,7 +478,7 @@ class MainWindow(QMainWindow):
             reply = QMessageBox.question(
                 self,
                 "Confirm deletion",
-                f'Really delete list "{settings.db.active_list}"?',
+                f'Really delete list "{settings.DB.active_list}"?',
                 QMessageBox.StandardButton.Yes,
                 QMessageBox.StandardButton.No,
             )
@@ -487,15 +487,15 @@ class MainWindow(QMainWindow):
                 self.update_status_bar()
                 return
 
-            settings.db.todo_total -= settings.db.todo_count
-            del settings.db.todo_lists[settings.db.active_list]
-            settings.db.list_count -= 1
+            settings.DB.todo_total -= settings.DB.todo_count
+            del settings.DB.todo_lists[settings.DB.active_list]
+            settings.DB.list_count -= 1
 
             # reset database
-            settings.db.active_list = ""
-            settings.options["active_list"] = settings.db.active_list
-            settings.db.todo_count = 0
-            settings.db.write_config()
+            settings.DB.active_list = ""
+            settings.options["active_list"] = settings.DB.active_list
+            settings.DB.todo_count = 0
+            settings.DB.write_config()
             if Path.exists(settings.lists_fn):
                 Path.unlink(settings.lists_fn)
 
@@ -513,7 +513,7 @@ class MainWindow(QMainWindow):
             reply = QMessageBox.question(
                 self,
                 "Confirm rename",
-                f"Are you sure you want to rename list {settings.db.active_list} to {list_name}",
+                f"Are you sure you want to rename list {settings.DB.active_list} to {list_name}",
                 QMessageBox.StandardButton.Yes,
                 QMessageBox.StandardButton.No,
             )
@@ -521,12 +521,12 @@ class MainWindow(QMainWindow):
             if reply == QMessageBox.StandardButton.No:
                 return
 
-            settings.db.todo_lists[list_name] = settings.db.todo_lists[
-                settings.db.active_list
+            settings.DB.todo_lists[list_name] = settings.DB.todo_lists[
+                settings.DB.active_list
             ]
-            del settings.db.todo_lists[settings.db.active_list]
-            settings.db.active_list = settings.db.todo_lists[list_name]
-            settings.db.write_config()
+            del settings.DB.todo_lists[settings.DB.active_list]
+            settings.DB.active_list = settings.DB.todo_lists[list_name]
+            settings.DB.write_config()
             self.write_todo_data()
             self.refresh()
 
@@ -539,15 +539,15 @@ class MainWindow(QMainWindow):
         """
         self.update_progress_bar(0)
 
-        if len(settings.db.todo_lists.keys()) == 0:
+        if len(settings.DB.todo_lists.keys()) == 0:
             return
 
         list_entry, ok = QInputDialog.getItem(
-            self, "Select List", "To-Do Lists: ", list(settings.db.todo_lists.keys())
+            self, "Select List", "To-Do Lists: ", list(settings.DB.todo_lists.keys())
         )
         if ok:
             self.db_update_active_list(list_entry)
-            settings.db.write_config()
+            settings.DB.write_config()
 
         self.refresh()
 
@@ -556,7 +556,7 @@ class MainWindow(QMainWindow):
         """Export active list to text file."""
         self.update_progress_bar(0)
 
-        if settings.db.todo_count == 0:
+        if settings.DB.todo_count == 0:
             msg = "No todos to export"
             QMessageBox.warning(self, "Export List", msg)
             logger.log.warning(msg)
@@ -584,7 +584,7 @@ class MainWindow(QMainWindow):
         fp = Path.home().joinpath(fn)
 
         self.update_status_bar(f"Exporting to text file {fp}.")
-        settings.db.write_text_file(fp)
+        settings.DB.write_text_file(fp)
         msg = f"finished exporting to {fp}."
         logger.log.info(msg)
         self.update_status_bar(msg)
@@ -637,8 +637,8 @@ class MainWindow(QMainWindow):
         """Add a new to-do to active list."""
         self.update_progress_bar(0)
 
-        if not settings.db.active_list:
-            if settings.db.list_count == 0:
+        if not settings.DB.active_list:
+            if settings.DB.list_count == 0:
                 QMessageBox.information(
                     self,
                     "No list",
@@ -668,7 +668,7 @@ class MainWindow(QMainWindow):
         # Get a new to-do from user
         AddTodoDialog().exec()
         self.write_todo_data()
-        settings.db.sort_active_list()
+        settings.DB.sort_active_list()
         self.refresh()
 
     @error_on_none_db
@@ -690,10 +690,10 @@ class MainWindow(QMainWindow):
                 for index in indices:
                     item = self.table.cellWidget(index.row(), 1)
                     text = item.text()
-                    todo = settings.db.todo_index(text)
-                    del settings.db.todo_lists[settings.db.active_list][todo]
-                    settings.db.todo_count -= 1
-                    settings.db.todo_total -= 1
+                    todo = settings.DB.todo_index(text)
+                    del settings.DB.todo_lists[settings.DB.active_list][todo]
+                    settings.DB.todo_count -= 1
+                    settings.DB.todo_total -= 1
                     self.write_todo_data()
                     self.table.removeRow(index.row())
                 self.refresh()
@@ -708,11 +708,11 @@ class MainWindow(QMainWindow):
         for index in self.table.selectedIndexes():
             item = self.table.cellWidget(index.row(), 1)
             text = item.text()
-            todo = settings.db.todo_index(text)
-            if not settings.db.todo_lists[settings.db.active_list][todo]["complete"]:
-                settings.db.todo_lists[settings.db.active_list][todo]["complete"] = True
+            todo = settings.DB.todo_index(text)
+            if not settings.DB.todo_lists[settings.DB.active_list][todo]["complete"]:
+                settings.DB.todo_lists[settings.DB.active_list][todo]["complete"] = True
             else:
-                settings.db.todo_lists[settings.db.active_list][todo][
+                settings.DB.todo_lists[settings.DB.active_list][todo][
                     "complete"
                 ] = False
 
@@ -735,8 +735,8 @@ class MainWindow(QMainWindow):
                 priority = 1
 
             reminder = item_r.text()
-            todo = settings.db.todo_index(reminder)
-            settings.db.todo_lists[settings.db.active_list][todo]["priority"] = priority
+            todo = settings.DB.todo_index(reminder)
+            settings.DB.todo_lists[settings.DB.active_list][todo]["priority"] = priority
             self.write_todo_data()
             self.refresh()
 
@@ -746,7 +746,7 @@ class MainWindow(QMainWindow):
         for index in self.table.selectedIndexes():
             item = self.table.cellWidget(index.row(), 1)
             new_text = item.text()
-            settings.db.todo_lists[settings.db.active_list][index.row()][
+            settings.DB.todo_lists[settings.DB.active_list][index.row()][
                 "reminder"
             ] = new_text
         self.write_todo_data()
@@ -786,21 +786,21 @@ class MainWindow(QMainWindow):
 
         i = 0
 
-        for list_entry in settings.db.todo_lists:
-            for todo in settings.db.todo_lists[list_entry]:
+        for list_entry in settings.DB.todo_lists:
+            for todo in settings.DB.todo_lists[list_entry]:
                 if todo["complete"]:
                     i += 1
 
         value = i
 
         self.progressBar.reset()
-        self.progressBar.setMaximum(settings.db.todo_total)
+        self.progressBar.setMaximum(settings.DB.todo_total)
         self.progressBar.setValue(value)
 
     @error_on_none_db
     def update_status_bar(self, msg="Ready", *args, **kwargs):
         """Update the status bar, display some statistics."""
-        if settings.db.server_running():
+        if settings.DB.server_running():
             server_status = (
                 f"Up on {settings.options['address']}: {settings.options['port']}"
             )
@@ -808,7 +808,7 @@ class MainWindow(QMainWindow):
             server_status = "Down"
 
         # create our status bar text
-        text = f"Lists: {settings.db.list_count}  Shown: {settings.db.active_list}  To-Do's: {settings.db.todo_count} of {settings.db.todo_total}  Status: {msg}  Server: {server_status}"
+        text = f"Lists: {settings.DB.list_count}  Shown: {settings.DB.active_list}  To-Do's: {settings.DB.todo_count} of {settings.DB.todo_total}  Status: {msg}  Server: {server_status}"
 
         self.statusBarLabel.setText(text)
 
@@ -824,18 +824,18 @@ class MainWindow(QMainWindow):
         self.table.setHorizontalHeaderLabels(["Priority", "Reminder"])
 
         # make sure we have a valid active list
-        if settings.db.active_list not in settings.db.todo_lists:
+        if settings.DB.active_list not in settings.DB.todo_lists:
             self.update_status_bar()
             return
 
         # add each to-do in the list to the table, show a progress bar
         i = 0
-        settings.db.sort_active_list()
+        settings.DB.sort_active_list()
 
         # update the progress bar
         self.update_progress_bar(0)
 
-        for todo in settings.db.todo_lists[settings.db.active_list]:
+        for todo in settings.DB.todo_lists[settings.DB.active_list]:
             # create priority table item
             item_p = QComboBox(self)
             item_p.addItems(["Low", "Normal", "High"])
@@ -866,8 +866,8 @@ class MainWindow(QMainWindow):
             i += 1
 
         # update the database todo_count
-        settings.db.todo_count = len(settings.db.todo_lists[settings.db.active_list])
-        settings.db.list_count = len(settings.db.todo_lists.keys())
+        settings.DB.todo_count = len(settings.DB.todo_lists[settings.DB.active_list])
+        settings.DB.list_count = len(settings.DB.todo_lists.keys())
 
         # update progress and status bars
         self.update_progress_bar()
@@ -885,18 +885,18 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event, *args, **kwargs):
         """Take care of clean up details."""
         # save configuration
-        result, msg = settings.db.write_config()
+        result, msg = settings.DB.write_config()
         if not result:
             QMessageBox.warning(self, "Write Error", msg)
 
         # save to-do lists and condfig
         logger.log.info("Saving db and configuration data")
         self.write_todo_data()
-        settings.db.write_config()
+        settings.DB.write_config()
 
         # shutdown database network server
-        if settings.db.server_running():
-            settings.db.net_server.shutdown()
+        if settings.DB.server_running():
+            settings.DB.net_server.shutdown()
 
         # hide the tray icon
         self.tray_icon.hide()

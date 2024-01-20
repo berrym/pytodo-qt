@@ -25,7 +25,7 @@ def catch_value_error_exception(func):
             result = func(*args, **kwargs)
             return result
         except ValueError as e:
-            logger.log.exception(f"AESCipher error: {e}")
+            logger.log.exception("AESCipher error: %s", e)
             return None
 
     return wrapper

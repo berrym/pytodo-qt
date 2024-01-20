@@ -106,7 +106,7 @@ def main():
             settings.options[k] = v
 
     # create a to-do database
-    settings.db = TodoDatabase.CreateTodoDatabase()
+    settings.DB = TodoDatabase.CreateTodoDatabase()
 
     # create a QApplication, the main window, then hand over control to Qt
     app = QApplication(sys.argv)

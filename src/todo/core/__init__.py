@@ -19,7 +19,7 @@ def error_on_none_db(func):
     def wrapper(*args, **kwargs):
         """Wrap around func and check settings.db"""
 
-        if settings.db is not None:
+        if settings.DB is not None:
             try:
                 result = func(*args, **kwargs)
                 return result
