@@ -354,7 +354,6 @@ class MainWindow(QMainWindow):
         else:
             settings.db.start_server()
             QMessageBox.information(self, "Info", "The database server was started.")
-            self.refresh()
 
     @error_on_none_db
     def db_stop_server(self, *args, **kwargs):
@@ -364,7 +363,6 @@ class MainWindow(QMainWindow):
         else:
             settings.db.stop_server()
             QMessageBox.information(self, "Info", "The database server was stopped.")
-            self.refresh()
 
     @error_on_none_db
     def db_server_port(self, *args, **kwargs):
