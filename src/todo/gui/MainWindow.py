@@ -388,7 +388,6 @@ class MainWindow(QMainWindow):
                 if reply == QMessageBox.StandardButton.Yes:
                     settings.db.restart_server()
                     settings.db.write_config()
-                    self.refresh()
 
     @error_on_none_db
     def db_server_bind_address(self, *args, **kwargs):
@@ -416,7 +415,6 @@ class MainWindow(QMainWindow):
                 if reply == QMessageBox.StandardButton.Yes:
                     settings.db.restart_server()
                     settings.db.write_config()
-                    self.refresh()
 
     @error_on_none_db
     def add_list(self, *args, **kwargs):
