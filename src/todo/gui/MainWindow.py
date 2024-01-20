@@ -310,9 +310,6 @@ class MainWindow(QMainWindow):
         result, msg = json_helpers.write_json_data()
         if not result:
             QMessageBox.warning(self, "Write Error", msg)
-            logger.log.warning(msg)
-        else:
-            logger.log.info(msg)
 
         self.update_progress_bar()
         self.update_status_bar()

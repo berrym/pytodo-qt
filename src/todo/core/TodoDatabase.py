@@ -152,7 +152,7 @@ class CreateTodoDatabase:
         if fn is None:
             return
 
-        logger.log.info("Writing todo lists to file %s", fn)
+        logger.log.info("Writing todo list to file %s", fn)
         try:
             with open(fn, "w", encoding="utf-8") as f:
                 f.write(f"{self.active_list:*^60}\n\n")
