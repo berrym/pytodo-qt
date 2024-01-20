@@ -885,8 +885,10 @@ class MainWindow(QMainWindow):
         if not result:
             QMessageBox.warning(self, "Write Error", msg)
 
-        # save to-do lists
+        # save to-do lists and condfig
+        logger.log.info("Saving db and configuration data")
         self.write_todo_data()
+        settings.db.write_config()
 
         # shutdown database network server
         if settings.db.server_running():
