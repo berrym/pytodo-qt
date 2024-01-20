@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import time
+from pathlib import Path
 
 from ..core import settings, json_helpers
 from ..core.Logger import Logger
@@ -71,7 +72,7 @@ class DataBaseClient:
             return False, e
 
         # write data to a temporary file, then read it in
-        tmp = os.path.join(settings.todo_dir, ".todo_lists.tmp")
+        tmp = Path.joinpath(settings.todo_dir, ".todo_lists.tmp")
         try:
             with open(tmp, "w", encoding="utf-8") as f:
                 f.write(deserialized)
@@ -80,7 +81,7 @@ class DataBaseClient:
             result, e = json_helpers.read_json_data(tmp)
             if not result:
                 return False, e
-            os.remove(tmp)
+            Path.unlink(tmp)
             return True, msg
         except IOError as e:
             msg = f"Unable to write temporary file: {e}"

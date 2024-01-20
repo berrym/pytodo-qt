@@ -565,17 +565,21 @@ class MainWindow(QMainWindow):
         if fn is None:
             # prompt user for filename
             self.update_status_bar("Waiting for input")
-            ok, fn = QInputDialog.getText(
+            fn, ok = QInputDialog.getText(
                 self,
                 "Save list to text file",
                 "Enter name of file to write as text:",
             )
 
             if not ok:
-                QMessageBox.warning(
-                    self, "Export List", "Did not finishing exporting list"
-                )
+                msg = "Did not finishing exporting list"
+                QMessageBox.warning(self, "Export List", msg)
+                logger.log.warning(msg)
                 return
+
+        if not fn:
+            logger.log.warning("Did not get filename to export")
+            return
 
         fp = Path.home().joinpath(fn)
 

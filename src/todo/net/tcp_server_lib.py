@@ -132,7 +132,9 @@ class TCPRequestHandler(socketserver.StreamRequestHandler):
             logger.log.warning(msg)
             return
 
-        settings.db.sync_pull(self.host)
+        if settings.db is not None:
+            logger.log.info("Performing a sync pull")
+            settings.db.sync_pull(self.host)
 
     def handle(self):
         """Handle requests."""

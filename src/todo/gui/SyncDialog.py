@@ -94,6 +94,7 @@ class SyncDialog(QDialog):
                 settings.options["pull"] = True
 
             # try the push, inform user of results
+            logger.log.info(f"Sending a sync push request to {address}:{port}")
             result, msg = settings.db.sync_push((address, port))
             QMessageBox.information(self, "Sync Push", msg)
             if not pull_ok:
