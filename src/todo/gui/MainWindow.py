@@ -277,11 +277,8 @@ class CreateMainWindow(QMainWindow):
         # show the window
         self.show()
 
-        # read in any saved to-do data
+        # read in to-do data
         self.read_todo_data()
-
-        # draw the table
-        self.refresh()
 
         logger.log.info("Main window created")
 
@@ -314,8 +311,12 @@ class CreateMainWindow(QMainWindow):
         result, msg = json_helpers.write_json_data()
         if not result:
             QMessageBox.warning(self, "Write Error", msg)
-            self.update_progress_bar()
-            self.update_status_bar()
+            logger.log.warning(msg)
+        else:
+            logger.log.info(msg)
+
+        self.update_progress_bar()
+        self.update_status_bar()
 
     def db_sync_pull(self):
         """Pull lists from another network server."""
@@ -330,7 +331,6 @@ class CreateMainWindow(QMainWindow):
         self.update_progress_bar(0)
         self.update_status_bar("Waiting for input")
         SyncDialog(sync_operations["PUSH_REQUEST"].name).exec()
-        self.refresh()
 
     @error_on_none_db
     def db_update_active_list(self, list_name, *args, **kwargs):
