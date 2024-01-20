@@ -110,7 +110,7 @@ def main():
 
     # create a QApplication, the main window, then hand over control to Qt
     app = QApplication(sys.argv)
-    _ = MainWindow.CreateMainWindow()
+    _ = MainWindow.MainWindow()
     sys.exit(app.exec())
 
 

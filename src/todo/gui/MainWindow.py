@@ -35,19 +35,18 @@ from ..net.sync_operations import sync_operations
 logger = Logger(__name__)
 
 
-class CreateMainWindow(QMainWindow):
+class MainWindow(QMainWindow):
     """This class implements the bulk of the gui functionality in To-Do.
 
     It creates the main window, and helps to facilitate management of the
     list database for the user.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self):
         """Create the window, make a table, fill table with to-do data."""
         logger.log.info("Creating the main window")
 
         # create the window, set title and tooltip, resize and center window
-        # QMainWindow.__init__(self)
         super().__init__()
         self.setWindowIcon(QIcon("gui/icons/todo.png"))
         self.setWindowTitle("To-Do")
@@ -70,9 +69,9 @@ class CreateMainWindow(QMainWindow):
         printer.setShortcut("Ctrl+P")
         printer.triggered.connect(self.printlist)
 
-        quit = QAction(QIcon(), "Exit", self)
-        quit.setShortcut("Ctrl+Q")
-        quit.triggered.connect(self.close)
+        _quit = QAction(QIcon(), "Exit", self)
+        _quit.setShortcut("Ctrl+Q")
+        _quit.triggered.connect(self.close)
 
         # to-do actions
         add = QAction(QIcon("gui/icons/plus.png"), "Add new to-do", self)
@@ -105,11 +104,11 @@ class CreateMainWindow(QMainWindow):
         list_switch.setShortcut("Ctrl+L")
         list_switch.triggered.connect(self.switch_list)
 
-        sync_pull = QAction(QIcon(), "Get lists from another computer", self)
+        sync_pull = QAction(QIcon(), "Get lists from a remote host", self)
         sync_pull.setShortcut("F6")
         sync_pull.triggered.connect(self.db_sync_pull)
 
-        sync_push = QAction(QIcon(), "Send lists to another computer", self)
+        sync_push = QAction(QIcon(), "Send lists to a remote host", self)
         sync_push.setShortcut("F7")
         sync_push.triggered.connect(self.db_sync_push)
 
@@ -139,7 +138,7 @@ class CreateMainWindow(QMainWindow):
             main_menu = menu_bar.addMenu("&Menu")
             if main_menu is not None:
                 main_menu.addAction(printer)
-                main_menu.addAction(quit)
+                main_menu.addAction(_quit)
             else:
                 msg = "Could not populate main menu, exiting"
                 QMessageBox.warning(self, "Creation Error", msg)
@@ -206,7 +205,7 @@ class CreateMainWindow(QMainWindow):
                 toolbar.addAction(add)
                 toolbar.addAction(delete)
                 toolbar.addAction(toggle)
-                toolbar.addAction(quit)
+                toolbar.addAction(_quit)
             else:
                 msg = "Could not create toolbar, exiting"
                 QMessageBox.warning(self, "Creation Error", msg)
@@ -323,7 +322,6 @@ class CreateMainWindow(QMainWindow):
         self.update_progress_bar(0)
         self.update_status_bar("Sync Pull")
         SyncDialog(sync_operations["PULL_REQUEST"].name).exec()
-        self.write_todo_data()
         self.refresh()
 
     def db_sync_push(self):
