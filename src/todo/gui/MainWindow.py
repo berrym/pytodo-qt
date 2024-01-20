@@ -484,6 +484,7 @@ class MainWindow(QMainWindow):
             )
             if reply == QMessageBox.StandardButton.No:
                 self.update_progress_bar()
+                self.update_status_bar()
                 return
 
             settings.db.todo_total -= settings.db.todo_count
@@ -495,8 +496,8 @@ class MainWindow(QMainWindow):
             settings.options["active_list"] = settings.db.active_list
             settings.db.todo_count = 0
             settings.db.write_config()
-            if os.path.exists(settings.lists_fn):
-                os.remove(settings.lists_fn)
+            if Path.exists(settings.lists_fn):
+                Path.unlink(settings.lists_fn)
 
         self.refresh()
 
@@ -546,7 +547,7 @@ class MainWindow(QMainWindow):
         )
         if ok:
             self.db_update_active_list(list_entry)
-            self.write_todo_data()
+            settings.db.write_config()
 
         self.refresh()
 
@@ -615,7 +616,7 @@ class MainWindow(QMainWindow):
                     string += line
 
             # Remove temporary file
-            os.remove(tmp_fn)
+            Path.unlink(tmp_fn)
 
             # Open string as a QTextDocument and then print it
             doc = QTextDocument(string)
@@ -868,7 +869,7 @@ class MainWindow(QMainWindow):
         self.update_progress_bar()
         self.update_status_bar()
 
-    def tray_event(self, reason=QSystemTrayIcon.activated, *args, **kwargs):
+    def tray_event(self, reason=QSystemTrayIcon.activated):
         """Hide the main window when the system tray icon is clicked."""
         if reason == QSystemTrayIcon.activated:
             if self.isVisible():
@@ -884,7 +885,7 @@ class MainWindow(QMainWindow):
         if not result:
             QMessageBox.warning(self, "Write Error", msg)
 
-        # save todo lists
+        # save to-do lists
         self.write_todo_data()
 
         # shutdown database network server
