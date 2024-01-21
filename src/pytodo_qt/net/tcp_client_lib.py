@@ -77,7 +77,7 @@ class DatabaseClient(QObject):
             return False, e
 
         # write data to a temporary file, then read it in
-        tmp = Path.joinpath(settings.todo_dir, ".todo_lists.tmp")
+        tmp = Path.joinpath(settings.app_dir, ".todo_lists.tmp")
         try:
             with open(tmp, "w", encoding="utf-8") as f:
                 f.write(deserialized)

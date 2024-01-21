@@ -3,7 +3,6 @@
 This module implements the GUI for To-Do.
 """
 
-import os
 import sys
 
 from pathlib import Path
@@ -50,7 +49,7 @@ class MainWindow(QMainWindow):
 
         # create the window, set title and tooltip, resize and center window
         super().__init__()
-        self.setWindowIcon(QIcon("gui/icons/todo.png"))
+        self.setWindowIcon(QIcon("gui/icons/pytodo-qt.png"))
         self.setWindowTitle("To-Do")
         self.setToolTip("Python3 + Qt5 = Happy <u>To-Do</u> Programmer!")
         QToolTip.setFont(QFont("Helvetica", 10))
@@ -84,7 +83,7 @@ class MainWindow(QMainWindow):
         delete.setShortcut("-")
         delete.triggered.connect(self.delete_todo)
 
-        toggle = QAction(QIcon("gui/icons/todo.png"), "Toggle to-do Status", self)
+        toggle = QAction(QIcon("gui/icons/pytodo-qt.png"), "Toggle to-do Status", self)
         toggle.setShortcut("%")
         toggle.triggered.connect(self.toggle_todo)
 
@@ -132,7 +131,7 @@ class MainWindow(QMainWindow):
 
         # fanfare
         about = QAction(QIcon(), "About To-Do", self)
-        about.triggered.connect(self.about_todo)
+        about.triggered.connect(self.about_app)
 
         about_qt = QAction(QIcon(), "About Qt", self)
         about_qt.triggered.connect(self.about_qt)
@@ -254,7 +253,7 @@ class MainWindow(QMainWindow):
 
         # system tray icon
         self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.setIcon(QIcon("gui/icons/todo.png"))
+        self.tray_icon.setIcon(QIcon("gui/icons/pytodo-qt.png"))
 
         # system tray menu actions
         show_action = QAction("Show", self)
@@ -293,7 +292,7 @@ class MainWindow(QMainWindow):
 
     def read_todo_data(self):
         """Read lists of to-dos from database."""
-        if os.path.exists(settings.lists_fn):
+        if Path.exists(settings.db_fn):
             self.update_progress_bar(0)
             self.update_status_bar("Reading in JSON data")
             result, msg = json_helpers.read_json_data()
@@ -632,7 +631,7 @@ class MainWindow(QMainWindow):
             self.update_progress_bar()
             return
 
-        tmp_fn = Path.home().joinpath(settings.todo_dir, ".todo_printer.tmp")
+        tmp_fn = Path.home().joinpath(settings.app_dir, ".todo_printer.tmp")
 
         accept = QPrintDialog(self.printer).exec()
         if accept:
@@ -659,7 +658,7 @@ class MainWindow(QMainWindow):
             doc = QTextDocument(string)
             doc.print(self.printer)
 
-        msg = "Finished printing todo list"
+        msg = "Finished printing pytodo-qt list"
         QMessageBox.information(self, "Print List", msg)
         logger.log.info(msg)
         self.update_progress_bar()
@@ -784,9 +783,9 @@ class MainWindow(QMainWindow):
             ] = new_text
         self.write_todo_data()
 
-    def about_todo(self):
+    def about_app(self):
         """Display a message box with Program/Author information."""
-        text = """<b><u>To-Do v0.2.5</u></b>
+        text = """<b><u>pytodo-qt v0.2.6</u></b>
         <br><br>To-Do list program that works with multiple To-Do
         lists locally and over a network.
         <br><br>License: <a href="http://www.fsf.org/licenses/gpl.html">GPLv3</a>
@@ -810,7 +809,7 @@ class MainWindow(QMainWindow):
         """Update the progress bar.
 
         Maximum value should be set to the total to-do count,
-        while value should be the number of completed todos.
+        while value should be the number of completed to-dos.
         This makes the progress bar show the total percentage
         of completed to-dos.
         """
@@ -850,7 +849,7 @@ class MainWindow(QMainWindow):
     def refresh(self, sync_occurred=0, *args, **kwargs):
         """Redraw the table and update the progress and status bars."""
         if sync_occurred:
-            logger.log.info("Sync operation occurred, refresh todo list")
+            logger.log.info("Sync operation occurred, refresh pytodo-qt list")
 
         self.update_status_bar("Redrawing table")
 

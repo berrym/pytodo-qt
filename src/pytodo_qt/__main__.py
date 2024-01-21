@@ -1,5 +1,7 @@
 """__main__.py
 
+pytodo-qt
+
 A to-do list program written in Python using PyQt6
 
 Copyright (C) 2024 Michael Berry <trismegustis@gmail.com>
@@ -39,18 +41,18 @@ def main():
     for i in range(0, len(sys.path)):
         if sys.path[i].__contains__("site-packages"):
             location = sys.path[i]
-            location += "/todo"
+            location += "/pytodo_qt"
             os.chdir(location)
             break
 
     if location == "":
         logger.log.exception("Unknown installation or invocation, exiting")
-        sys.exit(0)
+        sys.exit(1)
 
     # create a command line arg_parser
     arg_parser = argparse.ArgumentParser(
-        prog="To-Do",
-        description="To-Do List Application written in Python with Qt6",
+        prog="pytodo-qt",
+        description="To-Do List Application written in Python 3 and PyQt6",
         epilog="Copyright Michael Berry 2024",
     )
 
@@ -73,7 +75,7 @@ def main():
         action="store",
         type=str,
         choices=["yes", "no"],
-        help="allow remote users to grab your lists",
+        help="allow remote users to copy your lists",
     )
 
     server_group.add_argument(
@@ -86,14 +88,14 @@ def main():
     )
 
     server_group.add_argument(
-        "-i", "--ip", type=str, help="set the servers ip addresses."
+        "-i", "--ip", type=str, help="set the database server's IP address."
     )
 
     server_group.add_argument(
         "-p",
         "--port",
         type=int,
-        help="specify which port the network server will bind to",
+        help="specify which port the database server will bind to",
     )
 
     arg_parser.add_argument(

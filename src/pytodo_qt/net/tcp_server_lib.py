@@ -4,10 +4,11 @@ This module implements a threaded tcp socket server and request handler for To-D
 """
 
 import json
-import os
 import socketserver
 import sys
 import time
+
+from pathlib import Path
 
 from PyQt6.QtWidgets import QMessageBox
 
@@ -67,11 +68,9 @@ class TCPRequestHandler(socketserver.StreamRequestHandler):
             self.request.send(self.encrypted_reply)
             return
 
-        if os.path.exists(settings.lists_fn):
-            self.data = ""
-            with open(settings.lists_fn, encoding="utf-8") as f:
-                for line in f:
-                    self.data += line
+        if Path.exists(settings.db_fn):
+            with settings.db_fn.open(mode="r", encoding="utf-8") as db_file:
+                self.data = db_file.read()
 
         if self.data is not None:
             logger.log.info("PULL_REQUEST ACCEPTED")

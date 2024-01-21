@@ -10,25 +10,25 @@ from pathlib import Path
 
 home_dir = Path.home()
 if home_dir is not None:
-    todo_dir = Path.joinpath(home_dir, ".todo")
+    app_dir = Path.joinpath(home_dir, ".pytodo-qt")
 else:
     print("Error: unable to get home directory, exiting")
     sys.exit(1)
 
-if not Path.exists(todo_dir):
+if not Path.exists(app_dir):
     try:
-        Path.mkdir(todo_dir)
+        Path.mkdir(app_dir)
     except OSError as e:
-        print(f"Error create to-do directory {todo_dir}: {e}")
+        print(f"Error: failed to create pytodo-qt directory {app_dir}: {e}")
         sys.exit(1)
 
-log_fn = Path.joinpath(todo_dir, "todo.log")
+log_fn = Path.joinpath(app_dir, "pytodo-qt.log")
 
 if not Path.exists(log_fn):
     try:
         log_fn.touch()
     except OSError as e:
-        print(f"Error creating To-Do log file {log_fn}: {e}")
+        print(f"Error: failed to create pytodo-qt log file {log_fn}: {e}")
         sys.exit(1)
 
 

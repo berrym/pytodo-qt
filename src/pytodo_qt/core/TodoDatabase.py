@@ -4,9 +4,10 @@ This module implements the to-do database.
 """
 
 import configparser
-import os
 import sys
 import threading
+
+from pathlib import Path
 
 from PyQt6.QtCore import QObject
 
@@ -39,7 +40,7 @@ class TodoDatabase(QObject):
 
         # create an ini config parser
         self.config = configparser.ConfigParser()
-        if not os.path.exists(settings.ini_fn):
+        if not Path.exists(settings.ini_fn):
             self.write_default_config()
         self.parse_config()
 
@@ -65,7 +66,7 @@ class TodoDatabase(QObject):
         self.config["server"] = {}
         self.config["server"]["key"] = "BewareTheBlackGuardian"
         self.config["server"]["run"] = "yes"
-        self.config["server"]["address"] = "127.0.0.1"
+        self.config["server"]["address"] = "0.0.0.0"
         self.config["server"]["port"] = "5364"
         self.config["server"]["pull"] = "yes"
         self.config["server"]["push"] = "yes"
@@ -156,14 +157,14 @@ class TodoDatabase(QObject):
         if fn is None:
             return
 
-        logger.log.info("Writing todo list to file %s", fn)
+        logger.log.info("Writing pytodo-qt list to file %s", fn)
         try:
             with open(fn, "w", encoding="utf-8") as f:
                 f.write(f"{self.active_list:*^60}\n\n")
                 for todo in self.todo_lists[self.active_list]:
                     f.write(f'{todo["reminder"]}\n')
         except IOError as e:
-            logger.log.exception("Unable to write todo list to %s: %s", fn, e)
+            logger.log.exception("Unable to write pytodo-qt list to %s: %s", fn, e)
 
     def server_running(self):
         """Determine if the server is running"""

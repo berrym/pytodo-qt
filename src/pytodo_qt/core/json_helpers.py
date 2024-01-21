@@ -1,6 +1,7 @@
 import json
-import os
 import sys
+
+from pathlib import Path
 
 from ..core import error_on_none_db, settings
 from ..core.Logger import Logger
@@ -21,9 +22,9 @@ def merge_todo_lists(*todo_lists):
 
 
 @error_on_none_db
-def read_json_data(fn=settings.lists_fn):
+def read_json_data(fn=settings.db_fn):
     """Read in to-do lists from a JSON file."""
-    if not os.path.exists(fn):
+    if not Path.exists(fn):
         msg = f"JSON file {fn} does not exist"
         logger.log.warning(msg)
         return False, msg
@@ -69,7 +70,7 @@ def read_json_data(fn=settings.lists_fn):
 
 
 @error_on_none_db
-def write_json_data(fn=settings.lists_fn):
+def write_json_data(fn=settings.db_fn):
     """Write to-do lists as a JSON file."""
     logger.log.info("Writing JSON file %s", fn)
     try:

@@ -6,12 +6,12 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-todo = ["*.png"]
-"todo.gui.icons" = ["*.png"]
+pytodo_qt = ["*.png"]
+"pytodo_qt.gui.icons" = ["*.png"]
 
 [project]
 name = "pytodo-qt"
-version = "0.2.5"
+version = "0.2.6"
 description = "A small cross-platform to-do application written in Python 3 and PyQt6"
 readme = "README.md"
 authors = [
@@ -33,4 +33,4 @@ requires-python = ">=3.8"
 Homepage = "https://github.com/berrym/pytodo-qt"
 
 [project.scripts]
-todo = "todo.__main__:main"
+pytodo-qt = "pytodo_qt.__main__:main"

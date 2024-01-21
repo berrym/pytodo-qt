@@ -1,6 +1,6 @@
 """__init__.py
 
-todo.core: A decorator to make security checks on the to-do database.
+pytodo-qt.core: A decorator to make security checks on the to-do database.
 """
 
 import sys
