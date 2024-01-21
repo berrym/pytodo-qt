@@ -493,8 +493,6 @@ class MainWindow(QMainWindow):
             settings.options["active_list"] = settings.DB.active_list
             settings.DB.todo_count = 0
             settings.DB.write_config()
-            if Path.exists(settings.lists_fn):
-                Path.unlink(settings.lists_fn)
 
         self.refresh()
 
