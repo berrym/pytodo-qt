@@ -127,9 +127,7 @@ class MainWindow(QMainWindow):
         change_bind_address = QAction(QIcon(), "Change network server address", self)
         change_bind_address.triggered.connect(self.db_server_bind_address)
 
-        change_crypto_key = QAction(
-            QIcon(), "Change database network cryptography key", self
-        )
+        change_crypto_key = QAction(QIcon(), "Change network AES cipher", self)
         change_crypto_key.triggered.connect(self.db_change_crypto_key)
 
         # fanfare
@@ -429,17 +427,13 @@ class MainWindow(QMainWindow):
 
     @error_on_none_db
     def db_change_crypto_key(self, *args, **kwargs):
-        """Change database cryptography key."""
-        key, ok = QInputDialog.getText(
-            self, "Change database cryptography key", "Key: "
-        )
+        """Change network AES cipher."""
+        key, ok = QInputDialog.getText(self, "Change network AES cipher", "Cipher: ")
         if not ok:
             return
 
         if settings.options["key"] == key:
-            QMessageBox.information(
-                self, "Info", f"Database cryptography key is already {key}"
-            )
+            QMessageBox.information(self, "Info", f"AES cipher is already {key}")
             return
 
         settings.options["key"] = key
