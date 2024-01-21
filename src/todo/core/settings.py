@@ -13,7 +13,7 @@ from ..core.Logger import Logger
 logger = Logger(__name__)
 
 
-__version__ = "0.2.4"
+__version__ = "0.2.5"
 options = {}
 DB = None
 
@@ -21,7 +21,7 @@ home_dir = Path.home()
 if home_dir is not None:
     todo_dir = Path.joinpath(home_dir, ".todo")
 else:
-    logger.log.exception("Unable to write log file, exiting")
+    logger.log.exception("Unable to get home directory, exiting")
     sys.exit(1)
 
 if not Path.exists(todo_dir):

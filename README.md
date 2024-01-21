@@ -54,7 +54,7 @@ Copyright 2024 Michael Berry <trismegustis@gmail.com>
 
 ## Latest release
 
-- v0.2.4
+- v0.2.5
 
 ## License
 

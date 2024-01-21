@@ -4,18 +4,32 @@ A Generic logging class.
 """
 
 import logging
-import os
 import sys
 
+from pathlib import Path
 
-home_dir = os.getenv("HOME")
+home_dir = Path.home()
 if home_dir is not None:
-    todo_dir = os.path.join(home_dir, ".todo")
+    todo_dir = Path.joinpath(home_dir, ".todo")
 else:
-    print("Error: unable to write log file, exiting")
+    print("Error: unable to get home directory, exiting")
     sys.exit(1)
 
-log_fn = os.path.join(todo_dir, "todo.log")
+if not Path.exists(todo_dir):
+    try:
+        Path.mkdir(todo_dir)
+    except OSError as e:
+        print(f"Error create to-do directory {todo_dir}: {e}")
+        sys.exit(1)
+
+log_fn = Path.joinpath(todo_dir, "todo.log")
+
+if not Path.exists(log_fn):
+    try:
+        log_fn.touch()
+    except OSError as e:
+        print(f"Error creating To-Do log file {log_fn}: {e}")
+        sys.exit(1)
 
 
 class Logger:

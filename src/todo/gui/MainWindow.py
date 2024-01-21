@@ -68,7 +68,7 @@ class MainWindow(QMainWindow):
         # create some actions
         printer = QAction(QIcon(), "Print", self)
         printer.setShortcut("Ctrl+P")
-        printer.triggered.connect(self.printlist)
+        printer.triggered.connect(self.print_list)
 
         _quit = QAction(QIcon(), "Exit", self)
         _quit.setShortcut("Ctrl+Q")
@@ -304,8 +304,7 @@ class MainWindow(QMainWindow):
     def write_todo_data(self, *args, **kwargs):
         """Write to-do lists to a JSON file."""
         if len(settings.DB.todo_lists.keys()) == 0:
-            msg = "No to-do information, aborting write"
-            QMessageBox.warning(self, "Write Error", msg)
+            logger.log.info("No to-do information, aborting write")
             return
 
         self.update_progress_bar(0)
@@ -592,7 +591,7 @@ class MainWindow(QMainWindow):
         self.update_status_bar(msg)
         self.update_progress_bar()
 
-    def printlist(self):
+    def print_list(self):
         """Print the active list."""
         self.update_progress_bar(0)
 
@@ -755,7 +754,7 @@ class MainWindow(QMainWindow):
 
     def about_todo(self):
         """Display a message box with Program/Author information."""
-        text = """<b><u>To-Do v0.2.4</u></b>
+        text = """<b><u>To-Do v0.2.5</u></b>
         <br><br>To-Do list program that works with multiple To-Do
         lists locally and over a network.
         <br><br>License: <a href="http://www.fsf.org/licenses/gpl.html">GPLv3</a>
