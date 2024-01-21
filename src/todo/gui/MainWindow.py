@@ -8,6 +8,7 @@ import sys
 
 from pathlib import Path
 
+from PyQt6 import QtCore
 from PyQt6.QtCore import QPersistentModelIndex
 from PyQt6.QtGui import QAction, QIcon, QFont, QTextDocument
 from PyQt6.QtWidgets import (
@@ -273,6 +274,9 @@ class MainWindow(QMainWindow):
         # create a printer
         self.printer = QPrinter()
 
+        # Refresh after every sync
+        settings.DB.db_client.sync_occurred.connect(self.refresh)
+
         # show the window
         self.show()
 
@@ -319,7 +323,6 @@ class MainWindow(QMainWindow):
         self.update_progress_bar(0)
         self.update_status_bar("Sync Pull")
         SyncDialog(sync_operations["PULL_REQUEST"].name).exec()
-        self.refresh()
 
     def db_sync_push(self):
         """Push lists to another computer."""
@@ -752,7 +755,7 @@ class MainWindow(QMainWindow):
 
     def about_todo(self):
         """Display a message box with Program/Author information."""
-        text = """<b><u>To-Do v0.2.3</u></b>
+        text = """<b><u>To-Do v0.2.4</u></b>
         <br><br>To-Do list program that works with multiple To-Do
         lists locally and over a network.
         <br><br>License: <a href="http://www.fsf.org/licenses/gpl.html">GPLv3</a>
@@ -812,8 +815,12 @@ class MainWindow(QMainWindow):
         self.statusBarLabel.setText(text)
 
     @error_on_none_db
-    def refresh(self, *args, **kwargs):
+    @QtCore.pyqtSlot(int)
+    def refresh(self, sync_occurred=0, *args, **kwargs):
         """Redraw the table and update the progress and status bars."""
+        if sync_occurred:
+            logger.log.info("Sync operation occurred, refresh todo list")
+
         self.update_status_bar("Redrawing table")
 
         # clear the table
@@ -895,7 +902,7 @@ class MainWindow(QMainWindow):
 
         # shutdown database network server
         if settings.DB.server_running():
-            settings.DB.net_server.shutdown()
+            settings.DB.db_server.shutdown()
 
         # hide the tray icon
         self.tray_icon.hide()

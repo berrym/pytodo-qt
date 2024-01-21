@@ -1,6 +1,6 @@
 """__main__.py
 
-A to-do list program written in Python using Qt5
+A to-do list program written in Python using PyQt6
 
 Copyright (C) 2024 Michael Berry <trismegustis@gmail.com>
 
@@ -106,10 +106,8 @@ def main():
         if v is not None:
             settings.options[k] = v
 
-    # create a to-do database
-    settings.DB = TodoDatabase()
-
-    # create a QApplication, the main window, then hand over control to Qt
+    # create a QApplication, the main window, DB, then hand over control to Qt
     app = QApplication(sys.argv)
+    settings.DB = TodoDatabase()
     _ = MainWindow()
     sys.exit(app.exec())

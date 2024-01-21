@@ -84,7 +84,7 @@ class SyncDialog(QDialog):
         if self.operation == sync_operations["PULL_REQUEST"].name:
             # try the pull, inform user of the results
             result, msg = settings.DB.sync_pull((address, port))
-            QMessageBox.information(self, "Sync Pull", msg)
+            logger.log.info(msg)
             if not result:
                 return
         elif self.operation == sync_operations["PUSH_REQUEST"].name:
@@ -96,7 +96,7 @@ class SyncDialog(QDialog):
             # try the push, inform user of results
             logger.log.info("Sending a sync push request to %s:%d", address, port)
             result, msg = settings.DB.sync_push((address, port))
-            QMessageBox.information(self, "Sync Push", msg)
+            logger.log.info(msg)
             if not pull_ok:
                 settings.options["pull"] = False
 

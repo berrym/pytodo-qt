@@ -8,6 +8,8 @@ import os
 import sys
 import threading
 
+from PyQt6.QtCore import QObject
+
 from ..core import settings
 from ..core.Logger import Logger
 from ..net import tcp_server_lib, tcp_client_lib
@@ -16,11 +18,12 @@ from ..net import tcp_server_lib, tcp_client_lib
 logger = Logger(__name__)
 
 
-class TodoDatabase:
+class TodoDatabase(QObject):
     """Maintains a database of to-do lists."""
 
     def __init__(self):
         """Create a working database."""
+        super().__init__()
         logger.log.info("Building the to-do database")
         self.initialized = False
         self.server_up = False
@@ -45,12 +48,12 @@ class TodoDatabase:
 
         # create a server, and start it in a new thread
         # the server will create a new thread for each connection established
-        self.net_server = None
+        self.db_server = None
         if settings.options["run"]:
             self.start_server()
 
         # create a client
-        self.net_client = tcp_client_lib.DataBaseClient()
+        self.db_client = tcp_client_lib.DatabaseClient()
 
     def write_default_config(self):
         """Write the default configuration for To-Do."""
@@ -163,7 +166,7 @@ class TodoDatabase:
 
     def server_running(self):
         """Determine if the server is running"""
-        if self.server_up and self.net_server is not None:
+        if self.server_up and self.db_server is not None:
             return True
 
         return False
@@ -174,13 +177,13 @@ class TodoDatabase:
             return
 
         logger.log.info("Starting the server")
-        self.net_server = tcp_server_lib.DataBaseServer(
+        self.db_server = tcp_server_lib.DatabaseServer(
             (settings.options["address"], settings.options["port"]),
             tcp_server_lib.TCPRequestHandler,
         )
 
         # start network server thread
-        st = threading.Thread(target=self.net_server.serve_forever)
+        st = threading.Thread(target=self.db_server.serve_forever)
         st.daemon = True
         st.start()
         self.server_up = True
@@ -191,10 +194,10 @@ class TodoDatabase:
 
     def stop_server(self):
         """Stop and destroy the server."""
-        if self.net_server is not None and self.server_running():
+        if self.db_server is not None and self.server_running():
             logger.log.info("Shutting down the server")
-            self.net_server.shutdown()
-            self.net_server = None
+            self.db_server.shutdown()
+            self.db_server = None
             self.server_up = False
             logger.log.info("Server shut down")
         else:
@@ -213,11 +216,11 @@ class TodoDatabase:
 
     def sync_pull(self, host):
         """Perform a client pull."""
-        return self.net_client.sync_pull(host)
+        return self.db_client.sync_pull(host)
 
     def sync_push(self, host):
         """Perform a client push."""
-        return self.net_client.sync_push(host)
+        return self.db_client.sync_push(host)
 
     def sort_active_list(self):
         """Sort the active to-do list."""

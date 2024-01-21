@@ -20,7 +20,7 @@ from ..net.sync_operations import sync_operations
 logger = Logger(__name__)
 
 
-class DataBaseServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+class DatabaseServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     """Threaded tcp server."""
 
     allow_reuse_address = True

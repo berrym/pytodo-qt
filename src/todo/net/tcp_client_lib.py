@@ -9,6 +9,8 @@ import time
 
 from pathlib import Path
 
+from PyQt6.QtCore import QObject, pyqtSignal
+
 from ..core import settings, json_helpers
 from ..core.Logger import Logger
 from ..crypto.AESCipher import AESCipher
@@ -19,11 +21,14 @@ from ..net.sync_operations import sync_operations
 logger = Logger(__name__)
 
 
-class DataBaseClient:
+class DatabaseClient(QObject):
     """To-Do database client class."""
+
+    sync_occurred = pyqtSignal(int)
 
     def __init__(self):
         """Initialize client."""
+        super().__init__()
         self.buf_size = 4096
         self.aes_cipher = AESCipher(settings.options["key"])
 
@@ -110,7 +115,9 @@ class DataBaseClient:
     def sync_pull(self, host):
         """Synchronize database with another by pulling it from a host."""
         logger.log.info("Performing a Sync Pull")
-        return self.synchronize(host, sync_operations["PULL_REQUEST"].name)
+        result, msg = self.synchronize(host, sync_operations["PULL_REQUEST"].name)
+        self.sync_occurred.emit(1)
+        return result, msg
 
     def sync_push(self, host):
         """Synchronize lists between devices by pushing them to a host.
@@ -120,4 +127,5 @@ class DataBaseClient:
         the device you want your to-do lists on to pull from you.
         """
         logger.log.info("Performing a Sync Push")
-        return self.synchronize(host, sync_operations["PUSH_REQUEST"].name)
+        result, msg = self.synchronize(host, sync_operations["PUSH_REQUEST"].name)
+        return result, msg
