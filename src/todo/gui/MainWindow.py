@@ -522,7 +522,7 @@ class MainWindow(QMainWindow):
                 settings.DB.active_list
             ]
             del settings.DB.todo_lists[settings.DB.active_list]
-            settings.DB.active_list = settings.DB.todo_lists[list_name]
+            settings.DB.active_list = list_name
             settings.DB.write_config()
             self.write_todo_data()
             self.refresh()
