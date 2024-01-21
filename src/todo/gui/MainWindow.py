@@ -399,19 +399,21 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self, "Info", f"Server is already bound to {address}"
             )
-        else:
-            settings.options["address"] = address
-            if settings.DB.server_running():
-                reply = QMessageBox.question(
-                    self,
-                    "Restart Database Server?",
-                    "The server needs to be restarted for changes to take effect, would you like to do that now?",
-                    QMessageBox.StandardButton.Yes,
-                    QMessageBox.StandardButton.No,
-                )
-                if reply == QMessageBox.StandardButton.Yes:
-                    settings.DB.restart_server()
-                    settings.DB.write_config()
+            return
+
+        settings.options["address"] = address
+        if settings.DB.server_running():
+            reply = QMessageBox.question(
+                self,
+                "Restart Database Server?",
+                "The server needs to be restarted for changes to take effect, would you like to do that now?",
+                QMessageBox.StandardButton.Yes,
+                QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                settings.DB.restart_server()
+                settings.DB.write_config()
+                self.refresh()
 
     @error_on_none_db
     def add_list(self, *args, **kwargs):
