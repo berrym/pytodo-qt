@@ -16,7 +16,7 @@ from ..net import tcp_server_lib, tcp_client_lib
 logger = Logger(__name__)
 
 
-class CreateTodoDatabase:
+class TodoDatabase:
     """Maintains a database of to-do lists."""
 
     def __init__(self):

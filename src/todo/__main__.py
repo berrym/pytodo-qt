@@ -25,8 +25,9 @@ import sys
 from PyQt6.QtWidgets import QApplication
 
 from .core.Logger import Logger
-from .core import settings, TodoDatabase
-from .gui import MainWindow
+from .core import settings
+from .core.TodoDatabase import TodoDatabase
+from .gui.MainWindow import MainWindow
 
 
 logger = Logger(__name__)
@@ -106,14 +107,9 @@ def main():
             settings.options[k] = v
 
     # create a to-do database
-    settings.DB = TodoDatabase.CreateTodoDatabase()
+    settings.DB = TodoDatabase()
 
     # create a QApplication, the main window, then hand over control to Qt
     app = QApplication(sys.argv)
-    _ = MainWindow.MainWindow()
+    _ = MainWindow()
     sys.exit(app.exec())
-
-
-# Main? - Program entry point
-if __name__ == "__main__":
-    main()
