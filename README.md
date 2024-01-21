@@ -10,7 +10,7 @@ A small cross-platform application to manage multiple to-do lists written in Pyt
 
 - Install a recent version of Python, needs **at least** version *3.8*
 - For a package install you will need `pip` or `pipx`
-- For a manual install you will need `git` and the python modules `setuptools`, `wheel`, `build` and `pyqt6`
+- For a manual install you will need `git` and the python modules `setuptools`, `wheel`, `build` and `PyQt6`
   You can install these via your package manager or via `pip`
 
 ## Installation
@@ -54,7 +54,7 @@ Copyright 2024 Michael Berry <trismegustis@gmail.com>
 
 ## Latest release
 
-* v0.2.3
+- v0.2.4
 
 ## License
 
