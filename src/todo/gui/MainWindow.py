@@ -339,7 +339,7 @@ class MainWindow(QMainWindow):
             logger.log.critical(msg)
             sys.exit(1)
         else:
-            logger.log.critical(msg)
+            logger.log.info(msg)
 
     @error_on_none_db
     def db_start_server(self, *args, **kwargs):
