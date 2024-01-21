@@ -1,46 +1,65 @@
-# To-Do
+# pytodo-qt
 
 A simple to-do list program.
 
 ## Description
 
-A small application to manage multiple to-do lists written in Python 3 and Qt5
+A small cross-platform application to manage multiple to-do lists written in Python 3 and PyQt6
 
 ## Getting started
 
-* Clone the git repository from https://github.com/berrym/todo.git
+- Install a recent version of Python, needs **at least** version *3.8*
+- For a package install you will need `pip` or `pipx`
+- For a manual install you will need `git` and the python modules `setuptools`, `wheel`, `build` and `pyqt6`
+  You can install these via your package manager or via `pip`
 
-* Install a recent version of Python, needs version 3.8+.
+## Installation
 
-* A requirements.txt is provided in the repository so required packages can be installed using pip.
-    * pip install -r requirements.txt --user
+- Install a package. **Recommended**.
+
+It can be installed from PyPi via pip or preferably pipx, all three of these methods should work
+
+    $ pipx install pytodo-qt       # for a local virtualenv install
+    $ pip install pytodo-qt        # for a systemwide install
+    $ pip install --user pytodo-qt # for a user local install
+
+- Manual install
+
+It can be installed by cloning the git repository and building the package:
+
+    $ git clone https://github.com/berrym/pytodo-qt.git
+    $ cd pytodo-qt
+    $ python3 -m venv /path/to/pytodo-qt/venv
+    $ sh /path/to/pytodo-qt/venv/bin/activate  # for linux/unix, activate the appropriate script for your os
+    $ python3 -m build
+    $ /path/to/pytodo-qt/venv/bin/pip install .
 
 ### Executing program
 
-The main script can be executed from the command line, e.g.
+If you installed a package then a script named `todo` was installed
 
-* python3 todo.py
+    $ todo  # launches the application
+
+If you followed the manual local build instructions
+
+    $ /path/to/pytodo-qt/venv/bin/todo  # launches the application
 
 ## Help
 
-python3 todo.py --help
+    $ todo --help
 
-## Authors
+## Copyright
 
-Copyright 2020
-Michael Berry <trismegustis@gmail.com>
+Copyright 2024 Michael Berry <trismegustis@gmail.com>
 
-## Version History
-* 0.1.1
-    * Needs Python 3.8 for walrus operator.
-    * Improved dialogs for syncing.
-    * Serialize network I/O with json.
+## Latest release
 
-* 0.1.0
-    * Initial Release
+* v0.2.3
 
 ## License
 
 This project is licensed under the GNU General Public License version 3, or at your option any later version.
-
 See the COPYING file included in the git repository.
+
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
