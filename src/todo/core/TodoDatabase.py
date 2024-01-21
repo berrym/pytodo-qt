@@ -86,6 +86,7 @@ class TodoDatabase(QObject):
             self.config["database"]["reverse_sort"] = "yes"
         else:
             self.config["database"]["reverse_sort"] = "no"
+        self.config["server"]["key"] = settings.options["key"]
         if settings.options["run"]:
             self.config["server"]["run"] = "yes"
         else:

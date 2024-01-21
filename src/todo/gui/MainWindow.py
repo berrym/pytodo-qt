@@ -28,6 +28,7 @@ from PyQt6.QtPrintSupport import QPrinter, QPrintDialog
 
 from ..core import error_on_none_db, settings, json_helpers
 from ..core.Logger import Logger
+from ..crypto.AESCipher import AESCipher
 from ..gui.AddTodoDialog import AddTodoDialog
 from ..gui.SyncDialog import SyncDialog
 from ..net.sync_operations import sync_operations
@@ -88,7 +89,7 @@ class MainWindow(QMainWindow):
         toggle.triggered.connect(self.toggle_todo)
 
         # list actions
-        list_add = QAction(QIcon(), "Add new list", self)
+        list_add = QAction(QIcon("gui/icons/plus.png"), "Add new list", self)
         list_add.setShortcut("Ctrl++")
         list_add.triggered.connect(self.add_list)
 
@@ -125,6 +126,11 @@ class MainWindow(QMainWindow):
 
         change_bind_address = QAction(QIcon(), "Change network server address", self)
         change_bind_address.triggered.connect(self.db_server_bind_address)
+
+        change_crypto_key = QAction(
+            QIcon(), "Change database network cryptography key", self
+        )
+        change_crypto_key.triggered.connect(self.db_change_crypto_key)
 
         # fanfare
         about = QAction(QIcon(), "About To-Do", self)
@@ -184,6 +190,7 @@ class MainWindow(QMainWindow):
                 server_menu.addAction(stop_server)
                 server_menu.addAction(change_port)
                 server_menu.addAction(change_bind_address)
+                server_menu.addAction(change_crypto_key)
             else:
                 msg = "Could not populate server menu, exiting"
                 QMessageBox.warning(self, "Creation Error", msg)
@@ -245,6 +252,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Creation Error", msg)
             logger.log.exception(msg)
             sys.exit(1)
+        self.update_status_bar()
 
         # system tray icon
         self.tray_icon = QSystemTrayIcon(self)
@@ -394,7 +402,7 @@ class MainWindow(QMainWindow):
     def db_server_bind_address(self, *args, **kwargs):
         """Bind database server to an ip address."""
         address, ok = QInputDialog.getText(
-            self, "Change server ip address", "IP Address: "
+            self, "Change server IP address", "IP Address: "
         )
         if not ok:
             return
@@ -406,6 +414,37 @@ class MainWindow(QMainWindow):
             return
 
         settings.options["address"] = address
+        if settings.DB.server_running():
+            reply = QMessageBox.question(
+                self,
+                "Restart Database Server?",
+                "The server needs to be restarted for changes to take effect, would you like to do that now?",
+                QMessageBox.StandardButton.Yes,
+                QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                settings.DB.restart_server()
+                settings.DB.write_config()
+                self.refresh()
+
+    @error_on_none_db
+    def db_change_crypto_key(self, *args, **kwargs):
+        """Change database cryptography key."""
+        key, ok = QInputDialog.getText(
+            self, "Change database cryptography key", "Key: "
+        )
+        if not ok:
+            return
+
+        if settings.options["key"] == key:
+            QMessageBox.information(
+                self, "Info", f"Database cryptography key is already {key}"
+            )
+            return
+
+        settings.options["key"] = key
+        settings.DB.db_client.aes_cipher = AESCipher(key)
+        settings.DB.db_server.aes_cipher = AESCipher(key)
         if settings.DB.server_running():
             reply = QMessageBox.question(
                 self,
@@ -574,7 +613,6 @@ class MainWindow(QMainWindow):
 
             if not ok:
                 msg = "Did not finishing exporting list"
-                QMessageBox.warning(self, "Export List", msg)
                 logger.log.warning(msg)
                 return
 
