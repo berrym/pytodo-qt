@@ -37,17 +37,8 @@ logger = Logger(__name__)
 
 # Main function
 def main():
-    location = ""
-    for i in range(0, len(sys.path)):
-        if sys.path[i].__contains__("site-packages"):
-            location = sys.path[i]
-            location += "/pytodo_qt"
-            os.chdir(location)
-            break
-
-    if location == "":
-        logger.log.exception("Unknown installation or invocation, exiting")
-        sys.exit(1)
+    # move to main module dir
+    os.chdir(os.path.dirname(__file__))
 
     # create a command line arg_parser
     arg_parser = argparse.ArgumentParser(

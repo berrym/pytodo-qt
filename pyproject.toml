@@ -11,7 +11,7 @@ pytodo_qt = ["*.png"]
 
 [project]
 name = "pytodo-qt"
-version = "0.2.7"
+version = "0.2.8"
 description = "A small cross-platform to-do application written in Python 3 and PyQt6"
 readme = "README.md"
 authors = [

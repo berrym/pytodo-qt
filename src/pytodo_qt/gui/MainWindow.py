@@ -811,7 +811,7 @@ class MainWindow(QMainWindow):
 
     def about_app(self):
         """Display a message box with Program/Author information."""
-        text = """<b><u>pytodo-qt v0.2.7</u></b>
+        text = """<b><u>pytodo-qt v0.2.8</u></b>
         <br><br>To-Do list program that works with multiple To-Do
         lists locally and over a network.
         <br><br>License: <a href="http://www.fsf.org/licenses/gpl.html">GPLv3</a>
