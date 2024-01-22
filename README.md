@@ -36,17 +36,17 @@ It can be installed by cloning the git repository and building the package:
 
 ### Executing program
 
-If you installed a package then a script named `todo` was installed
+If you installed a package then a script named `pytodo-qt` was installed
 
-    $ todo  # launches the application
+    $ pytodo-qt  # launches the application
 
 If you followed the manual local build instructions
 
-    $ /path/to/pytodo-qt/venv/bin/todo  # launches the application
+    $ /path/to/pytodo-qt/venv/bin/pytodo-qt  # launches the application
 
 ## Help
 
-    $ todo --help
+    $ pytodo-qt --help
 
 ## Copyright
 
