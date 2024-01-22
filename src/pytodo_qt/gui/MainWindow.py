@@ -49,8 +49,8 @@ class MainWindow(QMainWindow):
 
         # create the window, set title and tooltip, resize and center window
         super().__init__()
-        self.setWindowIcon(QIcon("gui/icons/pytodo-qt.png"))
         self.setWindowTitle("To-Do")
+        self.setWindowIcon(QIcon("gui/icons/pytodo-qt.png"))
         self.setToolTip("Python3 + Qt5 = Happy <u>To-Do</u> Programmer!")
         QToolTip.setFont(QFont("Helvetica", 10))
         self.resize(800, 500)
@@ -121,13 +121,13 @@ class MainWindow(QMainWindow):
         stop_server.triggered.connect(self.db_stop_server)
 
         change_port = QAction(QIcon(), "Change network server port", self)
-        change_port.triggered.connect(self.db_server_port)
+        change_port.triggered.connect(self.db_server_bind_port)
 
-        change_bind_address = QAction(QIcon(), "Change network server address", self)
-        change_bind_address.triggered.connect(self.db_server_bind_address)
+        change_address = QAction(QIcon(), "Change network server address", self)
+        change_address.triggered.connect(self.db_server_bind_address)
 
-        change_crypto_key = QAction(QIcon(), "Change network AES cipher", self)
-        change_crypto_key.triggered.connect(self.db_change_crypto_key)
+        change_aes_cipher = QAction(QIcon(), "Change network AES cipher", self)
+        change_aes_cipher.triggered.connect(self.db_change_aes_cipher)
 
         # fanfare
         about = QAction(QIcon(), "About To-Do", self)
@@ -186,8 +186,8 @@ class MainWindow(QMainWindow):
                 server_menu.addAction(start_server)
                 server_menu.addAction(stop_server)
                 server_menu.addAction(change_port)
-                server_menu.addAction(change_bind_address)
-                server_menu.addAction(change_crypto_key)
+                server_menu.addAction(change_address)
+                server_menu.addAction(change_aes_cipher)
             else:
                 msg = "Could not populate server menu, exiting"
                 QMessageBox.warning(self, "Creation Error", msg)
@@ -280,7 +280,7 @@ class MainWindow(QMainWindow):
         self.printer = QPrinter()
 
         # Refresh after every sync
-        settings.DB.db_client.sync_occurred.connect(self.refresh)
+        settings.DB.db_client.sync_occurred.connect(self.db_sync_occurred)
 
         # show the window
         self.show()
@@ -289,6 +289,16 @@ class MainWindow(QMainWindow):
         self.read_todo_data()
 
         logger.log.info("Main window created")
+
+    @QtCore.pyqtSlot(str)
+    def db_sync_occurred(self, msg):
+        self.tray_icon.showMessage(
+            "Sync Event",
+            msg,
+            QIcon(),
+            8000,
+        )
+        self.refresh()
 
     def read_todo_data(self):
         """Read lists of to-dos from database."""
@@ -327,12 +337,24 @@ class MainWindow(QMainWindow):
         self.update_progress_bar(0)
         self.update_status_bar("Sync Pull")
         SyncDialog(sync_operations["PULL_REQUEST"].name).exec()
+        self.tray_icon.showMessage(
+            "Sync Event",
+            "Pulled to-do lists from remote host",
+            QIcon(),
+            8000,
+        )
 
     def db_sync_push(self):
         """Push lists to another computer."""
         self.update_progress_bar(0)
-        self.update_status_bar("Waiting for input")
+        self.update_status_bar("Sync Push")
         SyncDialog(sync_operations["PUSH_REQUEST"].name).exec()
+        self.tray_icon.showMessage(
+            "Sync Event",
+            "Pushed to-do lists to remote host",
+            QIcon(),
+            8000,
+        )
 
     @error_on_none_db
     def db_update_active_list(self, list_name, *args, **kwargs):
@@ -352,12 +374,14 @@ class MainWindow(QMainWindow):
     def db_start_server(self, *args, **kwargs):
         """Start the database server."""
         if settings.DB.server_running():
-            QMessageBox.information(
-                self, "Info", "The database server is already running."
+            self.tray_icon.showMessage(
+                "Info", "The database server is already running.", QIcon(), 8000
             )
         else:
             settings.DB.start_server()
-            QMessageBox.information(self, "Info", "The database server was started.")
+            self.tray_icon.showMessage(
+                "Info", "The database server was started.", QIcon(), 8000
+            )
 
     @error_on_none_db
     def db_stop_server(self, *args, **kwargs):
@@ -366,10 +390,12 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Info", "The database server is not running.")
         else:
             settings.DB.stop_server()
-            QMessageBox.information(self, "Info", "The database server was stopped.")
+            self.tray_icon.showMessage(
+                "Info", "The database server was stopped.", QIcon(), 8000
+            )
 
     @error_on_none_db
-    def db_server_port(self, *args, **kwargs):
+    def db_server_bind_port(self, *args, **kwargs):
         """Change the port the database server listens too."""
         port, ok = QInputDialog.getInt(self, "Change database server port", "Port: ")
         if not ok:
@@ -425,7 +451,7 @@ class MainWindow(QMainWindow):
                 self.refresh()
 
     @error_on_none_db
-    def db_change_crypto_key(self, *args, **kwargs):
+    def db_change_aes_cipher(self, *args, **kwargs):
         """Change network AES cipher."""
         key, ok = QInputDialog.getText(self, "Change network AES cipher", "Cipher: ")
         if not ok:
@@ -785,7 +811,7 @@ class MainWindow(QMainWindow):
 
     def about_app(self):
         """Display a message box with Program/Author information."""
-        text = """<b><u>pytodo-qt v0.2.6</u></b>
+        text = """<b><u>pytodo-qt v0.2.7</u></b>
         <br><br>To-Do list program that works with multiple To-Do
         lists locally and over a network.
         <br><br>License: <a href="http://www.fsf.org/licenses/gpl.html">GPLv3</a>

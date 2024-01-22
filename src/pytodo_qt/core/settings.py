@@ -13,7 +13,7 @@ from ..core.Logger import Logger
 logger = Logger(__name__)
 
 
-__version__ = "0.2.6"
+__version__ = "0.2.7"
 options = {}
 DB = None
 

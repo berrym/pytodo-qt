@@ -24,7 +24,7 @@ logger = Logger(__name__)
 class DatabaseClient(QObject):
     """To-Do database client class."""
 
-    sync_occurred = pyqtSignal(int)
+    sync_occurred = pyqtSignal(str)
 
     def __init__(self):
         """Initialize client."""
@@ -49,6 +49,7 @@ class DatabaseClient(QObject):
         """Process remote host's response to a request."""
         msg = f"{host} responded to {request} with {response}"
         logger.log.info(msg)
+        self.sync_occurred.emit(msg)
 
         if response == sync_operations["ACCEPT"].name:
             if request == sync_operations["PULL_REQUEST"].name:
@@ -87,6 +88,7 @@ class DatabaseClient(QObject):
             if not result:
                 return False, e
             Path.unlink(tmp)
+            self.sync_occurred.emit(msg)
             return True, msg
         except IOError as e:
             msg = f"Unable to write temporary file: {e}"
@@ -116,7 +118,7 @@ class DatabaseClient(QObject):
         """Synchronize database with another by pulling it from a host."""
         logger.log.info("Performing a Sync Pull")
         result, msg = self.synchronize(host, sync_operations["PULL_REQUEST"].name)
-        self.sync_occurred.emit(1)
+        self.sync_occurred.emit(f"PULL_REQUEST sent to {host}")
         return result, msg
 
     def sync_push(self, host):
@@ -128,4 +130,5 @@ class DatabaseClient(QObject):
         """
         logger.log.info("Performing a Sync Push")
         result, msg = self.synchronize(host, sync_operations["PUSH_REQUEST"].name)
+        self.sync_occurred.emit(f"PUSH_REQUEST sent to {host}")
         return result, msg

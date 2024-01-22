@@ -115,7 +115,7 @@ class TCPRequestHandler(socketserver.StreamRequestHandler):
                 sync_operations["REJECT"].name
             )
             self.request.send(self.encrypted_reply)
-            QMessageBox.warning(None, "Push Sync", msg)
+            QMessageBox.warning(None, "Sync Push", msg)
             logger.log.warning(msg)
             return
 
