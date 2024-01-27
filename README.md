@@ -64,3 +64,4 @@ See the COPYING file included in the git repository.
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![build result](https://build.opensuse.org/projects/home:berrym/packages/pytodo-qt/badge.svg?type=default)](https://build.opensuse.org/package/show/home:berrym/pytodo-qt)
+[![Copr build status](https://copr.fedorainfracloud.org/coprs/mberry/pytodo-qt/package/pytodo-qt/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/mberry/pytodo-qt/package/pytodo-qt/)
