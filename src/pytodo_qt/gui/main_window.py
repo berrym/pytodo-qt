@@ -688,26 +688,31 @@ class MainWindow(QMainWindow):
         from ..net.client import AsyncClient
 
         async def do_pull():
-            client = AsyncClient()
-            success, data = await client.sync_pull(host, port)
-            if success:
-                merged_count = self._merge_sync_data_internal(data)
-                self._save_database()
-                self._refresh_ui()
-                if merged_count > 0:
-                    QMessageBox.information(
-                        self,
-                        "Pull Complete",
-                        f"Pulled and merged {merged_count} items from {host}:{port}",
-                    )
+            try:
+                logger.log.debug("Menu pull: connecting to %s:%d", host, port)
+                client = AsyncClient(self)
+                success, data = await client.sync_pull(host, port)
+                if success:
+                    merged_count = self._merge_sync_data_internal(data)
+                    self._save_database()
+                    self._refresh_ui()
+                    if merged_count > 0:
+                        QMessageBox.information(
+                            self,
+                            "Pull Complete",
+                            f"Pulled and merged {merged_count} items from {host}:{port}",
+                        )
+                    else:
+                        QMessageBox.information(
+                            self,
+                            "Already In Sync",
+                            f"No new items from {host}:{port} - already in sync.",
+                        )
                 else:
-                    QMessageBox.information(
-                        self,
-                        "Already In Sync",
-                        f"No new items from {host}:{port} - already in sync.",
-                    )
-            else:
-                QMessageBox.warning(self, "Pull Failed", f"Could not pull from {host}:{port}")
+                    QMessageBox.warning(self, "Pull Failed", f"Could not pull from {host}:{port}")
+            except Exception as e:
+                logger.log.exception("Menu pull failed: %s", e)
+                QMessageBox.critical(self, "Pull Error", f"Pull failed: {e}")
 
         asyncio.ensure_future(do_pull())
 
@@ -716,17 +721,22 @@ class MainWindow(QMainWindow):
         from ..net.client import AsyncClient
 
         async def do_push():
-            client = AsyncClient()
-            data = json.dumps(self._database.to_dict()).encode("utf-8")
-            success = await client.sync_push(host, port, data)
-            if success:
-                QMessageBox.information(
-                    self,
-                    "Push Complete",
-                    f"Pushed {len(data)} bytes to {host}:{port}\nRemote will merge any new items.",
-                )
-            else:
-                QMessageBox.warning(self, "Push Failed", f"Could not push to {host}:{port}")
+            try:
+                logger.log.debug("Menu push: connecting to %s:%d", host, port)
+                client = AsyncClient(self)
+                data = json.dumps(self._database.to_dict()).encode("utf-8")
+                success = await client.sync_push(host, port, data)
+                if success:
+                    QMessageBox.information(
+                        self,
+                        "Push Complete",
+                        f"Pushed {len(data)} bytes to {host}:{port}\nRemote will merge any new items.",
+                    )
+                else:
+                    QMessageBox.warning(self, "Push Failed", f"Could not push to {host}:{port}")
+            except Exception as e:
+                logger.log.exception("Menu push failed: %s", e)
+                QMessageBox.critical(self, "Push Error", f"Push failed: {e}")
 
         asyncio.ensure_future(do_push())
 
