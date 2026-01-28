@@ -64,6 +64,8 @@ class AsyncServer:
     host: str = "0.0.0.0"
     port: int = 5364
     identity: IdentityKeyPair | None = None
+    handshake_timeout: float = 30.0  # Timeout for handshake in seconds
+    message_timeout: float = 60.0  # Timeout for receiving messages
     _server: asyncio.Server | None = None
     _sessions: dict[tuple[str, int], ClientSession] = field(default_factory=dict)
     _get_sync_data: Callable[[], bytes] | None = None
@@ -155,9 +157,17 @@ class AsyncServer:
         logger.log.info("Client connected from %s", peer_addr)
 
         try:
-            # Perform handshake
-            if not await self._perform_handshake(session):
-                logger.log.warning("Handshake failed with %s", peer_addr)
+            # Perform handshake with timeout
+            try:
+                handshake_ok = await asyncio.wait_for(
+                    self._perform_handshake(session),
+                    timeout=self.handshake_timeout,
+                )
+                if not handshake_ok:
+                    logger.log.warning("Handshake failed with %s", peer_addr)
+                    return
+            except TimeoutError:
+                logger.log.warning("Handshake timed out with %s", peer_addr)
                 return
 
             # Notify connection
@@ -170,12 +180,19 @@ class AsyncServer:
                 except Exception as e:
                     logger.log.exception("Error in connection callback: %s", e)
 
-            # Handle messages
+            # Handle messages with timeout
             while True:
-                msg = await self._recv_message(session)
-                if msg is None:
+                try:
+                    msg = await asyncio.wait_for(
+                        self._recv_message(session),
+                        timeout=self.message_timeout,
+                    )
+                    if msg is None:
+                        break
+                    await self._handle_message(session, msg)
+                except TimeoutError:
+                    logger.log.info("Client %s timed out waiting for message", peer_addr)
                     break
-                await self._handle_message(session, msg)
 
         except asyncio.CancelledError:
             pass
