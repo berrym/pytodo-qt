@@ -85,11 +85,14 @@ class AsyncClient(QObject):
         Returns:
             True if connection and handshake succeeded
         """
+        logger.log.debug("connect() called: %s:%d", host, port)
         try:
+            logger.log.debug("Opening connection...")
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(host, port),
                 timeout=self._timeout,
             )
+            logger.log.debug("Connection opened, performing handshake...")
 
             self._connection = ConnectionState(reader=reader, writer=writer)
 
@@ -264,15 +267,19 @@ class AsyncClient(QObject):
     async def _perform_handshake(self) -> bool:
         """Perform the protocol handshake with key exchange."""
         if self._connection is None or self.identity is None:
+            logger.log.debug("Handshake: no connection or identity")
             return False
 
         try:
             # Send HELLO
+            logger.log.debug("Handshake: sending HELLO")
             hello = create_hello(self.identity.public_bytes())
             await self._send_message_raw(hello)
+            logger.log.debug("Handshake: HELLO sent, waiting for HELLO_ACK")
 
             # Receive HELLO_ACK
             msg = await self._recv_message_raw()
+            logger.log.debug("Handshake: received response")
             if msg is None or msg.header.msg_type != MessageType.HELLO_ACK:
                 logger.log.error(
                     "Expected HELLO_ACK, got %s", msg.header.msg_type.name if msg else "nothing"

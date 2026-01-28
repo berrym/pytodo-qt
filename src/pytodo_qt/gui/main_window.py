@@ -144,16 +144,20 @@ class MainWindow(QMainWindow):
         self.rename_list_action.triggered.connect(self._on_rename_list)
 
         # Sync actions
-        self.sync_pull_action = QAction("&Pull from Remote", self)
+        self.sync_pull_action = QAction("&Pull from Remote...", self)
         self.sync_pull_action.setShortcut("F6")
         self.sync_pull_action.triggered.connect(self._on_sync_pull)
 
-        self.sync_push_action = QAction("Pu&sh to Remote", self)
+        self.sync_push_action = QAction("Pu&sh to Remote...", self)
         self.sync_push_action.setShortcut("F7")
         self.sync_push_action.triggered.connect(self._on_sync_push)
 
         self.peer_manager_action = QAction("&Peer Manager...", self)
         self.peer_manager_action.triggered.connect(self._on_peer_manager)
+
+        # Peer submenus (populated dynamically)
+        self.pull_peers_menu: QMenu | None = None
+        self.push_peers_menu: QMenu | None = None
 
         # Help actions
         self.about_action = QAction("&About", self)
@@ -194,6 +198,17 @@ class MainWindow(QMainWindow):
         # Sync menu
         sync_menu = menu_bar.addMenu("&Sync")
         if sync_menu:
+            # Pull submenu with discovered peers
+            self.pull_peers_menu = sync_menu.addMenu("Pull from &Peer")
+            if self.pull_peers_menu:
+                self.pull_peers_menu.aboutToShow.connect(self._populate_pull_peers_menu)
+
+            # Push submenu with discovered peers
+            self.push_peers_menu = sync_menu.addMenu("Push to P&eer")
+            if self.push_peers_menu:
+                self.push_peers_menu.aboutToShow.connect(self._populate_push_peers_menu)
+
+            sync_menu.addSeparator()
             sync_menu.addAction(self.sync_pull_action)
             sync_menu.addAction(self.sync_push_action)
             sync_menu.addSeparator()
@@ -590,6 +605,88 @@ class MainWindow(QMainWindow):
                 item.reminder = text
                 item.mark_updated()
                 self._save_database()
+
+    def _populate_pull_peers_menu(self) -> None:
+        """Populate the pull peers submenu with discovered peers."""
+        if self.pull_peers_menu is None:
+            return
+
+        self.pull_peers_menu.clear()
+        discovery = get_discovery_service()
+        peers = [p for p in discovery.get_peers() if not p.is_local]
+
+        if not peers:
+            action = self.pull_peers_menu.addAction("No peers discovered")
+            action.setEnabled(False)
+        else:
+            for peer in peers:
+                action = self.pull_peers_menu.addAction(f"{peer.display_name} ({peer.address})")
+                action.setData((peer.address, peer.port))
+                action.triggered.connect(lambda checked, a=action: self._on_pull_from_peer(a))
+
+    def _populate_push_peers_menu(self) -> None:
+        """Populate the push peers submenu with discovered peers."""
+        if self.push_peers_menu is None:
+            return
+
+        self.push_peers_menu.clear()
+        discovery = get_discovery_service()
+        peers = [p for p in discovery.get_peers() if not p.is_local]
+
+        if not peers:
+            action = self.push_peers_menu.addAction("No peers discovered")
+            action.setEnabled(False)
+        else:
+            for peer in peers:
+                action = self.push_peers_menu.addAction(f"{peer.display_name} ({peer.address})")
+                action.setData((peer.address, peer.port))
+                action.triggered.connect(lambda checked, a=action: self._on_push_to_peer(a))
+
+    def _on_pull_from_peer(self, action: QAction) -> None:
+        """Handle pull from a specific discovered peer."""
+        data = action.data()
+        if data:
+            host, port = data
+            self._do_sync_pull(host, port)
+
+    def _on_push_to_peer(self, action: QAction) -> None:
+        """Handle push to a specific discovered peer."""
+        data = action.data()
+        if data:
+            host, port = data
+            self._do_sync_push(host, port)
+
+    def _do_sync_pull(self, host: str, port: int) -> None:
+        """Perform sync pull from specified host."""
+        from ..net.client import AsyncClient
+
+        async def do_pull():
+            client = AsyncClient()
+            success, data = await client.sync_pull(host, port)
+            if success:
+                self._merge_sync_data(data)
+                QMessageBox.information(
+                    self, "Sync Complete", f"Pulled and merged data from {host}:{port}"
+                )
+            else:
+                QMessageBox.warning(self, "Sync Failed", f"Could not pull from {host}:{port}")
+
+        asyncio.ensure_future(do_pull())
+
+    def _do_sync_push(self, host: str, port: int) -> None:
+        """Perform sync push to specified host."""
+        from ..net.client import AsyncClient
+
+        async def do_push():
+            client = AsyncClient()
+            data = json.dumps(self._database.to_dict()).encode("utf-8")
+            success = await client.sync_push(host, port, data)
+            if success:
+                QMessageBox.information(self, "Sync Complete", f"Pushed data to {host}:{port}")
+            else:
+                QMessageBox.warning(self, "Sync Failed", f"Could not push to {host}:{port}")
+
+        asyncio.ensure_future(do_push())
 
     def _on_sync_pull(self) -> None:
         """Handle sync pull action."""

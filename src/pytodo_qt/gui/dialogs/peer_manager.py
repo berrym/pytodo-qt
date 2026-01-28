@@ -87,10 +87,10 @@ class PeerManagerDialog(QDialog):
         # Peer action buttons
         peer_btns = QHBoxLayout()
 
-        self.connect_btn = QPushButton("Connect")
-        self.connect_btn.clicked.connect(self._on_connect)
-        self.connect_btn.setEnabled(False)
-        peer_btns.addWidget(self.connect_btn)
+        self.ping_btn = QPushButton("Ping")
+        self.ping_btn.clicked.connect(self._on_ping)
+        self.ping_btn.setEnabled(False)
+        peer_btns.addWidget(self.ping_btn)
 
         self.sync_btn = QPushButton("Sync")
         self.sync_btn.clicked.connect(self._on_sync)
@@ -195,20 +195,25 @@ class PeerManagerDialog(QDialog):
         """Handle selection change."""
         peer = self._get_selected_peer()
         enabled = peer is not None and not peer.is_local
-        self.connect_btn.setEnabled(enabled)
+        self.ping_btn.setEnabled(enabled)
         self.sync_btn.setEnabled(enabled)
 
     @asyncSlot()
-    async def _on_connect(self) -> None:
-        """Handle connect button click - ping the peer."""
+    async def _on_ping(self) -> None:
+        """Handle ping button click - test connectivity to peer."""
+        logger.log.debug("Ping button clicked")
         peer = self._get_selected_peer()
         if peer is None:
+            logger.log.debug("No peer selected")
             return
 
+        logger.log.debug("Pinging peer: %s", peer.name)
         self._set_busy(True, f"Pinging {peer.name}...")
 
         try:
+            logger.log.debug("Calling client.ping(%s, %d)", peer.address, peer.port)
             success, latency = await self._client.ping(peer.address, peer.port)
+            logger.log.debug("Ping returned: success=%s, latency=%s", success, latency)
             if success:
                 QMessageBox.information(
                     self,
@@ -232,24 +237,64 @@ class PeerManagerDialog(QDialog):
 
     @asyncSlot()
     async def _on_sync(self) -> None:
-        """Handle sync button click - pull from peer."""
+        """Handle sync button click - bidirectional sync with peer."""
+        logger.log.debug("Sync button clicked")
         peer = self._get_selected_peer()
         if peer is None:
+            logger.log.debug("No peer selected")
             return
 
-        self._set_busy(True, f"Syncing with {peer.name}...")
+        logger.log.debug("Syncing with peer: %s", peer.name)
+        self._set_busy(True, f"Pulling from {peer.name}...")
+
+        pull_success = False
+        push_success = False
+        merged_count = 0
+        push_data = b""
 
         try:
-            success, data = await self._client.sync_pull(peer.address, peer.port)
-            if success:
+            # First, pull from peer
+            logger.log.debug("Calling client.sync_pull(%s, %d)", peer.address, peer.port)
+            pull_success, data = await self._client.sync_pull(peer.address, peer.port)
+            logger.log.debug(
+                "Sync pull returned: success=%s, data_len=%d",
+                pull_success,
+                len(data) if data else 0,
+            )
+
+            if pull_success:
                 merged_count = self._merge_sync_data(data)
+                self.sync_data_received.emit(data)
+
+            # Then, push to peer
+            if self._database is not None:
+                self._set_busy(True, f"Pushing to {peer.name}...")
+                push_data = json.dumps(self._database.to_dict()).encode("utf-8")
+                logger.log.debug("Calling client.sync_push(%s, %d)", peer.address, peer.port)
+                push_success = await self._client.sync_push(peer.address, peer.port, push_data)
+                logger.log.debug("Sync push returned: success=%s", push_success)
+
+            # Report results
+            if pull_success and push_success:
                 QMessageBox.information(
                     self,
                     "Sync Successful",
-                    f"Pulled {len(data)} bytes from {peer.name}\nMerged {merged_count} items.",
+                    f"Synced with {peer.name}\n"
+                    f"Pulled and merged {merged_count} items.\n"
+                    f"Pushed {len(push_data)} bytes.",
                 )
-                # Emit signal so parent can refresh UI
-                self.sync_data_received.emit(data)
+            elif pull_success:
+                QMessageBox.warning(
+                    self,
+                    "Partial Sync",
+                    f"Pulled {merged_count} items from {peer.name}\nbut push failed.",
+                )
+            elif push_success:
+                QMessageBox.warning(
+                    self,
+                    "Partial Sync",
+                    f"Pushed to {peer.name}\nbut pull failed.",
+                )
             else:
                 QMessageBox.warning(
                     self,
@@ -336,7 +381,7 @@ class PeerManagerDialog(QDialog):
 
     def _set_busy(self, busy: bool, message: str = "") -> None:
         """Set UI busy state."""
-        self.connect_btn.setEnabled(not busy)
+        self.ping_btn.setEnabled(not busy)
         self.sync_btn.setEnabled(not busy)
         self.status_label.setText(
             message if busy else f"Found {len(self._discovery.get_peers())} peer(s)"
