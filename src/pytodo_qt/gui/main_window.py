@@ -353,20 +353,24 @@ class MainWindow(QMainWindow):
     def _on_sync_received(self, data: bytes) -> None:
         """Handle received sync data from incoming push."""
         try:
-            merged_count = self._merge_sync_data_internal(data)
-            if merged_count > 0:
+            merged, local_newer, identical = self._merge_sync_data_internal(data)
+            if merged > 0:
                 self._save_database()
                 self._refresh_ui()
-                logger.log.info("Received and merged %d items from remote push", merged_count)
+                logger.log.info("Received and merged %d items from remote push", merged)
             else:
-                logger.log.info("Received sync data, no new items to merge")
+                logger.log.info(
+                    "Received sync data: %d local newer, %d identical", local_newer, identical
+                )
         except Exception as e:
             logger.log.exception("Error processing sync data: %s", e)
 
-    def _merge_sync_data_internal(self, data: bytes) -> int:
-        """Internal merge logic, returns count of merged items."""
+    def _merge_sync_data_internal(self, data: bytes) -> tuple[int, int, int]:
+        """Internal merge logic, returns (merged_count, local_newer_count, identical_count)."""
         remote_db = Database.from_dict(json.loads(data.decode("utf-8")))
         merged_count = 0
+        local_newer_count = 0
+        identical_count = 0
 
         for list_id, remote_list in remote_db.lists.items():
             if list_id in self._database.lists:
@@ -377,6 +381,10 @@ class MainWindow(QMainWindow):
                         if remote_item.updated_at > local_item.updated_at:
                             local_list.items[item_id] = remote_item
                             merged_count += 1
+                        elif remote_item.updated_at < local_item.updated_at:
+                            local_newer_count += 1
+                        else:
+                            identical_count += 1
                     else:
                         local_list.items[item_id] = remote_item
                         merged_count += 1
@@ -384,7 +392,7 @@ class MainWindow(QMainWindow):
                 self._database.lists[list_id] = remote_list
                 merged_count += len(remote_list.items)
 
-        return merged_count
+        return merged_count, local_newer_count, identical_count
 
     def _load_database(self) -> None:
         """Load the database from file."""
@@ -693,20 +701,27 @@ class MainWindow(QMainWindow):
                 client = AsyncClient(self)
                 success, data = await client.sync_pull(host, port)
                 if success:
-                    merged_count = self._merge_sync_data_internal(data)
+                    merged, local_newer, identical = self._merge_sync_data_internal(data)
                     self._save_database()
                     self._refresh_ui()
-                    if merged_count > 0:
+                    if merged > 0:
                         QMessageBox.information(
                             self,
                             "Pull Complete",
-                            f"Pulled and merged {merged_count} items from {host}:{port}",
+                            f"Pulled and merged {merged} items from {host}:{port}",
+                        )
+                    elif local_newer > 0:
+                        QMessageBox.information(
+                            self,
+                            "Local Is Newer",
+                            f"No items merged - {local_newer} local items are newer.\n"
+                            "Push to update remote with your changes.",
                         )
                     else:
                         QMessageBox.information(
                             self,
                             "Already In Sync",
-                            f"No new items from {host}:{port} - already in sync.",
+                            f"Databases are identical with {host}:{port}",
                         )
                 else:
                     QMessageBox.warning(self, "Pull Failed", f"Could not pull from {host}:{port}")
@@ -756,18 +771,25 @@ class MainWindow(QMainWindow):
     def _merge_sync_data(self, data: bytes) -> None:
         """Merge received sync data into local database."""
         try:
-            merged_count = self._merge_sync_data_internal(data)
+            merged, local_newer, identical = self._merge_sync_data_internal(data)
             self._save_database()
             self._refresh_ui()
-            logger.log.info("Merged %d items from sync", merged_count)
-            if merged_count > 0:
+            logger.log.info(
+                "Merged %d, local newer %d, identical %d", merged, local_newer, identical
+            )
+            if merged > 0:
                 QMessageBox.information(
-                    self, "Sync Complete", f"Merged {merged_count} items from remote."
+                    self, "Sync Complete", f"Merged {merged} items from remote."
+                )
+            elif local_newer > 0:
+                QMessageBox.information(
+                    self,
+                    "Local Is Newer",
+                    f"No items merged - {local_newer} local items are newer.\n"
+                    "Push to update remote with your changes.",
                 )
             else:
-                QMessageBox.information(
-                    self, "Already In Sync", "No new items to merge - databases are in sync."
-                )
+                QMessageBox.information(self, "Already In Sync", "Databases are identical.")
         except Exception as e:
             logger.log.exception("Error merging sync data: %s", e)
             QMessageBox.warning(self, "Merge Error", f"Failed to merge sync data: {e}")

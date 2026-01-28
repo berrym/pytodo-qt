@@ -262,8 +262,9 @@ class PeerManagerDialog(QDialog):
                 len(data) if data else 0,
             )
 
+            local_newer = 0
             if pull_success:
-                merged_count = self._merge_sync_data(data)
+                merged_count, local_newer, _ = self._merge_sync_data(data)
                 self.sync_data_received.emit(data)
 
             # Then, push to peer
@@ -284,12 +285,20 @@ class PeerManagerDialog(QDialog):
                         f"Merged {merged_count} new items.\n"
                         f"Pushed {len(push_data)} bytes.",
                     )
+                elif local_newer > 0:
+                    QMessageBox.information(
+                        self,
+                        "Sync Complete",
+                        f"Synced with {peer.name}\n"
+                        f"{local_newer} local items were newer (kept).\n"
+                        f"Pushed {len(push_data)} bytes.",
+                    )
                 else:
                     QMessageBox.information(
                         self,
                         "Already In Sync",
                         f"Synced with {peer.name}\n"
-                        f"No new items to merge - already in sync.\n"
+                        f"Databases are identical.\n"
                         f"Pushed {len(push_data)} bytes.",
                     )
             elif pull_success:
@@ -316,45 +325,52 @@ class PeerManagerDialog(QDialog):
         finally:
             self._set_busy(False)
 
-    def _merge_sync_data(self, data: bytes) -> int:
+    def _merge_sync_data(self, data: bytes) -> tuple[int, int, int]:
         """Merge received sync data into local database.
 
         Returns:
-            Number of items merged
+            Tuple of (merged_count, local_newer_count, identical_count)
         """
         if self._database is None:
             logger.log.warning("No database available for merge")
-            return 0
+            return 0, 0, 0
 
         try:
             remote_db = Database.from_dict(json.loads(data.decode("utf-8")))
             merged_count = 0
+            local_newer_count = 0
+            identical_count = 0
 
             for list_id, remote_list in remote_db.lists.items():
                 if list_id in self._database.lists:
-                    # Merge items from remote list into local list
                     local_list = self._database.lists[list_id]
                     for item_id, remote_item in remote_list.items.items():
                         if item_id in local_list.items:
-                            # Keep newer item
                             local_item = local_list.items[item_id]
                             if remote_item.updated_at > local_item.updated_at:
                                 local_list.items[item_id] = remote_item
                                 merged_count += 1
+                            elif remote_item.updated_at < local_item.updated_at:
+                                local_newer_count += 1
+                            else:
+                                identical_count += 1
                         else:
-                            # Add new item
                             local_list.items[item_id] = remote_item
                             merged_count += 1
                 else:
-                    # Add new list
                     self._database.lists[list_id] = remote_list
-                    merged_count += 1
+                    merged_count += len(remote_list.items)
 
-            logger.log.info("Merged %d items from sync", merged_count)
-            return merged_count
+            logger.log.info(
+                "Merge result: %d merged, %d local newer, %d identical",
+                merged_count,
+                local_newer_count,
+                identical_count,
+            )
+            return merged_count, local_newer_count, identical_count
         except Exception as e:
             logger.log.exception("Error merging sync data: %s", e)
-            return 0
+            return 0, 0, 0
 
     @asyncSlot()
     async def _on_manual_connect(self) -> None:
