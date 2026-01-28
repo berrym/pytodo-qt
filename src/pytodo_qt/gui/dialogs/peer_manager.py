@@ -5,10 +5,10 @@ Dialog for managing discovered peers and connections.
 
 from __future__ import annotations
 
-import asyncio
+import json
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog,
@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 from qasync import asyncSlot
 
 from ...core.logger import Logger
+from ...core.models import Database
 from ...net.client import AsyncClient
 from ...net.discovery import DiscoveredPeer, get_discovery_service
 
@@ -41,7 +42,10 @@ logger = Logger(__name__)
 class PeerManagerDialog(QDialog):
     """Dialog for managing discovered peers and connections."""
 
-    def __init__(self, parent=None):
+    # Signal emitted when sync data is received (data bytes)
+    sync_data_received = pyqtSignal(bytes)
+
+    def __init__(self, parent=None, database: Database | None = None):
         super().__init__(parent)
         self.setWindowTitle("Peer Manager")
         self.setMinimumWidth(600)
@@ -49,6 +53,7 @@ class PeerManagerDialog(QDialog):
 
         self._discovery = get_discovery_service()
         self._client = AsyncClient(self)
+        self._database = database
         self._setup_ui()
         self._refresh_peers()
 
@@ -237,13 +242,14 @@ class PeerManagerDialog(QDialog):
         try:
             success, data = await self._client.sync_pull(peer.address, peer.port)
             if success:
-                # TODO: Actually merge the received data with local database
+                merged_count = self._merge_sync_data(data)
                 QMessageBox.information(
                     self,
                     "Sync Successful",
-                    f"Pulled {len(data)} bytes from {peer.name}\n\n"
-                    "Note: Data merge not yet implemented.",
+                    f"Pulled {len(data)} bytes from {peer.name}\nMerged {merged_count} items.",
                 )
+                # Emit signal so parent can refresh UI
+                self.sync_data_received.emit(data)
             else:
                 QMessageBox.warning(
                     self,
@@ -255,6 +261,46 @@ class PeerManagerDialog(QDialog):
             QMessageBox.critical(self, "Error", f"Sync failed: {e}")
         finally:
             self._set_busy(False)
+
+    def _merge_sync_data(self, data: bytes) -> int:
+        """Merge received sync data into local database.
+
+        Returns:
+            Number of items merged
+        """
+        if self._database is None:
+            logger.log.warning("No database available for merge")
+            return 0
+
+        try:
+            remote_db = Database.from_dict(json.loads(data.decode("utf-8")))
+            merged_count = 0
+
+            for list_id, remote_list in remote_db.lists.items():
+                if list_id in self._database.lists:
+                    # Merge items from remote list into local list
+                    local_list = self._database.lists[list_id]
+                    for item_id, remote_item in remote_list.items.items():
+                        if item_id in local_list.items:
+                            # Keep newer item
+                            local_item = local_list.items[item_id]
+                            if remote_item.updated_at > local_item.updated_at:
+                                local_list.items[item_id] = remote_item
+                                merged_count += 1
+                        else:
+                            # Add new item
+                            local_list.items[item_id] = remote_item
+                            merged_count += 1
+                else:
+                    # Add new list
+                    self._database.lists[list_id] = remote_list
+                    merged_count += 1
+
+            logger.log.info("Merged %d items from sync", merged_count)
+            return merged_count
+        except Exception as e:
+            logger.log.exception("Error merging sync data: %s", e)
+            return 0
 
     @asyncSlot()
     async def _on_manual_connect(self) -> None:
@@ -274,8 +320,7 @@ class PeerManagerDialog(QDialog):
                 QMessageBox.information(
                     self,
                     "Connection Successful",
-                    f"Connected to {host}:{port}\n"
-                    f"Latency: {latency:.1f}ms",
+                    f"Connected to {host}:{port}\nLatency: {latency:.1f}ms",
                 )
             else:
                 QMessageBox.warning(
@@ -293,7 +338,9 @@ class PeerManagerDialog(QDialog):
         """Set UI busy state."""
         self.connect_btn.setEnabled(not busy)
         self.sync_btn.setEnabled(not busy)
-        self.status_label.setText(message if busy else f"Found {len(self._discovery.get_peers())} peer(s)")
+        self.status_label.setText(
+            message if busy else f"Found {len(self._discovery.get_peers())} peer(s)"
+        )
 
     def closeEvent(self, event) -> None:
         """Handle dialog close."""

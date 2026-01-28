@@ -5,6 +5,7 @@ Refactored main window using modular components.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -29,6 +30,7 @@ from ..core.logger import Logger
 from ..core.models import Database, TodoList, create_todo_list
 from ..crypto.keyring_storage import get_or_create_identity
 from ..net.discovery import get_discovery_service
+from ..net.server import AsyncServer
 from .dialogs import AddTodoDialog, PeerManagerDialog, SettingsDialog, SyncDialog
 from .styles import apply_current_theme
 from .widgets import ListSelectorWidget, StatusBarWidget, TodoTableWidget
@@ -51,6 +53,7 @@ class MainWindow(QMainWindow):
         self._config = get_config()
         self._config_manager = get_config_manager()
         self._printer = QPrinter()
+        self._server: AsyncServer | None = None
 
         self._setup_window()
         self._setup_actions()
@@ -68,6 +71,9 @@ class MainWindow(QMainWindow):
 
         # Start discovery service
         self._start_discovery()
+
+        # Start server
+        self._start_server()
 
         # Show window
         self.show()
@@ -282,6 +288,61 @@ class MainWindow(QMainWindow):
             discovery.stop()
         except Exception as e:
             logger.log.warning("Error stopping discovery: %s", e)
+
+    def _start_server(self) -> None:
+        """Start the TCP server for sync connections."""
+        config = get_config()
+
+        if not config.server.enabled:
+            logger.log.info("Server disabled")
+            return
+
+        try:
+            self._server = AsyncServer(
+                host=config.server.address,
+                port=config.server.port,
+            )
+            # Schedule server start in the async event loop
+            asyncio.ensure_future(self._async_start_server())
+        except Exception as e:
+            logger.log.exception("Failed to create server: %s", e)
+
+    async def _async_start_server(self) -> None:
+        """Async helper to start the server."""
+        if self._server is None:
+            return
+
+        try:
+            await self._server.start(
+                get_sync_data=self._get_sync_data,
+                on_sync_received=self._on_sync_received,
+            )
+            logger.log.info("Server started")
+        except Exception as e:
+            logger.log.exception("Failed to start server: %s", e)
+
+    def _stop_server(self) -> None:
+        """Stop the TCP server."""
+        if self._server is None:
+            return
+
+        try:
+            asyncio.ensure_future(self._server.stop())
+        except Exception as e:
+            logger.log.warning("Error stopping server: %s", e)
+
+    def _get_sync_data(self) -> bytes:
+        """Get database as bytes for sync."""
+        return json.dumps(self._database.to_dict()).encode("utf-8")
+
+    def _on_sync_received(self, data: bytes) -> None:
+        """Handle received sync data."""
+        try:
+            received_db = Database.from_dict(json.loads(data.decode("utf-8")))
+            # TODO: Merge databases properly
+            logger.log.info("Received sync data with %d lists", len(received_db.lists))
+        except Exception as e:
+            logger.log.exception("Error processing sync data: %s", e)
 
     def _load_database(self) -> None:
         """Load the database from file."""
@@ -532,18 +593,63 @@ class MainWindow(QMainWindow):
 
     def _on_sync_pull(self) -> None:
         """Handle sync pull action."""
-        dialog = SyncDialog(self, operation="pull")
-        dialog.exec()
+        dialog = SyncDialog(self, operation="pull", database=self._database)
+        if dialog.exec() == SyncDialog.DialogCode.Accepted:
+            result = dialog.get_sync_result()
+            if result:
+                self._merge_sync_data(result)
 
     def _on_sync_push(self) -> None:
         """Handle sync push action."""
-        dialog = SyncDialog(self, operation="push")
+        dialog = SyncDialog(self, operation="push", database=self._database)
         dialog.exec()
+
+    def _merge_sync_data(self, data: bytes) -> None:
+        """Merge received sync data into local database."""
+        try:
+            remote_db = Database.from_dict(json.loads(data.decode("utf-8")))
+            merged_count = 0
+
+            for list_id, remote_list in remote_db.lists.items():
+                if list_id in self._database.lists:
+                    # Merge items from remote list into local list
+                    local_list = self._database.lists[list_id]
+                    for item_id, remote_item in remote_list.items.items():
+                        if item_id in local_list.items:
+                            # Keep newer item
+                            local_item = local_list.items[item_id]
+                            if remote_item.updated_at > local_item.updated_at:
+                                local_list.items[item_id] = remote_item
+                                merged_count += 1
+                        else:
+                            # Add new item
+                            local_list.items[item_id] = remote_item
+                            merged_count += 1
+                else:
+                    # Add new list
+                    self._database.lists[list_id] = remote_list
+                    merged_count += 1
+
+            self._save_database()
+            self._refresh_ui()
+            logger.log.info("Merged %d items from sync", merged_count)
+            QMessageBox.information(
+                self, "Sync Complete", f"Merged {merged_count} items from remote."
+            )
+        except Exception as e:
+            logger.log.exception("Error merging sync data: %s", e)
+            QMessageBox.warning(self, "Merge Error", f"Failed to merge sync data: {e}")
 
     def _on_peer_manager(self) -> None:
         """Handle peer manager action."""
-        dialog = PeerManagerDialog(self)
+        dialog = PeerManagerDialog(self, database=self._database)
+        dialog.sync_data_received.connect(self._on_peer_sync_received)
         dialog.exec()
+
+    def _on_peer_sync_received(self, data: bytes) -> None:
+        """Handle sync data received from peer manager."""
+        self._save_database()
+        self._refresh_ui()
 
     def _on_settings(self) -> None:
         """Handle settings action."""
@@ -598,6 +704,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """Handle window close."""
+        # Stop server
+        self._stop_server()
+
         # Stop discovery service
         self._stop_discovery()
 

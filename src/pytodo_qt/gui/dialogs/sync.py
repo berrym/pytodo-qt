@@ -5,6 +5,7 @@ Dialog for synchronization operations.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from PyQt6.QtWidgets import (
@@ -19,9 +20,12 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QVBoxLayout,
 )
+from qasync import asyncSlot
 
 from ...core.config import get_config
 from ...core.logger import Logger
+from ...core.models import Database
+from ...net.client import AsyncClient
 
 if TYPE_CHECKING:
     pass
@@ -33,15 +37,19 @@ logger = Logger(__name__)
 class SyncDialog(QDialog):
     """Dialog for synchronization operations."""
 
-    def __init__(self, parent=None, operation: str = "pull"):
+    def __init__(self, parent=None, operation: str = "pull", database: Database | None = None):
         """Initialize sync dialog.
 
         Args:
             parent: Parent widget
             operation: "pull" or "push"
+            database: Database instance for sync operations
         """
         super().__init__(parent)
         self._operation = operation
+        self._database = database
+        self._client = AsyncClient(self)
+        self._sync_result: bytes | None = None
 
         title = "Sync Pull" if operation == "pull" else "Sync Push"
         self.setWindowTitle(title)
@@ -103,7 +111,8 @@ class SyncDialog(QDialog):
         config = get_config()
         self.port_spin.setValue(config.server.port)
 
-    def _on_sync(self) -> None:
+    @asyncSlot()
+    async def _on_sync(self) -> None:
         """Handle sync button click."""
         host = self.host_edit.text().strip()
         if not host:
@@ -119,27 +128,62 @@ class SyncDialog(QDialog):
         self.status_label.setText(f"Connecting to {host}:{port}...")
         self.button_box.setEnabled(False)
 
-        # For now, just show a message - actual sync will be integrated later
-        # In production, this would use AsyncClient
-        self.progress_bar.setRange(0, 1)
-        self.progress_bar.setValue(1)
+        try:
+            if self._operation == "pull":
+                await self._do_pull(host, port)
+            else:
+                await self._do_push(host, port)
+        except Exception as e:
+            logger.log.exception("Sync failed: %s", e)
+            self.status_label.setText(f"Error: {e}")
+            QMessageBox.critical(self, "Sync Error", f"Sync failed: {e}")
+        finally:
+            self.progress_bar.setRange(0, 1)
+            self.progress_bar.setValue(1)
+            self.button_box.setEnabled(True)
 
-        if self._operation == "pull":
-            self.status_label.setText(f"Pull from {host}:{port} would happen here")
+    async def _do_pull(self, host: str, port: int) -> None:
+        """Perform sync pull operation."""
+        self.status_label.setText(f"Pulling from {host}:{port}...")
+
+        success, data = await self._client.sync_pull(host, port)
+        if success:
+            self._sync_result = data
+            self.status_label.setText(f"Pulled {len(data)} bytes")
+            QMessageBox.information(
+                self,
+                "Sync Complete",
+                f"Successfully pulled {len(data)} bytes from {host}:{port}",
+            )
+            logger.log.info("Sync pull successful: %d bytes from %s:%d", len(data), host, port)
+            self.accept()
         else:
-            self.status_label.setText(f"Push to {host}:{port} would happen here")
+            self.status_label.setText("Pull failed")
+            QMessageBox.warning(self, "Sync Failed", f"Could not pull from {host}:{port}")
 
-        self.button_box.setEnabled(True)
+    async def _do_push(self, host: str, port: int) -> None:
+        """Perform sync push operation."""
+        if self._database is None:
+            QMessageBox.warning(self, "Error", "No database available for push")
+            return
 
-        QMessageBox.information(
-            self,
-            "Sync",
-            f"Sync {self._operation} to {host}:{port}\n\n"
-            "Note: Full async sync integration pending.",
-        )
+        self.status_label.setText(f"Pushing to {host}:{port}...")
 
-        logger.log.info("Sync %s to %s:%d initiated", self._operation, host, port)
-        self.accept()
+        data = json.dumps(self._database.to_dict()).encode("utf-8")
+        success = await self._client.sync_push(host, port, data)
+
+        if success:
+            self.status_label.setText(f"Pushed {len(data)} bytes")
+            QMessageBox.information(
+                self,
+                "Sync Complete",
+                f"Successfully pushed {len(data)} bytes to {host}:{port}",
+            )
+            logger.log.info("Sync push successful: %d bytes to %s:%d", len(data), host, port)
+            self.accept()
+        else:
+            self.status_label.setText("Push failed")
+            QMessageBox.warning(self, "Sync Failed", f"Could not push to {host}:{port}")
 
     def get_host(self) -> str:
         """Get the entered host."""
@@ -148,3 +192,7 @@ class SyncDialog(QDialog):
     def get_port(self) -> int:
         """Get the entered port."""
         return self.port_spin.value()
+
+    def get_sync_result(self) -> bytes | None:
+        """Get the pulled sync data (for pull operations)."""
+        return self._sync_result
