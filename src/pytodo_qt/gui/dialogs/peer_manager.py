@@ -276,13 +276,22 @@ class PeerManagerDialog(QDialog):
 
             # Report results
             if pull_success and push_success:
-                QMessageBox.information(
-                    self,
-                    "Sync Successful",
-                    f"Synced with {peer.name}\n"
-                    f"Pulled and merged {merged_count} items.\n"
-                    f"Pushed {len(push_data)} bytes.",
-                )
+                if merged_count > 0:
+                    QMessageBox.information(
+                        self,
+                        "Sync Complete",
+                        f"Synced with {peer.name}\n"
+                        f"Merged {merged_count} new items.\n"
+                        f"Pushed {len(push_data)} bytes.",
+                    )
+                else:
+                    QMessageBox.information(
+                        self,
+                        "Already In Sync",
+                        f"Synced with {peer.name}\n"
+                        f"No new items to merge - already in sync.\n"
+                        f"Pushed {len(push_data)} bytes.",
+                    )
             elif pull_success:
                 QMessageBox.warning(
                     self,

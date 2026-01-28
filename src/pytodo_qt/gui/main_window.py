@@ -351,13 +351,40 @@ class MainWindow(QMainWindow):
         return json.dumps(self._database.to_dict()).encode("utf-8")
 
     def _on_sync_received(self, data: bytes) -> None:
-        """Handle received sync data."""
+        """Handle received sync data from incoming push."""
         try:
-            received_db = Database.from_dict(json.loads(data.decode("utf-8")))
-            # TODO: Merge databases properly
-            logger.log.info("Received sync data with %d lists", len(received_db.lists))
+            merged_count = self._merge_sync_data_internal(data)
+            if merged_count > 0:
+                self._save_database()
+                self._refresh_ui()
+                logger.log.info("Received and merged %d items from remote push", merged_count)
+            else:
+                logger.log.info("Received sync data, no new items to merge")
         except Exception as e:
             logger.log.exception("Error processing sync data: %s", e)
+
+    def _merge_sync_data_internal(self, data: bytes) -> int:
+        """Internal merge logic, returns count of merged items."""
+        remote_db = Database.from_dict(json.loads(data.decode("utf-8")))
+        merged_count = 0
+
+        for list_id, remote_list in remote_db.lists.items():
+            if list_id in self._database.lists:
+                local_list = self._database.lists[list_id]
+                for item_id, remote_item in remote_list.items.items():
+                    if item_id in local_list.items:
+                        local_item = local_list.items[item_id]
+                        if remote_item.updated_at > local_item.updated_at:
+                            local_list.items[item_id] = remote_item
+                            merged_count += 1
+                    else:
+                        local_list.items[item_id] = remote_item
+                        merged_count += 1
+            else:
+                self._database.lists[list_id] = remote_list
+                merged_count += len(remote_list.items)
+
+        return merged_count
 
     def _load_database(self) -> None:
         """Load the database from file."""
@@ -664,12 +691,23 @@ class MainWindow(QMainWindow):
             client = AsyncClient()
             success, data = await client.sync_pull(host, port)
             if success:
-                self._merge_sync_data(data)
-                QMessageBox.information(
-                    self, "Sync Complete", f"Pulled and merged data from {host}:{port}"
-                )
+                merged_count = self._merge_sync_data_internal(data)
+                self._save_database()
+                self._refresh_ui()
+                if merged_count > 0:
+                    QMessageBox.information(
+                        self,
+                        "Pull Complete",
+                        f"Pulled and merged {merged_count} items from {host}:{port}",
+                    )
+                else:
+                    QMessageBox.information(
+                        self,
+                        "Already In Sync",
+                        f"No new items from {host}:{port} - already in sync.",
+                    )
             else:
-                QMessageBox.warning(self, "Sync Failed", f"Could not pull from {host}:{port}")
+                QMessageBox.warning(self, "Pull Failed", f"Could not pull from {host}:{port}")
 
         asyncio.ensure_future(do_pull())
 
@@ -682,9 +720,13 @@ class MainWindow(QMainWindow):
             data = json.dumps(self._database.to_dict()).encode("utf-8")
             success = await client.sync_push(host, port, data)
             if success:
-                QMessageBox.information(self, "Sync Complete", f"Pushed data to {host}:{port}")
+                QMessageBox.information(
+                    self,
+                    "Push Complete",
+                    f"Pushed {len(data)} bytes to {host}:{port}\nRemote will merge any new items.",
+                )
             else:
-                QMessageBox.warning(self, "Sync Failed", f"Could not push to {host}:{port}")
+                QMessageBox.warning(self, "Push Failed", f"Could not push to {host}:{port}")
 
         asyncio.ensure_future(do_push())
 
@@ -704,35 +746,18 @@ class MainWindow(QMainWindow):
     def _merge_sync_data(self, data: bytes) -> None:
         """Merge received sync data into local database."""
         try:
-            remote_db = Database.from_dict(json.loads(data.decode("utf-8")))
-            merged_count = 0
-
-            for list_id, remote_list in remote_db.lists.items():
-                if list_id in self._database.lists:
-                    # Merge items from remote list into local list
-                    local_list = self._database.lists[list_id]
-                    for item_id, remote_item in remote_list.items.items():
-                        if item_id in local_list.items:
-                            # Keep newer item
-                            local_item = local_list.items[item_id]
-                            if remote_item.updated_at > local_item.updated_at:
-                                local_list.items[item_id] = remote_item
-                                merged_count += 1
-                        else:
-                            # Add new item
-                            local_list.items[item_id] = remote_item
-                            merged_count += 1
-                else:
-                    # Add new list
-                    self._database.lists[list_id] = remote_list
-                    merged_count += 1
-
+            merged_count = self._merge_sync_data_internal(data)
             self._save_database()
             self._refresh_ui()
             logger.log.info("Merged %d items from sync", merged_count)
-            QMessageBox.information(
-                self, "Sync Complete", f"Merged {merged_count} items from remote."
-            )
+            if merged_count > 0:
+                QMessageBox.information(
+                    self, "Sync Complete", f"Merged {merged_count} items from remote."
+                )
+            else:
+                QMessageBox.information(
+                    self, "Already In Sync", "No new items to merge - databases are in sync."
+                )
         except Exception as e:
             logger.log.exception("Error merging sync data: %s", e)
             QMessageBox.warning(self, "Merge Error", f"Failed to merge sync data: {e}")
