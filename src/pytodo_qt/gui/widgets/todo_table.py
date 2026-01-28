@@ -46,8 +46,8 @@ class TodoTableWidget(QTableWidget):
         self._setup_table()
 
         # Fonts
-        self._normal_font = QFont("Helvetica", 10)
-        self._completed_font = QFont("Helvetica", 10)
+        self._normal_font = QFont("Helvetica", 12)
+        self._completed_font = QFont("Helvetica", 12)
         self._completed_font.setBold(True)
         self._completed_font.setStrikeOut(True)
 
@@ -62,6 +62,11 @@ class TodoTableWidget(QTableWidget):
         if header:
             header.setStretchLastSection(True)
             header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+
+        # Set row height so text is readable
+        v_header = self.verticalHeader()
+        if v_header:
+            v_header.setDefaultSectionSize(36)
 
         # Selection behavior
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -98,10 +103,12 @@ class TodoTableWidget(QTableWidget):
 
         for row, item in enumerate(items):
             self.insertRow(row)
+            self.setRowHeight(row, 36)
             self._item_id_map[row] = item.id
 
             # Priority combo box
             priority_combo = QComboBox()
+            priority_combo.setMinimumHeight(32)
             priority_combo.addItems(["Low", "Normal", "High"])
             priority_combo.setCurrentIndex(
                 2 - item.priority + 1
@@ -122,6 +129,7 @@ class TodoTableWidget(QTableWidget):
 
             # Reminder text field
             reminder_edit = QLineEdit(item.reminder)
+            reminder_edit.setMinimumHeight(32)
             reminder_edit.returnPressed.connect(lambda r=row: self._on_reminder_changed(r))
 
             # Style based on completion status
@@ -135,6 +143,9 @@ class TodoTableWidget(QTableWidget):
                 reminder_edit.setFont(self._normal_font)
 
             self.setCellWidget(row, 1, reminder_edit)
+
+        # Resize rows to fit widget contents
+        self.resizeRowsToContents()
 
         logger.log.info("Refreshed table with %d items", len(items))
 
