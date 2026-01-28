@@ -27,6 +27,8 @@ from ..core import settings
 from ..core.config import get_config, get_config_manager
 from ..core.logger import Logger
 from ..core.models import Database, TodoList, create_todo_list
+from ..crypto.keyring_storage import get_or_create_identity
+from ..net.discovery import get_discovery_service
 from .dialogs import AddTodoDialog, PeerManagerDialog, SettingsDialog, SyncDialog
 from .styles import apply_current_theme
 from .widgets import ListSelectorWidget, StatusBarWidget, TodoTableWidget
@@ -63,6 +65,9 @@ class MainWindow(QMainWindow):
 
         # Load data
         self._load_database()
+
+        # Start discovery service
+        self._start_discovery()
 
         # Show window
         self.show()
@@ -245,6 +250,35 @@ class MainWindow(QMainWindow):
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
+
+    def _start_discovery(self) -> None:
+        """Start the mDNS discovery service for peer discovery."""
+        config = get_config()
+
+        if not config.server.enabled or not config.discovery.enabled:
+            logger.log.info("Discovery disabled (server.enabled=%s, discovery.enabled=%s)",
+                          config.server.enabled, config.discovery.enabled)
+            return
+
+        try:
+            identity = get_or_create_identity()
+            discovery = get_discovery_service()
+            discovery.start(
+                port=config.server.port,
+                fingerprint=identity.fingerprint,
+                protocol_version=config.security.protocol_version,
+            )
+            logger.log.info("Discovery service started")
+        except Exception as e:
+            logger.log.exception("Failed to start discovery service: %s", e)
+
+    def _stop_discovery(self) -> None:
+        """Stop the mDNS discovery service."""
+        try:
+            discovery = get_discovery_service()
+            discovery.stop()
+        except Exception as e:
+            logger.log.warning("Error stopping discovery: %s", e)
 
     def _load_database(self) -> None:
         """Load the database from file."""
@@ -561,6 +595,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """Handle window close."""
+        # Stop discovery service
+        self._stop_discovery()
+
         # Save database
         self._save_database()
 

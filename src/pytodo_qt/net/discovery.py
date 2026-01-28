@@ -109,7 +109,7 @@ class DiscoveryService:
                 addresses=addresses,
             )
 
-            zc.register_service(self._service_info)
+            zc.register_service(self._service_info, allow_name_change=True)
             logger.log.info("Registered mDNS service: %s", service_name)
 
             # Start browsing for peers
