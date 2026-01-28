@@ -1,67 +1,136 @@
 # pytodo-qt
 
-A simple to-do list program.
+[![CI](https://github.com/berrym/pytodo-qt/actions/workflows/ci.yml/badge.svg)](https://github.com/berrym/pytodo-qt/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-## Description
+A cross-platform to-do list manager with encrypted peer-to-peer synchronization.
 
-A small cross-platform application to manage multiple to-do lists written in Python 3 and PyQt6
+## Features
 
-## Getting started
+- **Multiple lists** - Organize tasks into separate lists
+- **Priority levels** - High, normal, and low priority with color coding
+- **Encrypted sync** - AES-256-GCM encryption with Ed25519 key exchange
+- **Auto-discovery** - Find other instances on your network via mDNS/Zeroconf
+- **Dark/light themes** - System-following or manual theme selection
+- **Cross-platform** - Linux, macOS, and Windows support
 
-- Install a recent version of Python, needs **at least** version *3.8*
-- For a package install you will need `pip` or `pipx`
-- For a manual install you will need `git` and the python modules `setuptools`, `wheel`, `build` and `PyQt6`
-  You can install these via your package manager or via `pip`
+## Requirements
+
+- Python 3.11 or later
+- PyQt6
 
 ## Installation
 
-- Install a package. **Recommended**.
+### From PyPI
 
-It can be installed from PyPi via pip or preferably pipx, all three of these methods should work
+```bash
+pipx install pytodo-qt    # recommended
+pip install pytodo-qt     # alternative
+```
 
-    $ pipx install pytodo-qt       # for a local virtualenv install
-    $ pip install pytodo-qt        # for a systemwide install
-    $ pip install --user pytodo-qt # for a user local install
+### From source
 
-- Manual install
+```bash
+git clone https://github.com/berrym/pytodo-qt.git
+cd pytodo-qt
+pip install .
+```
 
-It can be installed by cloning the git repository and building the package:
+### Development install
 
-    $ git clone https://github.com/berrym/pytodo-qt.git
-    $ cd pytodo-qt
-    $ python3 -m venv /path/to/pytodo-qt/venv
-    $ sh /path/to/pytodo-qt/venv/bin/activate  # for linux/unix, activate the appropriate script for your os
-    $ python3 -m build
-    $ /path/to/pytodo-qt/venv/bin/pip install .
+```bash
+pip install -e ".[dev]"
+```
 
-### Executing program
+## Usage
 
-If you installed a package then a script named `pytodo-qt` was installed
+```bash
+pytodo-qt
+```
 
-    $ pytodo-qt  # launches the application
+### Command-line options
 
-If you followed the manual local build instructions
+```
+Server Options:
+  -s, --server {yes,no}    enable/disable network server
+  --pull {yes,no}          allow remote pull requests
+  --push {yes,no}          allow remote push requests
+  -i, --ip IP              server bind address
+  -p, --port PORT          server port
 
-    $ /path/to/pytodo-qt/venv/bin/pytodo-qt  # launches the application
+Discovery Options:
+  -d, --discovery {yes,no} enable/disable mDNS discovery
 
-## Help
+Appearance Options:
+  -t, --theme {light,dark,system}
+```
 
-    $ pytodo-qt --help
+## Configuration
 
-## Copyright
+Configuration is stored in XDG-compliant locations:
 
-Copyright 2024 Michael Berry <trismegustis@gmail.com>
+| Platform | Config | Data |
+|----------|--------|------|
+| Linux | `~/.config/pytodo-qt/` | `~/.local/share/pytodo-qt/` |
+| macOS | `~/Library/Application Support/pytodo-qt/` | same |
+| Windows | `%APPDATA%\pytodo-qt\` | same |
 
-## Latest release
+### config.toml
 
-- v0.2.8
+```toml
+[database]
+active_list = ""
+sort_key = "priority"
+reverse_sort = false
+
+[server]
+enabled = true
+address = "0.0.0.0"
+port = 5364
+allow_pull = true
+allow_push = true
+
+[discovery]
+enabled = true
+service_name = ""  # defaults to pytodo-{hostname}
+
+[appearance]
+theme = "system"  # light, dark, system
+```
+
+## Synchronization
+
+pytodo-qt uses a secure peer-to-peer protocol for syncing between instances:
+
+1. **Discovery** - Instances advertise themselves via mDNS (`_pytodo._tcp.local.`)
+2. **Key exchange** - Ed25519 identity keys with X25519 ephemeral session keys
+3. **Encryption** - All data encrypted with AES-256-GCM
+4. **Merge** - Last-write-wins conflict resolution with UUID-based items
+
+Identity keys are stored in your system keyring (GNOME Keyring, macOS Keychain, Windows Credential Locker).
+
+## Development
+
+```bash
+# Install dev dependencies
+pip install -e ".[dev]"
+
+# Run tests
+pytest
+
+# Lint and format
+ruff check src/ tests/
+ruff format src/ tests/
+
+# Type check
+basedpyright src/
+```
 
 ## License
 
-This project is licensed under the GNU General Public License version 3, or at your option any later version.
-See the COPYING file included in the git repository.
+GPLv3 or later. See [COPYING](COPYING) for details.
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![build result](https://build.opensuse.org/projects/home:berrym/packages/pytodo-qt/badge.svg?type=default)](https://build.opensuse.org/package/show/home:berrym/pytodo-qt)
-[![Copr build status](https://copr.fedorainfracloud.org/coprs/mberry/pytodo-qt/package/pytodo-qt/status_image/last_build.png)](https://copr.fedorainfracloud.org/coprs/mberry/pytodo-qt/package/pytodo-qt/)
+Copyright 2024 Michael Berry <trismegustis@gmail.com>

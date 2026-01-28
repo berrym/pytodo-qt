@@ -2,7 +2,7 @@
 
 pytodo-qt
 
-A to-do list program written in Python using PyQt6
+A modern to-do list application with secure synchronization.
 
 Copyright (C) 2024 Michael Berry <trismegustis@gmail.com>
 
@@ -21,86 +21,140 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import argparse
-import os
 import sys
 
 from PyQt6.QtWidgets import QApplication
 
-from .core.Logger import Logger
 from .core import settings
-from .core.TodoDatabase import TodoDatabase
-from .gui.MainWindow import MainWindow
-
+from .core.logger import Logger
 
 logger = Logger(__name__)
 
 
-# Main function
 def main():
-    # move to main module dir
-    os.chdir(os.path.dirname(__file__))
+    """Application entry point."""
+    # Initialize configuration system
+    config = settings.init_config()
 
-    # create a command line arg_parser
+    # Create command line argument parser
     arg_parser = argparse.ArgumentParser(
         prog="pytodo-qt",
-        description="To-Do List Application written in Python 3 and PyQt6",
-        epilog="Copyright Michael Berry 2024",
+        description="Modern To-Do List Application with Secure Sync",
+        epilog="Copyright (C) 2024 Michael Berry",
     )
 
-    # add network server command group
-    server_group = arg_parser.add_argument_group("Server Commands")
+    # Server options
+    server_group = arg_parser.add_argument_group("Server Options")
 
-    # add options
     server_group.add_argument(
         "-s",
-        "--run-server",
+        "--server",
         action="store",
         type=str,
         choices=["yes", "no"],
-        help="run a simple to-do list network server",
+        help="enable/disable network server",
     )
 
     server_group.add_argument(
-        "-a",
-        "--allow-pull",
+        "--pull",
         action="store",
         type=str,
         choices=["yes", "no"],
-        help="allow remote users to copy your lists",
+        help="allow remote pull requests",
     )
 
     server_group.add_argument(
-        "-A",
-        "--allow-push",
+        "--push",
         action="store",
         type=str,
         choices=["yes", "no"],
-        help="allow remote users to send you their lists",
+        help="allow remote push requests",
     )
 
     server_group.add_argument(
-        "-i", "--ip", type=str, help="set the database server's IP address."
+        "-i",
+        "--ip",
+        type=str,
+        help="server bind address",
     )
 
     server_group.add_argument(
         "-p",
         "--port",
         type=int,
-        help="specify which port the database server will bind to",
+        help="server port",
     )
 
+    # Discovery options
+    discovery_group = arg_parser.add_argument_group("Discovery Options")
+
+    discovery_group.add_argument(
+        "-d",
+        "--discovery",
+        action="store",
+        type=str,
+        choices=["yes", "no"],
+        help="enable/disable mDNS discovery",
+    )
+
+    # Appearance options
+    appearance_group = arg_parser.add_argument_group("Appearance Options")
+
+    appearance_group.add_argument(
+        "-t",
+        "--theme",
+        type=str,
+        choices=["light", "dark", "system"],
+        help="UI theme",
+    )
+
+    # General options
     arg_parser.add_argument(
-        "-V", "--version", action="version", version=f"%(prog)s v{settings.__version__}"
+        "-V",
+        "--version",
+        action="version",
+        version=f"%(prog)s v{settings.__version__}",
     )
 
-    # parse args then convert to dict format
+    # Parse arguments
     args = arg_parser.parse_args()
-    for k, v in vars(args).items():
-        if v is not None:
-            settings.options[k] = v
 
-    # create a QApplication, the main window, DB, then hand over control to Qt
+    # Apply command-line overrides to config
+    if args.server is not None:
+        config.server.enabled = args.server == "yes"
+    if args.pull is not None:
+        config.server.allow_pull = args.pull == "yes"
+    if args.push is not None:
+        config.server.allow_push = args.push == "yes"
+    if args.ip is not None:
+        config.server.address = args.ip
+    if args.port is not None:
+        config.server.port = args.port
+    if args.discovery is not None:
+        config.discovery.enabled = args.discovery == "yes"
+    if args.theme is not None:
+        config.appearance.theme = args.theme
+
+    # Create Qt application
     app = QApplication(sys.argv)
-    settings.DB = TodoDatabase()
-    _ = MainWindow()
+    app.setApplicationName("pytodo-qt")
+    app.setApplicationVersion(settings.__version__)
+    app.setOrganizationName("pytodo-qt")
+
+    # Apply theme
+    from .gui.styles import apply_current_theme
+
+    apply_current_theme()
+
+    # Create main window
+    logger.log.info("Starting pytodo-qt v%s", settings.__version__)
+    from .gui.main_window import MainWindow
+
+    _window = MainWindow()  # noqa: F841 - window must stay alive for event loop
+
+    # Run application
     sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()

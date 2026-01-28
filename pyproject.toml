@@ -6,28 +6,81 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-pytodo_qt = ["*.png"]
+pytodo_qt = ["*.png", "*.qss"]
 "pytodo_qt.gui.icons" = ["*.png"]
+"pytodo_qt.gui.styles" = ["*.qss"]
+
+[tool.basedpyright]
+typeCheckingMode = "standard"
+pythonVersion = "3.11"
+reportMissingImports = "warning"
+reportMissingTypeStubs = false
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "SIM",    # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "SIM108", # allow if-else instead of ternary
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pytodo_qt"]
 
 [project]
 name = "pytodo-qt"
-version = "0.2.8"
-description = "A small cross-platform to-do application written in Python 3 and PyQt6"
+version = "0.3.0"
+description = "A cross-platform to-do list manager with encrypted peer-to-peer synchronization"
 readme = "README.md"
 authors = [
     {name = "Michael Berry", email = "trismegustis@gmail.com"},
 ]
 dependencies = [
-    "PyQt6",
-    "pycryptodomex",
+    "PyQt6>=6.4",
+    "cryptography>=41.0",
+    "zeroconf>=0.80",
+    "keyring>=24.0",
+    "qasync>=0.24",
+    "rich>=13.0",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Operating System :: OS Independent",
 ]
 license = {text = "GPLv3"}
-requires-python = ">=3.8"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-qt>=4.2",
+    "pytest-asyncio>=0.21",
+    "ruff>=0.4",
+    "basedpyright>=1.18",
+]
 
 [project.urls]
 Homepage = "https://github.com/berrym/pytodo-qt"

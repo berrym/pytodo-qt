@@ -1,35 +1,80 @@
-"""__init__.py
+"""pytodo-qt.core: Core functionality and data models.
 
-pytodo-qt.core: A decorator to make security checks on the to-do database.
+Provides:
+- Configuration management (TOML-based)
+- XDG-compliant path management
+- Data models with UUID and sync support
+- Synchronization engine with LWW merge
 """
 
-import sys
+from .config import (
+    AppConfig,
+    AppearanceConfig,
+    ConfigManager,
+    DatabaseConfig,
+    DiscoveryConfig,
+    SecurityConfig,
+    ServerConfig,
+    get_config,
+    get_config_manager,
+)
+from .models import (
+    Database,
+    TodoItem,
+    TodoList,
+    create_todo_item,
+    create_todo_list,
+)
+from .paths import (
+    get_config_dir,
+    get_config_file,
+    get_data_dir,
+    get_database_file,
+    get_log_file,
+    get_state_dir,
+    get_xdg_config_home,
+    get_xdg_data_home,
+    get_xdg_state_home,
+)
+from .sync_engine import (
+    ConflictInfo,
+    MergeResult,
+    SyncEngine,
+    get_sync_engine,
+    merge_databases,
+)
 
-from PyQt6.QtWidgets import QMessageBox
-
-from ..core import settings
-from ..core.Logger import Logger
-
-
-def error_on_none_db(func):
-    """Check if settings.db is valid and run func or error out if it is None."""
-
-    logger = Logger(func.__name__)
-
-    def wrapper(*args, **kwargs):
-        """Wrap around func and check settings.db"""
-
-        if settings.DB is not None:
-            try:
-                result = func(*args, **kwargs)
-                return result
-            except OSError as e:
-                logger.log.exception(f"To-Do error: {e}")
-                return
-        else:
-            msg = "Database does not exist, exiting"
-            QMessageBox.critical(None, "Database Error", msg)
-            logger.log.exception(msg)
-            sys.exit(1)
-
-    return wrapper
+__all__ = [
+    # Config
+    "AppConfig",
+    "ConfigManager",
+    "DatabaseConfig",
+    "ServerConfig",
+    "SecurityConfig",
+    "DiscoveryConfig",
+    "AppearanceConfig",
+    "get_config",
+    "get_config_manager",
+    # Paths
+    "get_config_dir",
+    "get_config_file",
+    "get_data_dir",
+    "get_database_file",
+    "get_log_file",
+    "get_state_dir",
+    "get_xdg_config_home",
+    "get_xdg_data_home",
+    "get_xdg_state_home",
+    # Models
+    "Database",
+    "TodoItem",
+    "TodoList",
+    "create_todo_item",
+    "create_todo_list",
+    # Sync
+    "ConflictInfo",
+    "MergeResult",
+    "SyncEngine",
+    "get_sync_engine",
+    "merge_databases",
+]

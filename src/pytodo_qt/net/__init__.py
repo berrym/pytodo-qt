@@ -1,20 +1,47 @@
-""""__init__.py
+"""Network module for pytodo-qt.
 
-A small TCP socket reader with a simple progress bar.
+Provides:
+- Async TCP server and client with authenticated encryption
+- Protocol v2.0 with Ed25519/X25519 handshake
+- Zeroconf/mDNS service discovery
 """
 
-from PyQt6 import QtWidgets, QtCore
+from .client import AsyncClient, create_client
+from .discovery import (
+    SERVICE_TYPE,
+    DiscoveredPeer,
+    DiscoveryService,
+    get_discovery_service,
+    start_discovery,
+    stop_discovery,
+)
+from .protocol import (
+    PROTOCOL_VERSION,
+    ErrorCode,
+    Message,
+    MessageHeader,
+    MessageType,
+)
+from .server import AsyncServer, start_server
 
-
-def recv_all(sock, size):
-    """Read data from a socket until it's finished."""
-    pd = QtWidgets.QProgressDialog("Sync To-Do lists", "Abort sync", 0, size, None)
-    pd.setMinimumWidth(375)
-    pd.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
-    pd.setValue(0)
-    pd.forceShow()
-    data = bytearray()
-    while chunk := sock.recv(1):
-        data.extend(chunk)
-        pd.setValue(len(data))
-    return data
+__all__ = [
+    # Protocol
+    "PROTOCOL_VERSION",
+    "ErrorCode",
+    "Message",
+    "MessageHeader",
+    "MessageType",
+    # Discovery
+    "DiscoveredPeer",
+    "DiscoveryService",
+    "SERVICE_TYPE",
+    "get_discovery_service",
+    "start_discovery",
+    "stop_discovery",
+    # Server
+    "AsyncServer",
+    "start_server",
+    # Client
+    "AsyncClient",
+    "create_client",
+]

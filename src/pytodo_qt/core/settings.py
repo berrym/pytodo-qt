@@ -1,37 +1,41 @@
 """settings.py
 
-This module creates To-Do core global variables and functions.
+Application settings and version information.
 """
 
-import sys
-
-from pathlib import Path
-
-from ..core.Logger import Logger
-
+from . import paths
+from .config import AppConfig, get_config_manager
+from .logger import Logger
 
 logger = Logger(__name__)
 
 
-__version__ = "0.2.8"
-options = {}
-DB = None
+__version__ = "0.3.0"
 
-home_dir = Path.home()
-if home_dir is not None:
-    app_dir = Path.joinpath(home_dir, ".pytodo-qt")
-else:
-    logger.log.exception("Unable to get home directory, exiting")
-    sys.exit(1)
-
-if not Path.exists(app_dir):
-    try:
-        Path.mkdir(app_dir)
-    except OSError as e:
-        logger.log.exception("Error creating pytodo-qt configuration directory: %s", e)
-        sys.exit(1)
+# Config manager singleton
+_config_mgr = None
 
 
-# private files
-ini_fn = Path.joinpath(app_dir, "pytodo-qt.ini")
-db_fn = Path.joinpath(app_dir, "pytodo-qt-db.json")
+def init_config() -> AppConfig:
+    """Initialize configuration system."""
+    global _config_mgr
+    _config_mgr = get_config_manager()
+    return _config_mgr.config
+
+
+def save_config() -> bool:
+    """Save current configuration."""
+    if _config_mgr is not None:
+        return _config_mgr.save()
+    return False
+
+
+# XDG-compliant directories
+config_dir = paths.get_config_dir()
+data_dir = paths.get_data_dir()
+state_dir = paths.get_state_dir()
+
+# XDG-compliant file paths
+config_fn = paths.get_config_file()
+db_fn = paths.get_database_file()
+log_fn = paths.get_log_file()
