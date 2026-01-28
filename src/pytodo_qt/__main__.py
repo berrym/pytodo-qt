@@ -21,9 +21,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import argparse
+import asyncio
 import sys
 
 from PyQt6.QtWidgets import QApplication
+from qasync import QEventLoop
 
 from .core import settings
 from .core.logger import Logger
@@ -141,6 +143,10 @@ def main():
     app.setApplicationVersion(settings.__version__)
     app.setOrganizationName("pytodo-qt")
 
+    # Set up async event loop with qasync
+    loop = QEventLoop(app)
+    asyncio.set_event_loop(loop)
+
     # Apply theme
     from .gui.styles import apply_current_theme
 
@@ -152,8 +158,9 @@ def main():
 
     _window = MainWindow()  # noqa: F841 - window must stay alive for event loop
 
-    # Run application
-    sys.exit(app.exec())
+    # Run application with async event loop
+    with loop:
+        sys.exit(loop.run_forever())
 
 
 if __name__ == "__main__":

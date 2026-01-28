@@ -5,6 +5,7 @@ Dialog for managing discovered peers and connections.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QTimer
@@ -24,8 +25,10 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem,
     QVBoxLayout,
 )
+from qasync import asyncSlot
 
 from ...core.logger import Logger
+from ...net.client import AsyncClient
 from ...net.discovery import DiscoveredPeer, get_discovery_service
 
 if TYPE_CHECKING:
@@ -45,6 +48,7 @@ class PeerManagerDialog(QDialog):
         self.setMinimumHeight(400)
 
         self._discovery = get_discovery_service()
+        self._client = AsyncClient(self)
         self._setup_ui()
         self._refresh_peers()
 
@@ -189,31 +193,71 @@ class PeerManagerDialog(QDialog):
         self.connect_btn.setEnabled(enabled)
         self.sync_btn.setEnabled(enabled)
 
-    def _on_connect(self) -> None:
-        """Handle connect button click."""
+    @asyncSlot()
+    async def _on_connect(self) -> None:
+        """Handle connect button click - ping the peer."""
         peer = self._get_selected_peer()
         if peer is None:
             return
 
-        # Just ping for now
-        QMessageBox.information(
-            self,
-            "Connect",
-            f"Would connect to {peer.name} at {peer.address}:{peer.port}\n\n"
-            f"Fingerprint: {peer.fingerprint}",
-        )
+        self._set_busy(True, f"Pinging {peer.name}...")
 
-    def _on_sync(self) -> None:
-        """Handle sync button click."""
+        try:
+            success, latency = await self._client.ping(peer.address, peer.port)
+            if success:
+                QMessageBox.information(
+                    self,
+                    "Connection Successful",
+                    f"Connected to {peer.name}\n\n"
+                    f"Address: {peer.address}:{peer.port}\n"
+                    f"Latency: {latency:.1f}ms\n"
+                    f"Fingerprint: {peer.fingerprint}",
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Connection Failed",
+                    f"Could not connect to {peer.name} at {peer.address}:{peer.port}",
+                )
+        except Exception as e:
+            logger.log.exception("Ping failed: %s", e)
+            QMessageBox.critical(self, "Error", f"Connection failed: {e}")
+        finally:
+            self._set_busy(False)
+
+    @asyncSlot()
+    async def _on_sync(self) -> None:
+        """Handle sync button click - pull from peer."""
         peer = self._get_selected_peer()
         if peer is None:
             return
 
-        QMessageBox.information(
-            self, "Sync", f"Would sync with {peer.name} at {peer.address}:{peer.port}"
-        )
+        self._set_busy(True, f"Syncing with {peer.name}...")
 
-    def _on_manual_connect(self) -> None:
+        try:
+            success, data = await self._client.sync_pull(peer.address, peer.port)
+            if success:
+                # TODO: Actually merge the received data with local database
+                QMessageBox.information(
+                    self,
+                    "Sync Successful",
+                    f"Pulled {len(data)} bytes from {peer.name}\n\n"
+                    "Note: Data merge not yet implemented.",
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Sync Failed",
+                    f"Could not sync with {peer.name}",
+                )
+        except Exception as e:
+            logger.log.exception("Sync failed: %s", e)
+            QMessageBox.critical(self, "Error", f"Sync failed: {e}")
+        finally:
+            self._set_busy(False)
+
+    @asyncSlot()
+    async def _on_manual_connect(self) -> None:
         """Handle manual connect button click."""
         host = self.manual_host_edit.text().strip()
         port = self.manual_port_spin.value()
@@ -222,7 +266,34 @@ class PeerManagerDialog(QDialog):
             QMessageBox.warning(self, "Error", "Please enter a hostname or IP address.")
             return
 
-        QMessageBox.information(self, "Manual Connect", f"Would connect to {host}:{port}")
+        self._set_busy(True, f"Pinging {host}:{port}...")
+
+        try:
+            success, latency = await self._client.ping(host, port)
+            if success:
+                QMessageBox.information(
+                    self,
+                    "Connection Successful",
+                    f"Connected to {host}:{port}\n"
+                    f"Latency: {latency:.1f}ms",
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Connection Failed",
+                    f"Could not connect to {host}:{port}",
+                )
+        except Exception as e:
+            logger.log.exception("Manual connect failed: %s", e)
+            QMessageBox.critical(self, "Error", f"Connection failed: {e}")
+        finally:
+            self._set_busy(False)
+
+    def _set_busy(self, busy: bool, message: str = "") -> None:
+        """Set UI busy state."""
+        self.connect_btn.setEnabled(not busy)
+        self.sync_btn.setEnabled(not busy)
+        self.status_label.setText(message if busy else f"Found {len(self._discovery.get_peers())} peer(s)")
 
     def closeEvent(self, event) -> None:
         """Handle dialog close."""
