@@ -256,8 +256,11 @@ class MainWindow(QMainWindow):
         config = get_config()
 
         if not config.server.enabled or not config.discovery.enabled:
-            logger.log.info("Discovery disabled (server.enabled=%s, discovery.enabled=%s)",
-                          config.server.enabled, config.discovery.enabled)
+            logger.log.info(
+                "Discovery disabled (server.enabled=%s, discovery.enabled=%s)",
+                config.server.enabled,
+                config.discovery.enabled,
+            )
             return
 
         try:
