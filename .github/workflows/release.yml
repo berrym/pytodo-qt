@@ -122,36 +122,18 @@ jobs:
       - name: Ad-hoc sign application (macOS)
         if: runner.os == 'macOS'
         run: |
-          set +e  # Don't exit on individual command failures
           APP_PATH="dist/pytodo-qt.app"
 
-          # Find ALL Mach-O binaries and save to file
-          echo "Finding all Mach-O binaries..."
-          find "$APP_PATH" -type f -print0 | xargs -0 file | grep "Mach-O" | cut -d: -f1 > /tmp/binaries.txt
-          echo "Found $(wc -l < /tmp/binaries.txt) Mach-O binaries"
+          # Remove signatures from ALL files in the bundle
+          echo "Stripping all existing signatures..."
+          find "$APP_PATH" -type f -perm +111 -exec codesign --remove-signature {} \; 2>/dev/null || true
+          find "$APP_PATH" -name "*.dylib" -exec codesign --remove-signature {} \; 2>/dev/null || true
+          find "$APP_PATH" -name "*.so" -exec codesign --remove-signature {} \; 2>/dev/null || true
+          find "$APP_PATH" -name "Python" -exec codesign --remove-signature {} \; 2>/dev/null || true
 
-          # Remove signatures from ALL binaries first
-          echo "Removing existing signatures..."
-          while IFS= read -r binary; do
-            codesign --remove-signature "$binary" 2>/dev/null
-          done < /tmp/binaries.txt
-
-          # Sign ALL Mach-O files
-          echo "Signing all Mach-O binaries..."
-          while IFS= read -r binary; do
-            echo "Signing: $binary"
-            codesign --force --sign - "$binary"
-          done < /tmp/binaries.txt
-
-          set -e  # Re-enable exit on error
-
-          # Sign the main executable with runtime option
-          echo "Signing main executable..."
-          codesign --force --sign - --options runtime "$APP_PATH/Contents/MacOS/pytodo-qt"
-
-          # Sign the entire bundle
-          echo "Signing app bundle..."
-          codesign --force --sign - --options runtime "$APP_PATH"
+          # Sign the entire bundle with --deep to recursively sign everything
+          echo "Signing entire app bundle with --deep..."
+          codesign --force --deep --sign - --options runtime "$APP_PATH"
 
           # Verify the signature
           echo "Verifying signature..."
