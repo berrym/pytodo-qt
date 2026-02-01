@@ -119,6 +119,25 @@ jobs:
       - name: Build executable
         run: pyinstaller pytodo-qt.spec
 
+      - name: Ad-hoc sign application (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          # Remove existing signatures that may be invalid
+          codesign --remove-signature "dist/pytodo-qt.app" || true
+
+          # Find and remove signatures from all nested binaries
+          find "dist/pytodo-qt.app" -type f \( -name "*.so" -o -name "*.dylib" -o -perm +111 \) -exec codesign --remove-signature {} \; 2>/dev/null || true
+
+          # Ad-hoc sign all frameworks and libraries first (deep signing from inside out)
+          find "dist/pytodo-qt.app/Contents/Frameworks" -type f \( -name "*.so" -o -name "*.dylib" \) -exec codesign --force --sign - {} \; 2>/dev/null || true
+          find "dist/pytodo-qt.app/Contents/Resources" -type f \( -name "*.so" -o -name "*.dylib" \) -exec codesign --force --sign - {} \; 2>/dev/null || true
+
+          # Ad-hoc sign the main app bundle
+          codesign --force --deep --sign - "dist/pytodo-qt.app"
+
+          # Verify the signature
+          codesign --verify --verbose "dist/pytodo-qt.app"
+
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
