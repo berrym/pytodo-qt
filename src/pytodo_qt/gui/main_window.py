@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -259,18 +260,36 @@ class MainWindow(QMainWindow):
 
     def _setup_tray_icon(self) -> None:
         """Set up the system tray icon."""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            logger.log.warning("System tray is not available on this platform")
+            self.tray_icon = None
+            return
+
         self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.setIcon(self._get_icon("pytodo-qt.png"))
 
-        tray_menu = QMenu()
-        tray_menu.addAction("Show", self.show)
-        tray_menu.addAction("Hide", self.hide)
-        tray_menu.addSeparator()
-        tray_menu.addAction("Exit", self.close)
+        # On macOS, use a template-style icon for better menu bar integration
+        icon = self._get_icon("pytodo-qt.png")
+        if sys.platform == "darwin":
+            # Mark as template image for macOS menu bar (adapts to dark/light mode)
+            icon.setIsMask(True)
+        self.tray_icon.setIcon(icon)
 
-        self.tray_icon.setContextMenu(tray_menu)
+        self._tray_menu = QMenu()
+        self._tray_menu.addAction("Show", self.show)
+        self._tray_menu.addAction("Hide", self.hide)
+        self._tray_menu.addSeparator()
+        self._tray_menu.addAction("Exit", self.close)
+
+        # On macOS, don't auto-attach context menu (it shows on every click)
+        # Instead, we manually show it on right-click in _on_tray_activated
+        if sys.platform != "darwin":
+            self.tray_icon.setContextMenu(self._tray_menu)
+
         self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
+
+        if not self.tray_icon.isVisible():
+            logger.log.warning("System tray icon failed to show")
 
     def _start_discovery(self) -> None:
         """Start the mDNS discovery service for peer discovery."""
@@ -850,11 +869,21 @@ class MainWindow(QMainWindow):
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         """Handle tray icon activation."""
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            # Left-click: toggle window visibility
             if self.isVisible():
                 self.hide()
             else:
                 self.show()
                 self.activateWindow()
+        elif (
+            reason == QSystemTrayIcon.ActivationReason.Context
+            and sys.platform == "darwin"
+            and self.tray_icon is not None
+        ):
+            # Right-click: show context menu (macOS needs manual handling)
+            from PyQt6.QtGui import QCursor
+
+            self._tray_menu.popup(QCursor.pos())
 
     def closeEvent(self, event) -> None:
         """Handle window close."""
@@ -871,7 +900,8 @@ class MainWindow(QMainWindow):
         self._config_manager.save()
 
         # Hide tray icon
-        self.tray_icon.hide()
+        if self.tray_icon is not None:
+            self.tray_icon.hide()
 
         logger.log.info("Application closing")
         event.accept()
