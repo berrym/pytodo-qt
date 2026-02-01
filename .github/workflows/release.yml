@@ -119,19 +119,6 @@ jobs:
       - name: Build executable
         run: pyinstaller pytodo-qt.spec
 
-      - name: Strip signatures from application (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          APP_PATH="dist/pytodo-qt.app"
-
-          # Remove ALL signatures - app will run unsigned with quarantine removed
-          echo "Stripping all signatures from bundle..."
-          find "$APP_PATH" -type f -print0 | xargs -0 file 2>/dev/null | grep Mach-O | cut -d: -f1 | while read f; do
-            codesign --remove-signature "$f" 2>/dev/null || true
-          done
-
-          echo "Signatures stripped. App will run unsigned when quarantine is removed."
-
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
