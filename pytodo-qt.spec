@@ -58,7 +58,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=["runtime_hook_macos.py"],
     excludes=excludes,
     noarchive=False,
     optimize=0,
@@ -127,6 +127,7 @@ if sys.platform == "darwin":
             "NSMicrophoneUsageDescription": "Access needed for audio.",
             "LSEnvironment": {
                 "QT_MAC_WANTS_LAYER": "1",
+                "QT_APPLE_DISABLE_PROMPT_ANSWERER": "1",
             },
         },
     )
