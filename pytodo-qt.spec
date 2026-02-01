@@ -23,7 +23,6 @@ pytodo_qt_imports = collect_submodules("pytodo_qt")
 
 # Collect package data (icons only - styles are in Python code)
 datas = [
-    ("src/pytodo_qt/gui/icons/*.png", "pytodo_qt/gui/icons"),
     ("src/pytodo_qt/gui/icons/*.svg", "pytodo_qt/gui/icons"),
 ]
 
@@ -66,7 +65,7 @@ exe = EXE(
     runtime_tmpdir=None,
     console=False,  # Windowed mode, no terminal
     disable_windowed_traceback=False,
-    argv_emulation=False,
+    argv_emulation=sys.platform == "darwin",  # Required for Qt on macOS
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
@@ -94,6 +93,8 @@ if sys.platform == "darwin":
             "CFBundleDisplayName": "PyTodo-Qt",
             "CFBundleShortVersionString": "0.3.3",
             "CFBundleVersion": "0.3.3",
+            "CFBundlePackageType": "APPL",
+            "NSPrincipalClass": "NSApplication",
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "10.13",
         },
