@@ -35,6 +35,20 @@ hiddenimports = [
     "qasync",
 ] + pytodo_qt_imports
 
+# Exclude Qt modules we don't need (prevents problematic permission plugins on macOS)
+excludes = [
+    "PyQt6.QtPositioning",
+    "PyQt6.QtLocation",
+    "PyQt6.QtBluetooth",
+    "PyQt6.QtNfc",
+    "PyQt6.QtSensors",
+    "PyQt6.QtWebEngine",
+    "PyQt6.QtWebEngineCore",
+    "PyQt6.QtWebEngineWidgets",
+    "PyQt6.QtMultimedia",
+    "PyQt6.QtMultimediaWidgets",
+]
+
 a = Analysis(
     ["launcher.py"],
     pathex=["src"],
@@ -44,10 +58,18 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=excludes,
     noarchive=False,
     optimize=0,
 )
+
+# Filter out macOS permission plugins that crash when bundle info is unavailable
+if sys.platform == "darwin":
+    a.binaries = [
+        (name, path, type_)
+        for name, path, type_ in a.binaries
+        if "permissionplugin" not in name.lower()
+    ]
 
 pyz = PYZ(a.pure)
 
@@ -91,8 +113,9 @@ if sys.platform == "darwin":
         bundle_identifier="com.pytodo-qt.app",
         info_plist={
             "CFBundleDisplayName": "PyTodo-Qt",
-            "CFBundleShortVersionString": "0.3.4",
-            "CFBundleVersion": "0.3.4",
+            "CFBundleExecutable": "pytodo-qt",
+            "CFBundleShortVersionString": "0.3.5",
+            "CFBundleVersion": "0.3.5",
             "CFBundlePackageType": "APPL",
             "NSPrincipalClass": "NSApplication",
             "NSHighResolutionCapable": True,

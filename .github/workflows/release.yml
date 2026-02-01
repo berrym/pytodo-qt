@@ -8,7 +8,7 @@ on:
       version:
         description: 'Version number (e.g., 0.3.4)'
         required: true
-        default: '0.3.4'
+        default: '0.3.5'
 
 permissions:
   contents: write
