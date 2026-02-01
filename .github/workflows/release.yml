@@ -119,6 +119,12 @@ jobs:
       - name: Build executable
         run: pyinstaller pytodo-qt.spec
 
+      - name: Ad-hoc sign application (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --deep --sign - dist/pytodo-qt.app
+          codesign --verify --deep dist/pytodo-qt.app
+
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |

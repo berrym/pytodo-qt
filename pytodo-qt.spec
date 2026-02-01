@@ -89,7 +89,7 @@ exe = EXE(
     disable_windowed_traceback=False,
     argv_emulation=False,  # Disabled - can cause bundle context issues on macOS
     target_arch=None,
-    codesign_identity="-",  # Ad-hoc sign during PyInstaller build
+    codesign_identity=None,  # Don't sign during build, handled in workflow
     entitlements_file=None,
     icon=icon_file,
 )
