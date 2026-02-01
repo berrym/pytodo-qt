@@ -89,7 +89,7 @@ exe = EXE(
     disable_windowed_traceback=False,
     argv_emulation=False,  # Disabled - can cause bundle context issues on macOS
     target_arch=None,
-    codesign_identity="-" if sys.platform == "darwin" else None,  # Ad-hoc sign on macOS
+    codesign_identity=None,  # Signing handled separately in workflow
     entitlements_file=None,
     icon=icon_file,
 )
