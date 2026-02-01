@@ -103,7 +103,12 @@ class MainWindow(QMainWindow):
             pixmap = QPixmap(str(icon_path))
             icon = QIcon()
             # Set same pixmap for all modes to prevent Qt from modifying it
-            for mode in (QIcon.Mode.Normal, QIcon.Mode.Active, QIcon.Mode.Disabled, QIcon.Mode.Selected):
+            for mode in (
+                QIcon.Mode.Normal,
+                QIcon.Mode.Active,
+                QIcon.Mode.Disabled,
+                QIcon.Mode.Selected,
+            ):
                 icon.addPixmap(pixmap, mode)
             return icon
         return QIcon(str(icon_path))
