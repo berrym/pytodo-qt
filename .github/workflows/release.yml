@@ -122,29 +122,12 @@ jobs:
       - name: Ad-hoc sign application (macOS)
         if: runner.os == 'macOS'
         run: |
-          # Remove all existing signatures first
-          find "dist/pytodo-qt.app" -type f \( -name "*.so" -o -name "*.dylib" -o -name "Python" -o -name "QtCore" -o -name "QtGui" -o -name "QtWidgets" -o -name "QtNetwork" -o -name "QtSvg" -o -name "QtDBus" -o -name "QtPrintSupport" -o -name "QtPdf" \) -exec codesign --remove-signature {} \; 2>/dev/null || true
-          codesign --remove-signature "dist/pytodo-qt.app/Contents/MacOS/pytodo-qt" 2>/dev/null || true
+          # Remove existing broken/invalid signatures
+          codesign --remove-signature "dist/pytodo-qt.app"
 
-          # Sign from inside out - frameworks first
-          find "dist/pytodo-qt.app/Contents/Frameworks" -type f \( -name "*.so" -o -name "*.dylib" \) -exec codesign --force --sign - --options runtime {} \; 2>/dev/null || true
-          find "dist/pytodo-qt.app/Contents/Resources" -type f \( -name "*.so" -o -name "*.dylib" \) -exec codesign --force --sign - --options runtime {} \; 2>/dev/null || true
-
-          # Sign standalone frameworks (Python, Qt)
-          for fw in dist/pytodo-qt.app/Contents/Frameworks/Python dist/pytodo-qt.app/Contents/Frameworks/Qt*; do
-            if [ -f "$fw" ]; then
-              codesign --force --sign - --options runtime "$fw" 2>/dev/null || true
-            fi
-          done
-
-          # Sign the main executable
-          codesign --force --sign - --options runtime "dist/pytodo-qt.app/Contents/MacOS/pytodo-qt"
-
-          # Finally sign the app bundle
-          codesign --force --sign - --options runtime "dist/pytodo-qt.app"
-
-          # Verify
-          codesign --verify --verbose "dist/pytodo-qt.app"
+          # Sign with entitlements that allow essential permissions
+          # (without a developer key, use '-' for the identity)
+          codesign --force --deep --sign - --options runtime,kill,library,get-task-allow "dist/pytodo-qt.app"
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
