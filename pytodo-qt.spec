@@ -111,7 +111,7 @@ if sys.platform == "darwin":
         coll,
         name="pytodo-qt.app",
         icon=icon_file,
-        bundle_identifier="com.pytodo-qt.app",
+        bundle_identifier="com.berrym.pytodo-qt",
         info_plist={
             "CFBundleDisplayName": "PyTodo-Qt",
             "CFBundleExecutable": "pytodo-qt",
