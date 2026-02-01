@@ -82,8 +82,8 @@ class MainWindow(QMainWindow):
 
     def _setup_window(self) -> None:
         """Configure the main window."""
-        self.setWindowTitle("pytodo-qt")
-        self.setWindowIcon(self._get_icon("pytodo-qt.png"))
+        self.setWindowTitle("PyTodo-Qt")
+        self.setWindowIcon(self._get_icon("pytodo-qt.svg"))
         self.resize(900, 600)
         self._center_window()
 
@@ -289,8 +289,8 @@ class MainWindow(QMainWindow):
 
         self.tray_icon = QSystemTrayIcon(self)
 
-        # On macOS, use a template-style icon for better menu bar integration
-        icon = self._get_icon("pytodo-qt.png")
+        # Use simple monochrome tray icon (works as macOS template)
+        icon = self._get_icon("tray.svg")
         if sys.platform == "darwin":
             # Mark as template image for macOS menu bar (adapts to dark/light mode)
             icon.setIsMask(True)
