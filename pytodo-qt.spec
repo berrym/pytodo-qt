@@ -87,7 +87,7 @@ exe = EXE(
     runtime_tmpdir=None,
     console=False,  # Windowed mode, no terminal
     disable_windowed_traceback=False,
-    argv_emulation=sys.platform == "darwin",  # Required for Qt on macOS
+    argv_emulation=False,  # Disabled - can cause bundle context issues on macOS
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
@@ -120,5 +120,8 @@ if sys.platform == "darwin":
             "NSPrincipalClass": "NSApplication",
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "10.13",
+            "LSEnvironment": {
+                "QT_MAC_WANTS_LAYER": "1",
+            },
         },
     )
