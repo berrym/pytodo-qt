@@ -24,6 +24,36 @@ A cross-platform to-do list manager with encrypted peer-to-peer synchronization.
 
 ## Installation
 
+### Pre-built Binaries
+
+Download the latest release for your platform from the [Releases page](https://github.com/berrym/pytodo-qt/releases).
+
+#### macOS
+
+1. Download `pytodo-qt-VERSION-macos-arm64.zip` (Apple Silicon) or `pytodo-qt-VERSION-macos-x86_64.zip` (Intel)
+2. Extract the zip file
+3. Move `pytodo-qt.app` to `/Applications` or `~/Applications`
+4. **First run only:** Right-click the app and select "Open" to bypass Gatekeeper
+   - Alternatively, run: `xattr -rd com.apple.quarantine /Applications/pytodo-qt.app`
+5. After the first run, you can open normally by double-clicking
+
+> **Note:** The app is ad-hoc signed (not notarized with an Apple Developer ID), so macOS will show an "unidentified developer" warning on first launch. This is normal for open-source software distributed outside the App Store.
+
+#### Linux
+
+1. Download `pytodo-qt-VERSION-linux-x86_64.tar.gz` or `pytodo-qt-VERSION-linux-arm64.tar.gz`
+2. Extract: `tar -xzf pytodo-qt-VERSION-linux-*.tar.gz`
+3. Run the install script: `cd pytodo-qt-*/ && ./install.sh`
+4. Or run directly: `./pytodo-qt`
+
+The install script places the binary in `~/.local/bin/` and creates a desktop entry.
+
+#### Windows
+
+1. Download `pytodo-qt-VERSION-windows-x86_64.zip`
+2. Extract the zip file
+3. Run `pytodo-qt.exe`
+
 ### From PyPI
 
 ```bash
