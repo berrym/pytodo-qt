@@ -3,6 +3,12 @@ name: Build Release Executables
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., 0.3.2)'
+        required: true
+        default: '0.3.2'
 
 jobs:
   build:
@@ -113,7 +119,8 @@ jobs:
       - name: Package (Linux)
         if: runner.os == 'Linux'
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
           PACKAGE_NAME="pytodo-qt-${VERSION}-linux-${{ matrix.arch }}"
           mkdir -p "${PACKAGE_NAME}"
           # Copy the entire onedir output
@@ -128,7 +135,8 @@ jobs:
       - name: Package (macOS)
         if: runner.os == 'macOS'
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
           PACKAGE_NAME="pytodo-qt-${VERSION}-macos-${{ matrix.arch }}"
           # The .app bundle is in dist/
           cd dist
@@ -141,7 +149,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $version = if ("${{ github.event.inputs.version }}") { "${{ github.event.inputs.version }}" } else { $env:GITHUB_REF_NAME -replace '^v', '' }
           $packageName = "pytodo-qt-${version}-windows-${{ matrix.arch }}"
           # Rename the onedir output folder and zip it
           Rename-Item -Path "dist\pytodo-qt" -NewName $packageName
@@ -149,7 +157,14 @@ jobs:
           echo "ASSET_PATH=${packageName}.zip" >> $env:GITHUB_ENV
           echo "ASSET_NAME=${packageName}.zip" >> $env:GITHUB_ENV
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ASSET_NAME }}
+          path: ${{ env.ASSET_PATH }}
+
       - name: Upload release asset
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.ASSET_PATH }}
