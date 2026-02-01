@@ -32,17 +32,24 @@ LAUNCHER
 chmod 755 "${PREFIX}/bin/pytodo-qt"
 echo "  Installed launcher to ${PREFIX}/bin/pytodo-qt"
 
-# Install desktop file
-install -m 644 "${SCRIPT_DIR}/pytodo-qt.desktop" "${PREFIX}/share/applications/pytodo-qt.desktop"
-echo "  Installed desktop file to ${PREFIX}/share/applications/pytodo-qt.desktop"
-
-# Install icon
+# Install icon first
 install -m 644 "${SCRIPT_DIR}/pytodo-qt.png" "${PREFIX}/share/icons/hicolor/256x256/apps/pytodo-qt.png"
 echo "  Installed icon to ${PREFIX}/share/icons/hicolor/256x256/apps/pytodo-qt.png"
+
+# Install desktop file with absolute icon path for reliability
+sed "s|Icon=pytodo-qt|Icon=${PREFIX}/share/icons/hicolor/256x256/apps/pytodo-qt.png|" \
+    "${SCRIPT_DIR}/pytodo-qt.desktop" > "${PREFIX}/share/applications/pytodo-qt.desktop"
+chmod 644 "${PREFIX}/share/applications/pytodo-qt.desktop"
+echo "  Installed desktop file to ${PREFIX}/share/applications/pytodo-qt.desktop"
 
 # Update icon cache if available
 if command -v gtk-update-icon-cache &> /dev/null; then
     gtk-update-icon-cache -f -t "${PREFIX}/share/icons/hicolor" 2>/dev/null || true
+fi
+
+# Update desktop database if available
+if command -v update-desktop-database &> /dev/null; then
+    update-desktop-database "${PREFIX}/share/applications" 2>/dev/null || true
 fi
 
 echo ""
