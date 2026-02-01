@@ -24,6 +24,7 @@ pytodo_qt_imports = collect_submodules("pytodo_qt")
 # Collect package data (icons only - styles are in Python code)
 datas = [
     ("src/pytodo_qt/gui/icons/*.svg", "pytodo_qt/gui/icons"),
+    ("qt.conf", "."),  # Qt plugin path configuration
 ]
 
 # Hidden imports for PyQt6 plugins
@@ -120,6 +121,10 @@ if sys.platform == "darwin":
             "NSPrincipalClass": "NSApplication",
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "10.13",
+            # Privacy descriptions - required for Qt permission plugins
+            "NSLocationWhenInUseUsageDescription": "Required for Qt Location services.",
+            "NSCameraUsageDescription": "Access needed for photos.",
+            "NSMicrophoneUsageDescription": "Access needed for audio.",
             "LSEnvironment": {
                 "QT_MAC_WANTS_LAYER": "1",
             },

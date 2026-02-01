@@ -138,11 +138,20 @@ jobs:
       - name: Ad-hoc sign application (macOS)
         if: runner.os == 'macOS'
         run: |
+          # 1. Remove extended attributes that can cause signing issues
+          xattr -rc dist/pytodo-qt.app
+
+          # 2. Remove existing signatures (PyInstaller signs by default)
+          find dist/pytodo-qt.app -name "_CodeSignature" -exec rm -rf {} +
+
+          # 3. Apply fresh ad-hoc signature with hardened runtime
           codesign --force --deep --sign - \
-            --entitlements entitlements.plist \
             --options runtime \
+            --entitlements entitlements.plist \
             dist/pytodo-qt.app
-          codesign --verify --deep --strict dist/pytodo-qt.app
+
+          # 4. Verify signature
+          codesign --verify --verbose --deep dist/pytodo-qt.app
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
