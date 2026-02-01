@@ -7,7 +7,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 pytodo_qt = ["*.png", "*.qss"]
-"pytodo_qt.gui.icons" = ["*.png"]
+"pytodo_qt.gui.icons" = ["*.png", "*.svg", "*.ico", "*.icns"]
 "pytodo_qt.gui.styles" = ["*.qss"]
 
 [tool.basedpyright]

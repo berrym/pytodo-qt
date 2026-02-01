@@ -1,0 +1,157 @@
+name: Build Release Executables
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+            artifact_name: pytodo-qt-linux-x86_64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            artifact_name: pytodo-qt-linux-arm64
+          - os: macos-13
+            arch: x86_64
+            artifact_name: pytodo-qt-macos-x86_64
+          - os: macos-latest
+            arch: arm64
+            artifact_name: pytodo-qt-macos-arm64
+          - os: windows-latest
+            arch: x86_64
+            artifact_name: pytodo-qt-windows-x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libxkbcommon0 libxcb-cursor0 imagemagick
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install .
+
+      - name: Convert SVG to PNG (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          convert -background none src/pytodo_qt/gui/icons/pytodo-qt.svg \
+            -resize 256x256 src/pytodo_qt/gui/icons/pytodo-qt-256.png
+
+      - name: Convert SVG to ICO (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install imagemagick -y
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          magick convert -background none src/pytodo_qt/gui/icons/pytodo-qt.svg `
+            -resize 256x256 src/pytodo_qt/gui/icons/pytodo-qt-256.png
+          magick convert src/pytodo_qt/gui/icons/pytodo-qt-256.png `
+            -define icon:auto-resize=256,128,64,48,32,16 `
+            src/pytodo_qt/gui/icons/pytodo-qt.ico
+
+      - name: Convert SVG to ICNS (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          # Create iconset directory
+          mkdir -p pytodo-qt.iconset
+
+          # Use sips to convert SVG to PNG at various sizes
+          # First create a high-res PNG from the SVG using qlmanage
+          qlmanage -t -s 1024 -o . src/pytodo_qt/gui/icons/pytodo-qt.svg 2>/dev/null || true
+
+          # If qlmanage didn't work, try using Python with cairosvg
+          if [ ! -f "pytodo-qt.svg.png" ]; then
+            pip install cairosvg pillow
+            python -c "
+          import cairosvg
+          cairosvg.svg2png(url='src/pytodo_qt/gui/icons/pytodo-qt.svg',
+                          write_to='pytodo-qt-1024.png',
+                          output_width=1024, output_height=1024)
+          "
+            mv pytodo-qt-1024.png pytodo-qt.svg.png
+          fi
+
+          # Generate all required icon sizes
+          sips -z 16 16 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_16x16.png
+          sips -z 32 32 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_16x16@2x.png
+          sips -z 32 32 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_32x32.png
+          sips -z 64 64 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_32x32@2x.png
+          sips -z 128 128 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_128x128.png
+          sips -z 256 256 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_128x128@2x.png
+          sips -z 256 256 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_256x256.png
+          sips -z 512 512 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_256x256@2x.png
+          sips -z 512 512 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_512x512.png
+          sips -z 1024 1024 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_512x512@2x.png
+
+          # Create icns file
+          iconutil -c icns pytodo-qt.iconset -o src/pytodo_qt/gui/icons/pytodo-qt.icns
+
+          # Create 256x256 PNG for consistency
+          sips -z 256 256 pytodo-qt.svg.png --out src/pytodo_qt/gui/icons/pytodo-qt-256.png
+
+      - name: Build executable
+        run: pyinstaller pytodo-qt.spec
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_NAME="pytodo-qt-${VERSION}-linux-${{ matrix.arch }}"
+          mkdir -p "${PACKAGE_NAME}"
+          # Copy the entire onedir output
+          cp -r dist/pytodo-qt/* "${PACKAGE_NAME}/"
+          cp packaging/linux/pytodo-qt.desktop "${PACKAGE_NAME}/"
+          cp packaging/linux/install.sh "${PACKAGE_NAME}/"
+          cp src/pytodo_qt/gui/icons/pytodo-qt-256.png "${PACKAGE_NAME}/pytodo-qt.png"
+          tar -czvf "${PACKAGE_NAME}.tar.gz" "${PACKAGE_NAME}"
+          echo "ASSET_PATH=${PACKAGE_NAME}.tar.gz" >> $GITHUB_ENV
+          echo "ASSET_NAME=${PACKAGE_NAME}.tar.gz" >> $GITHUB_ENV
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_NAME="pytodo-qt-${VERSION}-macos-${{ matrix.arch }}"
+          # The .app bundle is in dist/
+          cd dist
+          zip -r "../${PACKAGE_NAME}.zip" pytodo-qt.app
+          cd ..
+          echo "ASSET_PATH=${PACKAGE_NAME}.zip" >> $GITHUB_ENV
+          echo "ASSET_NAME=${PACKAGE_NAME}.zip" >> $GITHUB_ENV
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $packageName = "pytodo-qt-${version}-windows-${{ matrix.arch }}"
+          # Rename the onedir output folder and zip it
+          Rename-Item -Path "dist\pytodo-qt" -NewName $packageName
+          Compress-Archive -Path "dist\${packageName}" -DestinationPath "${packageName}.zip"
+          echo "ASSET_PATH=${packageName}.zip" >> $env:GITHUB_ENV
+          echo "ASSET_NAME=${packageName}.zip" >> $env:GITHUB_ENV
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ASSET_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from PyQt6.QtCore import pyqtSlot
-from PyQt6.QtGui import QAction, QIcon, QTextDocument
+from PyQt6.QtGui import QAction, QIcon, QPixmap, QTextDocument
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt6.QtWidgets import (
     QInputDialog,
@@ -88,12 +88,25 @@ class MainWindow(QMainWindow):
         self._center_window()
 
     def _get_icon(self, name: str) -> QIcon:
-        """Get an icon from the icons directory."""
+        """Get an icon from the icons directory.
+
+        For SVG icons, explicitly sets pixmaps for all icon modes to prevent
+        Qt from auto-generating mode variants which can cause rendering issues.
+        """
         icon_dir = Path(__file__).parent / "icons"
         icon_path = icon_dir / name
-        if icon_path.exists():
-            return QIcon(str(icon_path))
-        return QIcon()
+        if not icon_path.exists():
+            return QIcon()
+
+        if name.endswith(".svg"):
+            # Load SVG as pixmap and set for all modes to prevent hover issues
+            pixmap = QPixmap(str(icon_path))
+            icon = QIcon()
+            # Set same pixmap for all modes to prevent Qt from modifying it
+            for mode in (QIcon.Mode.Normal, QIcon.Mode.Active, QIcon.Mode.Disabled, QIcon.Mode.Selected):
+                icon.addPixmap(pixmap, mode)
+            return icon
+        return QIcon(str(icon_path))
 
     def _center_window(self) -> None:
         """Center the window on screen."""
@@ -114,21 +127,25 @@ class MainWindow(QMainWindow):
         self.settings_action = QAction("&Settings...", self)
         self.settings_action.triggered.connect(self._on_settings)
 
-        self.exit_action = QAction("E&xit", self)
+        self.exit_action = QAction(self._get_icon("exit.svg"), "E&xit", self)
         self.exit_action.setShortcut("Ctrl+Q")
+        self.exit_action.setToolTip("Exit application (Ctrl+Q)")
         self.exit_action.triggered.connect(self.close)
 
         # Todo actions
-        self.add_todo_action = QAction(self._get_icon("plus.png"), "&Add To-Do", self)
+        self.add_todo_action = QAction(self._get_icon("plus.svg"), "&Add To-Do", self)
         self.add_todo_action.setShortcut("+")
+        self.add_todo_action.setToolTip("Add new to-do (+)")
         self.add_todo_action.triggered.connect(self._on_add_todo)
 
-        self.delete_todo_action = QAction(self._get_icon("minus.png"), "&Delete To-Do", self)
+        self.delete_todo_action = QAction(self._get_icon("minus.svg"), "&Delete To-Do", self)
         self.delete_todo_action.setShortcut("-")
+        self.delete_todo_action.setToolTip("Delete selected to-do (-)")
         self.delete_todo_action.triggered.connect(self._on_delete_todo)
 
-        self.toggle_todo_action = QAction("&Toggle Complete", self)
+        self.toggle_todo_action = QAction(self._get_icon("toggle.svg"), "&Toggle Complete", self)
         self.toggle_todo_action.setShortcut("%")
+        self.toggle_todo_action.setToolTip("Toggle completion status (%)")
         self.toggle_todo_action.triggered.connect(self._on_toggle_todo)
 
         # List actions

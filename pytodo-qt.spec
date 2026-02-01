@@ -1,0 +1,100 @@
+# -*- mode: python ; coding: utf-8 -*-
+"""PyInstaller spec file for pytodo-qt.
+
+This spec file builds a directory-based executable (onedir mode) with:
+- Platform-specific icons
+- All PyQt6 plugins
+- Package data (icons)
+"""
+
+import sys
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+
+# Detect platform for icon selection
+if sys.platform == "darwin":
+    icon_file = "src/pytodo_qt/gui/icons/pytodo-qt.icns"
+elif sys.platform == "win32":
+    icon_file = "src/pytodo_qt/gui/icons/pytodo-qt.ico"
+else:
+    icon_file = None  # Linux doesn't use icon in executable
+
+# Collect all pytodo_qt submodules
+pytodo_qt_imports = collect_submodules("pytodo_qt")
+
+# Collect package data (icons only - styles are in Python code)
+datas = [
+    ("src/pytodo_qt/gui/icons/*.png", "pytodo_qt/gui/icons"),
+    ("src/pytodo_qt/gui/icons/*.svg", "pytodo_qt/gui/icons"),
+]
+
+# Hidden imports for PyQt6 plugins
+hiddenimports = [
+    "PyQt6.QtCore",
+    "PyQt6.QtGui",
+    "PyQt6.QtWidgets",
+    "PyQt6.QtNetwork",
+    "qasync",
+] + pytodo_qt_imports
+
+a = Analysis(
+    ["launcher.py"],
+    pathex=["src"],
+    binaries=[],
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+    optimize=0,
+)
+
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,  # onedir mode: binaries collected separately
+    name="pytodo-qt",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,  # Windowed mode, no terminal
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=icon_file,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name="pytodo-qt",
+)
+
+# macOS app bundle
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name="pytodo-qt.app",
+        icon=icon_file,
+        bundle_identifier="com.pytodo-qt.app",
+        info_plist={
+            "CFBundleDisplayName": "PyTodo-Qt",
+            "CFBundleShortVersionString": "0.3.2",
+            "CFBundleVersion": "0.3.2",
+            "NSHighResolutionCapable": True,
+            "LSMinimumSystemVersion": "10.13",
+        },
+    )

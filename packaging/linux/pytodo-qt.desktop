@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=PyTodo-Qt
+Comment=A modern to-do list application with secure synchronization
+Exec=pytodo-qt
+Icon=pytodo-qt
+Categories=Utility;Office;Qt;
+Keywords=todo;task;list;productivity;
+Terminal=false
+StartupNotify=true
