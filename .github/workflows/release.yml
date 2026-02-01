@@ -116,14 +116,33 @@ jobs:
           # Create 256x256 PNG for consistency
           sips -z 256 256 pytodo-qt.svg.png --out src/pytodo_qt/gui/icons/pytodo-qt-256.png
 
-      - name: Build executable
+      - name: Build executable (non-macOS)
+        if: runner.os != 'macOS'
         run: pyinstaller pytodo-qt.spec
+
+      - name: Build executable (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          # Use --windowed flag which creates .app bundle required for proper macOS behavior
+          pyinstaller --onedir --windowed --name "pytodo-qt" \
+            --add-data "src/pytodo_qt/gui/icons/*.svg:pytodo_qt/gui/icons" \
+            --hidden-import PyQt6.QtCore \
+            --hidden-import PyQt6.QtGui \
+            --hidden-import PyQt6.QtWidgets \
+            --hidden-import PyQt6.QtNetwork \
+            --hidden-import qasync \
+            --icon "src/pytodo_qt/gui/icons/pytodo-qt.icns" \
+            --paths src \
+            launcher.py
 
       - name: Ad-hoc sign application (macOS)
         if: runner.os == 'macOS'
         run: |
-          codesign --force --deep --sign - dist/pytodo-qt.app
-          codesign --verify --deep dist/pytodo-qt.app
+          codesign --force --deep --sign - \
+            --entitlements entitlements.plist \
+            --options runtime \
+            dist/pytodo-qt.app
+          codesign --verify --deep --strict dist/pytodo-qt.app
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
