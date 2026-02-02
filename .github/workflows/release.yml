@@ -73,6 +73,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # Install GTK runtime which includes cairo library (required by cairosvg)
+          choco install gtk-runtime -y
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           # Use cairosvg for SVG rendering (ImageMagick can't render gradients)
           pip install cairosvg
           python -c @"
@@ -81,7 +84,7 @@ jobs:
                           write_to='src/pytodo_qt/gui/icons/pytodo-qt-256.png',
                           output_width=256, output_height=256)
           "@
-          # Use ImageMagick only for PNG to ICO conversion
+          # Use ImageMagick for PNG to ICO conversion
           choco install imagemagick -y
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           magick convert src/pytodo_qt/gui/icons/pytodo-qt-256.png `
@@ -93,6 +96,9 @@ jobs:
         run: |
           # Create iconset directory
           mkdir -p pytodo-qt.iconset
+
+          # Install cairo library (required by cairosvg, not pre-installed on ARM64 runners)
+          brew install cairo
 
           # Use cairosvg to convert SVG to PNG (preserves transparency)
           pip install cairosvg pillow
