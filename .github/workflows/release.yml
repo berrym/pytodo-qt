@@ -61,8 +61,13 @@ jobs:
       - name: Convert SVG to PNG (Linux)
         if: runner.os == 'Linux'
         run: |
-          convert -background none src/pytodo_qt/gui/icons/pytodo-qt.svg \
-            -resize 256x256 src/pytodo_qt/gui/icons/pytodo-qt-256.png
+          pip install cairosvg
+          python -c "
+          import cairosvg
+          cairosvg.svg2png(url='src/pytodo_qt/gui/icons/pytodo-qt.svg',
+                          write_to='src/pytodo_qt/gui/icons/pytodo-qt-256.png',
+                          output_width=256, output_height=256)
+          "
 
       - name: Convert SVG to ICO (Windows)
         if: runner.os == 'Windows'
