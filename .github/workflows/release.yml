@@ -82,21 +82,14 @@ jobs:
           # Create iconset directory
           mkdir -p pytodo-qt.iconset
 
-          # Use sips to convert SVG to PNG at various sizes
-          # First create a high-res PNG from the SVG using qlmanage
-          qlmanage -t -s 1024 -o . src/pytodo_qt/gui/icons/pytodo-qt.svg 2>/dev/null || true
-
-          # If qlmanage didn't work, try using Python with cairosvg
-          if [ ! -f "pytodo-qt.svg.png" ]; then
-            pip install cairosvg pillow
-            python -c "
+          # Use cairosvg to convert SVG to PNG (preserves transparency)
+          pip install cairosvg pillow
+          python -c "
           import cairosvg
           cairosvg.svg2png(url='src/pytodo_qt/gui/icons/pytodo-qt.svg',
-                          write_to='pytodo-qt-1024.png',
+                          write_to='pytodo-qt.svg.png',
                           output_width=1024, output_height=1024)
           "
-            mv pytodo-qt-1024.png pytodo-qt.svg.png
-          fi
 
           # Generate all required icon sizes
           sips -z 16 16 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_16x16.png
