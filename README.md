@@ -48,6 +48,8 @@ Download the latest release for your platform from the [Releases page](https://g
 
 The install script places the binary in `~/.local/bin/` and creates a desktop entry.
 
+To uninstall: `~/.local/lib/pytodo-qt/uninstall.sh` (or run `./uninstall.sh` from the extracted archive)
+
 #### Windows
 
 1. Download `pytodo-qt-VERSION-windows-x86_64.zip`
