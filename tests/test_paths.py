@@ -14,6 +14,7 @@ from pytodo_qt.core.paths import (
     get_database_file,
     get_legacy_dir,
     get_legacy_ini_file,
+    get_legacy_json_database,
     get_log_file,
     get_state_dir,
     get_xdg_config_home,
@@ -138,9 +139,15 @@ class TestFilePaths:
         assert result == Path.home() / ".pytodo-qt" / "pytodo-qt.ini"
 
     def test_get_database_file(self):
-        """Test get_database_file returns correct path."""
+        """Test get_database_file returns correct path (SQLite)."""
         with patch.dict(os.environ, {"XDG_DATA_HOME": "/xdg/data"}):
             result = get_database_file()
+            assert result == Path("/xdg/data/pytodo-qt/pytodo-qt.db")
+
+    def test_get_legacy_json_database(self):
+        """Test get_legacy_json_database returns correct path."""
+        with patch.dict(os.environ, {"XDG_DATA_HOME": "/xdg/data"}):
+            result = get_legacy_json_database()
             assert result == Path("/xdg/data/pytodo-qt/pytodo-qt-db.json")
 
     def test_get_log_file(self):

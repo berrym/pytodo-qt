@@ -76,7 +76,12 @@ def get_legacy_ini_file() -> Path:
 
 
 def get_database_file() -> Path:
-    """Get path to database JSON file."""
+    """Get path to SQLite database file."""
+    return get_data_dir() / "pytodo-qt.db"
+
+
+def get_legacy_json_database() -> Path:
+    """Get path to legacy JSON database file (for migration)."""
     return get_data_dir() / "pytodo-qt-db.json"
 
 
@@ -123,9 +128,9 @@ def migrate_from_legacy() -> bool:
         except OSError as e:
             logger.log.warning("Failed to migrate config: %s", e)
 
-    # Migrate database file
+    # Migrate database file (to JSON location, will be migrated to SQLite later)
     legacy_db = legacy_dir / "pytodo-qt-db.json"
-    new_db = get_database_file()
+    new_db = get_legacy_json_database()
     if legacy_db.exists() and not new_db.exists():
         try:
             shutil.copy2(legacy_db, new_db)

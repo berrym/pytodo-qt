@@ -175,7 +175,8 @@ class ConfigManager:
 
         self.config_file = self.config_dir / "config.toml"
         self.legacy_ini_file = self.config_dir / "pytodo-qt.ini"
-        self.db_file = self.data_dir / "pytodo-qt-db.json"
+        self.db_file = self.data_dir / "pytodo-qt.db"  # SQLite database
+        self.legacy_json_file = self.data_dir / "pytodo-qt-db.json"  # For migration
         self.log_file = self.state_dir / "pytodo-qt.log"
 
         self._config: AppConfig | None = None

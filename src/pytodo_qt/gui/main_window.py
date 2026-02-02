@@ -27,7 +27,9 @@ from PyQt6.QtWidgets import (
 
 from ..core import settings
 from ..core.config import get_config, get_config_manager
+from ..core.database import DatabaseStorage
 from ..core.logger import Logger
+from ..core.migration import MigrationError, migrate_json_to_sqlite, needs_migration
 from ..core.models import Database, TodoList, create_todo_list
 from ..crypto.keyring_storage import get_or_create_identity
 from ..net.discovery import get_discovery_service
@@ -53,6 +55,7 @@ class MainWindow(QMainWindow):
         self._database = Database()
         self._config = get_config()
         self._config_manager = get_config_manager()
+        self._storage = DatabaseStorage(self._config_manager.db_file)
         self._printer = QPrinter()
         self._server: AsyncServer | None = None
 
@@ -436,45 +439,50 @@ class MainWindow(QMainWindow):
         return merged_count, local_newer_count, identical_count
 
     def _load_database(self) -> None:
-        """Load the database from file."""
-        db_path = self._config_manager.db_file
+        """Load the database from SQLite, migrating from JSON if needed."""
+        json_path = self._config_manager.legacy_json_file
+        sqlite_path = self._config_manager.db_file
 
-        if db_path.exists():
+        # Check if migration from JSON to SQLite is needed
+        if needs_migration(json_path, sqlite_path):
             try:
-                with open(db_path, encoding="utf-8") as f:
-                    data = json.load(f)
+                logger.log.info("Migrating database from JSON to SQLite...")
+                migrate_json_to_sqlite(json_path, sqlite_path, backup=True)
+                logger.log.info("Database migration completed successfully")
+            except MigrationError as e:
+                logger.log.exception("Database migration failed: %s", e)
+                QMessageBox.warning(
+                    self,
+                    "Migration Error",
+                    f"Failed to migrate database to new format: {e}\n\n"
+                    "The application will continue with an empty database.",
+                )
 
-                # Check if it's new format (has schema_version) or legacy
-                if "schema_version" in data:
-                    self._database = Database.from_dict(data)
-                else:
-                    # Legacy format
-                    self._database = Database.from_legacy(data)
-                    logger.log.info("Migrated legacy database format")
+        # Open SQLite storage and load database
+        try:
+            self._storage.open()
+            self._database = self._storage.load_database()
+            logger.log.info("Loaded database from %s", sqlite_path)
+        except Exception as e:
+            logger.log.exception("Error loading database: %s", e)
+            QMessageBox.warning(self, "Load Error", f"Failed to load database: {e}")
+            self._database = Database()
 
-                logger.log.info("Loaded database from %s", db_path)
-            except Exception as e:
-                logger.log.exception("Error loading database: %s", e)
-                QMessageBox.warning(self, "Load Error", f"Failed to load database: {e}")
-
-        # Set active list from config
+        # Set active list from config (overrides stored active_list_id)
         active_list_name = self._config.database.active_list
         if active_list_name:
             self._database.set_active_list_by_name(active_list_name)
-        elif self._database.lists:
-            # Set first list as active
+        elif self._database.lists and self._database.active_list_id is None:
+            # Set first list as active if none set
             self._database.active_list_id = next(iter(self._database.lists.keys()))
 
         self._refresh_ui()
 
     def _save_database(self) -> bool:
-        """Save the database to file."""
-        db_path = self._config_manager.db_file
-
+        """Save the database to SQLite."""
         try:
-            with open(db_path, "w", encoding="utf-8") as f:
-                json.dump(self._database.to_dict(), f, indent=2)
-            logger.log.info("Saved database to %s", db_path)
+            self._storage.save_database(self._database)
+            logger.log.info("Saved database to %s", self._config_manager.db_file)
             return True
         except Exception as e:
             logger.log.exception("Error saving database: %s", e)
@@ -917,6 +925,9 @@ class MainWindow(QMainWindow):
 
         # Save database
         self._save_database()
+
+        # Close database connection
+        self._storage.close()
 
         # Save config
         self._config_manager.save()
