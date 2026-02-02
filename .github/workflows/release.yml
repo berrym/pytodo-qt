@@ -50,7 +50,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libegl1 libxkbcommon0 libxcb-cursor0 imagemagick
+          sudo apt-get install -y libegl1 libxkbcommon0 libxcb-cursor0
 
       - name: Install Python dependencies
         run: |
@@ -58,68 +58,36 @@ jobs:
           pip install pyinstaller
           pip install .
 
-      - name: Convert SVG to PNG (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          pip install cairosvg
-          python -c "
-          import cairosvg
-          cairosvg.svg2png(url='src/pytodo_qt/gui/icons/pytodo-qt.svg',
-                          write_to='src/pytodo_qt/gui/icons/pytodo-qt-256.png',
-                          output_width=256, output_height=256)
-          "
+      # PNG icons are pre-rendered and committed to the repo (no cairosvg needed at build time)
+      # Linux uses the PNG directly, Windows/macOS convert to platform-specific formats
 
-      - name: Convert SVG to ICO (Windows)
+      - name: Convert PNG to ICO (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # Install GTK runtime which includes cairo library (required by cairosvg)
-          choco install gtk-runtime -y
-          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          # Use cairosvg for SVG rendering (ImageMagick can't render gradients)
-          pip install cairosvg
-          python -c @"
-          import cairosvg
-          cairosvg.svg2png(url='src/pytodo_qt/gui/icons/pytodo-qt.svg',
-                          write_to='src/pytodo_qt/gui/icons/pytodo-qt-256.png',
-                          output_width=256, output_height=256)
-          "@
-          # Use ImageMagick for PNG to ICO conversion
           choco install imagemagick -y
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           magick convert src/pytodo_qt/gui/icons/pytodo-qt-256.png `
             -define icon:auto-resize=256,128,64,48,32,16 `
             src/pytodo_qt/gui/icons/pytodo-qt.ico
 
-      - name: Convert SVG to ICNS (macOS)
+      - name: Convert PNG to ICNS (macOS)
         if: runner.os == 'macOS'
         run: |
           # Create iconset directory
           mkdir -p pytodo-qt.iconset
 
-          # Install cairo library (required by cairosvg, not pre-installed on ARM64 runners)
-          brew install cairo
-
-          # Use cairosvg to convert SVG to PNG (preserves transparency)
-          pip install cairosvg pillow
-          python -c "
-          import cairosvg
-          cairosvg.svg2png(url='src/pytodo_qt/gui/icons/pytodo-qt.svg',
-                          write_to='pytodo-qt.svg.png',
-                          output_width=1024, output_height=1024)
-          "
-
-          # Generate all required icon sizes
-          sips -z 16 16 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_16x16.png
-          sips -z 32 32 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_16x16@2x.png
-          sips -z 32 32 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_32x32.png
-          sips -z 64 64 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_32x32@2x.png
-          sips -z 128 128 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_128x128.png
-          sips -z 256 256 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_128x128@2x.png
-          sips -z 256 256 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_256x256.png
-          sips -z 512 512 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_256x256@2x.png
-          sips -z 512 512 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_512x512.png
-          sips -z 1024 1024 pytodo-qt.svg.png --out pytodo-qt.iconset/icon_512x512@2x.png
+          # Generate all required icon sizes from committed 1024px PNG
+          sips -z 16 16 src/pytodo_qt/gui/icons/pytodo-qt-1024.png --out pytodo-qt.iconset/icon_16x16.png
+          sips -z 32 32 src/pytodo_qt/gui/icons/pytodo-qt-1024.png --out pytodo-qt.iconset/icon_16x16@2x.png
+          sips -z 32 32 src/pytodo_qt/gui/icons/pytodo-qt-1024.png --out pytodo-qt.iconset/icon_32x32.png
+          sips -z 64 64 src/pytodo_qt/gui/icons/pytodo-qt-1024.png --out pytodo-qt.iconset/icon_32x32@2x.png
+          sips -z 128 128 src/pytodo_qt/gui/icons/pytodo-qt-1024.png --out pytodo-qt.iconset/icon_128x128.png
+          sips -z 256 256 src/pytodo_qt/gui/icons/pytodo-qt-1024.png --out pytodo-qt.iconset/icon_128x128@2x.png
+          sips -z 256 256 src/pytodo_qt/gui/icons/pytodo-qt-1024.png --out pytodo-qt.iconset/icon_256x256.png
+          sips -z 512 512 src/pytodo_qt/gui/icons/pytodo-qt-1024.png --out pytodo-qt.iconset/icon_256x256@2x.png
+          sips -z 512 512 src/pytodo_qt/gui/icons/pytodo-qt-1024.png --out pytodo-qt.iconset/icon_512x512.png
+          sips -z 1024 1024 src/pytodo_qt/gui/icons/pytodo-qt-1024.png --out pytodo-qt.iconset/icon_512x512@2x.png
 
           # Create icns file
           iconutil -c icns pytodo-qt.iconset -o src/pytodo_qt/gui/icons/pytodo-qt.icns
