@@ -193,7 +193,6 @@ class TestINIMigration:
 
     def test_migrate_from_ini_all_sections(self):
         """Test migrating full INI config."""
-        from unittest.mock import patch
 
         with tempfile.TemporaryDirectory() as tmpdir:
             config_dir = Path(tmpdir) / "config"

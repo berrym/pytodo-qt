@@ -5,8 +5,6 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from pytodo_qt.core.paths import (
     APP_NAME,
     ensure_directories,
@@ -144,20 +142,22 @@ class TestEnsureDirectories:
 
     def test_creates_directories(self):
         """Test that ensure_directories creates all needed directories."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch.dict(
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch.dict(
                 os.environ,
                 {
                     "XDG_CONFIG_HOME": str(Path(tmpdir) / "config"),
                     "XDG_DATA_HOME": str(Path(tmpdir) / "data"),
                     "XDG_STATE_HOME": str(Path(tmpdir) / "state"),
                 },
-            ):
-                ensure_directories()
+            ),
+        ):
+            ensure_directories()
 
-                assert (Path(tmpdir) / "config" / "pytodo-qt").exists()
-                assert (Path(tmpdir) / "data" / "pytodo-qt").exists()
-                assert (Path(tmpdir) / "state" / "pytodo-qt").exists()
+            assert (Path(tmpdir) / "config" / "pytodo-qt").exists()
+            assert (Path(tmpdir) / "data" / "pytodo-qt").exists()
+            assert (Path(tmpdir) / "state" / "pytodo-qt").exists()
 
     def test_existing_directories_not_recreated(self):
         """Test that existing directories are not affected."""
@@ -207,19 +207,21 @@ class TestMigration:
             legacy_config.write_text("[server]\nport = 5364\n")
 
             new_config_dir = Path(tmpdir) / "config" / "pytodo-qt"
-            new_data_dir = Path(tmpdir) / "data" / "pytodo-qt"
-            new_state_dir = Path(tmpdir) / "state" / "pytodo-qt"
+            Path(tmpdir) / "data" / "pytodo-qt"
+            Path(tmpdir) / "state" / "pytodo-qt"
 
-            with patch("pytodo_qt.core.paths.get_legacy_dir", return_value=legacy_dir):
-                with patch.dict(
+            with (
+                patch("pytodo_qt.core.paths.get_legacy_dir", return_value=legacy_dir),
+                patch.dict(
                     os.environ,
                     {
                         "XDG_CONFIG_HOME": str(Path(tmpdir) / "config"),
                         "XDG_DATA_HOME": str(Path(tmpdir) / "data"),
                         "XDG_STATE_HOME": str(Path(tmpdir) / "state"),
                     },
-                ):
-                    result = migrate_from_legacy()
+                ),
+            ):
+                result = migrate_from_legacy()
 
             assert result is True
             assert (new_config_dir / "config.toml").exists()
@@ -235,16 +237,18 @@ class TestMigration:
             legacy_db = legacy_dir / "pytodo-qt-db.json"
             legacy_db.write_text('{"lists": {}}')
 
-            with patch("pytodo_qt.core.paths.get_legacy_dir", return_value=legacy_dir):
-                with patch.dict(
+            with (
+                patch("pytodo_qt.core.paths.get_legacy_dir", return_value=legacy_dir),
+                patch.dict(
                     os.environ,
                     {
                         "XDG_CONFIG_HOME": str(Path(tmpdir) / "config"),
                         "XDG_DATA_HOME": str(Path(tmpdir) / "data"),
                         "XDG_STATE_HOME": str(Path(tmpdir) / "state"),
                     },
-                ):
-                    result = migrate_from_legacy()
+                ),
+            ):
+                result = migrate_from_legacy()
 
             new_db = Path(tmpdir) / "data" / "pytodo-qt" / "pytodo-qt-db.json"
             assert result is True
@@ -261,16 +265,18 @@ class TestMigration:
             legacy_ini = legacy_dir / "pytodo-qt.ini"
             legacy_ini.write_text("[General]\npassword=secret\n")
 
-            with patch("pytodo_qt.core.paths.get_legacy_dir", return_value=legacy_dir):
-                with patch.dict(
+            with (
+                patch("pytodo_qt.core.paths.get_legacy_dir", return_value=legacy_dir),
+                patch.dict(
                     os.environ,
                     {
                         "XDG_CONFIG_HOME": str(Path(tmpdir) / "config"),
                         "XDG_DATA_HOME": str(Path(tmpdir) / "data"),
                         "XDG_STATE_HOME": str(Path(tmpdir) / "state"),
                     },
-                ):
-                    result = migrate_from_legacy()
+                ),
+            ):
+                result = migrate_from_legacy()
 
             new_ini = Path(tmpdir) / "config" / "pytodo-qt" / "pytodo-qt.ini"
             assert result is True
@@ -292,16 +298,18 @@ class TestMigration:
             new_config = new_config_dir / "config.toml"
             new_config.write_text("[new]\nvalue = 2\n")
 
-            with patch("pytodo_qt.core.paths.get_legacy_dir", return_value=legacy_dir):
-                with patch.dict(
+            with (
+                patch("pytodo_qt.core.paths.get_legacy_dir", return_value=legacy_dir),
+                patch.dict(
                     os.environ,
                     {
                         "XDG_CONFIG_HOME": str(Path(tmpdir) / "config"),
                         "XDG_DATA_HOME": str(Path(tmpdir) / "data"),
                         "XDG_STATE_HOME": str(Path(tmpdir) / "state"),
                     },
-                ):
-                    result = migrate_from_legacy()
+                ),
+            ):
+                result = migrate_from_legacy()
 
             # Should not have migrated (nothing new)
             assert result is False
@@ -318,16 +326,18 @@ class TestMigration:
             legacy_config = legacy_dir / "config.toml"
             legacy_config.write_text("[server]\nport = 5364\n")
 
-            with patch("pytodo_qt.core.paths.get_legacy_dir", return_value=legacy_dir):
-                with patch.dict(
+            with (
+                patch("pytodo_qt.core.paths.get_legacy_dir", return_value=legacy_dir),
+                patch.dict(
                     os.environ,
                     {
                         "XDG_CONFIG_HOME": str(Path(tmpdir) / "config"),
                         "XDG_DATA_HOME": str(Path(tmpdir) / "data"),
                         "XDG_STATE_HOME": str(Path(tmpdir) / "state"),
                     },
-                ):
-                    migrate_from_legacy()
+                ),
+            ):
+                migrate_from_legacy()
 
             marker = legacy_dir / ".migrated-to-xdg"
             assert marker.exists()

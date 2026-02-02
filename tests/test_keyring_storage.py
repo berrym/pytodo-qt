@@ -1,13 +1,13 @@
 """Tests for keyring storage module."""
 
 import base64
-import os
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pytodo_qt.crypto.aes_gcm import generate_key
 from pytodo_qt.crypto.key_exchange import IdentityKeyPair
 from pytodo_qt.crypto.keyring_storage import (
     KEYRING_ENCRYPTION_KEY,
@@ -16,8 +16,6 @@ from pytodo_qt.crypto.keyring_storage import (
     KeyringError,
     KeyringUnavailableError,
     StoredIdentity,
-    _get_identity_file_path,
-    _get_local_key_file_path,
     _get_or_create_identity_file,
     _load_local_key_file,
     _store_identity_file,
@@ -30,7 +28,6 @@ from pytodo_qt.crypto.keyring_storage import (
     store_identity,
     store_local_encryption_key,
 )
-from pytodo_qt.crypto.aes_gcm import generate_key
 
 
 class TestKeyringConstants:
@@ -87,12 +84,14 @@ class TestStoreIdentity:
         """Test storage when keyring is unavailable."""
         keypair = IdentityKeyPair.generate()
 
-        with patch(
-            "pytodo_qt.crypto.keyring_storage._get_keyring",
-            side_effect=KeyringUnavailableError("Not available"),
+        with (
+            patch(
+                "pytodo_qt.crypto.keyring_storage._get_keyring",
+                side_effect=KeyringUnavailableError("Not available"),
+            ),
+            pytest.raises(KeyringError),
         ):
-            with pytest.raises(KeyringError):
-                store_identity(keypair)
+            store_identity(keypair)
 
     def test_store_identity_keyring_error(self):
         """Test storage when keyring write fails."""
@@ -136,21 +135,25 @@ class TestLoadIdentity:
 
     def test_load_identity_keyring_unavailable(self):
         """Test loading when keyring is unavailable."""
-        with patch(
-            "pytodo_qt.crypto.keyring_storage._get_keyring",
-            side_effect=KeyringUnavailableError("Not available"),
+        with (
+            patch(
+                "pytodo_qt.crypto.keyring_storage._get_keyring",
+                side_effect=KeyringUnavailableError("Not available"),
+            ),
+            pytest.raises(KeyringUnavailableError),
         ):
-            with pytest.raises(KeyringUnavailableError):
-                load_identity()
+            load_identity()
 
     def test_load_identity_invalid_data(self):
         """Test loading when keyring contains invalid data."""
         mock_keyring = MagicMock()
         mock_keyring.get_password.return_value = "not-valid-base64!!!"
 
-        with patch("pytodo_qt.crypto.keyring_storage._get_keyring", return_value=mock_keyring):
-            with pytest.raises(KeyringError):
-                load_identity()
+        with (
+            patch("pytodo_qt.crypto.keyring_storage._get_keyring", return_value=mock_keyring),
+            pytest.raises(KeyringError),
+        ):
+            load_identity()
 
 
 class TestDeleteIdentity:
@@ -164,9 +167,7 @@ class TestDeleteIdentity:
             result = delete_identity()
 
         assert result is True
-        mock_keyring.delete_password.assert_called_once_with(
-            KEYRING_SERVICE, KEYRING_IDENTITY_KEY
-        )
+        mock_keyring.delete_password.assert_called_once_with(KEYRING_SERVICE, KEYRING_IDENTITY_KEY)
 
     def test_delete_identity_not_found(self):
         """Test deletion when identity doesn't exist."""
@@ -212,15 +213,17 @@ class TestGetOrCreateIdentity:
     def test_fallback_to_file_on_keyring_unavailable(self):
         """Test fallback to file storage when keyring unavailable."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch(
-                "pytodo_qt.crypto.keyring_storage._get_keyring",
-                side_effect=KeyringUnavailableError("Not available"),
-            ):
-                with patch(
+            with (
+                patch(
+                    "pytodo_qt.crypto.keyring_storage._get_keyring",
+                    side_effect=KeyringUnavailableError("Not available"),
+                ),
+                patch(
                     "pytodo_qt.crypto.keyring_storage._get_identity_file_path",
                     return_value=Path(tmpdir) / "identity.key",
-                ):
-                    result = get_or_create_identity()
+                ),
+            ):
+                result = get_or_create_identity()
 
             assert result is not None
             assert (Path(tmpdir) / "identity.key").exists()
@@ -319,15 +322,17 @@ class TestLocalEncryptionKey:
         with tempfile.TemporaryDirectory() as tmpdir:
             key_file = Path(tmpdir) / "local.key"
 
-            with patch(
-                "pytodo_qt.crypto.keyring_storage._get_keyring",
-                side_effect=KeyringUnavailableError("Not available"),
-            ):
-                with patch(
+            with (
+                patch(
+                    "pytodo_qt.crypto.keyring_storage._get_keyring",
+                    side_effect=KeyringUnavailableError("Not available"),
+                ),
+                patch(
                     "pytodo_qt.crypto.keyring_storage._get_local_key_file_path",
                     return_value=key_file,
-                ):
-                    store_local_encryption_key(key)
+                ),
+            ):
+                store_local_encryption_key(key)
 
             assert key_file.exists()
             with open(key_file, "rb") as f:
@@ -365,15 +370,17 @@ class TestLocalEncryptionKey:
             with open(key_file, "wb") as f:
                 f.write(key)
 
-            with patch(
-                "pytodo_qt.crypto.keyring_storage._get_keyring",
-                side_effect=KeyringUnavailableError("Not available"),
-            ):
-                with patch(
+            with (
+                patch(
+                    "pytodo_qt.crypto.keyring_storage._get_keyring",
+                    side_effect=KeyringUnavailableError("Not available"),
+                ),
+                patch(
                     "pytodo_qt.crypto.keyring_storage._get_local_key_file_path",
                     return_value=key_file,
-                ):
-                    result = load_local_encryption_key()
+                ),
+            ):
+                result = load_local_encryption_key()
 
             assert result == key
 

@@ -4,7 +4,6 @@ import base64
 import hashlib
 import os
 
-import pytest
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.padding import PKCS7
 
@@ -117,7 +116,7 @@ class TestLegacyAESCipher:
 
         encrypted = _encrypt_legacy(plaintext, passphrase)
         # Truncate the encrypted data
-        truncated = encrypted[:len(encrypted) // 2]
+        truncated = encrypted[: len(encrypted) // 2]
 
         cipher = LegacyAESCipher(passphrase)
         result = cipher.decrypt(truncated)
@@ -202,12 +201,12 @@ class TestLegacyMigrationScenarios:
     def test_migrate_simple_todo_list(self):
         """Test migrating a simple todo list JSON."""
         passphrase = "user_password"
-        legacy_data = b'''{
+        legacy_data = b"""{
             "Shopping": [
                 {"reminder": "Buy milk", "priority": 2, "complete": false},
                 {"reminder": "Buy bread", "priority": 3, "complete": true}
             ]
-        }'''
+        }"""
 
         encrypted = _encrypt_legacy(legacy_data, passphrase)
         decrypted = decrypt_legacy_data(encrypted, passphrase)
@@ -227,7 +226,7 @@ class TestLegacyMigrationScenarios:
     def test_migrate_special_characters(self):
         """Test migrating data with special characters."""
         passphrase = "password"
-        legacy_data = "Café résumé naïve 日本語 🎉".encode("utf-8")
+        legacy_data = "Café résumé naïve 日本語 🎉".encode()
 
         encrypted = _encrypt_legacy(legacy_data, passphrase)
         decrypted = decrypt_legacy_data(encrypted, passphrase)

@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from pytodo_qt.net.discovery import (
     SERVICE_TYPE,
     DiscoveredPeer,
@@ -277,9 +275,7 @@ class TestPeerListener:
         }
         mock_zc.get_service_info.return_value = mock_info
 
-        with patch(
-            "pytodo_qt.net.discovery.get_config"
-        ) as mock_config:
+        with patch("pytodo_qt.net.discovery.get_config") as mock_config:
             mock_config.return_value.discovery.get_service_name.return_value = "other-service"
 
             listener.add_service(mock_zc, SERVICE_TYPE, f"test-peer.{SERVICE_TYPE}")
@@ -378,9 +374,7 @@ class TestPeerListener:
         }
         mock_zc.get_service_info.return_value = mock_info
 
-        with patch(
-            "pytodo_qt.net.discovery.get_config"
-        ) as mock_config:
+        with patch("pytodo_qt.net.discovery.get_config") as mock_config:
             mock_config.return_value.discovery.get_service_name.return_value = "other-service"
 
             listener.update_service(mock_zc, SERVICE_TYPE, f"test-peer.{SERVICE_TYPE}")
@@ -410,9 +404,7 @@ class TestPeerListener:
         }
         mock_zc.get_service_info.return_value = mock_info
 
-        with patch(
-            "pytodo_qt.net.discovery.get_config"
-        ) as mock_config:
+        with patch("pytodo_qt.net.discovery.get_config") as mock_config:
             # Service name matches our own
             mock_config.return_value.discovery.get_service_name.return_value = "my-service"
 
