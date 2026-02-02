@@ -44,3 +44,6 @@ btrfs_backup-*.tar.gz
 
 # ide
 .idea
+
+# uv
+uv.lock
