@@ -78,6 +78,7 @@ dev = [
     "pytest>=7.0",
     "pytest-qt>=4.2",
     "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
     "ruff>=0.4",
     "basedpyright>=1.18",
 ]
