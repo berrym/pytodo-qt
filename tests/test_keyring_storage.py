@@ -246,9 +246,12 @@ class TestFileBasedStorage:
             assert result.keypair.public_bytes() == keypair.public_bytes()
             identity_file = Path(tmpdir) / "identity.key"
             assert identity_file.exists()
-            # Check permissions (0o600 = owner read/write only)
-            mode = identity_file.stat().st_mode & 0o777
-            assert mode == 0o600
+            # Check permissions (0o600 = owner read/write only) - Unix only
+            import sys
+
+            if sys.platform != "win32":
+                mode = identity_file.stat().st_mode & 0o777
+                assert mode == 0o600
 
     def test_get_or_create_identity_file_existing(self):
         """Test loading existing identity from file."""
@@ -427,8 +430,12 @@ class TestLocalKeyFile:
                 _store_local_key_file(key)
 
             assert key_file.exists()
-            mode = key_file.stat().st_mode & 0o777
-            assert mode == 0o600
+            # Check permissions (0o600 = owner read/write only) - Unix only
+            import sys
+
+            if sys.platform != "win32":
+                mode = key_file.stat().st_mode & 0o777
+                assert mode == 0o600
             with open(key_file, "rb") as f:
                 assert f.read() == key
 

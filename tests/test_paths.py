@@ -36,11 +36,16 @@ class TestXDGConfigHome:
 
     def test_default_config_home(self):
         """Test default config home when XDG_CONFIG_HOME not set."""
-        with patch.dict(os.environ, {}, clear=True):
-            # Clear XDG_CONFIG_HOME if present
-            os.environ.pop("XDG_CONFIG_HOME", None)
+        # Save and remove XDG_CONFIG_HOME without clearing all env vars
+        # (Windows needs USERPROFILE etc. for Path.home())
+        env_backup = os.environ.get("XDG_CONFIG_HOME")
+        os.environ.pop("XDG_CONFIG_HOME", None)
+        try:
             result = get_xdg_config_home()
             assert result == Path.home() / ".config"
+        finally:
+            if env_backup is not None:
+                os.environ["XDG_CONFIG_HOME"] = env_backup
 
     def test_custom_config_home(self):
         """Test custom config home from environment."""
@@ -54,10 +59,14 @@ class TestXDGDataHome:
 
     def test_default_data_home(self):
         """Test default data home when XDG_DATA_HOME not set."""
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("XDG_DATA_HOME", None)
+        env_backup = os.environ.get("XDG_DATA_HOME")
+        os.environ.pop("XDG_DATA_HOME", None)
+        try:
             result = get_xdg_data_home()
             assert result == Path.home() / ".local" / "share"
+        finally:
+            if env_backup is not None:
+                os.environ["XDG_DATA_HOME"] = env_backup
 
     def test_custom_data_home(self):
         """Test custom data home from environment."""
@@ -71,10 +80,14 @@ class TestXDGStateHome:
 
     def test_default_state_home(self):
         """Test default state home when XDG_STATE_HOME not set."""
-        with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("XDG_STATE_HOME", None)
+        env_backup = os.environ.get("XDG_STATE_HOME")
+        os.environ.pop("XDG_STATE_HOME", None)
+        try:
             result = get_xdg_state_home()
             assert result == Path.home() / ".local" / "state"
+        finally:
+            if env_backup is not None:
+                os.environ["XDG_STATE_HOME"] = env_backup
 
     def test_custom_state_home(self):
         """Test custom state home from environment."""
