@@ -223,3 +223,323 @@ class TestKDF:
         key2 = derive_session_key(shared_secret, b"info2", 32)
 
         assert key1 != key2
+
+    def test_derive_session_key_different_lengths(self):
+        """Test deriving keys of different lengths."""
+        shared_secret = b"shared_secret_bytes_here_32bytes"
+        info = b"test"
+
+        key16 = derive_session_key(shared_secret, info, 16)
+        key32 = derive_session_key(shared_secret, info, 32)
+        key64 = derive_session_key(shared_secret, info, 64)
+
+        assert len(key16) == 16
+        assert len(key32) == 32
+        assert len(key64) == 64
+
+    def test_derive_session_key_deterministic(self):
+        """Test that key derivation is deterministic."""
+        shared_secret = b"shared_secret_bytes_here_32bytes"
+        info = b"test-info"
+
+        key1 = derive_session_key(shared_secret, info, 32)
+        key2 = derive_session_key(shared_secret, info, 32)
+
+        assert key1 == key2
+
+
+class TestArgon2KDF:
+    """Tests for Argon2 key derivation."""
+
+    def test_derive_key_argon2_generates_key(self):
+        """Test Argon2 key derivation generates proper key."""
+        from pytodo_qt.crypto.kdf import derive_key_argon2
+
+        result = derive_key_argon2("test_password")
+
+        assert len(result.key) == 32
+        assert len(result.salt) == 16
+
+    def test_derive_key_argon2_with_salt(self):
+        """Test Argon2 with explicit salt."""
+        from pytodo_qt.crypto.kdf import derive_key_argon2
+
+        salt = b"fixed_salt_16byt"
+        result = derive_key_argon2("test_password", salt=salt)
+
+        assert result.salt == salt
+        assert len(result.key) == 32
+
+    def test_derive_key_argon2_deterministic_with_same_salt(self):
+        """Test Argon2 produces same key with same password and salt."""
+        from pytodo_qt.crypto.kdf import derive_key_argon2
+
+        salt = b"fixed_salt_16byt"
+        result1 = derive_key_argon2("test_password", salt=salt)
+        result2 = derive_key_argon2("test_password", salt=salt)
+
+        assert result1.key == result2.key
+
+    def test_derive_key_argon2_different_passwords(self):
+        """Test Argon2 produces different keys for different passwords."""
+        from pytodo_qt.crypto.kdf import derive_key_argon2
+
+        salt = b"fixed_salt_16byt"
+        result1 = derive_key_argon2("password1", salt=salt)
+        result2 = derive_key_argon2("password2", salt=salt)
+
+        assert result1.key != result2.key
+
+    def test_derive_key_argon2_different_salts(self):
+        """Test Argon2 produces different keys for different salts."""
+        from pytodo_qt.crypto.kdf import derive_key_argon2
+
+        result1 = derive_key_argon2("test_password", salt=b"salt_one_16bytes")
+        result2 = derive_key_argon2("test_password", salt=b"salt_two_16bytes")
+
+        assert result1.key != result2.key
+
+
+class TestPBKDF2Fallback:
+    """Tests for PBKDF2 fallback key derivation."""
+
+    def test_pbkdf2_fallback_generates_key(self):
+        """Test PBKDF2 fallback generates proper key."""
+        from pytodo_qt.crypto.kdf import _derive_key_pbkdf2_fallback
+
+        result = _derive_key_pbkdf2_fallback("test_password")
+
+        assert len(result.key) == 32
+        assert len(result.salt) == 16
+
+    def test_pbkdf2_fallback_with_salt(self):
+        """Test PBKDF2 fallback with explicit salt."""
+        from pytodo_qt.crypto.kdf import _derive_key_pbkdf2_fallback
+
+        salt = b"fixed_salt_16byt"
+        result = _derive_key_pbkdf2_fallback("test_password", salt=salt)
+
+        assert result.salt == salt
+        assert len(result.key) == 32
+
+    def test_pbkdf2_fallback_deterministic(self):
+        """Test PBKDF2 produces same key with same inputs."""
+        from pytodo_qt.crypto.kdf import _derive_key_pbkdf2_fallback
+
+        salt = b"fixed_salt_16byt"
+        result1 = _derive_key_pbkdf2_fallback("test_password", salt=salt)
+        result2 = _derive_key_pbkdf2_fallback("test_password", salt=salt)
+
+        assert result1.key == result2.key
+
+
+class TestDeriveKeyPair:
+    """Tests for derive_key_pair_from_session."""
+
+    def test_derive_key_pair_produces_two_keys(self):
+        """Test that derive_key_pair_from_session produces two distinct keys."""
+        from pytodo_qt.crypto.kdf import derive_key_pair_from_session
+
+        shared_secret = b"shared_secret_bytes_here_32bytes"
+        session_id = b"session123"
+
+        enc_key, auth_key = derive_key_pair_from_session(shared_secret, session_id)
+
+        assert len(enc_key) == 32
+        assert len(auth_key) == 32
+        assert enc_key != auth_key
+
+    def test_derive_key_pair_deterministic(self):
+        """Test that derive_key_pair_from_session is deterministic."""
+        from pytodo_qt.crypto.kdf import derive_key_pair_from_session
+
+        shared_secret = b"shared_secret_bytes_here_32bytes"
+        session_id = b"session123"
+
+        enc_key1, auth_key1 = derive_key_pair_from_session(shared_secret, session_id)
+        enc_key2, auth_key2 = derive_key_pair_from_session(shared_secret, session_id)
+
+        assert enc_key1 == enc_key2
+        assert auth_key1 == auth_key2
+
+    def test_derive_key_pair_different_sessions(self):
+        """Test that different session IDs produce different keys."""
+        from pytodo_qt.crypto.kdf import derive_key_pair_from_session
+
+        shared_secret = b"shared_secret_bytes_here_32bytes"
+
+        enc1, auth1 = derive_key_pair_from_session(shared_secret, b"session1")
+        enc2, auth2 = derive_key_pair_from_session(shared_secret, b"session2")
+
+        assert enc1 != enc2
+        assert auth1 != auth2
+
+
+class TestDerivedKey:
+    """Tests for DerivedKey dataclass."""
+
+    def test_derived_key_creation(self):
+        """Test creating a DerivedKey."""
+        from pytodo_qt.crypto.kdf import DerivedKey
+
+        key = b"a" * 32
+        salt = b"b" * 16
+
+        derived = DerivedKey(key=key, salt=salt)
+
+        assert derived.key == key
+        assert derived.salt == salt
+
+
+class TestAESGCMEdgeCases:
+    """Additional edge case tests for AES-GCM."""
+
+    def test_encrypt_empty_plaintext(self):
+        """Test encrypting empty plaintext."""
+        key = generate_key()
+        cipher = AESGCMCipher(key)
+
+        plaintext = b""
+        encrypted = cipher.encrypt(plaintext)
+        decrypted = cipher.decrypt(encrypted)
+
+        assert decrypted == plaintext
+
+    def test_encrypt_large_message(self):
+        """Test encrypting a large message."""
+        key = generate_key()
+        cipher = AESGCMCipher(key)
+
+        # 1 MB of data
+        plaintext = b"A" * (1024 * 1024)
+        encrypted = cipher.encrypt(plaintext)
+        decrypted = cipher.decrypt(encrypted)
+
+        assert decrypted == plaintext
+
+    def test_each_encryption_produces_different_ciphertext(self):
+        """Test that each encryption uses a unique nonce."""
+        key = generate_key()
+        cipher = AESGCMCipher(key)
+        plaintext = b"Same message"
+
+        encrypted1 = cipher.encrypt(plaintext)
+        encrypted2 = cipher.encrypt(plaintext)
+
+        # Ciphertexts should differ due to random nonces
+        assert encrypted1.ciphertext != encrypted2.ciphertext
+
+    def test_decrypt_truncated_ciphertext(self):
+        """Test that truncated ciphertext fails decryption."""
+        key = generate_key()
+        cipher = AESGCMCipher(key)
+
+        plaintext = b"Test message"
+        encrypted = cipher.encrypt(plaintext)
+
+        # Create truncated encrypted message
+        from pytodo_qt.crypto.aes_gcm import EncryptedMessage
+
+        truncated = EncryptedMessage(
+            nonce=encrypted.nonce,
+            ciphertext=encrypted.ciphertext[:-8],  # Remove part of tag
+        )
+
+        with pytest.raises(DecryptionError):
+            cipher.decrypt(truncated)
+
+
+class TestKeyExchangeEdgeCases:
+    """Additional edge case tests for key exchange."""
+
+    def test_signature_wrong_message(self):
+        """Test signature verification with wrong message."""
+        keypair = IdentityKeyPair.generate()
+        message = b"Original message"
+        signature = keypair.sign(message)
+
+        assert keypair.verify(signature, b"Different message") is False
+
+    def test_signature_wrong_key(self):
+        """Test signature verification with wrong key."""
+        keypair1 = IdentityKeyPair.generate()
+        keypair2 = IdentityKeyPair.generate()
+
+        message = b"Test message"
+        signature = keypair1.sign(message)
+
+        # Verify with different keypair should fail
+        assert keypair2.verify(signature, message) is False
+
+    def test_ephemeral_keypair_unique(self):
+        """Test that each ephemeral keypair is unique."""
+        keypairs = [EphemeralKeyPair.generate() for _ in range(10)]
+        public_keys = [kp.public_bytes() for kp in keypairs]
+
+        # All public keys should be unique
+        assert len(set(public_keys)) == len(public_keys)
+
+    def test_signed_bundle_serialization_roundtrip(self):
+        """Test signed bundle serialization roundtrip."""
+        from pytodo_qt.crypto.key_exchange import SignedKeyBundle
+
+        identity = IdentityKeyPair.generate()
+        ephemeral = EphemeralKeyPair.generate()
+
+        bundle = create_signed_key_bundle(identity, ephemeral)
+        serialized = bundle.to_bytes()
+
+        # Deserialize
+        restored = SignedKeyBundle.from_bytes(serialized)
+
+        assert restored.ephemeral_public == bundle.ephemeral_public
+        assert restored.identity_public == bundle.identity_public
+        assert restored.signature == bundle.signature
+        assert restored.verify() is True
+
+    def test_signed_bundle_invalid_signature(self):
+        """Test bundle with invalid signature fails verification."""
+        from pytodo_qt.crypto.key_exchange import SignedKeyBundle
+
+        identity = IdentityKeyPair.generate()
+        ephemeral = EphemeralKeyPair.generate()
+
+        bundle = create_signed_key_bundle(identity, ephemeral)
+
+        # Create bundle with tampered signature
+        tampered = SignedKeyBundle(
+            ephemeral_public=bundle.ephemeral_public,
+            identity_public=bundle.identity_public,
+            signature=b"X" * 64,  # Invalid signature
+        )
+
+        assert tampered.verify() is False
+
+    def test_derive_session_keys_asymmetric(self):
+        """Test that initiator and responder get opposite keys."""
+        client_ephemeral = EphemeralKeyPair.generate()
+        server_ephemeral = EphemeralKeyPair.generate()
+
+        from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
+
+        server_pub = X25519PublicKey.from_public_bytes(server_ephemeral.public_bytes())
+        shared_secret = client_ephemeral.exchange(server_pub)
+
+        client_keys = derive_session_keys(
+            shared_secret,
+            client_ephemeral.public_bytes(),
+            server_ephemeral.public_bytes(),
+            is_initiator=True,
+        )
+        server_keys = derive_session_keys(
+            shared_secret,
+            server_ephemeral.public_bytes(),
+            client_ephemeral.public_bytes(),
+            is_initiator=False,
+        )
+
+        # Keys should be swapped
+        assert client_keys.encrypt_key == server_keys.decrypt_key
+        assert client_keys.decrypt_key == server_keys.encrypt_key
+        # Session ID should match
+        assert client_keys.session_id == server_keys.session_id
