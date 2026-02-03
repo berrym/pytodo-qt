@@ -169,6 +169,10 @@ class MainWindow(QMainWindow):
         self.rename_list_action.setShortcut("Ctrl+R")
         self.rename_list_action.triggered.connect(self._on_rename_list)
 
+        self.toggle_private_action = QAction("Toggle &Private", self)
+        self.toggle_private_action.setShortcut("Ctrl+Shift+P")
+        self.toggle_private_action.triggered.connect(self._on_toggle_private)
+
         # Sync actions
         self.sync_pull_action = QAction("&Pull from Remote...", self)
         self.sync_pull_action.setShortcut("F6")
@@ -220,6 +224,8 @@ class MainWindow(QMainWindow):
             list_menu.addAction(self.add_list_action)
             list_menu.addAction(self.delete_list_action)
             list_menu.addAction(self.rename_list_action)
+            list_menu.addSeparator()
+            list_menu.addAction(self.toggle_private_action)
 
         # Sync menu
         sync_menu = menu_bar.addMenu("&Sync")
@@ -268,6 +274,7 @@ class MainWindow(QMainWindow):
         self.list_selector.add_list_requested.connect(self._on_add_list)
         self.list_selector.delete_list_requested.connect(self._on_delete_list)
         self.list_selector.rename_list_requested.connect(self._on_rename_list)
+        self.list_selector.toggle_private_requested.connect(self._on_toggle_private)
         layout.addWidget(self.list_selector)
 
         # Todo table
@@ -391,8 +398,8 @@ class MainWindow(QMainWindow):
             logger.log.warning("Error stopping server: %s", e)
 
     def _get_sync_data(self) -> bytes:
-        """Get database as bytes for sync."""
-        return json.dumps(self._database.to_dict()).encode("utf-8")
+        """Get database as bytes for sync (excludes private lists)."""
+        return json.dumps(self._database.to_dict_for_sync()).encode("utf-8")
 
     def _on_sync_received(self, data: bytes) -> None:
         """Handle received sync data from incoming push."""
@@ -657,6 +664,19 @@ class MainWindow(QMainWindow):
         self._save_database()
         self._refresh_ui()
 
+    def _on_toggle_private(self) -> None:
+        """Handle toggle private action."""
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+
+        active_list.toggle_private()
+        self._save_database()
+        self._refresh_ui()
+
+        status = "private (won't sync)" if active_list.private else "shared"
+        self.status_bar_widget.show_message(f'List "{active_list.name}" is now {status}', 3000)
+
     @pyqtSlot(object)
     def _on_list_changed(self, todo_list: TodoList | None) -> None:
         """Handle list selection change."""
@@ -781,14 +801,14 @@ class MainWindow(QMainWindow):
         asyncio.ensure_future(do_pull())
 
     def _do_sync_push(self, host: str, port: int) -> None:
-        """Perform sync push to specified host."""
+        """Perform sync push to specified host (excludes private lists)."""
         from ..net.client import AsyncClient
 
         async def do_push():
             try:
                 logger.log.debug("Menu push: connecting to %s:%d", host, port)
                 client = AsyncClient(self)
-                data = json.dumps(self._database.to_dict()).encode("utf-8")
+                data = json.dumps(self._database.to_dict_for_sync()).encode("utf-8")
                 success = await client.sync_push(host, port, data)
                 if success:
                     QMessageBox.information(

@@ -267,10 +267,10 @@ class PeerManagerDialog(QDialog):
                 merged_count, local_newer, _ = self._merge_sync_data(data)
                 self.sync_data_received.emit(data)
 
-            # Then, push to peer
+            # Then, push to peer (excludes private lists)
             if self._database is not None:
                 self._set_busy(True, f"Pushing to {peer.name}...")
-                push_data = json.dumps(self._database.to_dict()).encode("utf-8")
+                push_data = json.dumps(self._database.to_dict_for_sync()).encode("utf-8")
                 logger.log.debug("Calling client.sync_push(%s, %d)", peer.address, peer.port)
                 push_success = await self._client.sync_push(peer.address, peer.port, push_data)
                 logger.log.debug("Sync push returned: success=%s", push_success)

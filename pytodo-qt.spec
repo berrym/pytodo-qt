@@ -115,8 +115,8 @@ if sys.platform == "darwin":
         info_plist={
             "CFBundleDisplayName": "PyTodo-Qt",
             "CFBundleExecutable": "pytodo-qt",
-            "CFBundleShortVersionString": "0.3.8",
-            "CFBundleVersion": "0.3.8",
+            "CFBundleShortVersionString": "0.3.9",
+            "CFBundleVersion": "0.3.9",
             "CFBundlePackageType": "APPL",
             "NSPrincipalClass": "NSApplication",
             "NSHighResolutionCapable": True,

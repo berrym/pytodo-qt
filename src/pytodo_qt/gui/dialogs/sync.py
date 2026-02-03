@@ -162,14 +162,14 @@ class SyncDialog(QDialog):
             QMessageBox.warning(self, "Sync Failed", f"Could not pull from {host}:{port}")
 
     async def _do_push(self, host: str, port: int) -> None:
-        """Perform sync push operation."""
+        """Perform sync push operation (excludes private lists)."""
         if self._database is None:
             QMessageBox.warning(self, "Error", "No database available for push")
             return
 
         self.status_label.setText(f"Pushing to {host}:{port}...")
 
-        data = json.dumps(self._database.to_dict()).encode("utf-8")
+        data = json.dumps(self._database.to_dict_for_sync()).encode("utf-8")
         success = await self._client.sync_push(host, port, data)
 
         if success:

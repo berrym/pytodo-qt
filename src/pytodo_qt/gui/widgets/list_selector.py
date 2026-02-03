@@ -5,14 +5,17 @@ Widget for selecting and managing to-do lists.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QWidget,
 )
@@ -35,6 +38,7 @@ class ListSelectorWidget(QWidget):
     add_list_requested = pyqtSignal()
     delete_list_requested = pyqtSignal()
     rename_list_requested = pyqtSignal()
+    toggle_private_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -48,6 +52,9 @@ class ListSelectorWidget(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        # Load lock icon
+        self._lock_icon = self._load_icon("lock.svg")
+
         # Label
         layout.addWidget(QLabel("List:"))
 
@@ -55,6 +62,8 @@ class ListSelectorWidget(QWidget):
         self.combo = QComboBox()
         self.combo.setMinimumWidth(200)
         self.combo.currentIndexChanged.connect(self._on_selection_changed)
+        self.combo.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.combo.customContextMenuRequested.connect(self._show_context_menu)
         layout.addWidget(self.combo, 1)
 
         # Add button
@@ -95,7 +104,10 @@ class ListSelectorWidget(QWidget):
             # Add all non-deleted lists
             current_idx = 0
             for i, lst in enumerate(self._database.active_lists()):
-                self.combo.addItem(lst.name, lst.id)
+                if lst.private:
+                    self.combo.addItem(self._lock_icon, lst.name, lst.id)
+                else:
+                    self.combo.addItem(lst.name, lst.id)
                 if lst.id == self._database.active_list_id:
                     current_idx = i
 
@@ -156,3 +168,44 @@ class ListSelectorWidget(QWidget):
             lst = self._database.get_list(list_id)
             self.list_changed.emit(lst)
             logger.log.info("Switched to list: %s", lst.name if lst else "None")
+
+    def _load_icon(self, name: str) -> QIcon:
+        """Load an icon from the icons directory."""
+        icon_dir = Path(__file__).parent.parent / "icons"
+        icon_path = icon_dir / name
+        if not icon_path.exists():
+            return QIcon()
+
+        if name.endswith(".svg"):
+            pixmap = QPixmap(str(icon_path))
+            icon = QIcon()
+            for mode in (
+                QIcon.Mode.Normal,
+                QIcon.Mode.Active,
+                QIcon.Mode.Disabled,
+                QIcon.Mode.Selected,
+            ):
+                icon.addPixmap(pixmap, mode)
+            return icon
+        return QIcon(str(icon_path))
+
+    def _show_context_menu(self, position) -> None:
+        """Show context menu for list operations."""
+        current_list = self.get_current_list()
+        if current_list is None:
+            return
+
+        menu = QMenu(self)
+
+        # Private/Shared toggle
+        if current_list.private:
+            action = menu.addAction(self._lock_icon, "Make Shared")
+        else:
+            action = menu.addAction(self._lock_icon, "Make Private")
+        action.triggered.connect(self.toggle_private_requested.emit)
+
+        menu.addSeparator()
+        menu.addAction("Rename...", self.rename_list_requested.emit)
+        menu.addAction("Delete...", self.delete_list_requested.emit)
+
+        menu.exec(self.combo.mapToGlobal(position))

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS lists (
     name TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
-    deleted INTEGER NOT NULL DEFAULT 0
+    deleted INTEGER NOT NULL DEFAULT 0,
+    private INTEGER NOT NULL DEFAULT 0
 )
 """
 
@@ -157,7 +158,27 @@ class DatabaseStorage:
                 (str(SCHEMA_VERSION),),
             )
 
+        # Run migrations if needed
+        self._migrate_schema_3_to_4()
+
         logger.log.debug("Database schema initialized")
+
+    def _migrate_schema_3_to_4(self) -> None:
+        """Migrate schema from version 3 to 4 (add private column)."""
+        current_version = self.get_schema_version()
+        if current_version >= 4:
+            return
+
+        cursor = self.connection.execute("PRAGMA table_info(lists)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if "private" not in columns:
+            self.connection.execute(
+                "ALTER TABLE lists ADD COLUMN private INTEGER NOT NULL DEFAULT 0"
+            )
+            logger.log.info("Migrated schema 3->4: added private column to lists")
+
+        self.set_schema_version(4)
 
     def get_schema_version(self) -> int:
         """Get current schema version."""
@@ -242,8 +263,8 @@ class DatabaseStorage:
         """
         self.connection.execute(
             """
-            INSERT OR REPLACE INTO lists (id, name, created_at, updated_at, deleted)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO lists (id, name, created_at, updated_at, deleted, private)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 str(lst.id),
@@ -251,6 +272,7 @@ class DatabaseStorage:
                 lst.created_at,
                 lst.updated_at,
                 1 if lst.deleted else 0,
+                1 if lst.private else 0,
             ),
         )
 
@@ -271,12 +293,19 @@ class DatabaseStorage:
 
     def _row_to_list(self, row: sqlite3.Row) -> TodoList:
         """Convert a database row to a TodoList."""
+        # Check if private column exists (for backward compatibility during migration)
+        try:
+            private = bool(row["private"])
+        except (KeyError, IndexError):
+            private = False
+
         return TodoList(
             id=UUID(row["id"]),
             name=row["name"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             deleted=bool(row["deleted"]),
+            private=private,
             items={},  # Items loaded separately
         )
 

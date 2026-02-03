@@ -103,6 +103,7 @@ class TodoList:
     created_at: int = field(default_factory=_now_timestamp)
     updated_at: int = field(default_factory=_now_timestamp)
     deleted: bool = False  # Tombstone for sync
+    private: bool = False  # Private lists excluded from sync
 
     def mark_updated(self) -> None:
         """Mark list as updated with current timestamp."""
@@ -111,6 +112,11 @@ class TodoList:
     def mark_deleted(self) -> None:
         """Mark list as deleted (tombstone)."""
         self.deleted = True
+        self.mark_updated()
+
+    def toggle_private(self) -> None:
+        """Toggle private status."""
+        self.private = not self.private
         self.mark_updated()
 
     def add_item(self, item: TodoItem) -> None:
@@ -153,6 +159,7 @@ class TodoList:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "deleted": self.deleted,
+            "private": self.private,
         }
 
     @classmethod
@@ -170,6 +177,7 @@ class TodoList:
             created_at=data.get("created_at", _now_timestamp()),
             updated_at=data.get("updated_at", _now_timestamp()),
             deleted=data.get("deleted", False),
+            private=data.get("private", False),
         )
 
     @classmethod
@@ -256,6 +264,14 @@ class Database:
             "schema_version": self.schema_version,
             "active_list_id": str(self.active_list_id) if self.active_list_id else None,
             "lists": {str(k): v.to_dict() for k, v in self.lists.items()},
+        }
+
+    def to_dict_for_sync(self) -> dict[str, Any]:
+        """Convert to dictionary for sync, excluding private lists."""
+        return {
+            "schema_version": self.schema_version,
+            "active_list_id": str(self.active_list_id) if self.active_list_id else None,
+            "lists": {str(k): v.to_dict() for k, v in self.lists.items() if not v.private},
         }
 
     def to_json(self) -> str:
