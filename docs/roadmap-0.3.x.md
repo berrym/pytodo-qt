@@ -7,8 +7,8 @@ This document outlines the remaining 0.3.x releases, focusing on foundational im
 | Release | Focus | Status |
 |---------|-------|--------|
 | 0.3.7 | Platform-specific release binaries | Complete |
-| 0.3.8 | SQLite migration | **Implementation Complete** |
-| 0.3.9 | Private lists | Planned |
+| 0.3.8 | SQLite migration | Complete |
+| 0.3.9 | Private lists | **Complete** |
 | 0.3.10 | Users & access control | Planned |
 
 Each release is backward compatible and delivers standalone value.
@@ -66,6 +66,8 @@ See [0.3.8 SQLite Migration Plan](./plans/0.3.8-sqlite-migration.md) for details
 
 ## 0.3.9: Private Lists
 
+**Status:** Implementation complete. Released.
+
 **Goal:** Allow users to mark lists as private, excluding them from sync.
 
 ### Why Private Lists
@@ -75,25 +77,35 @@ See [0.3.8 SQLite Migration Plan](./plans/0.3.8-sqlite-migration.md) for details
 - Temporary lists that don't need to clutter other devices
 - User control over what data leaves their machine
 
-### Scope
+### What Was Implemented
 
-- Visibility flag per list: `shared` (default) or `private`
-- Private lists excluded from sync operations
-- UI toggle in list settings
-- Sync protocol respects visibility (private lists never transmitted)
+- `private` field added to TodoList model (default: `False`)
+- `toggle_private()` method to toggle status with timestamp update
+- `to_dict_for_sync()` on Database class filters out private lists
+- Schema migration v3→v4 adds `private` column to SQLite
+- Lock icon (`lock.svg`) displays for private lists in selector
+- Context menu on list selector: "Make Private" / "Make Shared"
+- Menu action: List → Toggle Private (Ctrl+Shift+P)
+- Status bar feedback when toggling private status
+- 14 new tests covering model, sync filtering, SQLite, and migration
 
 ### User Experience
 
-- New lists default to shared (current behavior)
-- Right-click or list settings → "Make Private" / "Make Shared"
-- Visual indicator for private lists (icon or label)
-- Clear feedback when toggling visibility
+- New lists default to shared (unchanged behavior)
+- Right-click list selector → "Make Private" / "Make Shared"
+- Lock icon appears next to private list names
+- Keyboard shortcut: Ctrl+Shift+P
+- Status bar shows confirmation message
 
-### Success Criteria
+### Success Criteria - All Met
 
-- Private lists never appear in sync data
-- Visibility toggle works in UI
-- Existing lists remain shared (no surprise behavior changes)
+- [x] Private lists never appear in sync data
+- [x] Visibility toggle works in UI (context menu + keyboard)
+- [x] Existing lists remain shared (no surprise behavior changes)
+- [x] Visual indicator (lock icon) for private lists
+- [x] 325 tests passing
+
+See [0.3.9 Private Lists Plan](./plans/0.3.9-private-lists.md) for details.
 
 ---
 
@@ -156,9 +168,9 @@ Each release migrates data from the previous:
 ```
 0.3.7 (JSON)
     ↓ automatic migration
-0.3.8 (SQLite, same schema as JSON conceptually)
-    ↓ schema migration
-0.3.9 (SQLite + visibility column)
+0.3.8 (SQLite schema v3)
+    ↓ automatic schema migration
+0.3.9 (SQLite schema v4 + private column)
     ↓ schema migration
 0.3.10 (SQLite + users, ownership, permissions)
 ```
