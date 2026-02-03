@@ -10,7 +10,7 @@ from .logger import Logger
 logger = Logger(__name__)
 
 
-__version__ = "0.3.7"
+__version__ = "0.3.8"
 
 # Config manager singleton
 _config_mgr = None

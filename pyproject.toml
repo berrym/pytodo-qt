@@ -49,7 +49,7 @@ known-first-party = ["pytodo_qt"]
 
 [project]
 name = "pytodo-qt"
-version = "0.3.7"
+version = "0.3.8"
 description = "A cross-platform to-do list manager with encrypted peer-to-peer synchronization"
 readme = "README.md"
 authors = [
