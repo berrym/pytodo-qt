@@ -30,11 +30,19 @@ from ..core.config import get_config, get_config_manager
 from ..core.database import DatabaseStorage
 from ..core.logger import Logger
 from ..core.migration import MigrationError, migrate_json_to_sqlite, needs_migration
-from ..core.models import Database, TodoList, create_todo_list
+from ..core.models import Database, Device, PendingSync, TodoList, create_todo_list
+from ..core.offline_queue import OfflineQueue
 from ..crypto.keyring_storage import get_or_create_identity
 from ..net.discovery import get_discovery_service
 from ..net.server import AsyncServer
-from .dialogs import AddTodoDialog, PeerManagerDialog, SettingsDialog, SyncDialog
+from .dialogs import (
+    AddTodoDialog,
+    DeviceManagerDialog,
+    ListSyncSettingsDialog,
+    PeerManagerDialog,
+    SettingsDialog,
+    SyncDialog,
+)
 from .styles import apply_current_theme
 from .widgets import ListSelectorWidget, StatusBarWidget, TodoTableWidget
 
@@ -56,6 +64,7 @@ class MainWindow(QMainWindow):
         self._config = get_config()
         self._config_manager = get_config_manager()
         self._storage = DatabaseStorage(self._config_manager.db_file)
+        self._offline_queue = OfflineQueue(self._storage)
         self._printer = QPrinter()
         self._server: AsyncServer | None = None
 
@@ -185,6 +194,9 @@ class MainWindow(QMainWindow):
         self.peer_manager_action = QAction("&Peer Manager...", self)
         self.peer_manager_action.triggered.connect(self._on_peer_manager)
 
+        self.device_manager_action = QAction("&Device Manager...", self)
+        self.device_manager_action.triggered.connect(self._on_device_manager)
+
         # Peer submenus (populated dynamically)
         self.pull_peers_menu: QMenu | None = None
         self.push_peers_menu: QMenu | None = None
@@ -230,6 +242,20 @@ class MainWindow(QMainWindow):
         # Sync menu
         sync_menu = menu_bar.addMenu("&Sync")
         if sync_menu:
+            # Sync Group submenu
+            self.sync_group_menu = sync_menu.addMenu("Sync &Group")
+            if self.sync_group_menu:
+                self.sync_group_menu.aboutToShow.connect(self._populate_sync_group_menu)
+
+            # Sync All Trusted action
+            self.sync_all_action = QAction("Sync &All Trusted", self)
+            self.sync_all_action.setShortcut("Ctrl+Shift+S")
+            self.sync_all_action.setToolTip("Sync with all online trusted devices")
+            self.sync_all_action.triggered.connect(self._on_sync_all_trusted)
+            sync_menu.addAction(self.sync_all_action)
+
+            sync_menu.addSeparator()
+
             # Pull submenu with discovered peers
             self.pull_peers_menu = sync_menu.addMenu("Pull from &Peer")
             if self.pull_peers_menu:
@@ -244,6 +270,7 @@ class MainWindow(QMainWindow):
             sync_menu.addAction(self.sync_pull_action)
             sync_menu.addAction(self.sync_push_action)
             sync_menu.addSeparator()
+            sync_menu.addAction(self.device_manager_action)
             sync_menu.addAction(self.peer_manager_action)
 
         # Help menu
@@ -275,6 +302,7 @@ class MainWindow(QMainWindow):
         self.list_selector.delete_list_requested.connect(self._on_delete_list)
         self.list_selector.rename_list_requested.connect(self._on_rename_list)
         self.list_selector.toggle_private_requested.connect(self._on_toggle_private)
+        self.list_selector.sync_settings_requested.connect(self._on_list_sync_settings)
         layout.addWidget(self.list_selector)
 
         # Todo table
@@ -342,8 +370,14 @@ class MainWindow(QMainWindow):
                 port=config.server.port,
                 fingerprint=identity.fingerprint,
                 protocol_version=config.security.protocol_version,
+                on_peer_added=self._on_peer_discovered,
             )
             logger.log.info("Discovery service started")
+
+            # Clean up expired pending syncs on startup
+            expired = self._offline_queue.cleanup_expired()
+            if expired > 0:
+                logger.log.info("Cleaned up %d expired pending syncs", expired)
         except Exception as e:
             logger.log.exception("Failed to start discovery service: %s", e)
 
@@ -382,10 +416,211 @@ class MainWindow(QMainWindow):
             await self._server.start(
                 get_sync_data=self._get_sync_data,
                 on_sync_received=self._on_sync_received,
+                on_client_connected=self._on_client_connected,
+                on_client_disconnected=self._on_client_disconnected,
             )
             logger.log.info("Server started")
         except Exception as e:
             logger.log.exception("Failed to start server: %s", e)
+
+    def _on_client_connected(self, address: str, fingerprint: str) -> None:
+        """Handle client connection - auto-track device."""
+        try:
+            self._track_device(fingerprint, address)
+            logger.log.info("Client connected and tracked: %s (%s)", address, fingerprint[:19])
+        except Exception as e:
+            logger.log.exception("Error tracking connected device: %s", e)
+
+    def _on_client_disconnected(self, address: str) -> None:
+        """Handle client disconnection."""
+        logger.log.debug("Client disconnected: %s", address)
+
+    def _track_device(self, fingerprint: str, address: str | None = None) -> Device:
+        """Track a device by fingerprint, creating or updating as needed.
+
+        Args:
+            fingerprint: Device fingerprint
+            address: Optional address (host:port or IP)
+
+        Returns:
+            The tracked Device object
+        """
+        import time
+
+        now = int(time.time() * 1000)
+
+        # Check if device already exists
+        existing = self._storage.get_device_by_fingerprint(fingerprint)
+
+        if existing:
+            # Update last_seen and address
+            existing.last_seen = now
+            if address:
+                existing.last_address = address
+            self._storage.save_device(existing)
+            logger.log.debug("Updated existing device: %s", fingerprint[:19])
+            return existing
+
+        # Create new device
+        device = Device(
+            fingerprint=fingerprint,
+            name="",  # User can name it later
+            first_seen=now,
+            last_seen=now,
+            last_address=address,
+            trust_level="normal",
+        )
+        self._storage.save_device(device)
+        logger.log.info("New device tracked: %s (address=%s)", fingerprint[:19], address)
+        return device
+
+    def _on_peer_discovered(self, peer) -> None:
+        """Handle peer discovery - check for pending syncs and auto-sync.
+
+        Args:
+            peer: DiscoveredPeer from discovery service
+        """
+        if peer.is_local:
+            return
+
+        fingerprint = peer.fingerprint
+        if not fingerprint:
+            return
+
+        # Look up device by fingerprint
+        device = self._storage.get_device_by_fingerprint(fingerprint)
+        if device is None:
+            return
+
+        # Check for pending syncs for this device
+        pending = self._offline_queue.get_pending_for_device(device.id)
+        if pending:
+            logger.log.info(
+                "Device %s came online with %d pending sync(s)",
+                device.name or fingerprint[:19],
+                len(pending),
+            )
+            asyncio.ensure_future(self._process_pending_syncs(device, peer, pending))
+            return  # Pending syncs take priority
+
+        # Check for auto-sync on trusted devices
+        config = get_config()
+        if config.discovery.auto_sync_trusted and device.trust_level == "trusted":
+            logger.log.info(
+                "Auto-syncing with trusted device: %s",
+                device.name or fingerprint[:19],
+            )
+            asyncio.ensure_future(self._auto_sync_with_device(device, peer))
+
+    async def _auto_sync_with_device(self, device: Device, peer) -> None:
+        """Perform automatic sync with a trusted device.
+
+        Args:
+            device: The trusted device
+            peer: DiscoveredPeer with connection info
+        """
+        from ..net.client import AsyncClient
+
+        try:
+            client = AsyncClient(self)
+            self.status_bar_widget.set_sync_status(
+                "syncing",
+                "sync",
+                f"Auto-sync: {device.name or 'Trusted device'}",
+            )
+
+            # Pull first
+            pull_ok, data = await client.sync_pull(peer.address, peer.port)
+            if pull_ok:
+                self._merge_sync_data_internal(data)
+
+            # Push (filtered by sync rules)
+            allowed_list_ids = self._storage.get_syncable_list_ids_for_device(device.id)
+            push_data = json.dumps(self._database.to_dict_for_device(allowed_list_ids)).encode(
+                "utf-8"
+            )
+            push_ok = await client.sync_push(peer.address, peer.port, push_data)
+
+            if pull_ok and push_ok:
+                self._track_device(device.fingerprint, f"{peer.address}:{peer.port}")
+                self._save_database()
+                self._refresh_ui()
+                self.status_bar_widget.set_sync_status("success")
+                logger.log.info(
+                    "Auto-sync completed with %s",
+                    device.name or device.fingerprint[:19],
+                )
+            else:
+                self.status_bar_widget.set_sync_status("error")
+                logger.log.warning(
+                    "Auto-sync failed with %s (pull=%s, push=%s)",
+                    device.name,
+                    pull_ok,
+                    push_ok,
+                )
+
+        except Exception as e:
+            self.status_bar_widget.set_sync_status("error")
+            logger.log.exception("Auto-sync error with %s: %s", device.name, e)
+
+    async def _process_pending_syncs(
+        self, device: Device, peer, pending: list[PendingSync]
+    ) -> None:
+        """Process pending syncs for a device that came online.
+
+        Args:
+            device: The device that came online
+            peer: DiscoveredPeer with connection info
+            pending: List of pending syncs to process
+        """
+        from ..net.client import AsyncClient
+
+        for sync in pending:
+            self._offline_queue.record_attempt(sync)
+
+            try:
+                client = AsyncClient(self)
+                self.status_bar_widget.set_sync_status(
+                    "syncing",
+                    "sync",
+                    f"Processing queued sync: {device.name or 'Device'}",
+                )
+
+                # Pull first
+                pull_ok, data = await client.sync_pull(peer.address, peer.port)
+                if pull_ok:
+                    self._merge_sync_data_internal(data)
+
+                # Push (filtered by sync rules)
+                allowed_list_ids = self._storage.get_syncable_list_ids_for_device(device.id)
+                push_data = json.dumps(self._database.to_dict_for_device(allowed_list_ids)).encode(
+                    "utf-8"
+                )
+                push_ok = await client.sync_push(peer.address, peer.port, push_data)
+
+                if pull_ok and push_ok:
+                    # Success - remove from queue
+                    self._offline_queue.remove(sync.id)
+                    self._track_device(device.fingerprint, f"{peer.address}:{peer.port}")
+                    self._save_database()
+                    self._refresh_ui()
+                    self.status_bar_widget.set_sync_status("success")
+                    logger.log.info(
+                        "Processed queued sync for %s",
+                        device.name or device.fingerprint[:19],
+                    )
+                else:
+                    self.status_bar_widget.set_sync_status("error")
+                    logger.log.warning(
+                        "Queued sync failed for %s (pull=%s, push=%s)",
+                        device.name,
+                        pull_ok,
+                        push_ok,
+                    )
+
+            except Exception as e:
+                self.status_bar_widget.set_sync_status("error")
+                logger.log.exception("Error processing queued sync: %s", e)
 
     def _stop_server(self) -> None:
         """Stop the TCP server."""
@@ -403,6 +638,7 @@ class MainWindow(QMainWindow):
 
     def _on_sync_received(self, data: bytes) -> None:
         """Handle received sync data from incoming push."""
+        self.status_bar_widget.set_sync_status("syncing", "pull", "remote")
         try:
             merged, local_newer, identical = self._merge_sync_data_internal(data)
             if merged > 0:
@@ -413,7 +649,9 @@ class MainWindow(QMainWindow):
                 logger.log.info(
                     "Received sync data: %d local newer, %d identical", local_newer, identical
                 )
+            self.status_bar_widget.set_sync_status("success")
         except Exception as e:
+            self.status_bar_widget.set_sync_status("error")
             logger.log.exception("Error processing sync data: %s", e)
 
     def _merge_sync_data_internal(self, data: bytes) -> tuple[int, int, int]:
@@ -524,6 +762,10 @@ class MainWindow(QMainWindow):
             address=config.server.address,
             port=config.server.port,
         )
+
+        # Pending sync count
+        pending_count = self._offline_queue.get_pending_count()
+        self.status_bar_widget.set_pending_sync_count(pending_count)
 
     # Action handlers
 
@@ -677,6 +919,38 @@ class MainWindow(QMainWindow):
         status = "private (won't sync)" if active_list.private else "shared"
         self.status_bar_widget.show_message(f'List "{active_list.name}" is now {status}', 3000)
 
+    def _on_list_sync_settings(self) -> None:
+        """Handle list sync settings request."""
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+
+        dialog = ListSyncSettingsDialog(
+            self,
+            todo_list=active_list,
+            storage=self._storage,
+        )
+
+        if dialog.exec() == ListSyncSettingsDialog.DialogCode.Accepted:
+            # Get potentially updated list (for private flag changes)
+            updated_list = dialog.get_updated_list()
+            if updated_list:
+                # Update in database
+                self._database.lists[updated_list.id] = updated_list
+                self._save_database()
+                self._refresh_ui()
+
+                # Show status message
+                if updated_list.private:
+                    msg = f'List "{updated_list.name}" is now private'
+                else:
+                    rules = self._storage.get_sync_rules_for_list(updated_list.id)
+                    if rules:
+                        msg = f'List "{updated_list.name}" syncs to selected groups'
+                    else:
+                        msg = f'List "{updated_list.name}" syncs to all devices'
+                self.status_bar_widget.show_message(msg, 3000)
+
     @pyqtSlot(object)
     def _on_list_changed(self, todo_list: TodoList | None) -> None:
         """Handle list selection change."""
@@ -709,6 +983,221 @@ class MainWindow(QMainWindow):
                 item.reminder = text
                 item.mark_updated()
                 self._save_database()
+
+    def _populate_sync_group_menu(self) -> None:
+        """Populate the sync group submenu with available groups."""
+        if self.sync_group_menu is None:
+            return
+
+        self.sync_group_menu.clear()
+
+        groups = self._storage.get_all_sync_groups()
+        if not groups:
+            action = self.sync_group_menu.addAction("No sync groups created")
+            action.setEnabled(False)
+            return
+
+        discovery = get_discovery_service()
+        online_fps = {p.fingerprint for p in discovery.get_peers() if not p.is_local}
+
+        for group in groups:
+            devices = self._storage.get_devices_in_group(group.id)
+            online_count = sum(1 for d in devices if d.fingerprint in online_fps)
+
+            action = self.sync_group_menu.addAction(
+                f"{group.name} ({online_count}/{len(devices)} online)"
+            )
+            action.setData(group.id)
+            action.setEnabled(online_count > 0)
+            action.triggered.connect(lambda checked, gid=group.id: self._on_sync_group(gid))
+
+    def _on_sync_group(self, group_id) -> None:
+        """Handle sync group from menu."""
+        asyncio.ensure_future(self._async_sync_group(group_id))
+
+    async def _async_sync_group(self, group_id) -> None:
+        """Async handler for syncing a group."""
+        group = self._storage.get_sync_group(group_id)
+        if group is None:
+            return
+
+        # Get online devices in group
+        discovery = get_discovery_service()
+        online_fps = {p.fingerprint for p in discovery.get_peers() if not p.is_local}
+        devices = self._storage.get_devices_in_group(group_id)
+        online_devices = [d for d in devices if d.fingerprint in online_fps]
+
+        if not online_devices:
+            QMessageBox.information(
+                self,
+                "No Online Devices",
+                f"No devices in '{group.name}' are currently online.",
+            )
+            return
+
+        result = QMessageBox.question(
+            self,
+            "Sync Group",
+            f"Sync with {len(online_devices)} online device(s) in '{group.name}'?\n\n"
+            + "\n".join(f"  - {d.name or 'Unnamed'}" for d in online_devices),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if result != QMessageBox.StandardButton.Yes:
+            return
+
+        await self._do_bulk_sync(online_devices, f"Syncing '{group.name}'")
+
+    def _on_sync_all_trusted(self) -> None:
+        """Handle sync all trusted devices."""
+        asyncio.ensure_future(self._async_sync_all_trusted())
+
+    async def _async_sync_all_trusted(self) -> None:
+        """Async handler for syncing all trusted devices."""
+        # Get online trusted devices
+        discovery = get_discovery_service()
+        online_fps = {p.fingerprint for p in discovery.get_peers() if not p.is_local}
+        devices = [
+            d
+            for d in self._storage.get_all_devices()
+            if d.trust_level == "trusted" and d.fingerprint in online_fps
+        ]
+
+        if not devices:
+            QMessageBox.information(
+                self,
+                "No Trusted Devices",
+                "No trusted devices are currently online.",
+            )
+            return
+
+        result = QMessageBox.question(
+            self,
+            "Sync All Trusted",
+            f"Sync with {len(devices)} trusted online device(s)?\n\n"
+            + "\n".join(f"  - {d.name or 'Unnamed'}" for d in devices),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if result != QMessageBox.StandardButton.Yes:
+            return
+
+        await self._do_bulk_sync(devices, "Syncing trusted devices")
+
+    async def _do_bulk_sync(
+        self, devices: list, operation_name: str, queue_offline: bool = False
+    ) -> None:
+        """Perform bulk sync with multiple devices with progress reporting.
+
+        Args:
+            devices: List of Device objects to sync with
+            operation_name: Name of the operation for status display
+            queue_offline: If True, queue syncs for offline devices
+        """
+        from ..net.client import AsyncClient
+
+        discovery = get_discovery_service()
+        success_count = 0
+        fail_count = 0
+        queued_count = 0
+        total = len(devices)
+
+        for i, device in enumerate(devices, 1):
+            # Update status bar with progress
+            self.status_bar_widget.set_sync_status(
+                "syncing",
+                "sync",
+                f"{operation_name}: {device.name or 'Device'} ({i}/{total})",
+            )
+
+            # Find peer for device
+            peer = None
+            for p in discovery.get_peers():
+                if p.fingerprint == device.fingerprint and not p.is_local:
+                    peer = p
+                    break
+
+            if peer is None:
+                if queue_offline:
+                    self._offline_queue.enqueue(device.id)
+                    queued_count += 1
+                    logger.log.info(
+                        "Queued sync for offline device: %s",
+                        device.name or device.fingerprint[:19],
+                    )
+                else:
+                    fail_count += 1
+                continue
+
+            try:
+                client = AsyncClient(self)
+
+                # Pull
+                pull_ok, data = await client.sync_pull(peer.address, peer.port)
+                if pull_ok:
+                    self._merge_sync_data_internal(data)
+
+                # Push (filtered by sync rules)
+                allowed_list_ids = self._storage.get_syncable_list_ids_for_device(device.id)
+                push_data = json.dumps(self._database.to_dict_for_device(allowed_list_ids)).encode(
+                    "utf-8"
+                )
+                push_ok = await client.sync_push(peer.address, peer.port, push_data)
+
+                if pull_ok and push_ok:
+                    success_count += 1
+                    # Track device
+                    self._track_device(device.fingerprint, f"{peer.address}:{peer.port}")
+                    # Clear any pending syncs for this device
+                    self._offline_queue.clear_for_device(device.id)
+                else:
+                    fail_count += 1
+
+            except Exception as e:
+                logger.log.exception("Bulk sync with %s failed: %s", device.name, e)
+                fail_count += 1
+
+        # Save and refresh
+        self._save_database()
+        self._refresh_ui()
+
+        # Show result
+        if fail_count == 0 and queued_count == 0:
+            self.status_bar_widget.set_sync_status("success")
+            QMessageBox.information(
+                self,
+                "Sync Complete",
+                f"Successfully synced with {success_count} device(s).",
+            )
+        elif queued_count > 0:
+            self.status_bar_widget.set_sync_status("success")
+            msg = f"Synced with {success_count} device(s)."
+            if queued_count > 0:
+                msg += f"\n{queued_count} device(s) offline - syncs queued."
+            if fail_count > 0:
+                msg += f"\n{fail_count} failed."
+            QMessageBox.information(self, "Sync Complete", msg)
+        else:
+            self.status_bar_widget.set_sync_status("error")
+            QMessageBox.warning(
+                self,
+                "Sync Partial",
+                f"Synced with {success_count} device(s).\n{fail_count} failed.",
+            )
+
+    def queue_sync_for_device(self, device_id: UUID) -> bool:
+        """Queue a sync for a device.
+
+        Args:
+            device_id: UUID of the device to queue sync for
+
+        Returns:
+            True if sync was queued, False if already queued
+        """
+        if self._offline_queue.has_pending(device_id):
+            return False
+        self._offline_queue.enqueue(device_id)
+        return True
 
     def _populate_pull_peers_menu(self) -> None:
         """Populate the pull peers submenu with discovered peers."""
@@ -765,14 +1254,21 @@ class MainWindow(QMainWindow):
         from ..net.client import AsyncClient
 
         async def do_pull():
+            self.status_bar_widget.set_sync_status("syncing", "pull", f"{host}:{port}")
             try:
                 logger.log.debug("Menu pull: connecting to %s:%d", host, port)
                 client = AsyncClient(self)
                 success, data = await client.sync_pull(host, port)
                 if success:
+                    # Track the device we synced with
+                    peer_fingerprint = client.get_last_peer_fingerprint()
+                    if peer_fingerprint:
+                        self._track_device(peer_fingerprint, f"{host}:{port}")
+
                     merged, local_newer, identical = self._merge_sync_data_internal(data)
                     self._save_database()
                     self._refresh_ui()
+                    self.status_bar_widget.set_sync_status("success")
                     if merged > 0:
                         QMessageBox.information(
                             self,
@@ -793,8 +1289,10 @@ class MainWindow(QMainWindow):
                             f"Databases are identical with {host}:{port}",
                         )
                 else:
+                    self.status_bar_widget.set_sync_status("error")
                     QMessageBox.warning(self, "Pull Failed", f"Could not pull from {host}:{port}")
             except Exception as e:
+                self.status_bar_widget.set_sync_status("error")
                 logger.log.exception("Menu pull failed: %s", e)
                 QMessageBox.critical(self, "Pull Error", f"Pull failed: {e}")
 
@@ -805,20 +1303,29 @@ class MainWindow(QMainWindow):
         from ..net.client import AsyncClient
 
         async def do_push():
+            self.status_bar_widget.set_sync_status("syncing", "push", f"{host}:{port}")
             try:
                 logger.log.debug("Menu push: connecting to %s:%d", host, port)
                 client = AsyncClient(self)
                 data = json.dumps(self._database.to_dict_for_sync()).encode("utf-8")
                 success = await client.sync_push(host, port, data)
                 if success:
+                    # Track the device we synced with
+                    peer_fingerprint = client.get_last_peer_fingerprint()
+                    if peer_fingerprint:
+                        self._track_device(peer_fingerprint, f"{host}:{port}")
+
+                    self.status_bar_widget.set_sync_status("success")
                     QMessageBox.information(
                         self,
                         "Push Complete",
                         f"Pushed {len(data)} bytes to {host}:{port}\nRemote will merge any new items.",
                     )
                 else:
+                    self.status_bar_widget.set_sync_status("error")
                     QMessageBox.warning(self, "Push Failed", f"Could not push to {host}:{port}")
             except Exception as e:
+                self.status_bar_widget.set_sync_status("error")
                 logger.log.exception("Menu push failed: %s", e)
                 QMessageBox.critical(self, "Push Error", f"Push failed: {e}")
 
@@ -828,6 +1335,12 @@ class MainWindow(QMainWindow):
         """Handle sync pull action."""
         dialog = SyncDialog(self, operation="pull", database=self._database)
         if dialog.exec() == SyncDialog.DialogCode.Accepted:
+            # Track device
+            fingerprint = dialog.get_peer_fingerprint()
+            address = dialog.get_last_address()
+            if fingerprint:
+                self._track_device(fingerprint, address)
+
             result = dialog.get_sync_result()
             if result:
                 self._merge_sync_data(result)
@@ -835,7 +1348,14 @@ class MainWindow(QMainWindow):
     def _on_sync_push(self) -> None:
         """Handle sync push action."""
         dialog = SyncDialog(self, operation="push", database=self._database)
-        dialog.exec()
+        if dialog.exec() == SyncDialog.DialogCode.Accepted:
+            # Track device
+            fingerprint = dialog.get_peer_fingerprint()
+            address = dialog.get_last_address()
+            if fingerprint:
+                self._track_device(fingerprint, address)
+
+            self.status_bar_widget.set_sync_status("success")
 
     def _merge_sync_data(self, data: bytes) -> None:
         """Merge received sync data into local database."""
@@ -843,6 +1363,7 @@ class MainWindow(QMainWindow):
             merged, local_newer, identical = self._merge_sync_data_internal(data)
             self._save_database()
             self._refresh_ui()
+            self.status_bar_widget.set_sync_status("success")
             logger.log.info(
                 "Merged %d, local newer %d, identical %d", merged, local_newer, identical
             )
@@ -860,19 +1381,33 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.information(self, "Already In Sync", "Databases are identical.")
         except Exception as e:
+            self.status_bar_widget.set_sync_status("error")
             logger.log.exception("Error merging sync data: %s", e)
             QMessageBox.warning(self, "Merge Error", f"Failed to merge sync data: {e}")
 
     def _on_peer_manager(self) -> None:
         """Handle peer manager action."""
-        dialog = PeerManagerDialog(self, database=self._database)
+        dialog = PeerManagerDialog(self, database=self._database, storage=self._storage)
         dialog.sync_data_received.connect(self._on_peer_sync_received)
+        dialog.exec()
+
+    def _on_device_manager(self) -> None:
+        """Handle device manager action."""
+        dialog = DeviceManagerDialog(self, database=self._database, storage=self._storage)
+        dialog.sync_data_received.connect(self._on_device_sync_received)
         dialog.exec()
 
     def _on_peer_sync_received(self, data: bytes) -> None:
         """Handle sync data received from peer manager."""
         self._save_database()
         self._refresh_ui()
+        self.status_bar_widget.set_sync_status("success")
+
+    def _on_device_sync_received(self, data: bytes) -> None:
+        """Handle sync data received from device manager."""
+        self._save_database()
+        self._refresh_ui()
+        self.status_bar_widget.set_sync_status("success")
 
     def _on_settings(self) -> None:
         """Handle settings action."""

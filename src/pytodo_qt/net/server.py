@@ -29,6 +29,7 @@ from .protocol import (
     Message,
     MessageHeader,
     MessageType,
+    create_busy_response,
     create_error,
     create_hello_ack,
     create_key_exchange_ack,
@@ -66,12 +67,17 @@ class AsyncServer:
     identity: IdentityKeyPair | None = None
     handshake_timeout: float = 30.0  # Timeout for handshake in seconds
     message_timeout: float = 60.0  # Timeout for receiving messages
+    sync_lock_timeout: float = 5.0  # Timeout for acquiring sync lock
     _server: asyncio.Server | None = None
     _sessions: dict[tuple[str, int], ClientSession] = field(default_factory=dict)
     _get_sync_data: Callable[[], bytes] | None = None
     _on_sync_received: Callable[[bytes], None] | None = None
     _on_client_connected: Callable[[str, str], None] | None = None
     _on_client_disconnected: Callable[[str], None] | None = None
+    # Sync concurrency protection
+    _sync_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    _sync_in_progress: bool = False
+    _current_sync_peer: str | None = None
 
     async def start(
         self,
@@ -311,6 +317,7 @@ class AsyncServer:
     async def _handle_message(self, session: ClientSession, msg: Message) -> None:
         """Handle a received message."""
         config = get_config()
+        peer_addr_str = f"{session.peer_address[0]}:{session.peer_address[1]}"
 
         if msg.header.msg_type == MessageType.PING:
             pong = create_pong()
@@ -322,17 +329,24 @@ class AsyncServer:
                 await self._send_message(session, error)
                 return
 
-            # Get sync data and send response
-            data = b"{}"
-            if self._get_sync_data:
-                try:
-                    data = self._get_sync_data()
-                except Exception as e:
-                    logger.log.exception("Error getting sync data: %s", e)
+            # Try to acquire sync lock
+            if not await self._try_acquire_sync_lock(session, peer_addr_str):
+                return
 
-            response = create_sync_response(data)
-            await self._send_message(session, response)
-            logger.log.info("Sent sync data to %s", session.peer_address)
+            try:
+                # Get sync data and send response
+                data = b"{}"
+                if self._get_sync_data:
+                    try:
+                        data = self._get_sync_data()
+                    except Exception as e:
+                        logger.log.exception("Error getting sync data: %s", e)
+
+                response = create_sync_response(data)
+                await self._send_message(session, response)
+                logger.log.info("Sent sync data to %s", session.peer_address)
+            finally:
+                self._release_sync_lock()
 
         elif msg.header.msg_type == MessageType.DELTA_PUSH:
             if not config.server.allow_push:
@@ -340,17 +354,26 @@ class AsyncServer:
                 await self._send_message(session, error)
                 return
 
-            # Process received data
-            if self._on_sync_received:
-                try:
-                    self._on_sync_received(msg.payload)
-                except Exception as e:
-                    logger.log.exception("Error processing sync data: %s", e)
+            # Try to acquire sync lock
+            if not await self._try_acquire_sync_lock(session, peer_addr_str):
+                return
 
-            # Send acknowledgment
-            ack = Message.create(MessageType.DELTA_ACK, b"")
-            await self._send_message(session, ack)
-            logger.log.info("Received and acknowledged delta push from %s", session.peer_address)
+            try:
+                # Process received data
+                if self._on_sync_received:
+                    try:
+                        self._on_sync_received(msg.payload)
+                    except Exception as e:
+                        logger.log.exception("Error processing sync data: %s", e)
+
+                # Send acknowledgment
+                ack = Message.create(MessageType.DELTA_ACK, b"")
+                await self._send_message(session, ack)
+                logger.log.info(
+                    "Received and acknowledged delta push from %s", session.peer_address
+                )
+            finally:
+                self._release_sync_lock()
 
         elif msg.header.msg_type == MessageType.ERROR:
             from .protocol import ErrorMessage
@@ -362,6 +385,46 @@ class AsyncServer:
                 err.error_code.name,
                 err.message,
             )
+
+    async def _try_acquire_sync_lock(self, session: ClientSession, peer_addr: str) -> bool:
+        """Try to acquire the sync lock, sending busy response if unavailable.
+
+        Returns True if lock acquired, False if busy response sent.
+        """
+        try:
+            # Try to acquire with timeout
+            acquired = await asyncio.wait_for(
+                self._sync_lock.acquire(),
+                timeout=self.sync_lock_timeout,
+            )
+            if acquired:
+                self._sync_in_progress = True
+                self._current_sync_peer = peer_addr
+                logger.log.debug("Sync lock acquired by %s", peer_addr)
+                return True
+        except TimeoutError:
+            pass
+
+        # Lock not available, send busy response
+        logger.log.info(
+            "Server busy (syncing with %s), rejecting request from %s",
+            self._current_sync_peer,
+            peer_addr,
+        )
+        busy = create_busy_response(
+            retry_after=5,
+            current_peer=self._current_sync_peer or "",
+        )
+        await self._send_message(session, busy)
+        return False
+
+    def _release_sync_lock(self) -> None:
+        """Release the sync lock."""
+        if self._sync_lock.locked():
+            self._sync_in_progress = False
+            self._current_sync_peer = None
+            self._sync_lock.release()
+            logger.log.debug("Sync lock released")
 
     async def _recv_message_raw(self, session: ClientSession) -> Message | None:
         """Receive a raw (unencrypted) message."""

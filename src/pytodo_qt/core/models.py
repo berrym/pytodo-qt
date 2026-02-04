@@ -274,6 +274,25 @@ class Database:
             "lists": {str(k): v.to_dict() for k, v in self.lists.items() if not v.private},
         }
 
+    def to_dict_for_device(self, allowed_list_ids: set[UUID]) -> dict[str, Any]:
+        """Convert to dictionary for sync with a specific device.
+
+        Args:
+            allowed_list_ids: Set of list IDs that should be included
+
+        Returns:
+            Dictionary with only the allowed lists
+        """
+        return {
+            "schema_version": self.schema_version,
+            "active_list_id": str(self.active_list_id) if self.active_list_id else None,
+            "lists": {
+                str(k): v.to_dict()
+                for k, v in self.lists.items()
+                if k in allowed_list_ids and not v.private
+            },
+        }
+
     def to_json(self) -> str:
         """Serialize to JSON string."""
         return json.dumps(self.to_dict(), indent=2)
@@ -329,6 +348,160 @@ class Database:
         return db
 
 
+@dataclass
+class Device:
+    """A known sync device identified by fingerprint."""
+
+    id: UUID = field(default_factory=_uuid_factory)
+    fingerprint: str = ""
+    name: str = ""
+    first_seen: int = field(default_factory=_now_timestamp)
+    last_seen: int = field(default_factory=_now_timestamp)
+    last_address: str | None = None
+    trust_level: str = "normal"  # normal, trusted, blocked
+
+    def update_seen(self, address: str | None = None) -> None:
+        """Update last seen timestamp and optionally address."""
+        self.last_seen = _now_timestamp()
+        if address:
+            self.last_address = address
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "id": str(self.id),
+            "fingerprint": self.fingerprint,
+            "name": self.name,
+            "first_seen": self.first_seen,
+            "last_seen": self.last_seen,
+            "last_address": self.last_address,
+            "trust_level": self.trust_level,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Device:
+        """Create from dictionary."""
+        return cls(
+            id=UUID(data["id"]) if isinstance(data["id"], str) else data["id"],
+            fingerprint=data.get("fingerprint", ""),
+            name=data.get("name", ""),
+            first_seen=data.get("first_seen", _now_timestamp()),
+            last_seen=data.get("last_seen", _now_timestamp()),
+            last_address=data.get("last_address"),
+            trust_level=data.get("trust_level", "normal"),
+        )
+
+
+@dataclass
+class SyncGroup:
+    """A group of devices for organized sync operations."""
+
+    id: UUID = field(default_factory=_uuid_factory)
+    name: str = ""
+    created_at: int = field(default_factory=_now_timestamp)
+    updated_at: int = field(default_factory=_now_timestamp)
+
+    def mark_updated(self) -> None:
+        """Mark group as updated with current timestamp."""
+        self.updated_at = _now_timestamp()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "id": str(self.id),
+            "name": self.name,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SyncGroup:
+        """Create from dictionary."""
+        return cls(
+            id=UUID(data["id"]) if isinstance(data["id"], str) else data["id"],
+            name=data.get("name", ""),
+            created_at=data.get("created_at", _now_timestamp()),
+            updated_at=data.get("updated_at", _now_timestamp()),
+        )
+
+
+@dataclass
+class ListSyncRule:
+    """Rule defining which groups a list syncs to."""
+
+    list_id: UUID = field(default_factory=_uuid_factory)
+    group_id: UUID = field(default_factory=_uuid_factory)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "list_id": str(self.list_id),
+            "group_id": str(self.group_id),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ListSyncRule:
+        """Create from dictionary."""
+        return cls(
+            list_id=UUID(data["list_id"]) if isinstance(data["list_id"], str) else data["list_id"],
+            group_id=UUID(data["group_id"])
+            if isinstance(data["group_id"], str)
+            else data["group_id"],
+        )
+
+
+@dataclass
+class PendingSync:
+    """A queued sync operation for an offline device."""
+
+    id: UUID = field(default_factory=_uuid_factory)
+    device_id: UUID = field(default_factory=_uuid_factory)
+    list_ids: list[UUID] = field(default_factory=list)  # Empty = all applicable lists
+    created_at: int = field(default_factory=_now_timestamp)
+    expires_at: int = field(
+        default_factory=lambda: _now_timestamp() + 7 * 24 * 60 * 60 * 1000
+    )  # 7 days
+    attempts: int = 0
+    last_attempt: int | None = None
+
+    def is_expired(self) -> bool:
+        """Check if this pending sync has expired."""
+        return _now_timestamp() > self.expires_at
+
+    def record_attempt(self) -> None:
+        """Record a sync attempt."""
+        self.attempts += 1
+        self.last_attempt = _now_timestamp()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "id": str(self.id),
+            "device_id": str(self.device_id),
+            "list_ids": [str(lid) for lid in self.list_ids],
+            "created_at": self.created_at,
+            "expires_at": self.expires_at,
+            "attempts": self.attempts,
+            "last_attempt": self.last_attempt,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> PendingSync:
+        """Create from dictionary."""
+        list_ids = [UUID(lid) if isinstance(lid, str) else lid for lid in data.get("list_ids", [])]
+        return cls(
+            id=UUID(data["id"]) if isinstance(data["id"], str) else data["id"],
+            device_id=UUID(data["device_id"])
+            if isinstance(data["device_id"], str)
+            else data["device_id"],
+            list_ids=list_ids,
+            created_at=data.get("created_at", _now_timestamp()),
+            expires_at=data.get("expires_at", _now_timestamp() + 7 * 24 * 60 * 60 * 1000),
+            attempts=data.get("attempts", 0),
+            last_attempt=data.get("last_attempt"),
+        )
+
+
 def create_todo_item(reminder: str, priority: int = 2) -> TodoItem:
     """Create a new todo item."""
     return TodoItem(reminder=reminder, priority=priority)
@@ -337,3 +510,18 @@ def create_todo_item(reminder: str, priority: int = 2) -> TodoItem:
 def create_todo_list(name: str) -> TodoList:
     """Create a new todo list."""
     return TodoList(name=name)
+
+
+def create_device(fingerprint: str, name: str = "") -> Device:
+    """Create a new device."""
+    return Device(fingerprint=fingerprint, name=name)
+
+
+def create_sync_group(name: str) -> SyncGroup:
+    """Create a new sync group."""
+    return SyncGroup(name=name)
+
+
+def create_pending_sync(device_id: UUID, list_ids: list[UUID] | None = None) -> PendingSync:
+    """Create a new pending sync for an offline device."""
+    return PendingSync(device_id=device_id, list_ids=list_ids or [])

@@ -125,6 +125,16 @@ class TestDiscoveryConfig:
         name = config.get_service_name()
         assert name.startswith("pytodo-")
 
+    def test_auto_sync_trusted_default_false(self):
+        """Test auto_sync_trusted defaults to False."""
+        config = DiscoveryConfig()
+        assert config.auto_sync_trusted is False
+
+    def test_auto_sync_trusted_from_dict(self):
+        """Test auto_sync_trusted loaded from dict."""
+        app_config = AppConfig.from_dict({"discovery": {"auto_sync_trusted": True}})
+        assert app_config.discovery.auto_sync_trusted is True
+
 
 class TestConfigManagerExtended:
     """Extended tests for ConfigManager."""

@@ -23,6 +23,7 @@ from ..crypto import (
 )
 from .protocol import (
     PROTOCOL_VERSION,
+    BusyResponse,
     ErrorCode,
     HelloMessage,
     KeyExchangeMessage,
@@ -62,6 +63,7 @@ class AsyncClient(QObject):
     # Signals for Qt integration
     sync_completed = pyqtSignal(str)  # Emitted when sync completes (message)
     sync_failed = pyqtSignal(str)  # Emitted when sync fails (error message)
+    server_busy = pyqtSignal(int, str)  # Emitted when server is busy (retry_after, current_peer)
     connected = pyqtSignal(str)  # Emitted on connection (fingerprint)
     disconnected = pyqtSignal()  # Emitted on disconnect
 
@@ -70,10 +72,20 @@ class AsyncClient(QObject):
         self.identity: IdentityKeyPair | None = None
         self._connection: ConnectionState | None = None
         self._timeout: float = 30.0
+        self._last_busy_response: BusyResponse | None = None
+        self._last_peer_fingerprint: str | None = None
 
         # Get identity
         stored = get_or_create_identity()
         self.identity = stored.keypair
+
+    def get_last_busy_response(self) -> BusyResponse | None:
+        """Get the last busy response received (if any)."""
+        return self._last_busy_response
+
+    def get_last_peer_fingerprint(self) -> str | None:
+        """Get the fingerprint of the last connected peer."""
+        return self._last_peer_fingerprint
 
     async def connect(self, host: str, port: int) -> bool:
         """Connect to a server.
@@ -102,6 +114,7 @@ class AsyncClient(QObject):
                 return False
 
             if self._connection.peer_fingerprint:
+                self._last_peer_fingerprint = self._connection.peer_fingerprint
                 self.connected.emit(self._connection.peer_fingerprint)
 
             logger.log.info("Connected to %s:%d", host, port)
@@ -159,7 +172,19 @@ class AsyncClient(QObject):
                 from .protocol import ErrorMessage
 
                 err = ErrorMessage.unpack(msg.payload)
-                self.sync_failed.emit(f"Server error: {err.message}")
+                if err.error_code == ErrorCode.SERVER_BUSY:
+                    # Parse busy response from payload (after error code byte)
+                    try:
+                        busy = BusyResponse.unpack(msg.payload[1:])
+                        self._last_busy_response = busy
+                        self.server_busy.emit(busy.retry_after, busy.current_peer)
+                        self.sync_failed.emit(
+                            f"Server busy (syncing with {busy.current_peer or 'another peer'})"
+                        )
+                    except Exception:
+                        self.sync_failed.emit("Server busy")
+                else:
+                    self.sync_failed.emit(f"Server error: {err.message}")
                 return False, b""
 
             if msg.header.msg_type != MessageType.SYNC_RESPONSE:
@@ -211,7 +236,19 @@ class AsyncClient(QObject):
                 from .protocol import ErrorMessage
 
                 err = ErrorMessage.unpack(msg.payload)
-                self.sync_failed.emit(f"Server error: {err.message}")
+                if err.error_code == ErrorCode.SERVER_BUSY:
+                    # Parse busy response from payload (after error code byte)
+                    try:
+                        busy = BusyResponse.unpack(msg.payload[1:])
+                        self._last_busy_response = busy
+                        self.server_busy.emit(busy.retry_after, busy.current_peer)
+                        self.sync_failed.emit(
+                            f"Server busy (syncing with {busy.current_peer or 'another peer'})"
+                        )
+                    except Exception:
+                        self.sync_failed.emit("Server busy")
+                else:
+                    self.sync_failed.emit(f"Server error: {err.message}")
                 return False
 
             if msg.header.msg_type != MessageType.DELTA_ACK:

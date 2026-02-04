@@ -39,6 +39,7 @@ class ListSelectorWidget(QWidget):
     delete_list_requested = pyqtSignal()
     rename_list_requested = pyqtSignal()
     toggle_private_requested = pyqtSignal()
+    sync_settings_requested = pyqtSignal()  # Open sync settings for current list
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -196,6 +197,11 @@ class ListSelectorWidget(QWidget):
             return
 
         menu = QMenu(self)
+
+        # Sync settings
+        menu.addAction("Sync Settings...", self.sync_settings_requested.emit)
+
+        menu.addSeparator()
 
         # Private/Shared toggle
         if current_list.private:

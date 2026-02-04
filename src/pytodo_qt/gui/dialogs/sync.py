@@ -50,6 +50,8 @@ class SyncDialog(QDialog):
         self._database = database
         self._client = AsyncClient(self)
         self._sync_result: bytes | None = None
+        self._last_host: str = ""
+        self._last_port: int = 0
 
         title = "Sync Pull" if operation == "pull" else "Sync Push"
         self.setWindowTitle(title)
@@ -128,6 +130,9 @@ class SyncDialog(QDialog):
         self.status_label.setText(f"Connecting to {host}:{port}...")
         self.button_box.setEnabled(False)
 
+        self._last_host = host
+        self._last_port = port
+
         try:
             if self._operation == "pull":
                 await self._do_pull(host, port)
@@ -196,3 +201,13 @@ class SyncDialog(QDialog):
     def get_sync_result(self) -> bytes | None:
         """Get the pulled sync data (for pull operations)."""
         return self._sync_result
+
+    def get_peer_fingerprint(self) -> str | None:
+        """Get the fingerprint of the last synced peer."""
+        return self._client.get_last_peer_fingerprint()
+
+    def get_last_address(self) -> str | None:
+        """Get the address of the last synced peer (host:port)."""
+        if self._last_host:
+            return f"{self._last_host}:{self._last_port}"
+        return None

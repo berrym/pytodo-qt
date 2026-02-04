@@ -62,6 +62,7 @@ class ErrorCode(IntEnum):
     INVALID_MESSAGE = 0x05
     SYNC_REJECTED = 0x06
     PEER_UNTRUSTED = 0x07
+    SERVER_BUSY = 0x08  # Server is busy with another sync operation
 
 
 @dataclass
@@ -261,6 +262,28 @@ class ErrorMessage:
 
 
 @dataclass
+class BusyResponse:
+    """Server busy response with retry information."""
+
+    retry_after: int  # Suggested retry delay in seconds
+    current_peer: str = ""  # Optional: peer address currently syncing
+
+    def pack(self) -> bytes:
+        """Pack to bytes."""
+        peer_bytes = self.current_peer.encode("utf-8")
+        return struct.pack(">IH", self.retry_after, len(peer_bytes)) + peer_bytes
+
+    @classmethod
+    def unpack(cls, data: bytes) -> BusyResponse:
+        """Unpack from bytes."""
+        if len(data) < 6:
+            raise ValueError("BusyResponse too short")
+        retry_after, peer_len = struct.unpack(">IH", data[:6])
+        current_peer = data[6 : 6 + peer_len].decode("utf-8") if peer_len > 0 else ""
+        return cls(retry_after=retry_after, current_peer=current_peer)
+
+
+@dataclass
 class PeerInfo:
     """Information about a discovered peer."""
 
@@ -365,3 +388,11 @@ def create_ping() -> Message:
 def create_pong() -> Message:
     """Create a PONG message."""
     return Message.create(MessageType.PONG, b"")
+
+
+def create_busy_response(retry_after: int = 5, current_peer: str = "") -> Message:
+    """Create a SERVER_BUSY error message with retry information."""
+    busy = BusyResponse(retry_after=retry_after, current_peer=current_peer)
+    # Pack as an ERROR message with SERVER_BUSY code, but include BusyResponse data
+    payload = struct.pack(">B", ErrorCode.SERVER_BUSY) + busy.pack()
+    return Message.create(MessageType.ERROR, payload)

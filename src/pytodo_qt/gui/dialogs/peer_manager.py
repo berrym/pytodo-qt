@@ -27,8 +27,9 @@ from PyQt6.QtWidgets import (
 )
 from qasync import asyncSlot
 
+from ...core.database import DatabaseStorage
 from ...core.logger import Logger
-from ...core.models import Database
+from ...core.models import Database, Device
 from ...net.client import AsyncClient
 from ...net.discovery import DiscoveredPeer, get_discovery_service
 
@@ -45,7 +46,12 @@ class PeerManagerDialog(QDialog):
     # Signal emitted when sync data is received (data bytes)
     sync_data_received = pyqtSignal(bytes)
 
-    def __init__(self, parent=None, database: Database | None = None):
+    def __init__(
+        self,
+        parent=None,
+        database: Database | None = None,
+        storage: DatabaseStorage | None = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Peer Manager")
         self.setMinimumWidth(600)
@@ -54,6 +60,7 @@ class PeerManagerDialog(QDialog):
         self._discovery = get_discovery_service()
         self._client = AsyncClient(self)
         self._database = database
+        self._storage = storage
         self._setup_ui()
         self._refresh_peers()
 
@@ -275,6 +282,11 @@ class PeerManagerDialog(QDialog):
                 push_success = await self._client.sync_push(peer.address, peer.port, push_data)
                 logger.log.debug("Sync push returned: success=%s", push_success)
 
+            # Track the device we synced with
+            fingerprint = self._client.get_last_peer_fingerprint()
+            if fingerprint and (pull_success or push_success):
+                self._track_device(fingerprint, f"{peer.address}:{peer.port}")
+
             # Report results
             if pull_success and push_success:
                 if merged_count > 0:
@@ -411,6 +423,42 @@ class PeerManagerDialog(QDialog):
         self.status_label.setText(
             message if busy else f"Found {len(self._discovery.get_peers())} peer(s)"
         )
+
+    def _track_device(self, fingerprint: str, address: str | None = None) -> None:
+        """Track a device by fingerprint, creating or updating as needed."""
+        if self._storage is None:
+            logger.log.debug("No storage available, skipping device tracking")
+            return
+
+        import time
+
+        now = int(time.time() * 1000)
+
+        try:
+            # Check if device already exists
+            existing = self._storage.get_device_by_fingerprint(fingerprint)
+
+            if existing:
+                # Update last_seen and address
+                existing.last_seen = now
+                if address:
+                    existing.last_address = address
+                self._storage.save_device(existing)
+                logger.log.debug("Updated existing device: %s", fingerprint[:19])
+            else:
+                # Create new device
+                device = Device(
+                    fingerprint=fingerprint,
+                    name="",  # User can name it later
+                    first_seen=now,
+                    last_seen=now,
+                    last_address=address,
+                    trust_level="normal",
+                )
+                self._storage.save_device(device)
+                logger.log.info("New device tracked: %s (address=%s)", fingerprint[:19], address)
+        except Exception as e:
+            logger.log.exception("Error tracking device: %s", e)
 
     def closeEvent(self, event) -> None:
         """Handle dialog close."""
