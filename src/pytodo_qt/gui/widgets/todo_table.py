@@ -23,7 +23,7 @@ from ...core.models import TodoList
 from ..styles.themes import get_colors
 
 if TYPE_CHECKING:
-    pass
+    from .search_filter import FilterState
 
 
 logger = Logger(__name__)
@@ -41,6 +41,7 @@ class TodoTableWidget(QTableWidget):
         super().__init__(parent)
         self._current_list: TodoList | None = None
         self._item_id_map: dict[int, UUID] = {}  # row -> item_id
+        self._filter_state: FilterState | None = None
 
         # Setup table
         self._setup_table()
@@ -86,6 +87,27 @@ class TodoTableWidget(QTableWidget):
         self._current_list = todo_list
         self.refresh()
 
+    def set_filter(self, filter_state: FilterState | None) -> None:
+        """Set the current filter and refresh display."""
+        self._filter_state = filter_state
+        self.refresh()
+
+    def _apply_filter(self, items: list) -> list:
+        """Filter items based on current filter state."""
+        if self._filter_state is None:
+            return items
+        filtered = items
+        if self._filter_state.text:
+            search = self._filter_state.text.lower()
+            filtered = [i for i in filtered if search in i.reminder.lower()]
+        if self._filter_state.priority != 0:
+            filtered = [i for i in filtered if i.priority == self._filter_state.priority]
+        if self._filter_state.status == 1:
+            filtered = [i for i in filtered if not i.complete]
+        elif self._filter_state.status == 2:
+            filtered = [i for i in filtered if i.complete]
+        return filtered
+
     def refresh(self) -> None:
         """Refresh the table contents."""
         self.setRowCount(0)
@@ -100,6 +122,10 @@ class TodoTableWidget(QTableWidget):
         items = sorted(
             self._current_list.active_items(), key=lambda x: (x.priority, x.reminder.lower())
         )
+
+        # Apply filter if active
+        if self._filter_state is not None and self._filter_state.is_active:
+            items = self._apply_filter(items)
 
         for row, item in enumerate(items):
             self.insertRow(row)

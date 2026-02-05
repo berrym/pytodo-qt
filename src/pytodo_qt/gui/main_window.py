@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from PyQt6.QtCore import pyqtSlot
-from PyQt6.QtGui import QAction, QIcon, QPixmap, QTextDocument
+from PyQt6.QtGui import QAction, QIcon, QKeySequence, QPixmap, QShortcut, QTextDocument
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt6.QtWidgets import (
     QInputDialog,
@@ -46,7 +46,7 @@ from .dialogs import (
     SyncDialog,
 )
 from .styles import apply_current_theme
-from .widgets import ListSelectorWidget, StatusBarWidget, TodoTableWidget
+from .widgets import ListSelectorWidget, SearchFilterWidget, StatusBarWidget, TodoTableWidget
 
 if TYPE_CHECKING:
     pass
@@ -218,6 +218,13 @@ class MainWindow(QMainWindow):
         self.about_qt_action = QAction("About &Qt", self)
         self.about_qt_action.triggered.connect(self._on_about_qt)
 
+        # Search shortcuts
+        self.search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
+        self.search_shortcut.activated.connect(self._on_search_focus)
+
+        self.escape_shortcut = QShortcut(QKeySequence("Escape"), self)
+        self.escape_shortcut.activated.connect(self._on_search_escape)
+
     def _setup_menus(self) -> None:
         """Create the menu bar."""
         menu_bar = self.menuBar()
@@ -314,6 +321,11 @@ class MainWindow(QMainWindow):
         self.list_selector.toggle_private_requested.connect(self._on_toggle_private)
         self.list_selector.sync_settings_requested.connect(self._on_list_sync_settings)
         layout.addWidget(self.list_selector)
+
+        # Search/filter bar
+        self.search_filter = SearchFilterWidget()
+        self.search_filter.filter_changed.connect(self._on_filter_changed)
+        layout.addWidget(self.search_filter)
 
         # Todo table
         self.todo_table = TodoTableWidget()
@@ -997,6 +1009,18 @@ class MainWindow(QMainWindow):
                 item.reminder = text
                 item.mark_updated()
                 self._save_database()
+
+    def _on_filter_changed(self, filter_state) -> None:
+        """Handle filter state change."""
+        self.todo_table.set_filter(filter_state)
+
+    def _on_search_focus(self) -> None:
+        """Handle Ctrl+F shortcut."""
+        self.search_filter.focus_search()
+
+    def _on_search_escape(self) -> None:
+        """Handle Escape shortcut."""
+        self.search_filter.handle_escape()
 
     def _populate_sync_group_menu(self) -> None:
         """Populate the sync group submenu with available groups."""

@@ -1,4 +1,5 @@
 """PyInstaller runtime hook to set environment before Qt loads."""
+
 import os
 import sys
 

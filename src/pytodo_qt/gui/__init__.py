@@ -10,13 +10,14 @@ Provides:
 from .dialogs import AddTodoDialog, PeerManagerDialog, SettingsDialog, SyncDialog
 from .main_window import MainWindow
 from .styles import Theme, apply_current_theme, apply_theme, get_current_theme
-from .widgets import ListSelectorWidget, StatusBarWidget, TodoTableWidget
+from .widgets import ListSelectorWidget, SearchFilterWidget, StatusBarWidget, TodoTableWidget
 
 __all__ = [
     "MainWindow",
     "TodoTableWidget",
     "StatusBarWidget",
     "ListSelectorWidget",
+    "SearchFilterWidget",
     "SettingsDialog",
     "PeerManagerDialog",
     "AddTodoDialog",

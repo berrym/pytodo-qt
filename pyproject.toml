@@ -73,7 +73,13 @@ classifiers = [
 license = {text = "GPLv3"}
 requires-python = ">=3.11"
 
-[project.optional-dependencies]
+[project.urls]
+Homepage = "https://github.com/berrym/pytodo-qt"
+
+[project.scripts]
+pytodo-qt = "pytodo_qt.__main__:main"
+
+[dependency-groups]
 dev = [
     "pytest>=7.0",
     "pytest-qt>=4.2",
@@ -82,9 +88,3 @@ dev = [
     "ruff>=0.4",
     "basedpyright>=1.18",
 ]
-
-[project.urls]
-Homepage = "https://github.com/berrym/pytodo-qt"
-
-[project.scripts]
-pytodo-qt = "pytodo_qt.__main__:main"
