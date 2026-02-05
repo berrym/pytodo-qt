@@ -47,6 +47,9 @@ LIGHT_COLORS = {
     "priority_high": "#e74c3c",
     "priority_normal": "#3498db",
     "priority_low": "#95a5a6",
+    "due_overdue": "#e74c3c",
+    "due_today": "#f39c12",
+    "due_soon": "#27ae60",
 }
 
 DARK_COLORS = {
@@ -66,6 +69,9 @@ DARK_COLORS = {
     "priority_high": "#ff6b6b",
     "priority_normal": "#5dade2",
     "priority_low": "#7f8c8d",
+    "due_overdue": "#ff6b6b",
+    "due_today": "#f5b041",
+    "due_soon": "#58d68d",
 }
 
 

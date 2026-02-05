@@ -538,8 +538,8 @@ class TestSchemaMigrationV5:
     """Tests for schema migration v4 to v5."""
 
     def test_schema_version_is_5(self):
-        """Test that current schema version is 5."""
-        assert SCHEMA_VERSION == 5
+        """Test that current schema version is 6."""
+        assert SCHEMA_VERSION == 6
 
     def test_new_database_has_sync_groups_tables(self):
         """Test that new database has all sync groups tables."""
@@ -611,8 +611,8 @@ class TestSchemaMigrationV5:
             storage = DatabaseStorage(db_path)
             storage.open()
 
-            # Check schema version was updated
-            assert storage.get_schema_version() == 5
+            # Check schema version was updated (migrates to v6 now)
+            assert storage.get_schema_version() == 6
 
             # Check new tables exist
             cursor = storage.connection.execute(

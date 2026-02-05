@@ -5,21 +5,35 @@ Table widget for displaying and editing to-do items.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import QDate, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDateEdit,
+    QDialog,
+    QHBoxLayout,
     QHeaderView,
+    QLabel,
     QLineEdit,
+    QPushButton,
     QTableWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ...core.logger import Logger
-from ...core.models import TodoList
+from ...core.models import (
+    TodoList,
+    format_due_date,
+    is_due_this_week,
+    is_due_today,
+    is_overdue,
+)
 from ..styles.themes import get_colors
 
 if TYPE_CHECKING:
@@ -29,12 +43,99 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 
+class DueDatePickerDialog(QDialog):
+    """Simple dialog for picking or clearing a due date."""
+
+    def __init__(self, current_date: date | None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Set Due Date")
+        self._date = current_date
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        # Date picker
+        self.date_edit = QDateEdit()
+        self.date_edit.setCalendarPopup(True)
+        if self._date:
+            self.date_edit.setDate(QDate(self._date.year, self._date.month, self._date.day))
+        else:
+            self.date_edit.setDate(QDate.currentDate())
+        layout.addWidget(self.date_edit)
+
+        # Buttons
+        btn_layout = QHBoxLayout()
+
+        clear_btn = QPushButton("Clear")
+        clear_btn.clicked.connect(self._on_clear)
+        btn_layout.addWidget(clear_btn)
+
+        btn_layout.addStretch()
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+
+        ok_btn = QPushButton("OK")
+        ok_btn.setDefault(True)
+        ok_btn.clicked.connect(self._on_ok)
+        btn_layout.addWidget(ok_btn)
+
+        layout.addLayout(btn_layout)
+
+    def _on_ok(self) -> None:
+        qdate = self.date_edit.date()
+        self._date = date(qdate.year(), qdate.month(), qdate.day())
+        self.accept()
+
+    def _on_clear(self) -> None:
+        self._date = None
+        self.accept()
+
+    def get_date(self) -> date | None:
+        return self._date
+
+
+class DueDateLabel(QWidget):
+    """Clickable due date label that opens date picker on click."""
+
+    date_changed = pyqtSignal(object)  # Emits date or None
+
+    def __init__(self, due_date: date | None, parent=None):
+        super().__init__(parent)
+        self._due_date = due_date
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 0, 4, 0)
+
+        self.label = QLabel(format_due_date(self._due_date))
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.label.setMinimumWidth(120)  # Fit "Overdue (99d)" or day names
+        layout.addWidget(self.label)
+
+    def mousePressEvent(self, event) -> None:
+        self._show_date_picker()
+
+    def _show_date_picker(self) -> None:
+        """Show date picker dialog."""
+        dialog = DueDatePickerDialog(self._due_date, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._due_date = dialog.get_date()
+            self.label.setText(format_due_date(self._due_date))
+            self.date_changed.emit(self._due_date)
+
+
 class TodoTableWidget(QTableWidget):
     """Table widget for displaying and editing to-do items."""
 
     # Signals
     item_priority_changed = pyqtSignal(object, int)  # (item_id, new_priority)
     item_reminder_changed = pyqtSignal(object, str)  # (item_id, new_text)
+    item_due_date_changed = pyqtSignal(object, object)  # (item_id, new_date or None)
     item_selected = pyqtSignal(object)  # (item_id or None)
 
     def __init__(self, parent=None):
@@ -54,15 +155,19 @@ class TodoTableWidget(QTableWidget):
 
     def _setup_table(self) -> None:
         """Configure the table widget."""
-        # Columns: Priority, Reminder
-        self.setColumnCount(2)
-        self.setHorizontalHeaderLabels(["Priority", "Reminder"])
+        # Columns: Priority, Reminder, Due
+        self.setColumnCount(3)
+        self.setHorizontalHeaderLabels(["Priority", "Reminder", "Due"])
 
-        # Stretch the reminder column
+        # Configure column sizes
         header = self.horizontalHeader()
         if header:
-            header.setStretchLastSection(True)
             header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+            # Set minimum width for Due column to fit "Overdue (99d)" or day names
+            header.setMinimumSectionSize(80)
+            self.setColumnWidth(2, 130)
 
         # Set row height so text is readable
         v_header = self.verticalHeader()
@@ -106,6 +211,15 @@ class TodoTableWidget(QTableWidget):
             filtered = [i for i in filtered if not i.complete]
         elif self._filter_state.status == 2:
             filtered = [i for i in filtered if i.complete]
+        # Due date filters
+        if self._filter_state.due_date == 1:  # Overdue
+            filtered = [i for i in filtered if is_overdue(i.due_date)]
+        elif self._filter_state.due_date == 2:  # Today
+            filtered = [i for i in filtered if is_due_today(i.due_date)]
+        elif self._filter_state.due_date == 3:  # This Week
+            filtered = [i for i in filtered if is_due_this_week(i.due_date)]
+        elif self._filter_state.due_date == 4:  # No Due Date
+            filtered = [i for i in filtered if i.due_date is None]
         return filtered
 
     def refresh(self) -> None:
@@ -118,10 +232,14 @@ class TodoTableWidget(QTableWidget):
 
         colors = get_colors()
 
-        # Sort items by priority, then by reminder
-        items = sorted(
-            self._current_list.active_items(), key=lambda x: (x.priority, x.reminder.lower())
-        )
+        # Sort items: items with due dates first (by date, then priority), then items without
+        def sort_key(item):
+            if item.due_date is None:
+                return (1, item.priority, item.reminder.lower())  # No date sorts last
+            else:
+                return (0, item.due_date.isoformat(), item.priority, item.reminder.lower())
+
+        items = sorted(self._current_list.active_items(), key=sort_key)
 
         # Apply filter if active
         if self._filter_state is not None and self._filter_state.is_active:
@@ -170,6 +288,22 @@ class TodoTableWidget(QTableWidget):
 
             self.setCellWidget(row, 1, reminder_edit)
 
+            # Due date widget
+            due_widget = DueDateLabel(item.due_date)
+            due_widget.date_changed.connect(lambda d, r=row: self._on_due_date_changed(r, d))
+
+            # Apply styling based on due date status
+            if is_overdue(item.due_date):
+                due_widget.label.setStyleSheet(
+                    f"color: {colors['due_overdue']}; font-weight: bold;"
+                )
+            elif is_due_today(item.due_date):
+                due_widget.label.setStyleSheet(f"color: {colors['due_today']}; font-weight: bold;")
+            elif item.due_date and is_due_this_week(item.due_date):
+                due_widget.label.setStyleSheet(f"color: {colors['due_soon']};")
+
+            self.setCellWidget(row, 2, due_widget)
+
         # Resize rows to fit widget contents
         self.resizeRowsToContents()
 
@@ -206,6 +340,12 @@ class TodoTableWidget(QTableWidget):
         reminder_edit = self.cellWidget(row, 1)
         if isinstance(reminder_edit, QLineEdit):
             self.item_reminder_changed.emit(item_id, reminder_edit.text())
+
+    def _on_due_date_changed(self, row: int, due_date: date | None) -> None:
+        """Handle due date change from inline picker."""
+        item_id = self._item_id_map.get(row)
+        if item_id is not None:
+            self.item_due_date_changed.emit(item_id, due_date)
 
     def _on_selection_changed(self) -> None:
         """Handle selection change."""

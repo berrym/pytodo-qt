@@ -331,6 +331,7 @@ class MainWindow(QMainWindow):
         self.todo_table = TodoTableWidget()
         self.todo_table.item_priority_changed.connect(self._on_item_priority_changed)
         self.todo_table.item_reminder_changed.connect(self._on_item_reminder_changed)
+        self.todo_table.item_due_date_changed.connect(self._on_item_due_date_changed)
         layout.addWidget(self.todo_table)
 
         self.setCentralWidget(central)
@@ -1009,6 +1010,17 @@ class MainWindow(QMainWindow):
                 item.reminder = text
                 item.mark_updated()
                 self._save_database()
+
+    def _on_item_due_date_changed(self, item_id: UUID, due_date) -> None:
+        """Handle item due date change."""
+        active_list = self._database.active_list
+        if active_list:
+            item = active_list.get_item(item_id)
+            if item:
+                item.due_date = due_date
+                item.mark_updated()
+                self._save_database()
+                self._refresh_ui()
 
     def _on_filter_changed(self, filter_state) -> None:
         """Handle filter state change."""

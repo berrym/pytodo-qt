@@ -203,8 +203,8 @@ class TestSchemaMigration:
     """Tests for schema migration v3 to v4 (private column)."""
 
     def test_schema_version_is_current(self):
-        """Test that current schema version is 5."""
-        assert SCHEMA_VERSION == 5
+        """Test that current schema version is 6."""
+        assert SCHEMA_VERSION == 6
 
     def test_new_database_has_private_column(self):
         """Test that new database has private column."""
@@ -281,8 +281,8 @@ class TestSchemaMigration:
             columns = [row[1] for row in cursor.fetchall()]
             assert "private" in columns
 
-            # Check schema version was updated (migrates through v4 to v5)
-            assert storage.get_schema_version() == 5
+            # Check schema version was updated (migrates through v4 to v5 to v6)
+            assert storage.get_schema_version() == 6
 
             # Check existing list has private=0 (False)
             cursor = storage.connection.execute("SELECT private FROM lists WHERE id = 'test-id'")

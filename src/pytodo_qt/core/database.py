@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS items (
     reminder TEXT NOT NULL DEFAULT '',
     priority INTEGER NOT NULL DEFAULT 2,
     complete INTEGER NOT NULL DEFAULT 0,
+    due_date TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     deleted INTEGER NOT NULL DEFAULT 0,
@@ -134,6 +135,11 @@ _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_list_sync_rules_group_id ON list_sync_rules(group_id)",
     "CREATE INDEX IF NOT EXISTS idx_pending_syncs_device_id ON pending_syncs(device_id)",
     "CREATE INDEX IF NOT EXISTS idx_pending_syncs_expires_at ON pending_syncs(expires_at)",
+]
+
+# Indexes that require schema v6 or later (due_date column)
+_CREATE_INDEXES_V6 = [
+    "CREATE INDEX IF NOT EXISTS idx_items_due_date ON items(due_date)",
 ]
 
 
@@ -240,6 +246,11 @@ class DatabaseStorage:
         # Run migrations if needed
         self._migrate_schema_3_to_4()
         self._migrate_schema_4_to_5()
+        self._migrate_schema_5_to_6()
+
+        # Create v6+ indexes (after migration ensures due_date column exists)
+        for index_sql in _CREATE_INDEXES_V6:
+            conn.execute(index_sql)
 
         logger.log.debug("Database schema initialized")
 
@@ -295,6 +306,24 @@ class DatabaseStorage:
             logger.log.info("Migrated schema 4->5: added sync groups tables")
 
         self.set_schema_version(5)
+
+    def _migrate_schema_5_to_6(self) -> None:
+        """Migrate schema from version 5 to 6 (add due_date column)."""
+        current_version = self.get_schema_version()
+        if current_version >= 6:
+            return
+
+        cursor = self.connection.execute("PRAGMA table_info(items)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if "due_date" not in columns:
+            self.connection.execute("ALTER TABLE items ADD COLUMN due_date TEXT")
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_items_due_date ON items(due_date)"
+            )
+            logger.log.info("Migrated schema 5->6: added due_date column")
+
+        self.set_schema_version(6)
 
     def get_schema_version(self) -> int:
         """Get current schema version."""
@@ -472,8 +501,8 @@ class DatabaseStorage:
         self.connection.execute(
             """
             INSERT OR REPLACE INTO items
-            (id, list_id, reminder, priority, complete, created_at, updated_at, deleted)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (id, list_id, reminder, priority, complete, due_date, created_at, updated_at, deleted)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(item.id),
@@ -481,6 +510,7 @@ class DatabaseStorage:
                 item.reminder,
                 item.priority,
                 1 if item.complete else 0,
+                item.due_date.isoformat() if item.due_date else None,
                 item.created_at,
                 item.updated_at,
                 1 if item.deleted else 0,
@@ -504,11 +534,21 @@ class DatabaseStorage:
 
     def _row_to_item(self, row: sqlite3.Row) -> TodoItem:
         """Convert a database row to a TodoItem."""
+        from datetime import date
+
+        # Handle due_date column (may not exist in older databases during migration)
+        try:
+            due_date_str = row["due_date"]
+            due_date = date.fromisoformat(due_date_str) if due_date_str else None
+        except (KeyError, IndexError):
+            due_date = None
+
         return TodoItem(
             id=UUID(row["id"]),
             reminder=row["reminder"],
             priority=row["priority"],
             complete=bool(row["complete"]),
+            due_date=due_date,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             deleted=bool(row["deleted"]),

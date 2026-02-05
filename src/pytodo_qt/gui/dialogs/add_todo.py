@@ -5,13 +5,18 @@ Dialog for adding a new to-do item.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import TYPE_CHECKING
 
+from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
+    QDateEdit,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QHBoxLayout,
     QLineEdit,
     QMessageBox,
     QVBoxLayout,
@@ -58,6 +63,21 @@ class AddTodoDialog(QDialog):
         self.priority_combo.setCurrentIndex(1)  # Default to Normal
         form.addRow("Priority:", self.priority_combo)
 
+        # Due date with checkbox
+        due_date_layout = QHBoxLayout()
+
+        self.due_date_checkbox = QCheckBox("Set due date")
+        self.due_date_checkbox.stateChanged.connect(self._on_due_date_toggled)
+
+        self.due_date_edit = QDateEdit()
+        self.due_date_edit.setCalendarPopup(True)
+        self.due_date_edit.setDate(QDate.currentDate())
+        self.due_date_edit.setEnabled(False)
+
+        due_date_layout.addWidget(self.due_date_checkbox)
+        due_date_layout.addWidget(self.due_date_edit, 1)
+        form.addRow("Due Date:", due_date_layout)
+
         layout.addLayout(form)
 
         # Button box
@@ -71,6 +91,10 @@ class AddTodoDialog(QDialog):
         # Focus reminder field
         self.reminder_edit.setFocus()
 
+    def _on_due_date_toggled(self, state: int) -> None:
+        """Handle due date checkbox toggle."""
+        self.due_date_edit.setEnabled(state == Qt.CheckState.Checked.value)
+
     def _on_accept(self) -> None:
         """Handle OK button."""
         reminder = self.reminder_edit.text().strip()
@@ -80,7 +104,13 @@ class AddTodoDialog(QDialog):
             return
 
         priority = self.priority_combo.currentData()
-        self._item = TodoItem(reminder=reminder, priority=priority)
+
+        due_date = None
+        if self.due_date_checkbox.isChecked():
+            qdate = self.due_date_edit.date()
+            due_date = date(qdate.year(), qdate.month(), qdate.day())
+
+        self._item = TodoItem(reminder=reminder, priority=priority, due_date=due_date)
         logger.log.info("Created new todo item: %s", reminder[:50])
         self.accept()
 

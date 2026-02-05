@@ -9,6 +9,7 @@ import json
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -35,6 +36,7 @@ class TodoItem:
     reminder: str = ""
     priority: int = 2  # 1=High, 2=Normal, 3=Low
     complete: bool = False
+    due_date: date | None = None
     created_at: int = field(default_factory=_now_timestamp)
     updated_at: int = field(default_factory=_now_timestamp)
     deleted: bool = False  # Tombstone for sync
@@ -60,6 +62,7 @@ class TodoItem:
             "reminder": self.reminder,
             "priority": self.priority,
             "complete": self.complete,
+            "due_date": self.due_date.isoformat() if self.due_date else None,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "deleted": self.deleted,
@@ -68,11 +71,14 @@ class TodoItem:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TodoItem:
         """Create from dictionary."""
+        due_date_str = data.get("due_date")
+        due_date = date.fromisoformat(due_date_str) if due_date_str else None
         return cls(
             id=UUID(data["id"]) if isinstance(data["id"], str) else data["id"],
             reminder=data.get("reminder", ""),
             priority=data.get("priority", 2),
             complete=data.get("complete", False),
+            due_date=due_date,
             created_at=data.get("created_at", _now_timestamp()),
             updated_at=data.get("updated_at", _now_timestamp()),
             deleted=data.get("deleted", False),
@@ -87,6 +93,7 @@ class TodoItem:
             reminder=legacy.get("reminder", ""),
             priority=legacy.get("priority", 2),
             complete=legacy.get("complete", False),
+            due_date=None,
             created_at=now,
             updated_at=now,
             deleted=False,
@@ -502,9 +509,9 @@ class PendingSync:
         )
 
 
-def create_todo_item(reminder: str, priority: int = 2) -> TodoItem:
+def create_todo_item(reminder: str, priority: int = 2, due_date: date | None = None) -> TodoItem:
     """Create a new todo item."""
-    return TodoItem(reminder=reminder, priority=priority)
+    return TodoItem(reminder=reminder, priority=priority, due_date=due_date)
 
 
 def create_todo_list(name: str) -> TodoList:
@@ -525,3 +532,41 @@ def create_sync_group(name: str) -> SyncGroup:
 def create_pending_sync(device_id: UUID, list_ids: list[UUID] | None = None) -> PendingSync:
     """Create a new pending sync for an offline device."""
     return PendingSync(device_id=device_id, list_ids=list_ids or [])
+
+
+def format_due_date(due_date: date | None) -> str:
+    """Format due date for display: 'Today', 'Tomorrow', 'Overdue (2d)', 'Jan 15'."""
+    if due_date is None:
+        return ""
+    today = date.today()
+    delta = (due_date - today).days
+    if delta < 0:
+        return f"Overdue ({abs(delta)}d)"
+    elif delta == 0:
+        return "Today"
+    elif delta == 1:
+        return "Tomorrow"
+    elif delta <= 7:
+        return due_date.strftime("%A")  # Day name
+    elif due_date.year == today.year:
+        return due_date.strftime("%b %d")
+    else:
+        return due_date.strftime("%b %d, %Y")
+
+
+def is_overdue(due_date: date | None) -> bool:
+    """Check if the due date is in the past."""
+    return due_date is not None and due_date < date.today()
+
+
+def is_due_today(due_date: date | None) -> bool:
+    """Check if the due date is today."""
+    return due_date is not None and due_date == date.today()
+
+
+def is_due_this_week(due_date: date | None) -> bool:
+    """Check if the due date is within the next 7 days."""
+    if due_date is None:
+        return False
+    today = date.today()
+    return today <= due_date <= today + timedelta(days=7)

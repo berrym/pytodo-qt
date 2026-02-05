@@ -31,11 +31,12 @@ class FilterState:
     text: str = ""
     priority: int = 0  # 0=All, 1=High, 2=Normal, 3=Low
     status: int = 0  # 0=All, 1=Active, 2=Completed
+    due_date: int = 0  # 0=All, 1=Overdue, 2=Today, 3=This Week, 4=No Due Date
 
     @property
     def is_active(self) -> bool:
         """Return True if any filter is active."""
-        return bool(self.text) or self.priority != 0 or self.status != 0
+        return bool(self.text) or self.priority != 0 or self.status != 0 or self.due_date != 0
 
 
 class SearchFilterWidget(QWidget):
@@ -95,6 +96,17 @@ class SearchFilterWidget(QWidget):
         self.status_combo.currentIndexChanged.connect(self._on_combo_changed)
         layout.addWidget(self.status_combo)
 
+        # Due date combo
+        self.due_date_combo = QComboBox()
+        self.due_date_combo.setMinimumHeight(32)
+        self.due_date_combo.addItem("Due: All", 0)
+        self.due_date_combo.addItem("Overdue", 1)
+        self.due_date_combo.addItem("Due Today", 2)
+        self.due_date_combo.addItem("This Week", 3)
+        self.due_date_combo.addItem("No Due Date", 4)
+        self.due_date_combo.currentIndexChanged.connect(self._on_combo_changed)
+        layout.addWidget(self.due_date_combo)
+
     def _load_icon(self, name: str) -> QIcon:
         """Load an icon from the icons directory."""
         icon_dir = Path(__file__).parent.parent / "icons"
@@ -150,6 +162,7 @@ class SearchFilterWidget(QWidget):
             text=self.search_edit.text().strip(),
             priority=self.priority_combo.currentData() or 0,
             status=self.status_combo.currentData() or 0,
+            due_date=self.due_date_combo.currentData() or 0,
         )
 
     def clear_filters(self) -> None:
@@ -157,6 +170,7 @@ class SearchFilterWidget(QWidget):
         self.search_edit.clear()
         self.priority_combo.setCurrentIndex(0)
         self.status_combo.setCurrentIndex(0)
+        self.due_date_combo.setCurrentIndex(0)
         self._emit_filter()
 
     def focus_search(self) -> None:
