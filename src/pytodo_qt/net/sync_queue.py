@@ -184,6 +184,10 @@ class SyncQueue(QObject):
                     operation.status = SyncStatus.FAILED
                     self.operation_completed.emit(str(operation.id), False)
                 finally:
+                    # Resolve future if caller is awaiting execute()
+                    future = getattr(operation, "_future", None)
+                    if future is not None and not future.done():
+                        future.set_result(result)
                     self._current = None
                     self._queue.task_done()
 
@@ -224,6 +228,13 @@ class SyncQueue(QObject):
 
             return result
 
+    async def execute(self, operation: SyncOperation) -> SyncResult:
+        """Enqueue operation and await its result."""
+        future: asyncio.Future[SyncResult] = asyncio.get_running_loop().create_future()
+        operation._future = future  # type: ignore[attr-defined]
+        await self._queue.put(operation)
+        return await future
+
     async def _execute_operation(self, operation: SyncOperation) -> SyncResult:
         """Execute a single sync operation."""
         try:
@@ -231,10 +242,17 @@ class SyncQueue(QObject):
                 success, data = await self._client.sync_pull(operation.host, operation.port)
                 if success:
                     return SyncResult(success=True, data=data, status=SyncStatus.SUCCESS)
-                else:
-                    # Check if it was a busy response
-                    # The client will have parsed the error - check the result
-                    return SyncResult(success=False, error="Pull failed", status=SyncStatus.FAILED)
+                busy = self._client.get_last_busy_response()
+                if busy:
+                    self._client._last_busy_response = None
+                    return SyncResult(
+                        success=False,
+                        error="Server busy",
+                        status=SyncStatus.BUSY_RETRY,
+                        retry_after=busy.retry_after,
+                        current_peer=busy.current_peer,
+                    )
+                return SyncResult(success=False, error="Pull failed", status=SyncStatus.FAILED)
 
             elif operation.operation_type == SyncOperationType.PUSH:
                 success = await self._client.sync_push(
@@ -242,8 +260,17 @@ class SyncQueue(QObject):
                 )
                 if success:
                     return SyncResult(success=True, status=SyncStatus.SUCCESS)
-                else:
-                    return SyncResult(success=False, error="Push failed", status=SyncStatus.FAILED)
+                busy = self._client.get_last_busy_response()
+                if busy:
+                    self._client._last_busy_response = None
+                    return SyncResult(
+                        success=False,
+                        error="Server busy",
+                        status=SyncStatus.BUSY_RETRY,
+                        retry_after=busy.retry_after,
+                        current_peer=busy.current_peer,
+                    )
+                return SyncResult(success=False, error="Push failed", status=SyncStatus.FAILED)
 
             else:
                 return SyncResult(

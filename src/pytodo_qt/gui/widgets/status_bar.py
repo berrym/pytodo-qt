@@ -61,6 +61,7 @@ class StatusBarWidget(QStatusBar):
 
         # Sync state tracking
         self._last_sync_time: datetime | None = None
+        self._last_auto_sync: bool = False
         self._sync_update_timer = QTimer(self)
         self._sync_update_timer.timeout.connect(self._update_sync_time_display)
         self._sync_update_timer.start(30000)  # Update every 30 seconds
@@ -128,13 +129,16 @@ class StatusBarWidget(QStatusBar):
         """Show a temporary message."""
         self.showMessage(message, timeout)
 
-    def set_sync_status(self, state: str, direction: str = "", peer: str = "") -> None:
+    def set_sync_status(
+        self, state: str, direction: str = "", peer: str = "", auto: bool = False
+    ) -> None:
         """Set the sync status display.
 
         Args:
             state: One of "idle", "syncing", "success", "error"
             direction: "push", "pull", or "" for idle
             peer: Peer name/address for context
+            auto: True if this is an auto-sync operation
         """
         if state == "syncing":
             if direction == "push":
@@ -147,6 +151,7 @@ class StatusBarWidget(QStatusBar):
             self.sync_status_label.setStyleSheet("color: #4A90D9;")  # Blue
         elif state == "success":
             self._last_sync_time = datetime.now()
+            self._last_auto_sync = auto
             self._update_sync_time_display()
             self.sync_status_label.setStyleSheet("color: green;")
         elif state == "error":
@@ -164,7 +169,8 @@ class StatusBarWidget(QStatusBar):
         """Update the sync time display with relative time."""
         if self._last_sync_time:
             time_ago = _format_time_ago(self._last_sync_time)
-            self.sync_status_label.setText(f"Synced {time_ago}")
+            prefix = "Auto-synced" if self._last_auto_sync else "Synced"
+            self.sync_status_label.setText(f"{prefix} {time_ago}")
         else:
             self.sync_status_label.setText("Not synced")
 

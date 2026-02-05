@@ -144,6 +144,9 @@ class SettingsDialog(QDialog):
         self.service_name_edit.setPlaceholderText("pytodo-{hostname}")
         discovery_layout.addRow("Service name:", self.service_name_edit)
 
+        self.auto_sync_check = QCheckBox("Auto-sync when trusted devices come online")
+        discovery_layout.addRow("", self.auto_sync_check)
+
         layout.addWidget(discovery_group)
         layout.addStretch()
 
@@ -265,6 +268,7 @@ class SettingsDialog(QDialog):
         # Discovery
         self.discovery_enabled_check.setChecked(config.discovery.enabled)
         self.service_name_edit.setText(config.discovery.service_name)
+        self.auto_sync_check.setChecked(config.discovery.auto_sync_trusted)
 
         # Appearance
         theme = config.appearance.theme
@@ -293,6 +297,7 @@ class SettingsDialog(QDialog):
         # Discovery
         config.discovery.enabled = self.discovery_enabled_check.isChecked()
         config.discovery.service_name = self.service_name_edit.text()
+        config.discovery.auto_sync_trusted = self.auto_sync_check.isChecked()
 
         # Appearance
         old_theme = config.appearance.theme

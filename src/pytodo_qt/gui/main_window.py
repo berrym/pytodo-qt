@@ -33,8 +33,10 @@ from ..core.migration import MigrationError, migrate_json_to_sqlite, needs_migra
 from ..core.models import Database, Device, PendingSync, TodoList, create_todo_list
 from ..core.offline_queue import OfflineQueue
 from ..crypto.keyring_storage import get_or_create_identity
+from ..net.client import AsyncClient
 from ..net.discovery import get_discovery_service
 from ..net.server import AsyncServer
+from ..net.sync_queue import SyncQueue, create_pull_operation, create_push_operation
 from .dialogs import (
     AddTodoDialog,
     DeviceManagerDialog,
@@ -65,6 +67,8 @@ class MainWindow(QMainWindow):
         self._config_manager = get_config_manager()
         self._storage = DatabaseStorage(self._config_manager.db_file)
         self._offline_queue = OfflineQueue(self._storage)
+        self._sync_client = AsyncClient(self)
+        self._sync_queue = SyncQueue(self._sync_client, self)
         self._printer = QPrinter()
         self._server: AsyncServer | None = None
 
@@ -84,6 +88,12 @@ class MainWindow(QMainWindow):
 
         # Start discovery service
         self._start_discovery()
+
+        # Start sync queue
+        self._sync_queue.operation_progress.connect(
+            lambda op_id, msg: self.status_bar_widget.show_message(msg)
+        )
+        asyncio.ensure_future(self._sync_queue.start())
 
         # Start server
         self._start_server()
@@ -519,10 +529,7 @@ class MainWindow(QMainWindow):
             device: The trusted device
             peer: DiscoveredPeer with connection info
         """
-        from ..net.client import AsyncClient
-
         try:
-            client = AsyncClient(self)
             self.status_bar_widget.set_sync_status(
                 "syncing",
                 "sync",
@@ -530,22 +537,26 @@ class MainWindow(QMainWindow):
             )
 
             # Pull first
-            pull_ok, data = await client.sync_pull(peer.address, peer.port)
+            pull_op = create_pull_operation(peer.address, peer.port, device_id=device.id)
+            pull_result = await self._sync_queue.execute(pull_op)
+            pull_ok = pull_result.success
             if pull_ok:
-                self._merge_sync_data_internal(data)
+                self._merge_sync_data_internal(pull_result.data)
 
             # Push (filtered by sync rules)
             allowed_list_ids = self._storage.get_syncable_list_ids_for_device(device.id)
             push_data = json.dumps(self._database.to_dict_for_device(allowed_list_ids)).encode(
                 "utf-8"
             )
-            push_ok = await client.sync_push(peer.address, peer.port, push_data)
+            push_op = create_push_operation(peer.address, peer.port, push_data, device_id=device.id)
+            push_result = await self._sync_queue.execute(push_op)
+            push_ok = push_result.success
 
             if pull_ok and push_ok:
                 self._track_device(device.fingerprint, f"{peer.address}:{peer.port}")
                 self._save_database()
                 self._refresh_ui()
-                self.status_bar_widget.set_sync_status("success")
+                self.status_bar_widget.set_sync_status("success", auto=True)
                 logger.log.info(
                     "Auto-sync completed with %s",
                     device.name or device.fingerprint[:19],
@@ -573,13 +584,10 @@ class MainWindow(QMainWindow):
             peer: DiscoveredPeer with connection info
             pending: List of pending syncs to process
         """
-        from ..net.client import AsyncClient
-
         for sync in pending:
             self._offline_queue.record_attempt(sync)
 
             try:
-                client = AsyncClient(self)
                 self.status_bar_widget.set_sync_status(
                     "syncing",
                     "sync",
@@ -587,16 +595,22 @@ class MainWindow(QMainWindow):
                 )
 
                 # Pull first
-                pull_ok, data = await client.sync_pull(peer.address, peer.port)
+                pull_op = create_pull_operation(peer.address, peer.port, device_id=device.id)
+                pull_result = await self._sync_queue.execute(pull_op)
+                pull_ok = pull_result.success
                 if pull_ok:
-                    self._merge_sync_data_internal(data)
+                    self._merge_sync_data_internal(pull_result.data)
 
                 # Push (filtered by sync rules)
                 allowed_list_ids = self._storage.get_syncable_list_ids_for_device(device.id)
                 push_data = json.dumps(self._database.to_dict_for_device(allowed_list_ids)).encode(
                     "utf-8"
                 )
-                push_ok = await client.sync_push(peer.address, peer.port, push_data)
+                push_op = create_push_operation(
+                    peer.address, peer.port, push_data, device_id=device.id
+                )
+                push_result = await self._sync_queue.execute(push_op)
+                push_ok = push_result.success
 
                 if pull_ok and push_ok:
                     # Success - remove from queue
@@ -604,7 +618,7 @@ class MainWindow(QMainWindow):
                     self._track_device(device.fingerprint, f"{peer.address}:{peer.port}")
                     self._save_database()
                     self._refresh_ui()
-                    self.status_bar_widget.set_sync_status("success")
+                    self.status_bar_widget.set_sync_status("success", auto=True)
                     logger.log.info(
                         "Processed queued sync for %s",
                         device.name or device.fingerprint[:19],
@@ -1094,8 +1108,6 @@ class MainWindow(QMainWindow):
             operation_name: Name of the operation for status display
             queue_offline: If True, queue syncs for offline devices
         """
-        from ..net.client import AsyncClient
-
         discovery = get_discovery_service()
         success_count = 0
         fail_count = 0
@@ -1130,21 +1142,23 @@ class MainWindow(QMainWindow):
                 continue
 
             try:
-                client = AsyncClient(self)
-
                 # Pull
-                pull_ok, data = await client.sync_pull(peer.address, peer.port)
-                if pull_ok:
-                    self._merge_sync_data_internal(data)
+                pull_op = create_pull_operation(peer.address, peer.port, device_id=device.id)
+                pull_result = await self._sync_queue.execute(pull_op)
+                if pull_result.success:
+                    self._merge_sync_data_internal(pull_result.data)
 
                 # Push (filtered by sync rules)
                 allowed_list_ids = self._storage.get_syncable_list_ids_for_device(device.id)
                 push_data = json.dumps(self._database.to_dict_for_device(allowed_list_ids)).encode(
                     "utf-8"
                 )
-                push_ok = await client.sync_push(peer.address, peer.port, push_data)
+                push_op = create_push_operation(
+                    peer.address, peer.port, push_data, device_id=device.id
+                )
+                push_result = await self._sync_queue.execute(push_op)
 
-                if pull_ok and push_ok:
+                if pull_result.success and push_result.success:
                     success_count += 1
                     # Track device
                     self._track_device(device.fingerprint, f"{peer.address}:{peer.port}")
@@ -1251,21 +1265,20 @@ class MainWindow(QMainWindow):
 
     def _do_sync_pull(self, host: str, port: int) -> None:
         """Perform sync pull from specified host."""
-        from ..net.client import AsyncClient
 
         async def do_pull():
             self.status_bar_widget.set_sync_status("syncing", "pull", f"{host}:{port}")
             try:
                 logger.log.debug("Menu pull: connecting to %s:%d", host, port)
-                client = AsyncClient(self)
-                success, data = await client.sync_pull(host, port)
-                if success:
+                pull_op = create_pull_operation(host, port)
+                result = await self._sync_queue.execute(pull_op)
+                if result.success:
                     # Track the device we synced with
-                    peer_fingerprint = client.get_last_peer_fingerprint()
+                    peer_fingerprint = self._sync_client.get_last_peer_fingerprint()
                     if peer_fingerprint:
                         self._track_device(peer_fingerprint, f"{host}:{port}")
 
-                    merged, local_newer, identical = self._merge_sync_data_internal(data)
+                    merged, local_newer, identical = self._merge_sync_data_internal(result.data)
                     self._save_database()
                     self._refresh_ui()
                     self.status_bar_widget.set_sync_status("success")
@@ -1300,18 +1313,17 @@ class MainWindow(QMainWindow):
 
     def _do_sync_push(self, host: str, port: int) -> None:
         """Perform sync push to specified host (excludes private lists)."""
-        from ..net.client import AsyncClient
 
         async def do_push():
             self.status_bar_widget.set_sync_status("syncing", "push", f"{host}:{port}")
             try:
                 logger.log.debug("Menu push: connecting to %s:%d", host, port)
-                client = AsyncClient(self)
                 data = json.dumps(self._database.to_dict_for_sync()).encode("utf-8")
-                success = await client.sync_push(host, port, data)
-                if success:
+                push_op = create_push_operation(host, port, data)
+                result = await self._sync_queue.execute(push_op)
+                if result.success:
                     # Track the device we synced with
-                    peer_fingerprint = client.get_last_peer_fingerprint()
+                    peer_fingerprint = self._sync_client.get_last_peer_fingerprint()
                     if peer_fingerprint:
                         self._track_device(peer_fingerprint, f"{host}:{port}")
 
@@ -1472,6 +1484,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """Handle window close."""
+        # Stop sync queue
+        asyncio.ensure_future(self._sync_queue.stop())
+
         # Stop server
         self._stop_server()
 
