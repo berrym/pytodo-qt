@@ -71,6 +71,7 @@ class MainWindow(QMainWindow):
         self._sync_queue = SyncQueue(self._sync_client, self)
         self._printer = QPrinter()
         self._server: AsyncServer | None = None
+        self._event_loop = asyncio.get_event_loop()  # Store for thread-safe scheduling
 
         self._setup_window()
         self._setup_actions()
@@ -523,7 +524,10 @@ class MainWindow(QMainWindow):
                 device.name or fingerprint[:19],
                 len(pending),
             )
-            asyncio.ensure_future(self._process_pending_syncs(device, peer, pending))
+            # Use thread-safe scheduling (callback comes from zeroconf thread)
+            asyncio.run_coroutine_threadsafe(
+                self._process_pending_syncs(device, peer, pending), self._event_loop
+            )
             return  # Pending syncs take priority
 
         # Check for auto-sync on trusted devices
@@ -533,7 +537,10 @@ class MainWindow(QMainWindow):
                 "Auto-syncing with trusted device: %s",
                 device.name or fingerprint[:19],
             )
-            asyncio.ensure_future(self._auto_sync_with_device(device, peer))
+            # Use thread-safe scheduling (callback comes from zeroconf thread)
+            asyncio.run_coroutine_threadsafe(
+                self._auto_sync_with_device(device, peer), self._event_loop
+            )
 
     async def _auto_sync_with_device(self, device: Device, peer) -> None:
         """Perform automatic sync with a trusted device.
