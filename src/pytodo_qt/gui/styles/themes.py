@@ -78,14 +78,40 @@ DARK_COLORS = {
 
 
 def get_system_theme() -> Theme:
-    """Detect system theme preference."""
+    """Detect system theme preference from the OS."""
+    import sys
+
+    if sys.platform == "darwin":
+        # macOS: check system appearance directly
+        try:
+            from Foundation import NSUserDefaults
+
+            defaults = NSUserDefaults.standardUserDefaults()
+            style = defaults.stringForKey_("AppleInterfaceStyle")
+            return Theme.DARK if style == "Dark" else Theme.LIGHT
+        except ImportError:
+            pass
+
+    # Fallback: use Qt's style hints (works on most platforms)
     app = QApplication.instance()
     if app is None:
         return Theme.LIGHT
 
+    # Qt 6.5+ has colorScheme() on QStyleHints
+    style_hints = app.styleHints()
+    if hasattr(style_hints, "colorScheme"):
+        from PyQt6.QtCore import Qt
+
+        scheme = style_hints.colorScheme()
+        if scheme == Qt.ColorScheme.Dark:
+            return Theme.DARK
+        elif scheme == Qt.ColorScheme.Light:
+            return Theme.LIGHT
+
+    # Final fallback: check default palette (before any theming applied)
+    # This may not work correctly if app theme was already changed
     palette = app.palette()
     window_color = palette.color(QPalette.ColorRole.Window)
-    # If window is dark (low luminance), system is in dark mode
     luminance = (
         0.299 * window_color.red() + 0.587 * window_color.green() + 0.114 * window_color.blue()
     )

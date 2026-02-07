@@ -45,8 +45,10 @@ class SettingsDialog(QDialog):
         self.setMinimumWidth(500)
         self.setMinimumHeight(400)
 
-        self._config = get_config()
         self._config_manager = get_config_manager()
+        self._config_manager.reload()  # Reload from disk to get saved values
+        self._config = get_config()
+        self._original_theme = self._config.appearance.theme  # Store for cancel
 
         self._setup_ui()
         self._load_settings()
@@ -236,12 +238,13 @@ class SettingsDialog(QDialog):
         self.theme_combo.addItem("System (follow OS)", "system")
         self.theme_combo.addItem("Light", "light")
         self.theme_combo.addItem("Dark", "dark")
+        self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         theme_layout.addRow("Theme:", self.theme_combo)
 
         layout.addWidget(theme_group)
 
         # Preview note
-        note = QLabel("Theme changes take effect immediately.")
+        note = QLabel("Theme changes are applied immediately.")
         note.setStyleSheet("color: gray; font-style: italic;")
         layout.addWidget(note)
 
@@ -270,12 +273,14 @@ class SettingsDialog(QDialog):
         self.service_name_edit.setText(config.discovery.service_name)
         self.auto_sync_check.setChecked(config.discovery.auto_sync_trusted)
 
-        # Appearance
+        # Appearance - block signals to prevent triggering theme change during load
+        self.theme_combo.blockSignals(True)
         theme = config.appearance.theme
         for i in range(self.theme_combo.count()):
             if self.theme_combo.itemData(i) == theme:
                 self.theme_combo.setCurrentIndex(i)
                 break
+        self.theme_combo.blockSignals(False)
 
     def _save_settings(self) -> bool:
         """Save settings from UI to config."""
@@ -333,3 +338,17 @@ class SettingsDialog(QDialog):
     def _on_apply(self) -> None:
         """Handle Apply button."""
         self._save_settings()
+
+    def _on_theme_changed(self, index: int) -> None:
+        """Handle theme combo box change - apply immediately."""
+        new_theme = self.theme_combo.currentData()
+        self._config.appearance.theme = new_theme
+        apply_current_theme()
+
+    def reject(self) -> None:
+        """Handle cancel - revert theme if changed."""
+        current_theme = self._config.appearance.theme
+        if current_theme != self._original_theme:
+            self._config.appearance.theme = self._original_theme
+            apply_current_theme()
+        super().reject()
