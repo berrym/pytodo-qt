@@ -5,10 +5,11 @@ Theme management for pytodo-qt.
 
 from __future__ import annotations
 
+import sys
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtGui import QColor, QFont, QPalette
 from PyQt6.QtWidgets import QApplication
 
 from ...core.config import get_config
@@ -77,10 +78,30 @@ DARK_COLORS = {
 }
 
 
+# Monospace font stack — platform-aware fallbacks for fingerprints etc.
+if sys.platform == "darwin":
+    MONO_FONT_FAMILIES = ["SF Mono", "Menlo", "Monaco"]
+elif sys.platform == "win32":
+    MONO_FONT_FAMILIES = ["Cascadia Mono", "Consolas", "Courier New"]
+else:
+    MONO_FONT_FAMILIES = ["Noto Sans Mono", "DejaVu Sans Mono", "Liberation Mono", "monospace"]
+
+DEFAULT_FONT_SIZE = 10
+
+
+def make_font(size: int = DEFAULT_FONT_SIZE, *, mono: bool = False) -> QFont:
+    """Create a QFont using the system default or a monospace fallback stack."""
+    if mono:
+        font = QFont(MONO_FONT_FAMILIES[0], size)
+        font.setFamilies(MONO_FONT_FAMILIES)
+    else:
+        font = QFont()
+        font.setPointSize(size)
+    return font
+
+
 def get_system_theme() -> Theme:
     """Detect system theme preference from the OS."""
-    import sys
-
     if sys.platform == "darwin":
         # macOS: check system appearance directly
         try:

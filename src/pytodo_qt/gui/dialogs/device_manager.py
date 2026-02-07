@@ -38,6 +38,7 @@ from ...core.models import Database, Device, create_device, create_sync_group
 from ...core.offline_queue import OfflineQueue
 from ...net.client import AsyncClient
 from ...net.discovery import DiscoveredPeer, get_discovery_service
+from ..styles.themes import make_font
 
 if TYPE_CHECKING:
     pass
@@ -203,8 +204,7 @@ class DeviceManagerDialog(QDialog):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         self.device_fingerprint_label.setWordWrap(True)
-        fp_font = QFont("monospace")
-        self.device_fingerprint_label.setFont(fp_font)
+        self.device_fingerprint_label.setFont(make_font(mono=True))
         device_form.addRow("Fingerprint:", self.device_fingerprint_label)
 
         # Hostname (from discovery or last_address)

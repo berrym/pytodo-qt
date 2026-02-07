@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 from ...core.config import get_config, get_config_manager
 from ...core.logger import Logger
 from ...crypto import get_or_create_identity
-from ..styles.themes import apply_current_theme
+from ..styles.themes import MONO_FONT_FAMILIES, apply_current_theme
 
 if TYPE_CHECKING:
     pass
@@ -172,7 +172,8 @@ class SettingsDialog(QDialog):
 
         self.fingerprint_edit = QLineEdit(fingerprint)
         self.fingerprint_edit.setReadOnly(True)
-        self.fingerprint_edit.setStyleSheet("font-family: monospace;")
+        mono_css = ", ".join(f'"{f}"' for f in MONO_FONT_FAMILIES)
+        self.fingerprint_edit.setStyleSheet(f"font-family: {mono_css};")
         identity_layout.addRow("Your fingerprint:", self.fingerprint_edit)
 
         copy_btn = QPushButton("Copy")

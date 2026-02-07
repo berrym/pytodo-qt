@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from PyQt6.QtCore import QDate, Qt, pyqtSignal
-from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -34,7 +33,7 @@ from ...core.models import (
     is_due_today,
     is_overdue,
 )
-from ..styles.themes import get_colors
+from ..styles.themes import get_colors, make_font
 
 if TYPE_CHECKING:
     from .search_filter import FilterState
@@ -148,8 +147,8 @@ class TodoTableWidget(QTableWidget):
         self._setup_table()
 
         # Fonts
-        self._normal_font = QFont("Helvetica", 12)
-        self._completed_font = QFont("Helvetica", 12)
+        self._normal_font = make_font(12)
+        self._completed_font = make_font(12)
         self._completed_font.setBold(True)
         self._completed_font.setStrikeOut(True)
 
