@@ -29,7 +29,9 @@ class Theme(Enum):
     SYSTEM = "system"
 
 
-# Modern color schemes
+# Modern color schemes — semantic colors tuned per-theme for WCAG AA contrast
+# Light: darker, slightly desaturated accents on white (CR >= 4.5:1)
+# Dark: lighter, more desaturated accents on dark surface (CR >= 4.5:1)
 LIGHT_COLORS = {
     "window": "#f5f5f5",
     "window_text": "#1a1a1a",
@@ -43,13 +45,13 @@ LIGHT_COLORS = {
     "link": "#0066cc",
     "border": "#d0d0d0",
     "completed_bg": "#f0f8f0",
-    "completed_text": "#666666",
-    "priority_high": "#e74c3c",
-    "priority_normal": "#3498db",
+    "completed_text": "#787878",
+    "priority_high": "#b12f25",
+    "priority_normal": "#1b5f98",
     "priority_low": "#95a5a6",
-    "due_overdue": "#e74c3c",
-    "due_today": "#f39c12",
-    "due_soon": "#27ae60",
+    "due_overdue": "#b12f25",
+    "due_today": "#ae6e13",
+    "due_soon": "#2a7e4d",
 }
 
 DARK_COLORS = {
@@ -65,13 +67,13 @@ DARK_COLORS = {
     "link": "#58a6ff",
     "border": "#3c3c3c",
     "completed_bg": "#1a2f1a",
-    "completed_text": "#808080",
-    "priority_high": "#ff6b6b",
-    "priority_normal": "#5dade2",
+    "completed_text": "#8c8c8c",
+    "priority_high": "#e77c74",
+    "priority_normal": "#85b1d6",
     "priority_low": "#7f8c8d",
-    "due_overdue": "#ff6b6b",
-    "due_today": "#f5b041",
-    "due_soon": "#58d68d",
+    "due_overdue": "#e77c74",
+    "due_today": "#ddad5f",
+    "due_soon": "#6bc791",
 }
 
 
