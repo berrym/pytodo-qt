@@ -36,7 +36,7 @@ from ..crypto.keyring_storage import get_or_create_identity
 from ..net.client import AsyncClient
 from ..net.discovery import get_discovery_service
 from ..net.server import AsyncServer
-from ..net.sync_queue import SyncQueue, create_pull_operation, create_push_operation
+from ..net.sync_queue import SyncQueue, SyncStatus, create_pull_operation, create_push_operation
 from .dialogs import (
     AddTodoDialog,
     DeviceManagerDialog,
@@ -71,6 +71,7 @@ class MainWindow(QMainWindow):
         self._sync_queue = SyncQueue(self._sync_client, self)
         self._printer = QPrinter()
         self._server: AsyncServer | None = None
+        self._auto_syncing_devices: set[UUID] = set()
         self._event_loop = asyncio.get_event_loop()  # Store for thread-safe scheduling
 
         self._setup_window()
@@ -533,6 +534,12 @@ class MainWindow(QMainWindow):
         # Check for auto-sync on trusted devices
         config = get_config()
         if config.discovery.auto_sync_trusted and device.trust_level == "trusted":
+            if device.id in self._auto_syncing_devices:
+                logger.log.debug(
+                    "Skipping auto-sync, already syncing with: %s",
+                    device.name or fingerprint[:19],
+                )
+                return
             logger.log.info(
                 "Auto-syncing with trusted device: %s",
                 device.name or fingerprint[:19],
@@ -549,7 +556,21 @@ class MainWindow(QMainWindow):
             device: The trusted device
             peer: DiscoveredPeer with connection info
         """
+        import random as _random
+
+        if device.id in self._auto_syncing_devices:
+            return
+        self._auto_syncing_devices.add(device.id)
         try:
+            # Random initial delay (1-3s) to avoid mutual discovery race
+            delay = 1.0 + _random.random() * 2.0  # noqa: S311
+            logger.log.debug(
+                "Auto-sync with %s: waiting %.1fs before connecting",
+                device.name or device.fingerprint[:19],
+                delay,
+            )
+            await asyncio.sleep(delay)
+
             self.status_bar_widget.set_sync_status(
                 "syncing",
                 "sync",
@@ -562,6 +583,15 @@ class MainWindow(QMainWindow):
             pull_ok = pull_result.success
             if pull_ok:
                 self._merge_sync_data_internal(pull_result.data)
+
+            # Skip push if pull had a connection error (peer not ready)
+            if pull_result.status == SyncStatus.CONNECTION_RETRY:
+                logger.log.warning(
+                    "Auto-sync pull connection failed for %s, skipping push",
+                    device.name or device.fingerprint[:19],
+                )
+                self.status_bar_widget.set_sync_status("error")
+                return
 
             # Push (filtered by sync rules)
             allowed_list_ids = self._storage.get_syncable_list_ids_for_device(device.id)
@@ -593,6 +623,8 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.status_bar_widget.set_sync_status("error")
             logger.log.exception("Auto-sync error with %s: %s", device.name, e)
+        finally:
+            self._auto_syncing_devices.discard(device.id)
 
     async def _process_pending_syncs(
         self, device: Device, peer, pending: list[PendingSync]
@@ -620,6 +652,15 @@ class MainWindow(QMainWindow):
                 pull_ok = pull_result.success
                 if pull_ok:
                     self._merge_sync_data_internal(pull_result.data)
+
+                # Skip push if pull had a connection error (peer not ready)
+                if pull_result.status == SyncStatus.CONNECTION_RETRY:
+                    logger.log.warning(
+                        "Pending sync pull connection failed for %s, skipping push",
+                        device.name or device.fingerprint[:19],
+                    )
+                    self.status_bar_widget.set_sync_status("error")
+                    continue
 
                 # Push (filtered by sync rules)
                 allowed_list_ids = self._storage.get_syncable_list_ids_for_device(device.id)

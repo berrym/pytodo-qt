@@ -73,6 +73,7 @@ class AsyncClient(QObject):
         self._connection: ConnectionState | None = None
         self._timeout: float = 30.0
         self._last_busy_response: BusyResponse | None = None
+        self._last_connection_error: bool = False
         self._last_peer_fingerprint: str | None = None
 
         # Get identity
@@ -82,6 +83,14 @@ class AsyncClient(QObject):
     def get_last_busy_response(self) -> BusyResponse | None:
         """Get the last busy response received (if any)."""
         return self._last_busy_response
+
+    def had_connection_error(self) -> bool:
+        """Check if the last operation had a network-level connection error."""
+        return self._last_connection_error
+
+    def clear_connection_error(self) -> None:
+        """Clear the connection error flag."""
+        self._last_connection_error = False
 
     def get_last_peer_fingerprint(self) -> str | None:
         """Get the fingerprint of the last connected peer."""
@@ -122,7 +131,13 @@ class AsyncClient(QObject):
 
         except TimeoutError:
             logger.log.error("Connection to %s:%d timed out", host, port)
+            self._last_connection_error = True
             self.sync_failed.emit("Connection timed out")
+            return False
+        except OSError as e:
+            logger.log.error("Connection to %s:%d refused/unreachable: %s", host, port, e)
+            self._last_connection_error = True
+            self.sync_failed.emit(f"Connection failed: {e}")
             return False
         except Exception as e:
             logger.log.exception("Connection to %s:%d failed: %s", host, port, e)
@@ -154,6 +169,7 @@ class AsyncClient(QObject):
         Returns:
             Tuple of (success, data)
         """
+        self._last_connection_error = False
         try:
             if not await self.connect(host, port):
                 return False, b""
@@ -218,6 +234,7 @@ class AsyncClient(QObject):
         Returns:
             True if push succeeded
         """
+        self._last_connection_error = False
         try:
             if not await self.connect(host, port):
                 return False

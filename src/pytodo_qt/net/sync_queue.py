@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import random
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -38,6 +39,7 @@ class SyncStatus(Enum):
     SUCCESS = "success"
     FAILED = "failed"
     BUSY_RETRY = "busy_retry"
+    CONNECTION_RETRY = "connection_retry"
     CANCELLED = "cancelled"
 
 
@@ -201,17 +203,20 @@ class SyncQueue(QObject):
                 logger.log.exception("Error in SyncQueue process loop: %s", e)
 
     async def _execute_with_retry(self, operation: SyncOperation) -> SyncResult:
-        """Execute operation with retry on busy."""
+        """Execute operation with retry on busy or connection error."""
         while True:
             result = await self._execute_operation(operation)
 
             # Check if server was busy and we can retry
             if result.status == SyncStatus.BUSY_RETRY and operation.can_retry():
                 operation.retry_count += 1
-                wait_time = result.retry_after or 5
+                base_wait = result.retry_after or 5
+                # Add jitter: 0.5x-1.5x of base wait time
+                jitter = 0.5 + random.random()  # noqa: S311
+                wait_time = base_wait * jitter
 
                 logger.log.info(
-                    "Server busy (with %s), retrying in %ds (attempt %d/%d)",
+                    "Server busy (with %s), retrying in %.1fs (attempt %d/%d)",
                     result.current_peer,
                     wait_time,
                     operation.retry_count,
@@ -220,7 +225,32 @@ class SyncQueue(QObject):
 
                 self.operation_progress.emit(
                     str(operation.id),
-                    f"Server busy, retrying in {wait_time}s...",
+                    f"Server busy, retrying in {wait_time:.0f}s...",
+                )
+
+                await asyncio.sleep(wait_time)
+                continue
+
+            # Check if connection failed and we can retry
+            if result.status == SyncStatus.CONNECTION_RETRY and operation.can_retry():
+                operation.retry_count += 1
+                # Exponential backoff: 2^retry_count seconds, with 0.5x-1.5x jitter
+                base_wait = 2**operation.retry_count
+                jitter = 0.5 + random.random()  # noqa: S311
+                wait_time = base_wait * jitter
+
+                logger.log.info(
+                    "Connection failed to %s:%d, retrying in %.1fs (attempt %d/%d)",
+                    operation.host,
+                    operation.port,
+                    wait_time,
+                    operation.retry_count,
+                    operation.max_retries,
+                )
+
+                self.operation_progress.emit(
+                    str(operation.id),
+                    f"Connection failed, retrying in {wait_time:.0f}s...",
                 )
 
                 await asyncio.sleep(wait_time)
@@ -252,6 +282,12 @@ class SyncQueue(QObject):
                         retry_after=busy.retry_after,
                         current_peer=busy.current_peer,
                     )
+                if self._client.had_connection_error():
+                    return SyncResult(
+                        success=False,
+                        error="Connection failed",
+                        status=SyncStatus.CONNECTION_RETRY,
+                    )
                 return SyncResult(success=False, error="Pull failed", status=SyncStatus.FAILED)
 
             elif operation.operation_type == SyncOperationType.PUSH:
@@ -269,6 +305,12 @@ class SyncQueue(QObject):
                         status=SyncStatus.BUSY_RETRY,
                         retry_after=busy.retry_after,
                         current_peer=busy.current_peer,
+                    )
+                if self._client.had_connection_error():
+                    return SyncResult(
+                        success=False,
+                        error="Connection failed",
+                        status=SyncStatus.CONNECTION_RETRY,
                     )
                 return SyncResult(success=False, error="Push failed", status=SyncStatus.FAILED)
 
