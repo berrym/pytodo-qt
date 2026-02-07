@@ -46,6 +46,7 @@ from .dialogs import (
     SyncDialog,
 )
 from .styles import apply_current_theme
+from .styles.themes import Theme, get_system_theme
 from .widgets import ListSelectorWidget, SearchFilterWidget, StatusBarWidget, TodoTableWidget
 
 if TYPE_CHECKING:
@@ -352,11 +353,16 @@ class MainWindow(QMainWindow):
 
         self.tray_icon = QSystemTrayIcon(self)
 
-        # Use simple monochrome tray icon (works as macOS template)
-        icon = self._get_icon("tray.svg")
+        # Use simple monochrome tray icon
         if sys.platform == "darwin":
             # Mark as template image for macOS menu bar (adapts to dark/light mode)
+            icon = self._get_icon("tray.svg")
             icon.setIsMask(True)
+        else:
+            # Pick icon color based on system theme so it's visible on dark panels
+            theme = get_system_theme()
+            icon_name = "tray-light.svg" if theme == Theme.DARK else "tray.svg"
+            icon = self._get_icon(icon_name)
         self.tray_icon.setIcon(icon)
 
         self._tray_menu = QMenu()
