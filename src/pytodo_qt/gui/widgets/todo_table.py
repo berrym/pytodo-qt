@@ -101,16 +101,18 @@ class DueDateLabel(QWidget):
 
     date_changed = pyqtSignal(object)  # Emits date or None
 
-    def __init__(self, due_date: date | None, parent=None):
+    def __init__(self, due_date: date | None, complete: bool = False, parent=None):
         super().__init__(parent)
         self._due_date = due_date
+        self._complete = complete
         self._setup_ui()
 
     def _setup_ui(self) -> None:
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 0, 4, 0)
 
-        self.label = QLabel(format_due_date(self._due_date))
+        self._complete = False
+        self.label = QLabel(format_due_date(self._due_date, self._complete))
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.label.setMinimumWidth(120)  # Fit "Overdue (99d)" or day names
@@ -124,7 +126,7 @@ class DueDateLabel(QWidget):
         dialog = DueDatePickerDialog(self._due_date, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._due_date = dialog.get_date()
-            self.label.setText(format_due_date(self._due_date))
+            self.label.setText(format_due_date(self._due_date, self._complete))
             self.date_changed.emit(self._due_date)
 
 
@@ -288,18 +290,21 @@ class TodoTableWidget(QTableWidget):
             self.setCellWidget(row, 1, reminder_edit)
 
             # Due date widget
-            due_widget = DueDateLabel(item.due_date)
+            due_widget = DueDateLabel(item.due_date, item.complete)
             due_widget.date_changed.connect(lambda d, r=row: self._on_due_date_changed(r, d))
 
-            # Apply styling based on due date status
-            if is_overdue(item.due_date):
-                due_widget.label.setStyleSheet(
-                    f"color: {colors['due_overdue']}; font-weight: bold;"
-                )
-            elif is_due_today(item.due_date):
-                due_widget.label.setStyleSheet(f"color: {colors['due_today']}; font-weight: bold;")
-            elif item.due_date and is_due_this_week(item.due_date):
-                due_widget.label.setStyleSheet(f"color: {colors['due_soon']};")
+            # Apply styling based on due date status (not for completed items)
+            if not item.complete:
+                if is_overdue(item.due_date):
+                    due_widget.label.setStyleSheet(
+                        f"color: {colors['due_overdue']}; font-weight: bold;"
+                    )
+                elif is_due_today(item.due_date):
+                    due_widget.label.setStyleSheet(
+                        f"color: {colors['due_today']}; font-weight: bold;"
+                    )
+                elif item.due_date and is_due_this_week(item.due_date):
+                    due_widget.label.setStyleSheet(f"color: {colors['due_soon']};")
 
             self.setCellWidget(row, 2, due_widget)
 

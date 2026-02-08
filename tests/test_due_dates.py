@@ -59,6 +59,34 @@ class TestDueDateHelpers:
         result = format_due_date(next_year)
         assert result == next_year.strftime("%b %d, %Y")
 
+    def test_format_due_date_overdue_completed(self):
+        """Test that completed items don't show 'Overdue'."""
+        yesterday = date.today() - timedelta(days=1)
+        # Incomplete item shows "Overdue"
+        assert format_due_date(yesterday, complete=False) == "Overdue (1d)"
+        # Complete item shows the date instead
+        result = format_due_date(yesterday, complete=True)
+        assert "Overdue" not in result
+        # Should show the date
+        if yesterday.year == date.today().year:
+            assert result == yesterday.strftime("%b %d")
+        else:
+            assert result == yesterday.strftime("%b %d, %Y")
+
+    def test_format_due_date_exactly_7_days(self):
+        """Test that exactly 7 days out shows date, not day name."""
+        in_7_days = date.today() + timedelta(days=7)
+        result = format_due_date(in_7_days)
+        # Should NOT be just a day name (which would be ambiguous)
+        # Should be "Jan 15" or similar
+        assert result == in_7_days.strftime("%b %d")
+
+    def test_format_due_date_6_days_shows_day_name(self):
+        """Test that 6 days out shows day name (unambiguous)."""
+        in_6_days = date.today() + timedelta(days=6)
+        result = format_due_date(in_6_days)
+        assert result == in_6_days.strftime("%A")
+
     def test_is_overdue_none(self):
         """Test is_overdue with None."""
         assert is_overdue(None) is False

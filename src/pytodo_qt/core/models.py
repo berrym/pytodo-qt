@@ -534,20 +534,30 @@ def create_pending_sync(device_id: UUID, list_ids: list[UUID] | None = None) -> 
     return PendingSync(device_id=device_id, list_ids=list_ids or [])
 
 
-def format_due_date(due_date: date | None) -> str:
-    """Format due date for display: 'Today', 'Tomorrow', 'Overdue (2d)', 'Jan 15'."""
+def format_due_date(due_date: date | None, complete: bool = False) -> str:
+    """Format due date for display: 'Today', 'Tomorrow', 'Overdue (2d)', 'Jan 15'.
+
+    Args:
+        due_date: The due date to format, or None.
+        complete: Whether the item is completed. Completed items don't show as overdue.
+    """
     if due_date is None:
         return ""
     today = date.today()
     delta = (due_date - today).days
     if delta < 0:
+        if complete:
+            # Completed items show the date, not "Overdue"
+            if due_date.year == today.year:
+                return due_date.strftime("%b %d")
+            return due_date.strftime("%b %d, %Y")
         return f"Overdue ({abs(delta)}d)"
     elif delta == 0:
         return "Today"
     elif delta == 1:
         return "Tomorrow"
-    elif delta <= 7:
-        return due_date.strftime("%A")  # Day name
+    elif delta < 7:
+        return due_date.strftime("%A")  # Day name (unambiguous within 2-6 days)
     elif due_date.year == today.year:
         return due_date.strftime("%b %d")
     else:
