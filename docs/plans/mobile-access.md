@@ -2,7 +2,7 @@
 
 ## The Problem
 
-pytodo-qt is built with PyQt6, which provides an excellent cross-platform desktop experience (Linux, macOS, Windows). However, **PyQt6 does not support mobile platforms** (iOS, Android).
+pytodo-qt is built with PyQt6, which provides an excellent cross-platform desktop experience (Linux, macOS, Windows). While **PyQt6/PySide6 have experimental mobile support** (iOS via static builds, Android via Qt for Android), this support is limited and not well-documented for Python bindings.
 
 This creates a real usability gap:
 - Users can sync between desktop/laptop devices
@@ -149,6 +149,59 @@ Without mobile access, pytodo-qt is limited to "at the desk" usage, which signif
 
 **Effort:** Months
 
+### Option 6: PyQt6/PySide6 Mobile (Experimental)
+
+**Approach:** Deploy the existing PyQt6 codebase to mobile using Qt for Android/iOS.
+
+**How it works:**
+- PySide6 has experimental support for Android via `pyside6-android-deploy`
+- Qt for Android provides the underlying framework
+- Requires building Python + Qt as static libraries for mobile
+- Same codebase could theoretically run on desktop and mobile
+
+**Architecture:**
+```
+┌──────────────────────────────────┐
+│        pytodo-qt codebase        │
+│   (PyQt6 or PySide6 widgets)     │
+└────────────────┬─────────────────┘
+                 │
+    ┌────────────┼────────────────┐
+    ▼            ▼                ▼
+┌────────┐  ┌─────────┐  ┌─────────────┐
+│Desktop │  │ Android │  │ iOS (static)│
+│(normal)│  │ (APK)   │  │ (limited)   │
+└────────┘  └─────────┘  └─────────────┘
+```
+
+**Pros:**
+- Single codebase for desktop and mobile
+- Reuses all existing code, models, sync logic
+- No new UI framework to learn
+- Full offline support (native app)
+
+**Cons:**
+- Experimental/limited documentation for Python bindings
+- PySide6 (LGPL) better supported than PyQt6 (GPL) for mobile
+- May require codebase migration from PyQt6 to PySide6
+- Touch targets and UI would need mobile adaptation
+- Build process is complex (cross-compilation, static linking)
+- App size likely large (bundled Python + Qt)
+- iOS support more limited than Android
+
+**Current status (as of 2025):**
+- PySide6 6.5+ includes `pyside6-android-deploy` tool
+- Android deployment works but requires specific Qt/Python versions
+- iOS requires manual static builds, less tooling support
+- Community examples exist but production use is rare
+
+**Effort:** 1-2 weeks for Android prototype, uncertain for iOS
+
+**When to consider:**
+- If web-based approach (Options 1-2) proves insufficient
+- If maintaining two codebases (Option 4-5) is too costly
+- Once PySide6 mobile tooling matures further
+
 ## Recommended Path
 
 ### Phase 1: Web UI Mode (Immediate)
@@ -179,7 +232,10 @@ Document how users can set up Tailscale/ZeroTier for access outside home network
 
 ### Phase 4: Evaluate Native Mobile (Future)
 
-Once web UI is proven and usage patterns understood, evaluate whether native mobile apps (BeeWare or other) are worth the investment.
+Once web UI is proven and usage patterns understood, evaluate whether native mobile apps are worth the investment. Options include:
+- BeeWare/Toga (Option 4) - Python with native widgets
+- PySide6 mobile (Option 6) - Same codebase, experimental tooling
+- Flutter/React Native (Option 5) - Complete rewrite, best mobile UX
 
 ## Technical Notes
 
