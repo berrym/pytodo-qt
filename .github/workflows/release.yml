@@ -97,11 +97,11 @@ jobs:
 
       - name: Build executable (non-macOS)
         if: runner.os != 'macOS'
-        run: pyinstaller pytodo-qt.spec
+        run: pyinstaller packaging/pyinstaller/pytodo-qt.spec
 
       - name: Build executable (macOS)
         if: runner.os == 'macOS'
-        run: pyinstaller --noconfirm pytodo-qt.spec
+        run: pyinstaller --noconfirm packaging/pyinstaller/pytodo-qt.spec
 
       - name: Delete crashing Qt permission plugins (macOS)
         if: runner.os == 'macOS'
@@ -127,7 +127,7 @@ jobs:
           # 3. Apply fresh ad-hoc signature with hardened runtime
           codesign --force --deep --sign - \
             --options runtime \
-            --entitlements entitlements.plist \
+            --entitlements packaging/macos/entitlements.plist \
             dist/pytodo-qt.app
 
           # 4. Verify signature

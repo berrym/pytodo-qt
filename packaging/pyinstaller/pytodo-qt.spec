@@ -7,14 +7,18 @@ This spec file builds a directory-based executable (onedir mode) with:
 - Package data (icons)
 """
 
+import os
 import sys
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
+# Root of the repository (two levels up from packaging/pyinstaller/)
+ROOT = os.path.normpath(os.path.join(SPECPATH, '..', '..'))
+
 # Detect platform for icon selection
 if sys.platform == "darwin":
-    icon_file = "src/pytodo_qt/gui/icons/pytodo-qt.icns"
+    icon_file = os.path.join(ROOT, "src", "pytodo_qt", "gui", "icons", "pytodo-qt.icns")
 elif sys.platform == "win32":
-    icon_file = "src/pytodo_qt/gui/icons/pytodo-qt.ico"
+    icon_file = os.path.join(ROOT, "src", "pytodo_qt", "gui", "icons", "pytodo-qt.ico")
 else:
     icon_file = None  # Linux doesn't use icon in executable
 
@@ -23,8 +27,8 @@ pytodo_qt_imports = collect_submodules("pytodo_qt")
 
 # Collect package data (icons only - styles are in Python code)
 datas = [
-    ("src/pytodo_qt/gui/icons/*.svg", "pytodo_qt/gui/icons"),
-    ("qt.conf", "."),  # Qt plugin path configuration
+    (os.path.join(ROOT, "src", "pytodo_qt", "gui", "icons", "*.svg"), "pytodo_qt/gui/icons"),
+    (os.path.join(SPECPATH, "qt.conf"), "."),  # Qt plugin path configuration
 ]
 
 # Hidden imports for PyQt6 plugins
@@ -51,14 +55,14 @@ excludes = [
 ]
 
 a = Analysis(
-    ["launcher.py"],
-    pathex=["src"],
+    [os.path.join(SPECPATH, "launcher.py")],
+    pathex=[os.path.join(ROOT, "src")],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=["runtime_hook_macos.py"],
+    runtime_hooks=[os.path.join(SPECPATH, "runtime_hook_macos.py")],
     excludes=excludes,
     noarchive=False,
     optimize=0,

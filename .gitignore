@@ -47,3 +47,6 @@ btrfs_backup-*.tar.gz
 
 # uv
 uv.lock
+
+# macOS icon build artifact
+pytodo-qt.iconset/
