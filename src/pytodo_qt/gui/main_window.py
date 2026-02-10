@@ -828,12 +828,14 @@ class MainWindow(QMainWindow):
         item_count = active_list.active_item_count() if active_list else 0
         completed = active_list.completed_count() if active_list else 0
         total_items = self._database.total_items()
+        total_completed = self._database.total_completed()
 
         self.status_bar_widget.update_stats(
             list_count=list_count,
             item_count=item_count,
             completed_count=completed,
             total_items=total_items,
+            total_completed=total_completed,
         )
 
         # Server status

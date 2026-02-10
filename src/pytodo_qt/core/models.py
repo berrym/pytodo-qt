@@ -265,6 +265,10 @@ class Database:
         """Count total non-deleted items across all lists."""
         return sum(lst.active_item_count() for lst in self.active_lists())
 
+    def total_completed(self) -> int:
+        """Count total completed non-deleted items across all lists."""
+        return sum(lst.completed_count() for lst in self.active_lists())
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {

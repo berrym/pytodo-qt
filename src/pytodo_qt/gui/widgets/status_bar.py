@@ -9,7 +9,14 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QTimer
-from PyQt6.QtWidgets import QLabel, QProgressBar, QStatusBar, QWidget
+from PyQt6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QStatusBar,
+    QWidget,
+)
 
 from ...core.logger import Logger
 
@@ -40,58 +47,90 @@ def _format_time_ago(dt: datetime) -> str:
 
 
 class StatusBarWidget(QStatusBar):
-    """Enhanced status bar with progress and statistics."""
+    """Enhanced status bar with progress and statistics.
+
+    Uses a single permanent container with QHBoxLayout to prevent
+    QStatusBar's showMessage() from hiding left-side widgets.
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        # Disable QStatusBar's built-in size grip -- we manage layout ourselves
+        self.setSizeGripEnabled(True)
 
-        # Progress bar for completion
+        # Build all widgets
         self.progress_bar = QProgressBar()
         self.progress_bar.setMaximumWidth(150)
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setFormat("%p% complete")
 
-        # Statistics labels
         self.list_count_label = QLabel()
         self.item_count_label = QLabel()
+        self.total_label = QLabel()
+        self._message_label = QLabel()
         self.status_label = QLabel()
         self.server_status_label = QLabel()
         self.pending_sync_label = QLabel()
         self.sync_status_label = QLabel()
+
+        # Timer for temporary messages
+        self._message_timer = QTimer(self)
+        self._message_timer.setSingleShot(True)
+        self._message_timer.timeout.connect(self._clear_message)
 
         # Sync state tracking
         self._last_sync_time: datetime | None = None
         self._last_auto_sync: bool = False
         self._sync_update_timer = QTimer(self)
         self._sync_update_timer.timeout.connect(self._update_sync_time_display)
-        self._sync_update_timer.start(30000)  # Update every 30 seconds
+        self._sync_update_timer.start(30000)
 
-        # Add widgets
-        self.addWidget(self.progress_bar)
-        self.addWidget(self._create_separator())
-        self.addWidget(self.list_count_label)
-        self.addWidget(self._create_separator())
-        self.addWidget(self.item_count_label)
-        self.addPermanentWidget(self.pending_sync_label)
-        self.addPermanentWidget(self._create_separator())
-        self.addPermanentWidget(self.sync_status_label)
-        self.addPermanentWidget(self._create_separator())
-        self.addPermanentWidget(self.server_status_label)
-        self.addPermanentWidget(self._create_separator())
-        self.addPermanentWidget(self.status_label)
+        # Single container -- added as permanent so QStatusBar never hides it
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Left section: stats
+        layout.addWidget(self.progress_bar)
+        layout.addWidget(self._create_separator())
+        layout.addWidget(self.list_count_label)
+        layout.addWidget(self._create_separator())
+        layout.addWidget(self.item_count_label)
+        self._total_separator = self._create_separator()
+        layout.addWidget(self._total_separator)
+        layout.addWidget(self.total_label)
+        layout.addWidget(self._create_separator())
+        layout.addWidget(self._message_label)
+
+        # Spacer pushes right section to the far right
+        layout.addStretch(1)
+
+        # Right section: sync and server info
+        layout.addWidget(self.pending_sync_label)
+        layout.addWidget(self._create_separator())
+        layout.addWidget(self.sync_status_label)
+        layout.addWidget(self._create_separator())
+        layout.addWidget(self.server_status_label)
+        layout.addWidget(self._create_separator())
+        layout.addWidget(self.status_label)
+
+        self.addPermanentWidget(container, 1)
 
         # Initialize
-        self.update_stats(0, 0, 0, 0)
+        self.update_stats(0, 0, 0, 0, 0)
         self.set_status("Ready")
         self.set_server_status(False, "", 0)
         self.set_sync_status("idle")
         self.set_pending_sync_count(0)
 
     def _create_separator(self) -> QWidget:
-        """Create a visual separator."""
-        separator = QWidget()
-        separator.setFixedWidth(10)
-        return separator
+        """Create a visual separator line."""
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        sep.setFixedWidth(10)
+        return sep
 
     def update_stats(
         self,
@@ -99,14 +138,21 @@ class StatusBarWidget(QStatusBar):
         item_count: int,
         completed_count: int,
         total_items: int,
+        total_completed: int,
     ) -> None:
         """Update statistics display."""
         self.list_count_label.setText(f"Lists: {list_count}")
-        self.item_count_label.setText(f"Items: {item_count}/{total_items}")
+        self.item_count_label.setText(f"Current: {completed_count}/{item_count}")
+        self.total_label.setText(f"Total: {total_completed}/{total_items}")
 
-        # Update progress bar
-        if total_items > 0:
-            self.progress_bar.setMaximum(total_items)
+        # Show global total only when multiple lists exist
+        show_total = list_count > 1
+        self.total_label.setVisible(show_total)
+        self._total_separator.setVisible(show_total)
+
+        # Progress bar tracks current list completion
+        if item_count > 0:
+            self.progress_bar.setMaximum(item_count)
             self.progress_bar.setValue(completed_count)
         else:
             self.progress_bar.setMaximum(1)
@@ -126,8 +172,13 @@ class StatusBarWidget(QStatusBar):
             self.server_status_label.setStyleSheet("color: gray;")
 
     def show_message(self, message: str, timeout: int = 3000) -> None:
-        """Show a temporary message."""
-        self.showMessage(message, timeout)
+        """Show a temporary message without disrupting layout."""
+        self._message_label.setText(message)
+        self._message_timer.start(timeout)
+
+    def _clear_message(self) -> None:
+        """Clear the temporary message."""
+        self._message_label.setText("")
 
     def set_sync_status(
         self, state: str, direction: str = "", peer: str = "", auto: bool = False
