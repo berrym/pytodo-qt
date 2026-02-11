@@ -261,6 +261,24 @@ class Database:
         """Get names of all non-deleted lists."""
         return [lst.name for lst in self.active_lists()]
 
+    def resolve_name_collision(self, name: str, peer_name: str = "") -> str:
+        """Return a unique list name, renaming if it collides with an existing list.
+
+        If no collision, returns the original name unchanged. Otherwise appends
+        a suffix like "(from PeerName)" or "(synced)" to disambiguate.
+        """
+        existing = {lst.name for lst in self.lists.values() if not lst.deleted}
+        if name not in existing:
+            return name
+        suffix = f"from {peer_name}" if peer_name else "synced"
+        candidate = f"{name} ({suffix})"
+        if candidate not in existing:
+            return candidate
+        counter = 2
+        while f"{candidate} {counter}" in existing:
+            counter += 1
+        return f"{candidate} {counter}"
+
     def total_items(self) -> int:
         """Count total non-deleted items across all lists."""
         return sum(lst.active_item_count() for lst in self.active_lists())

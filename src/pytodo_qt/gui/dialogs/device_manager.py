@@ -1034,7 +1034,7 @@ class DeviceManagerDialog(QDialog):
             pull_ok, data = await self._client.sync_pull(peer.address, peer.port)
             merged_count = 0
             if pull_ok:
-                merged_count, _, _ = self._merge_sync_data(data)
+                merged_count, _, _ = self._merge_sync_data(data, peer.name)
                 self.sync_data_received.emit(data)
 
             # Push (excludes private lists)
@@ -1375,7 +1375,7 @@ class DeviceManagerDialog(QDialog):
             success, data = await self._client.sync_pull(peer.address, peer.port)
             merged_count = 0
             if success:
-                merged_count, _, _ = self._merge_sync_data(data)
+                merged_count, _, _ = self._merge_sync_data(data, self._selected_device.name)
                 self.sync_data_received.emit(data)
 
             # Push (filtered by sync rules for this device)
@@ -1513,7 +1513,7 @@ class DeviceManagerDialog(QDialog):
                 # Pull
                 pull_ok, data = await self._client.sync_pull(peer.address, peer.port)
                 if pull_ok:
-                    self._merge_sync_data(data)
+                    self._merge_sync_data(data, device.name)
                     self.sync_data_received.emit(data)
 
                 # Push (filtered by sync rules for this device)
@@ -1595,7 +1595,7 @@ class DeviceManagerDialog(QDialog):
                 # Pull
                 pull_ok, data = await self._client.sync_pull(peer.address, peer.port)
                 if pull_ok:
-                    self._merge_sync_data(data)
+                    self._merge_sync_data(data, device.name)
                     self.sync_data_received.emit(data)
 
                 # Push (filtered by sync rules for this device)
@@ -1912,7 +1912,7 @@ class DeviceManagerDialog(QDialog):
         # Generate filtered sync data
         return json.dumps(self._database.to_dict_for_device(allowed_list_ids)).encode("utf-8")
 
-    def _merge_sync_data(self, data: bytes) -> tuple[int, int, int]:
+    def _merge_sync_data(self, data: bytes, peer_name: str = "") -> tuple[int, int, int]:
         """Merge received sync data into local database."""
         if self._database is None:
             return 0, 0, 0
@@ -1940,6 +1940,9 @@ class DeviceManagerDialog(QDialog):
                             local_list.items[item_id] = remote_item
                             merged += 1
                 else:
+                    remote_list.name = self._database.resolve_name_collision(
+                        remote_list.name, peer_name
+                    )
                     self._database.lists[list_id] = remote_list
                     merged += len(remote_list.items)
 

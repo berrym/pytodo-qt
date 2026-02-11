@@ -271,7 +271,7 @@ class PeerManagerDialog(QDialog):
 
             local_newer = 0
             if pull_success:
-                merged_count, local_newer, _ = self._merge_sync_data(data)
+                merged_count, local_newer, _ = self._merge_sync_data(data, peer.name)
                 self.sync_data_received.emit(data)
 
             # Then, push to peer (excludes private lists)
@@ -337,7 +337,7 @@ class PeerManagerDialog(QDialog):
         finally:
             self._set_busy(False)
 
-    def _merge_sync_data(self, data: bytes) -> tuple[int, int, int]:
+    def _merge_sync_data(self, data: bytes, peer_name: str = "") -> tuple[int, int, int]:
         """Merge received sync data into local database.
 
         Returns:
@@ -370,6 +370,9 @@ class PeerManagerDialog(QDialog):
                             local_list.items[item_id] = remote_item
                             merged_count += 1
                 else:
+                    remote_list.name = self._database.resolve_name_collision(
+                        remote_list.name, peer_name
+                    )
                     self._database.lists[list_id] = remote_list
                     merged_count += len(remote_list.items)
 

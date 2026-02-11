@@ -612,7 +612,7 @@ class MainWindow(QMainWindow):
             pull_result = await self._sync_queue.execute(pull_op)
             pull_ok = pull_result.success
             if pull_ok:
-                self._merge_sync_data_internal(pull_result.data)
+                self._merge_sync_data_internal(pull_result.data, device.name or peer.hostname)
 
             # Skip push if pull had a connection error (peer not ready)
             if pull_result.status == SyncStatus.CONNECTION_RETRY:
@@ -681,7 +681,7 @@ class MainWindow(QMainWindow):
                 pull_result = await self._sync_queue.execute(pull_op)
                 pull_ok = pull_result.success
                 if pull_ok:
-                    self._merge_sync_data_internal(pull_result.data)
+                    self._merge_sync_data_internal(pull_result.data, device.name or peer.hostname)
 
                 # Skip push if pull had a connection error (peer not ready)
                 if pull_result.status == SyncStatus.CONNECTION_RETRY:
@@ -741,11 +741,16 @@ class MainWindow(QMainWindow):
         """Get database as bytes for sync (excludes private lists)."""
         return json.dumps(self._database.to_dict_for_sync()).encode("utf-8")
 
-    def _on_sync_received(self, data: bytes) -> None:
+    def _on_sync_received(self, data: bytes, peer_fingerprint: str = "") -> None:
         """Handle received sync data from incoming push."""
         self.status_bar_widget.set_sync_status("syncing", "pull", "remote")
         try:
-            merged, local_newer, identical = self._merge_sync_data_internal(data)
+            peer_name = ""
+            if peer_fingerprint:
+                device = self._storage.get_device_by_fingerprint(peer_fingerprint)
+                if device:
+                    peer_name = device.name
+            merged, local_newer, identical = self._merge_sync_data_internal(data, peer_name)
             if merged > 0:
                 self._save_database()
                 self._refresh_ui()
@@ -759,7 +764,7 @@ class MainWindow(QMainWindow):
             self.status_bar_widget.set_sync_status("error")
             logger.log.exception("Error processing sync data: %s", e)
 
-    def _merge_sync_data_internal(self, data: bytes) -> tuple[int, int, int]:
+    def _merge_sync_data_internal(self, data: bytes, peer_name: str = "") -> tuple[int, int, int]:
         """Internal merge logic, returns (merged_count, local_newer_count, identical_count)."""
         remote_db = Database.from_dict(json.loads(data.decode("utf-8")))
         merged_count = 0
@@ -783,6 +788,9 @@ class MainWindow(QMainWindow):
                         local_list.items[item_id] = remote_item
                         merged_count += 1
             else:
+                remote_list.name = self._database.resolve_name_collision(
+                    remote_list.name, peer_name
+                )
                 self._database.lists[list_id] = remote_list
                 merged_count += len(remote_list.items)
 
@@ -1257,7 +1265,7 @@ class MainWindow(QMainWindow):
                 pull_op = create_pull_operation(peer.address, peer.port, device_id=device.id)
                 pull_result = await self._sync_queue.execute(pull_op)
                 if pull_result.success:
-                    self._merge_sync_data_internal(pull_result.data)
+                    self._merge_sync_data_internal(pull_result.data, device.name or peer.hostname)
 
                 # Push (filtered by sync rules)
                 allowed_list_ids = self._storage.get_syncable_list_ids_for_device(device.id)
@@ -1389,7 +1397,14 @@ class MainWindow(QMainWindow):
                     if peer_fingerprint:
                         self._track_device(peer_fingerprint, f"{host}:{port}")
 
-                    merged, local_newer, identical = self._merge_sync_data_internal(result.data)
+                    peer_name = ""
+                    if peer_fingerprint:
+                        dev = self._storage.get_device_by_fingerprint(peer_fingerprint)
+                        if dev:
+                            peer_name = dev.name
+                    merged, local_newer, identical = self._merge_sync_data_internal(
+                        result.data, peer_name or host
+                    )
                     self._save_database()
                     self._refresh_ui()
                     self.status_bar_widget.set_sync_status("success")
@@ -1466,7 +1481,12 @@ class MainWindow(QMainWindow):
 
             result = dialog.get_sync_result()
             if result:
-                self._merge_sync_data(result)
+                peer_name = ""
+                if fingerprint:
+                    dev = self._storage.get_device_by_fingerprint(fingerprint)
+                    if dev:
+                        peer_name = dev.name
+                self._merge_sync_data(result, peer_name)
 
     def _on_sync_push(self) -> None:
         """Handle sync push action."""
@@ -1480,10 +1500,10 @@ class MainWindow(QMainWindow):
 
             self.status_bar_widget.set_sync_status("success")
 
-    def _merge_sync_data(self, data: bytes) -> None:
+    def _merge_sync_data(self, data: bytes, peer_name: str = "") -> None:
         """Merge received sync data into local database."""
         try:
-            merged, local_newer, identical = self._merge_sync_data_internal(data)
+            merged, local_newer, identical = self._merge_sync_data_internal(data, peer_name)
             self._save_database()
             self._refresh_ui()
             self.status_bar_widget.set_sync_status("success")

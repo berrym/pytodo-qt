@@ -71,7 +71,7 @@ class AsyncServer:
     _server: asyncio.Server | None = None
     _sessions: dict[tuple[str, int], ClientSession] = field(default_factory=dict)
     _get_sync_data: Callable[[], bytes] | None = None
-    _on_sync_received: Callable[[bytes], None] | None = None
+    _on_sync_received: Callable[[bytes, str], None] | None = None
     _on_client_connected: Callable[[str, str], None] | None = None
     _on_client_disconnected: Callable[[str], None] | None = None
     # Sync concurrency protection
@@ -82,7 +82,7 @@ class AsyncServer:
     async def start(
         self,
         get_sync_data: Callable[[], bytes] | None = None,
-        on_sync_received: Callable[[bytes], None] | None = None,
+        on_sync_received: Callable[[bytes, str], None] | None = None,
         on_client_connected: Callable[[str, str], None] | None = None,
         on_client_disconnected: Callable[[str], None] | None = None,
     ) -> None:
@@ -362,7 +362,7 @@ class AsyncServer:
                 # Process received data
                 if self._on_sync_received:
                     try:
-                        self._on_sync_received(msg.payload)
+                        self._on_sync_received(msg.payload, session.peer_fingerprint or "")
                     except Exception as e:
                         logger.log.exception("Error processing sync data: %s", e)
 
