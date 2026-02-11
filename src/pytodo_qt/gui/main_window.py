@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from PyQt6.QtCore import pyqtSlot
-from PyQt6.QtGui import QAction, QIcon, QKeySequence, QPixmap, QShortcut, QTextDocument
+from PyQt6.QtGui import QAction, QIcon, QKeySequence, QPixmap, QShortcut, QTextDocument, QUndoStack
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt6.QtWidgets import (
     QInputDialog,
@@ -74,6 +74,11 @@ class MainWindow(QMainWindow):
         self._server: AsyncServer | None = None
         self._auto_syncing_devices: set[UUID] = set()
         self._event_loop = asyncio.get_event_loop()  # Store for thread-safe scheduling
+
+        # Undo/redo
+        self._undo_stack = QUndoStack(self)
+        self._undo_stack.setUndoLimit(50)
+        self._refreshing = False
 
         self._setup_window()
         self._setup_actions()
@@ -221,6 +226,15 @@ class MainWindow(QMainWindow):
         self.about_qt_action = QAction("About &Qt", self)
         self.about_qt_action.triggered.connect(self._on_about_qt)
 
+        # Undo/redo actions (auto-enable/disable and update text from QUndoStack)
+        self.undo_action = self._undo_stack.createUndoAction(self, "&Undo")
+        self.undo_action.setShortcut(QKeySequence.StandardKey.Undo)
+        self.undo_action.setIcon(self._get_icon("undo.svg"))
+
+        self.redo_action = self._undo_stack.createRedoAction(self, "&Redo")
+        self.redo_action.setShortcut(QKeySequence.StandardKey.Redo)
+        self.redo_action.setIcon(self._get_icon("redo.svg"))
+
         # Search shortcuts
         self.search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
         self.search_shortcut.activated.connect(self._on_search_focus)
@@ -242,6 +256,12 @@ class MainWindow(QMainWindow):
             file_menu.addAction(self.settings_action)
             file_menu.addSeparator()
             file_menu.addAction(self.exit_action)
+
+        # Edit menu
+        edit_menu = menu_bar.addMenu("&Edit")
+        if edit_menu:
+            edit_menu.addAction(self.undo_action)
+            edit_menu.addAction(self.redo_action)
 
         # Todo menu
         todo_menu = menu_bar.addMenu("&To-Do")
@@ -303,6 +323,9 @@ class MainWindow(QMainWindow):
         """Create the toolbar."""
         toolbar = self.addToolBar("Actions")
         if toolbar:
+            toolbar.addAction(self.undo_action)
+            toolbar.addAction(self.redo_action)
+            toolbar.addSeparator()
             toolbar.addAction(self.add_todo_action)
             toolbar.addAction(self.delete_todo_action)
             toolbar.addAction(self.toggle_todo_action)
@@ -817,9 +840,13 @@ class MainWindow(QMainWindow):
 
     def _refresh_ui(self) -> None:
         """Refresh all UI components."""
-        self.list_selector.set_database(self._database)
-        self.todo_table.set_list(self._database.active_list)
-        self._update_status()
+        self._refreshing = True
+        try:
+            self.list_selector.set_database(self._database)
+            self.todo_table.set_list(self._database.active_list)
+            self._update_status()
+        finally:
+            self._refreshing = False
 
     def _update_status(self) -> None:
         """Update the status bar."""
@@ -873,9 +900,10 @@ class MainWindow(QMainWindow):
 
         item = AddTodoDialog.create_item(self)
         if item is not None and self._database.active_list is not None:
-            self._database.active_list.add_item(item)
-            self._save_database()
-            self._refresh_ui()
+            from .commands import AddItemCommand
+
+            cmd = AddItemCommand(self, self._database.active_list.id, item)
+            self._undo_stack.push(cmd)
 
     def _on_delete_todo(self) -> None:
         """Handle delete to-do action."""
@@ -888,18 +916,10 @@ class MainWindow(QMainWindow):
         if active_list is None:
             return
 
-        reply = QMessageBox.question(
-            self,
-            "Confirm Delete",
-            f"Delete {len(item_ids)} item(s)?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
+        from .commands import DeleteItemsCommand
 
-        if reply == QMessageBox.StandardButton.Yes:
-            for item_id in item_ids:
-                active_list.remove_item(item_id)
-            self._save_database()
-            self._refresh_ui()
+        cmd = DeleteItemsCommand(self, active_list.id, item_ids)
+        self._undo_stack.push(cmd)
 
     def _on_toggle_todo(self) -> None:
         """Handle toggle to-do action."""
@@ -911,13 +931,18 @@ class MainWindow(QMainWindow):
         if active_list is None:
             return
 
+        # Capture current completion state for each item before toggling
+        item_states: list[tuple[UUID, bool]] = []
         for item_id in item_ids:
             item = active_list.get_item(item_id)
             if item:
-                item.toggle_complete()
+                item_states.append((item_id, item.complete))
 
-        self._save_database()
-        self._refresh_ui()
+        if item_states:
+            from .commands import ToggleCompleteCommand
+
+            cmd = ToggleCompleteCommand(self, active_list.id, item_states)
+            self._undo_stack.push(cmd)
 
     def _on_add_list(self) -> None:
         """Handle add list action."""
@@ -932,16 +957,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Duplicate", f'A list named "{name}" already exists.')
             return
 
+        from .commands import AddListCommand
+
         new_list = create_todo_list(name)
-        self._database.add_list(new_list)
-        self._database.set_active_list(new_list.id)
-
-        # Update config
-        self._config.database.active_list = name
-        self._config_manager.save()
-
-        self._save_database()
-        self._refresh_ui()
+        prev_active = self._database.active_list_id
+        cmd = AddListCommand(self, new_list, prev_active)
+        self._undo_stack.push(cmd)
 
     def _on_delete_list(self) -> None:
         """Handle delete list action."""
@@ -957,16 +978,17 @@ class MainWindow(QMainWindow):
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            active_list.mark_deleted()
-            # Find another list to make active
-            for lst in self._database.active_lists():
-                self._database.set_active_list(lst.id)
-                break
-            else:
-                self._database.active_list_id = None
+            from .commands import DeleteListCommand
 
-            self._save_database()
-            self._refresh_ui()
+            # Find another list to make active after deletion
+            new_active_id: UUID | None = None
+            for lst in self._database.active_lists():
+                if lst.id != active_list.id:
+                    new_active_id = lst.id
+                    break
+
+            cmd = DeleteListCommand(self, active_list.id, active_list.name, new_active_id)
+            self._undo_stack.push(cmd)
 
     def _on_rename_list(self) -> None:
         """Handle rename list action."""
@@ -983,11 +1005,10 @@ class MainWindow(QMainWindow):
         if not ok or not name.strip():
             return
 
-        active_list.name = name.strip()
-        active_list.mark_updated()
+        from .commands import RenameListCommand
 
-        self._save_database()
-        self._refresh_ui()
+        cmd = RenameListCommand(self, active_list.id, active_list.name, name.strip())
+        self._undo_stack.push(cmd)
 
     def _on_toggle_private(self) -> None:
         """Handle toggle private action."""
@@ -995,12 +1016,10 @@ class MainWindow(QMainWindow):
         if active_list is None:
             return
 
-        active_list.toggle_private()
-        self._save_database()
-        self._refresh_ui()
+        from .commands import TogglePrivateCommand
 
-        status = "private (won't sync)" if active_list.private else "shared"
-        self.status_bar_widget.show_message(f'List "{active_list.name}" is now {status}', 3000)
+        cmd = TogglePrivateCommand(self, active_list.id, active_list.private)
+        self._undo_stack.push(cmd)
 
     def _on_list_sync_settings(self) -> None:
         """Handle list sync settings request."""
@@ -1048,35 +1067,42 @@ class MainWindow(QMainWindow):
 
     def _on_item_priority_changed(self, item_id: UUID, priority: int) -> None:
         """Handle item priority change."""
+        if self._refreshing:
+            return
         active_list = self._database.active_list
         if active_list:
             item = active_list.get_item(item_id)
             if item:
-                item.priority = priority
-                item.mark_updated()
-                self._save_database()
-                self._refresh_ui()
+                from .commands import EditPriorityCommand
+
+                cmd = EditPriorityCommand(self, active_list.id, item_id, item.priority, priority)
+                self._undo_stack.push(cmd)
 
     def _on_item_reminder_changed(self, item_id: UUID, text: str) -> None:
         """Handle item reminder text change."""
+        if self._refreshing:
+            return
         active_list = self._database.active_list
         if active_list:
             item = active_list.get_item(item_id)
             if item:
-                item.reminder = text
-                item.mark_updated()
-                self._save_database()
+                from .commands import EditReminderCommand
+
+                cmd = EditReminderCommand(self, active_list.id, item_id, item.reminder, text)
+                self._undo_stack.push(cmd)
 
     def _on_item_due_date_changed(self, item_id: UUID, due_date) -> None:
         """Handle item due date change."""
+        if self._refreshing:
+            return
         active_list = self._database.active_list
         if active_list:
             item = active_list.get_item(item_id)
             if item:
-                item.due_date = due_date
-                item.mark_updated()
-                self._save_database()
-                self._refresh_ui()
+                from .commands import EditDueDateCommand
+
+                cmd = EditDueDateCommand(self, active_list.id, item_id, item.due_date, due_date)
+                self._undo_stack.push(cmd)
 
     def _on_filter_changed(self, filter_state) -> None:
         """Handle filter state change."""
