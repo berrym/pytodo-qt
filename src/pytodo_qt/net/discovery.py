@@ -5,6 +5,7 @@ Zeroconf/mDNS service discovery for pytodo-qt.
 
 from __future__ import annotations
 
+import contextlib
 import socket
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -163,24 +164,84 @@ class DiscoveryService:
         return self._peers.get(name)
 
     def _get_local_addresses(self) -> list[bytes]:
-        """Get local IPv4 addresses for service registration."""
-        addresses = []
+        """Get local addresses for service registration.
+
+        Uses OS routing table to find preferred outbound addresses for
+        both IPv4 and IPv6, then supplements with hostname-resolved
+        addresses. Filters loopback and link-local. Preferred addresses
+        are placed first since peers use addresses[0].
+        """
+        addresses: list[bytes] = []
+
+        # Preferred addresses via routing table (most reliable)
+        for family, pack_fn in [
+            (socket.AF_INET, socket.inet_aton),
+            (socket.AF_INET6, lambda a: socket.inet_pton(socket.AF_INET6, a)),
+        ]:
+            preferred = self._get_preferred_address(family)
+            if preferred:
+                with contextlib.suppress(OSError):
+                    addresses.append(pack_fn(preferred))
+
+        # Supplement with hostname-resolved addresses
         try:
-            # Get all local addresses
             hostname = socket.gethostname()
-            for addr_info in socket.getaddrinfo(hostname, None, socket.AF_INET):
-                sockaddr = addr_info[4]
-                addr: str = sockaddr[0]  # type: ignore[assignment]
-                if not addr.startswith("127."):
-                    addresses.append(socket.inet_aton(addr))
+            for family in (socket.AF_INET, socket.AF_INET6):
+                try:
+                    for addr_info in socket.getaddrinfo(hostname, None, family):
+                        addr: str = addr_info[4][0]
+                        if self._is_unusable_address(addr):
+                            continue
+                        if family == socket.AF_INET:
+                            packed = socket.inet_aton(addr)
+                        else:
+                            packed = socket.inet_pton(socket.AF_INET6, addr)
+                        if packed not in addresses:
+                            addresses.append(packed)
+                except socket.gaierror:
+                    pass
         except Exception as e:
             logger.log.warning("Error getting local addresses: %s", e)
 
-        # Add localhost as fallback
         if not addresses:
             addresses.append(socket.inet_aton("127.0.0.1"))
 
         return addresses
+
+    def _get_preferred_address(self, family: socket.AddressFamily) -> str | None:
+        """Determine the preferred outbound address via OS routing.
+
+        Opens a UDP socket and connects to a non-routable address without
+        sending data. The OS selects the outbound interface based on its
+        routing table, naturally avoiding virtual interfaces (Docker
+        bridges, container networks) that lack a default route.
+        """
+        if family == socket.AF_INET:
+            target = ("10.255.255.255", 1)
+        else:
+            # RFC 3849 documentation prefix — non-routable but triggers
+            # a valid routing table lookup on IPv6-capable machines.
+            target = ("2001:db8::1", 1)
+        try:
+            with socket.socket(family, socket.SOCK_DGRAM) as s:
+                s.connect(target)
+                addr = s.getsockname()[0]
+                if addr and addr not in ("0.0.0.0", "::"):
+                    return addr
+        except Exception as e:
+            label = "IPv4" if family == socket.AF_INET else "IPv6"
+            logger.log.debug("Could not determine preferred %s address: %s", label, e)
+        return None
+
+    @staticmethod
+    def _is_unusable_address(addr: str) -> bool:
+        """Check if an address is unsuitable for peer discovery."""
+        return (
+            addr.startswith("127.")  # IPv4 loopback
+            or addr.startswith("169.254.")  # IPv4 link-local (APIPA)
+            or addr == "::1"  # IPv6 loopback
+            or addr.startswith("fe80:")  # IPv6 link-local
+        )
 
     def _add_peer(self, peer: DiscoveredPeer) -> None:
         """Add a discovered peer."""
@@ -217,12 +278,13 @@ class _PeerListener(ServiceListener):
             return
 
         try:
-            # Parse service info
+            # Parse service info — prefer IPv4 for wider compatibility
             addresses = info.parsed_addresses()
             if not addresses:
                 return
 
-            address = addresses[0]
+            ipv4 = [a for a in addresses if "." in a]
+            address = ipv4[0] if ipv4 else addresses[0]
             port = info.port
             properties = info.properties
 

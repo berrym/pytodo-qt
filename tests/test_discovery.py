@@ -1,6 +1,9 @@
 """Tests for mDNS/Zeroconf discovery module."""
 
+import socket
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from pytodo_qt.net.discovery import (
     SERVICE_TYPE,
@@ -227,11 +230,61 @@ class TestDiscoveryService:
 
         addresses = service._get_local_addresses()
 
-        # Should return at least localhost
+        # Should return at least one address
         assert len(addresses) >= 1
-        # Each address should be 4 bytes (IPv4)
+        # Each address should be 4 bytes (IPv4) or 16 bytes (IPv6)
         for addr in addresses:
-            assert len(addr) == 4
+            assert len(addr) in (4, 16)
+
+    def test_get_local_addresses_preferred_first(self):
+        """Test that routing-derived preferred address is first."""
+        service = DiscoveryService()
+
+        preferred = service._get_preferred_address(socket.AF_INET)
+        if preferred is None:
+            pytest.skip("No IPv4 preferred address available")
+
+        addresses = service._get_local_addresses()
+        # First address should be the preferred IPv4 address
+        assert addresses[0] == socket.inet_aton(preferred)
+
+    def test_get_preferred_address_ipv4(self):
+        """Test IPv4 preferred address detection via routing table."""
+        service = DiscoveryService()
+
+        addr = service._get_preferred_address(socket.AF_INET)
+
+        # Should return a non-loopback address on a networked machine
+        # (may be None in isolated environments like CI)
+        if addr is not None:
+            assert not addr.startswith("127.")
+            assert "." in addr  # Valid IPv4 format
+
+    def test_get_preferred_address_ipv6(self):
+        """Test IPv6 preferred address detection via routing table."""
+        service = DiscoveryService()
+
+        addr = service._get_preferred_address(socket.AF_INET6)
+
+        # May be None if no IPv6 connectivity
+        if addr is not None:
+            assert addr != "::1"
+            assert not addr.startswith("fe80:")
+
+    def test_is_unusable_address(self):
+        """Test address filtering for unusable addresses."""
+        assert DiscoveryService._is_unusable_address("127.0.0.1") is True
+        assert DiscoveryService._is_unusable_address("127.0.1.1") is True
+        assert DiscoveryService._is_unusable_address("169.254.1.1") is True
+        assert DiscoveryService._is_unusable_address("::1") is True
+        assert DiscoveryService._is_unusable_address("fe80::1") is True
+        assert DiscoveryService._is_unusable_address("fe80::abcd:1234") is True
+
+        assert DiscoveryService._is_unusable_address("192.168.1.1") is False
+        assert DiscoveryService._is_unusable_address("10.0.0.1") is False
+        assert DiscoveryService._is_unusable_address("172.17.0.1") is False
+        assert DiscoveryService._is_unusable_address("2001:db8::1") is False
+        assert DiscoveryService._is_unusable_address("fd00::1") is False
 
 
 class TestGetDiscoveryService:
@@ -413,3 +466,61 @@ class TestPeerListener:
         peer = service.get_peer("my-service")
         assert peer is not None
         assert peer.is_local is True
+
+    def test_add_service_prefers_ipv4(self):
+        """Test that add_service prefers IPv4 when both are available."""
+        from pytodo_qt.net.discovery import _PeerListener
+
+        service = DiscoveryService()
+        listener = _PeerListener(service)
+
+        mock_zc = MagicMock()
+        mock_info = MagicMock()
+        # IPv6 first, IPv4 second — should still pick IPv4
+        mock_info.parsed_addresses.return_value = [
+            "2001:db8::1",
+            "192.168.1.100",
+        ]
+        mock_info.port = 5364
+        mock_info.properties = {
+            b"fingerprint": b"test:fingerprint",
+            b"version": b"2",
+            b"hostname": b"testhost",
+        }
+        mock_zc.get_service_info.return_value = mock_info
+
+        with patch("pytodo_qt.net.discovery.get_config") as mock_config:
+            mock_config.return_value.discovery.get_service_name.return_value = "other"
+
+            listener.add_service(mock_zc, SERVICE_TYPE, f"test-peer.{SERVICE_TYPE}")
+
+        peer = service.get_peer("test-peer")
+        assert peer is not None
+        assert peer.address == "192.168.1.100"
+
+    def test_add_service_falls_back_to_ipv6(self):
+        """Test that add_service uses IPv6 when no IPv4 is available."""
+        from pytodo_qt.net.discovery import _PeerListener
+
+        service = DiscoveryService()
+        listener = _PeerListener(service)
+
+        mock_zc = MagicMock()
+        mock_info = MagicMock()
+        mock_info.parsed_addresses.return_value = ["2001:db8::1"]
+        mock_info.port = 5364
+        mock_info.properties = {
+            b"fingerprint": b"test:fingerprint",
+            b"version": b"2",
+            b"hostname": b"testhost",
+        }
+        mock_zc.get_service_info.return_value = mock_info
+
+        with patch("pytodo_qt.net.discovery.get_config") as mock_config:
+            mock_config.return_value.discovery.get_service_name.return_value = "other"
+
+            listener.add_service(mock_zc, SERVICE_TYPE, f"test-peer.{SERVICE_TYPE}")
+
+        peer = service.get_peer("test-peer")
+        assert peer is not None
+        assert peer.address == "2001:db8::1"
