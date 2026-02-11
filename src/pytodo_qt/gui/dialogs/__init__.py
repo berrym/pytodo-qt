@@ -1,5 +1,6 @@
 """GUI dialogs for pytodo-qt."""
 
+from .add_list import AddListDialog
 from .add_todo import AddTodoDialog
 from .device_manager import DeviceManagerDialog
 from .list_sync_settings import ListSyncSettingsDialog
@@ -8,10 +9,11 @@ from .settings import SettingsDialog
 from .sync import SyncDialog
 
 __all__ = [
-    "SettingsDialog",
-    "PeerManagerDialog",
-    "DeviceManagerDialog",
+    "AddListDialog",
     "AddTodoDialog",
-    "SyncDialog",
+    "DeviceManagerDialog",
     "ListSyncSettingsDialog",
+    "PeerManagerDialog",
+    "SettingsDialog",
+    "SyncDialog",
 ]

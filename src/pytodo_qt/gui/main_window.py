@@ -30,7 +30,7 @@ from ..core.config import get_config, get_config_manager
 from ..core.database import DatabaseStorage
 from ..core.logger import Logger
 from ..core.migration import MigrationError, migrate_json_to_sqlite, needs_migration
-from ..core.models import Database, Device, PendingSync, TodoList, create_todo_list
+from ..core.models import Database, Device, PendingSync, TodoList
 from ..core.offline_queue import OfflineQueue
 from ..crypto.keyring_storage import get_or_create_identity
 from ..net.client import AsyncClient
@@ -38,6 +38,7 @@ from ..net.discovery import get_discovery_service
 from ..net.server import AsyncServer
 from ..net.sync_queue import SyncQueue, SyncStatus, create_pull_operation, create_push_operation
 from .dialogs import (
+    AddListDialog,
     AddTodoDialog,
     DeviceManagerDialog,
     ListSyncSettingsDialog,
@@ -946,20 +947,12 @@ class MainWindow(QMainWindow):
 
     def _on_add_list(self) -> None:
         """Handle add list action."""
-        name, ok = QInputDialog.getText(self, "Add List", "Enter list name:")
-        if not ok or not name.strip():
-            return
-
-        name = name.strip()
-
-        # Check for duplicate
-        if self._database.get_list_by_name(name):
-            QMessageBox.warning(self, "Duplicate", f'A list named "{name}" already exists.')
+        new_list = AddListDialog.create_list(self, self._database)
+        if new_list is None:
             return
 
         from .commands import AddListCommand
 
-        new_list = create_todo_list(name)
         prev_active = self._database.active_list_id
         cmd = AddListCommand(self, new_list, prev_active)
         self._undo_stack.push(cmd)
