@@ -167,9 +167,10 @@ class DiscoveryService:
         """Get local addresses for service registration.
 
         Uses OS routing table to find preferred outbound addresses for
-        both IPv4 and IPv6, then supplements with hostname-resolved
-        addresses. Filters loopback and link-local. Preferred addresses
-        are placed first since peers use addresses[0].
+        both IPv4 and IPv6. Only falls back to hostname-resolved addresses
+        when the routing table probe returns nothing (e.g. no default
+        route). This avoids advertising virtual interface addresses like
+        Docker bridges that hostname resolution may include.
         """
         addresses: list[bytes] = []
 
@@ -183,25 +184,26 @@ class DiscoveryService:
                 with contextlib.suppress(OSError):
                     addresses.append(pack_fn(preferred))
 
-        # Supplement with hostname-resolved addresses
-        try:
-            hostname = socket.gethostname()
-            for family in (socket.AF_INET, socket.AF_INET6):
-                try:
-                    for addr_info in socket.getaddrinfo(hostname, None, family):
-                        addr: str = addr_info[4][0]
-                        if self._is_unusable_address(addr):
-                            continue
-                        if family == socket.AF_INET:
-                            packed = socket.inet_aton(addr)
-                        else:
-                            packed = socket.inet_pton(socket.AF_INET6, addr)
-                        if packed not in addresses:
-                            addresses.append(packed)
-                except socket.gaierror:
-                    pass
-        except Exception as e:
-            logger.log.warning("Error getting local addresses: %s", e)
+        # Fall back to hostname resolution only if routing table gave nothing
+        if not addresses:
+            try:
+                hostname = socket.gethostname()
+                for family in (socket.AF_INET, socket.AF_INET6):
+                    try:
+                        for addr_info in socket.getaddrinfo(hostname, None, family):
+                            addr: str = addr_info[4][0]
+                            if self._is_unusable_address(addr):
+                                continue
+                            if family == socket.AF_INET:
+                                packed = socket.inet_aton(addr)
+                            else:
+                                packed = socket.inet_pton(socket.AF_INET6, addr)
+                            if packed not in addresses:
+                                addresses.append(packed)
+                    except socket.gaierror:
+                        pass
+            except Exception as e:
+                logger.log.warning("Error getting local addresses: %s", e)
 
         if not addresses:
             addresses.append(socket.inet_aton("127.0.0.1"))
