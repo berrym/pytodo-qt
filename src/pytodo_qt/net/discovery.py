@@ -191,7 +191,7 @@ class DiscoveryService:
                 for family in (socket.AF_INET, socket.AF_INET6):
                     try:
                         for addr_info in socket.getaddrinfo(hostname, None, family):
-                            addr: str = addr_info[4][0]
+                            addr: str = str(addr_info[4][0])
                             if self._is_unusable_address(addr):
                                 continue
                             if family == socket.AF_INET:
@@ -273,9 +273,9 @@ class _PeerListener(ServiceListener):
     def __init__(self, discovery: DiscoveryService):
         self._discovery = discovery
 
-    def add_service(self, zc: Zeroconf, service_type: str, name: str) -> None:
+    def add_service(self, zc: Zeroconf, type_: str, name: str) -> None:
         """Called when a service is discovered."""
-        info = zc.get_service_info(service_type, name)
+        info = zc.get_service_info(type_, name)
         if info is None:
             return
 
@@ -288,11 +288,13 @@ class _PeerListener(ServiceListener):
             ipv4 = [a for a in addresses if "." in a]
             address = ipv4[0] if ipv4 else addresses[0]
             port = info.port
+            if port is None:
+                return
             properties = info.properties
 
-            fingerprint = properties.get(b"fingerprint", b"").decode("utf-8")
-            version = int(properties.get(b"version", b"2").decode("utf-8"))
-            hostname = properties.get(b"hostname", b"unknown").decode("utf-8")
+            fingerprint = (properties.get(b"fingerprint") or b"").decode("utf-8")
+            version = int((properties.get(b"version") or b"2").decode("utf-8"))
+            hostname = (properties.get(b"hostname") or b"unknown").decode("utf-8")
 
             # Extract service name (remove service type suffix)
             service_name = name.replace(f".{SERVICE_TYPE}", "")
@@ -317,16 +319,16 @@ class _PeerListener(ServiceListener):
         except Exception as e:
             logger.log.exception("Error processing discovered service: %s", e)
 
-    def remove_service(self, zc: Zeroconf, service_type: str, name: str) -> None:
+    def remove_service(self, zc: Zeroconf, type_: str, name: str) -> None:
         """Called when a service is removed."""
         service_name = name.replace(f".{SERVICE_TYPE}", "")
         self._discovery._remove_peer(service_name)
 
-    def update_service(self, zc: Zeroconf, service_type: str, name: str) -> None:
+    def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
         """Called when a service is updated."""
         # Treat update as remove + add
-        self.remove_service(zc, service_type, name)
-        self.add_service(zc, service_type, name)
+        self.remove_service(zc, type_, name)
+        self.add_service(zc, type_, name)
 
 
 # Global discovery service instance

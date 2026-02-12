@@ -119,7 +119,7 @@ class AsyncClient(QObject):
 
             # Perform handshake
             if not await self._perform_handshake():
-                await self.disconnect()
+                await self.close_connection()
                 return False
 
             if self._connection.peer_fingerprint:
@@ -144,7 +144,7 @@ class AsyncClient(QObject):
             self.sync_failed.emit(f"Connection failed: {e}")
             return False
 
-    async def disconnect(self) -> None:
+    async def close_connection(self) -> None:
         """Disconnect from server."""
         if self._connection is None:
             return
@@ -221,7 +221,7 @@ class AsyncClient(QObject):
             self.sync_failed.emit(f"Sync pull failed: {e}")
             return False, b""
         finally:
-            await self.disconnect()
+            await self.close_connection()
 
     async def sync_push(self, host: str, port: int, data: bytes) -> bool:
         """Push sync data to server.
@@ -281,7 +281,7 @@ class AsyncClient(QObject):
             self.sync_failed.emit(f"Sync push failed: {e}")
             return False
         finally:
-            await self.disconnect()
+            await self.close_connection()
 
     async def ping(self, host: str, port: int) -> tuple[bool, float]:
         """Ping a server and measure latency.
@@ -316,7 +316,7 @@ class AsyncClient(QObject):
             logger.log.exception("Ping failed: %s", e)
             return False, 0.0
         finally:
-            await self.disconnect()
+            await self.close_connection()
 
     async def _perform_handshake(self) -> bool:
         """Perform the protocol handshake with key exchange."""

@@ -208,7 +208,8 @@ class ListSelectorWidget(QWidget):
             action = menu.addAction(self._lock_icon, "Make Shared")
         else:
             action = menu.addAction(self._lock_icon, "Make Private")
-        action.triggered.connect(self.toggle_private_requested.emit)
+        if action:
+            action.triggered.connect(self.toggle_private_requested.emit)
 
         menu.addSeparator()
         menu.addAction("Rename...", self.rename_list_requested.emit)

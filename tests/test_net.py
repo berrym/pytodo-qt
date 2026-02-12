@@ -102,7 +102,7 @@ class TestAsyncClient:
 
     @pytest.mark.asyncio
     async def test_disconnect_when_not_connected(self):
-        """Test disconnect when not connected does nothing."""
+        """Test close_connection when not connected does nothing."""
         with patch("pytodo_qt.net.client.get_or_create_identity") as mock_identity:
             from pytodo_qt.crypto.key_exchange import IdentityKeyPair
 
@@ -110,7 +110,7 @@ class TestAsyncClient:
 
             client = AsyncClient()
             # Should not raise
-            await client.disconnect()
+            await client.close_connection()
 
             assert client._connection is None
 

@@ -6,7 +6,8 @@ Dialog for managing known devices and sync groups.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
+from uuid import UUID
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
@@ -142,6 +143,7 @@ class DeviceManagerDialog(QDialog):
         self.device_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.device_table.setAlternatingRowColors(True)
         header = self.device_table.horizontalHeader()
+        assert header is not None
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         header.setStretchLastSection(True)
         self.device_table.itemSelectionChanged.connect(self._on_device_selected)
@@ -289,6 +291,7 @@ class DeviceManagerDialog(QDialog):
         self.group_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.group_table.setAlternatingRowColors(True)
         header = self.group_table.horizontalHeader()
+        assert header is not None
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         header.setStretchLastSection(True)
         self.group_table.itemSelectionChanged.connect(self._on_group_selected)
@@ -344,6 +347,7 @@ class DeviceManagerDialog(QDialog):
         self.group_members_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.group_members_table.setMaximumHeight(180)
         gh = self.group_members_table.horizontalHeader()
+        assert gh is not None
         gh.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         gh.setStretchLastSection(True)
         gd_layout.addWidget(self.group_members_table)
@@ -389,6 +393,7 @@ class DeviceManagerDialog(QDialog):
         self.peer_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.peer_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         ph = self.peer_table.horizontalHeader()
+        assert ph is not None
         ph.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         ph.setStretchLastSection(True)
         self.peer_table.itemSelectionChanged.connect(self._on_peer_selected)
@@ -668,7 +673,9 @@ class DeviceManagerDialog(QDialog):
 
     def _on_device_selected(self) -> None:
         """Handle device selection in the table."""
-        rows = self.device_table.selectionModel().selectedRows()
+        sel = self.device_table.selectionModel()
+        assert sel is not None
+        rows = sel.selectedRows()
         if not rows:
             self._selected_device = None
             self.device_group.setVisible(False)
@@ -692,7 +699,9 @@ class DeviceManagerDialog(QDialog):
 
     def _on_group_selected(self) -> None:
         """Handle group selection in the table."""
-        rows = self.group_table.selectionModel().selectedRows()
+        sel = self.group_table.selectionModel()
+        assert sel is not None
+        rows = sel.selectedRows()
         if not rows:
             self._selected_group_id = None
             self.group_details.setVisible(False)
@@ -903,7 +912,9 @@ class DeviceManagerDialog(QDialog):
 
     def _get_selected_peer(self) -> DiscoveredPeer | None:
         """Get the currently selected peer from the peer table."""
-        rows = self.peer_table.selectionModel().selectedRows()
+        sel = self.peer_table.selectionModel()
+        assert sel is not None
+        rows = sel.selectedRows()
         if not rows:
             return None
 
@@ -1385,7 +1396,8 @@ class DeviceManagerDialog(QDialog):
 
             # Update device last seen
             self._selected_device.update_seen(f"{peer.address}:{peer.port}")
-            self._storage.save_device(self._selected_device)
+            if self._storage is not None:
+                self._storage.save_device(self._selected_device)
 
             if success and push_success:
                 QMessageBox.information(
@@ -1443,7 +1455,8 @@ class DeviceManagerDialog(QDialog):
             if success:
                 # Update last seen
                 self._selected_device.update_seen(f"{host}:{port}")
-                self._storage.save_device(self._selected_device)
+                if self._storage is not None:
+                    self._storage.save_device(self._selected_device)
                 self._show_device_details(self._selected_device)
 
                 QMessageBox.information(
@@ -1550,7 +1563,7 @@ class DeviceManagerDialog(QDialog):
             devices = self._storage.get_all_devices(include_blocked=False)
             group_name = "All Devices"
         elif self._selected_group_id is not None:
-            group = self._storage.get_sync_group(self._selected_group_id)
+            group = self._storage.get_sync_group(cast(UUID, self._selected_group_id))
             if group is None:
                 return
             devices = self._storage.get_devices_in_group(group.id)
@@ -1618,7 +1631,7 @@ class DeviceManagerDialog(QDialog):
         if self._selected_group_id == _ALL_DEVICES_SENTINEL:
             self._show_group_details_all_devices()
         elif self._selected_group_id is not None:
-            group = self._storage.get_sync_group(self._selected_group_id)
+            group = self._storage.get_sync_group(cast(UUID, self._selected_group_id))
             if group:
                 self._show_group_details(group)
 
@@ -1656,7 +1669,7 @@ class DeviceManagerDialog(QDialog):
         if self._selected_group_id == _ALL_DEVICES_SENTINEL:
             return
 
-        group = self._storage.get_sync_group(self._selected_group_id)
+        group = self._storage.get_sync_group(cast(UUID, self._selected_group_id))
         if group is None:
             return
 
@@ -1688,7 +1701,7 @@ class DeviceManagerDialog(QDialog):
         if self._selected_group_id == _ALL_DEVICES_SENTINEL:
             return
 
-        group = self._storage.get_sync_group(self._selected_group_id)
+        group = self._storage.get_sync_group(cast(UUID, self._selected_group_id))
         if group is None:
             return
 
@@ -1720,7 +1733,7 @@ class DeviceManagerDialog(QDialog):
         if self._selected_group_id == _ALL_DEVICES_SENTINEL:
             return
 
-        group = self._storage.get_sync_group(self._selected_group_id)
+        group = self._storage.get_sync_group(cast(UUID, self._selected_group_id))
         if group is None:
             return
 
@@ -1957,13 +1970,15 @@ class DeviceManagerDialog(QDialog):
 
         if self._storage is None:
             action = self._sync_group_menu.addAction("No groups")
-            action.setEnabled(False)
+            if action:
+                action.setEnabled(False)
             return
 
         groups = self._storage.get_all_sync_groups()
         if not groups:
             action = self._sync_group_menu.addAction("No groups created")
-            action.setEnabled(False)
+            if action:
+                action.setEnabled(False)
             return
 
         online_fps = self._get_online_fingerprints()
@@ -1974,11 +1989,12 @@ class DeviceManagerDialog(QDialog):
             action = self._sync_group_menu.addAction(
                 f"{group.name} ({online_count}/{len(devices)} online)"
             )
-            action.setData(group.id)
-            action.setEnabled(online_count > 0)
-            action.triggered.connect(
-                lambda checked, gid=group.id: self._on_sync_group_from_menu(gid)
-            )
+            if action:
+                action.setData(group.id)
+                action.setEnabled(online_count > 0)
+                action.triggered.connect(
+                    lambda checked, gid=group.id: self._on_sync_group_from_menu(gid)
+                )
 
     def _on_sync_group_from_menu(self, group_id) -> None:
         """Handle sync group selection from menu."""
@@ -2008,7 +2024,7 @@ class DeviceManagerDialog(QDialog):
             self.status_label.setText("")
             self.setWindowTitle("Device & Sync Manager")
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0) -> None:  # noqa: N802
         """Handle dialog close."""
         self._refresh_timer.stop()
-        super().closeEvent(event)
+        super().closeEvent(a0)

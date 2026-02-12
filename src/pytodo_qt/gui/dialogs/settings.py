@@ -76,7 +76,9 @@ class SettingsDialog(QDialog):
         )
         button_box.accepted.connect(self._on_accept)
         button_box.rejected.connect(self.reject)
-        button_box.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self._on_apply)
+        apply_btn = button_box.button(QDialogButtonBox.StandardButton.Apply)
+        if apply_btn:
+            apply_btn.clicked.connect(self._on_apply)
         layout.addWidget(button_box)
 
     def _create_general_tab(self) -> QWidget:

@@ -488,7 +488,7 @@ async def start_server(
     host: str = "0.0.0.0",
     port: int = 5364,
     get_sync_data: Callable[[], bytes] | None = None,
-    on_sync_received: Callable[[bytes], None] | None = None,
+    on_sync_received: Callable[[bytes, str], None] | None = None,
 ) -> AsyncServer:
     """Create and start an async server."""
     server = AsyncServer(host=host, port=port)

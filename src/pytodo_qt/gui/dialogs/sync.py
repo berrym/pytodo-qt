@@ -101,9 +101,9 @@ class SyncDialog(QDialog):
         self.button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setText(
-            "Pull" if self._operation == "pull" else "Push"
-        )
+        ok_btn = self.button_box.button(QDialogButtonBox.StandardButton.Ok)
+        if ok_btn:
+            ok_btn.setText("Pull" if self._operation == "pull" else "Push")
         self.button_box.accepted.connect(self._on_sync)
         self.button_box.rejected.connect(self.reject)
         layout.addWidget(self.button_box)

@@ -72,7 +72,8 @@ class SearchFilterWidget(QWidget):
             action = self.search_edit.addAction(
                 search_icon, QLineEdit.ActionPosition.LeadingPosition
             )
-            action.setToolTip("Search")
+            if action:
+                action.setToolTip("Search")
 
         self.search_edit.textChanged.connect(self._on_text_changed)
         layout.addWidget(self.search_edit, 1)

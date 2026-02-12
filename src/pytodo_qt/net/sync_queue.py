@@ -171,6 +171,7 @@ class SyncQueue(QObject):
                     f"{operation.operation_type.value.title()}ing {operation.host}:{operation.port}...",
                 )
 
+                result: SyncResult | None = None
                 try:
                     result = await self._execute_with_retry(operation)
                     self._results[str(operation.id)] = result

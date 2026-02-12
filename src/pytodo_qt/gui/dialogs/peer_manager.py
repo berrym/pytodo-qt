@@ -83,10 +83,10 @@ class PeerManagerDialog(QDialog):
         self.peer_table.setHorizontalHeaderLabels(
             ["Name", "Address", "Port", "Version", "Fingerprint"]
         )
-        self.peer_table.horizontalHeader().setStretchLastSection(True)
-        self.peer_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.ResizeToContents
-        )
+        peer_header = self.peer_table.horizontalHeader()
+        assert peer_header is not None
+        peer_header.setStretchLastSection(True)
+        peer_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.peer_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.peer_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         peers_layout.addWidget(self.peer_table)
@@ -182,7 +182,9 @@ class PeerManagerDialog(QDialog):
 
     def _get_selected_peer(self) -> DiscoveredPeer | None:
         """Get the currently selected peer."""
-        rows = self.peer_table.selectionModel().selectedRows()
+        sel = self.peer_table.selectionModel()
+        assert sel is not None
+        rows = sel.selectedRows()
         if not rows:
             return None
 
@@ -463,7 +465,7 @@ class PeerManagerDialog(QDialog):
         except Exception as e:
             logger.log.exception("Error tracking device: %s", e)
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0) -> None:  # noqa: N802
         """Handle dialog close."""
         self._refresh_timer.stop()
-        super().closeEvent(event)
+        super().closeEvent(a0)

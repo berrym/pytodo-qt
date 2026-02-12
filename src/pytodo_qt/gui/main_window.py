@@ -228,11 +228,15 @@ class MainWindow(QMainWindow):
         self.about_qt_action.triggered.connect(self._on_about_qt)
 
         # Undo/redo actions (auto-enable/disable and update text from QUndoStack)
-        self.undo_action = self._undo_stack.createUndoAction(self, "&Undo")
+        undo_action = self._undo_stack.createUndoAction(self, "&Undo")
+        assert undo_action is not None
+        self.undo_action = undo_action
         self.undo_action.setShortcut(QKeySequence.StandardKey.Undo)
         self.undo_action.setIcon(self._get_icon("undo.svg"))
 
-        self.redo_action = self._undo_stack.createRedoAction(self, "&Redo")
+        redo_action = self._undo_stack.createRedoAction(self, "&Redo")
+        assert redo_action is not None
+        self.redo_action = redo_action
         self.redo_action.setShortcut(QKeySequence.StandardKey.Redo)
         self.redo_action.setIcon(self._get_icon("redo.svg"))
 
@@ -1126,8 +1130,9 @@ class MainWindow(QMainWindow):
 
         groups = self._storage.get_all_sync_groups()
         if not groups:
-            action = self.sync_group_menu.addAction("No sync groups created")
-            action.setEnabled(False)
+            no_groups = self.sync_group_menu.addAction("No sync groups created")
+            if no_groups:
+                no_groups.setEnabled(False)
             return
 
         discovery = get_discovery_service()
@@ -1140,9 +1145,10 @@ class MainWindow(QMainWindow):
             action = self.sync_group_menu.addAction(
                 f"{group.name} ({online_count}/{len(devices)} online)"
             )
-            action.setData(group.id)
-            action.setEnabled(online_count > 0)
-            action.triggered.connect(lambda checked, gid=group.id: self._on_sync_group(gid))
+            if action:
+                action.setData(group.id)
+                action.setEnabled(online_count > 0)
+                action.triggered.connect(lambda checked, gid=group.id: self._on_sync_group(gid))
 
     def _on_sync_group(self, group_id) -> None:
         """Handle sync group from menu."""
@@ -1342,13 +1348,15 @@ class MainWindow(QMainWindow):
         peers = [p for p in discovery.get_peers() if not p.is_local]
 
         if not peers:
-            action = self.pull_peers_menu.addAction("No peers discovered")
-            action.setEnabled(False)
+            no_peers = self.pull_peers_menu.addAction("No peers discovered")
+            if no_peers:
+                no_peers.setEnabled(False)
         else:
             for peer in peers:
                 action = self.pull_peers_menu.addAction(f"{peer.display_name} ({peer.address})")
-                action.setData((peer.address, peer.port))
-                action.triggered.connect(lambda checked, a=action: self._on_pull_from_peer(a))
+                if action:
+                    action.setData((peer.address, peer.port))
+                    action.triggered.connect(lambda checked, a=action: self._on_pull_from_peer(a))
 
     def _populate_push_peers_menu(self) -> None:
         """Populate the push peers submenu with discovered peers."""
@@ -1360,13 +1368,15 @@ class MainWindow(QMainWindow):
         peers = [p for p in discovery.get_peers() if not p.is_local]
 
         if not peers:
-            action = self.push_peers_menu.addAction("No peers discovered")
-            action.setEnabled(False)
+            no_peers = self.push_peers_menu.addAction("No peers discovered")
+            if no_peers:
+                no_peers.setEnabled(False)
         else:
             for peer in peers:
                 action = self.push_peers_menu.addAction(f"{peer.display_name} ({peer.address})")
-                action.setData((peer.address, peer.port))
-                action.triggered.connect(lambda checked, a=action: self._on_push_to_peer(a))
+                if action:
+                    action.setData((peer.address, peer.port))
+                    action.triggered.connect(lambda checked, a=action: self._on_push_to_peer(a))
 
     def _on_pull_from_peer(self, action: QAction) -> None:
         """Handle pull from a specific discovered peer."""
@@ -1402,7 +1412,7 @@ class MainWindow(QMainWindow):
                         dev = self._storage.get_device_by_fingerprint(peer_fingerprint)
                         if dev:
                             peer_name = dev.name
-                    merged, local_newer, identical = self._merge_sync_data_internal(
+                    merged, local_newer, _ = self._merge_sync_data_internal(
                         result.data, peer_name or host
                     )
                     self._save_database()
@@ -1540,13 +1550,13 @@ class MainWindow(QMainWindow):
         dialog.sync_data_received.connect(self._on_device_sync_received)
         dialog.exec()
 
-    def _on_peer_sync_received(self, data: bytes) -> None:
+    def _on_peer_sync_received(self, _data: bytes) -> None:
         """Handle sync data received from peer manager."""
         self._save_database()
         self._refresh_ui()
         self.status_bar_widget.set_sync_status("success")
 
-    def _on_device_sync_received(self, data: bytes) -> None:
+    def _on_device_sync_received(self, _data: bytes) -> None:
         """Handle sync data received from device manager."""
         self._save_database()
         self._refresh_ui()
@@ -1613,7 +1623,7 @@ class MainWindow(QMainWindow):
 
             self._tray_menu.popup(QCursor.pos())
 
-    def closeEvent(self, event) -> None:
+    def closeEvent(self, a0) -> None:  # noqa: N802
         """Handle window close."""
         # Stop sync queue
         asyncio.ensure_future(self._sync_queue.stop())
@@ -1638,4 +1648,5 @@ class MainWindow(QMainWindow):
             self.tray_icon.hide()
 
         logger.log.info("Application closing")
-        event.accept()
+        if a0:
+            a0.accept()

@@ -114,13 +114,14 @@ def get_system_theme() -> Theme:
             pass
 
     # Fallback: use Qt's style hints (works on most platforms)
-    app = QApplication.instance()
-    if app is None:
+    _app = QApplication.instance()
+    if _app is None or not isinstance(_app, QApplication):
         return Theme.LIGHT
+    app = _app
 
     # Qt 6.5+ has colorScheme() on QStyleHints
     style_hints = app.styleHints()
-    if hasattr(style_hints, "colorScheme"):
+    if style_hints is not None and hasattr(style_hints, "colorScheme"):
         from PyQt6.QtCore import Qt
 
         scheme = style_hints.colorScheme()
@@ -526,5 +527,5 @@ def apply_theme(app: QApplication, theme: Theme | None = None) -> None:
 def apply_current_theme() -> None:
     """Apply the current theme from config."""
     app = QApplication.instance()
-    if app is not None:
+    if app is not None and isinstance(app, QApplication):
         apply_theme(app)
