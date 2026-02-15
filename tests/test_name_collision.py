@@ -458,3 +458,53 @@ class TestMergeListMetadataLWW:
         # Name unchanged, should NOT get collision suffix
         assert local_list.name == "Shopping"
         assert local_list.deleted is True
+
+    def test_active_list_switches_on_sync_delete(self):
+        """Active list switches to another list when sync deletes it."""
+        from pytodo_qt.gui.main_window import MainWindow
+
+        active_list = create_todo_list("Shopping")
+        other_list = create_todo_list("Groceries")
+        db = Database()
+        db.add_list(active_list)
+        db.add_list(other_list)
+        db.set_active_list(active_list.id)
+
+        remote_list = TodoList.from_dict(active_list.to_dict())
+        time.sleep(0.01)
+        remote_list.mark_deleted()
+        remote_db = Database()
+        remote_db.lists[remote_list.id] = remote_list
+        remote_data = json.dumps(remote_db.to_dict()).encode("utf-8")
+
+        window = self._make_merge_window(db)
+        window._config.database.active_list = "Shopping"
+        MainWindow._merge_sync_data_internal(window, remote_data)
+        MainWindow._refresh_ui(window)
+
+        assert active_list.deleted is True
+        assert db.active_list_id == other_list.id
+
+    def test_active_list_cleared_when_all_deleted(self):
+        """Active list becomes None when sync deletes the only list."""
+        from pytodo_qt.gui.main_window import MainWindow
+
+        only_list = create_todo_list("Shopping")
+        db = Database()
+        db.add_list(only_list)
+        db.set_active_list(only_list.id)
+
+        remote_list = TodoList.from_dict(only_list.to_dict())
+        time.sleep(0.01)
+        remote_list.mark_deleted()
+        remote_db = Database()
+        remote_db.lists[remote_list.id] = remote_list
+        remote_data = json.dumps(remote_db.to_dict()).encode("utf-8")
+
+        window = self._make_merge_window(db)
+        window._config.database.active_list = "Shopping"
+        MainWindow._merge_sync_data_internal(window, remote_data)
+        MainWindow._refresh_ui(window)
+
+        assert only_list.deleted is True
+        assert db.active_list_id is None

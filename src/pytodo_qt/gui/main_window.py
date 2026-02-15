@@ -864,6 +864,18 @@ class MainWindow(QMainWindow):
         """Refresh all UI components."""
         self._refreshing = True
         try:
+            # If active list was deleted (e.g. via sync), switch to another
+            active = self._database.active_list
+            if active and active.deleted:
+                remaining = list(self._database.active_lists())
+                if remaining:
+                    self._database.set_active_list(remaining[0].id)
+                    self._config.database.active_list = remaining[0].name
+                else:
+                    self._database.active_list_id = None
+                    self._config.database.active_list = ""
+                self._config_manager.save()
+
             self.list_selector.set_database(self._database)
             self.todo_table.set_list(self._database.active_list)
             self._update_status()
