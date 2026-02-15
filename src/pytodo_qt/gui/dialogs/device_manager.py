@@ -1939,6 +1939,15 @@ class DeviceManagerDialog(QDialog):
             for list_id, remote_list in remote_db.lists.items():
                 if list_id in self._database.lists:
                     local_list = self._database.lists[list_id]
+                    # List-level metadata LWW
+                    if remote_list.updated_at > local_list.updated_at:
+                        if remote_list.name != local_list.name:
+                            local_list.name = self._database.resolve_name_collision(
+                                remote_list.name, peer_name
+                            )
+                        local_list.deleted = remote_list.deleted
+                        local_list.updated_at = remote_list.updated_at
+                        merged += 1
                     for item_id, remote_item in remote_list.items.items():
                         if item_id in local_list.items:
                             local_item = local_list.items[item_id]
