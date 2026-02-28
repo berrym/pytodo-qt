@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import socket
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -25,6 +26,17 @@ logger = Logger(__name__)
 
 # Service type for pytodo-qt
 SERVICE_TYPE = "_pytodo._tcp.local."
+
+# Periodic health-check interval (seconds)
+_HEALTH_CHECK_INTERVAL = 20 * 60  # 20 minutes
+
+# Grace period before confirming a peer removal (seconds).
+# mDNS TTL refreshes cause brief remove→add cycles; this absorbs them.
+_REMOVE_GRACE_PERIOD = 30.0
+
+# Extended TTL for our service's PTR/TXT records (seconds).
+# Default is 4500 s (75 min); 7200 s (2 h) reduces refresh-churn frequency.
+_SERVICE_OTHER_TTL = 7200
 
 
 @dataclass
@@ -58,6 +70,14 @@ class DiscoveryService:
     _listener: _PeerListener | None = None
     _on_peer_added: Callable[[DiscoveredPeer], None] | None = None
     _on_peer_removed: Callable[[str], None] | None = None
+    # Deferred removal timers keyed by peer name
+    _removal_timers: dict[str, threading.Timer] = field(default_factory=dict)
+    # Health-check timer
+    _health_timer: threading.Timer | None = None
+    # Saved start() parameters so _restart() can re-use them
+    _start_port: int = 0
+    _start_fingerprint: str = ""
+    _start_protocol_version: int = 2
 
     def start(
         self,
@@ -80,6 +100,10 @@ class DiscoveryService:
             logger.log.warning("Discovery already started")
             return
 
+        # Persist for _restart()
+        self._start_port = port
+        self._start_fingerprint = fingerprint
+        self._start_protocol_version = protocol_version
         self._on_peer_added = on_peer_added
         self._on_peer_removed = on_peer_removed
 
@@ -108,6 +132,7 @@ class DiscoveryService:
                     "hostname": hostname,
                 },
                 addresses=addresses,
+                other_ttl=_SERVICE_OTHER_TTL,
             )
 
             zc.register_service(self._service_info, allow_name_change=True)
@@ -122,6 +147,9 @@ class DiscoveryService:
             )
             logger.log.info("Started mDNS browser for %s", SERVICE_TYPE)
 
+            # Start periodic health check
+            self._schedule_health_check()
+
         except Exception as e:
             logger.log.exception("Failed to start discovery: %s", e)
             self.stop()
@@ -129,6 +157,16 @@ class DiscoveryService:
 
     def stop(self) -> None:
         """Stop service advertisement and discovery."""
+        # Cancel health-check timer
+        if self._health_timer is not None:
+            self._health_timer.cancel()
+            self._health_timer = None
+
+        # Cancel all pending removal timers
+        for timer in self._removal_timers.values():
+            timer.cancel()
+        self._removal_timers.clear()
+
         if self._service_info is not None and self._zeroconf is not None:
             try:
                 self._zeroconf.unregister_service(self._service_info)
@@ -162,6 +200,68 @@ class DiscoveryService:
     def get_peer(self, name: str) -> DiscoveredPeer | None:
         """Get a specific peer by name."""
         return self._peers.get(name)
+
+    # ------------------------------------------------------------------
+    # Health check & re-registration
+    # ------------------------------------------------------------------
+
+    def _schedule_health_check(self) -> None:
+        """Schedule the next periodic health check."""
+        self._health_timer = threading.Timer(_HEALTH_CHECK_INTERVAL, self._run_health_check)
+        self._health_timer.daemon = True
+        self._health_timer.start()
+
+    def _run_health_check(self) -> None:
+        """Periodic health check: refresh addresses and re-broadcast."""
+        if self._zeroconf is None or self._service_info is None:
+            return
+
+        try:
+            new_addresses = self._get_local_addresses()
+            old_addresses = list(self._service_info.addresses)
+
+            if set(new_addresses) != set(old_addresses):
+                logger.log.info("Network addresses changed, updating service registration")
+                self._service_info.addresses = new_addresses
+
+            self._zeroconf.update_service(self._service_info)
+            logger.log.debug("Health check: refreshed mDNS service registration")
+
+        except Exception as e:
+            logger.log.warning("Health check failed, restarting discovery: %s", e)
+            self._restart()
+            return
+
+        # Schedule next check
+        self._schedule_health_check()
+
+    def _restart(self) -> None:
+        """Tear down and re-create the Zeroconf instance."""
+        logger.log.info("Restarting discovery service")
+        # Save callbacks before stop() clears state
+        on_added = self._on_peer_added
+        on_removed = self._on_peer_removed
+        port = self._start_port
+        fingerprint = self._start_fingerprint
+        version = self._start_protocol_version
+
+        self.stop()
+        try:
+            self.start(
+                port=port,
+                fingerprint=fingerprint,
+                protocol_version=version,
+                on_peer_added=on_added,
+                on_peer_removed=on_removed,
+            )
+        except Exception as e:
+            logger.log.exception("Failed to restart discovery: %s", e)
+            # Schedule another attempt
+            self._schedule_health_check()
+
+    # ------------------------------------------------------------------
+    # Address helpers
+    # ------------------------------------------------------------------
 
     def _get_local_addresses(self) -> list[bytes]:
         """Get local addresses for service registration.
@@ -245,9 +345,36 @@ class DiscoveryService:
             or addr.startswith("fe80:")  # IPv6 link-local
         )
 
+    # ------------------------------------------------------------------
+    # Peer tracking with churn suppression
+    # ------------------------------------------------------------------
+
     def _add_peer(self, peer: DiscoveredPeer) -> None:
-        """Add a discovered peer."""
+        """Add or refresh a discovered peer.
+
+        If the peer is already known with the same address and port this
+        is treated as an mDNS TTL refresh — the entry is updated silently
+        without firing the on_peer_added callback.
+        """
+        # Cancel any pending deferred removal for this peer
+        timer = self._removal_timers.pop(peer.name, None)
+        if timer is not None:
+            timer.cancel()
+            logger.log.debug("Cancelled deferred removal for %s (TTL refresh)", peer.name)
+
+        existing = self._peers.get(peer.name)
         self._peers[peer.name] = peer
+
+        if existing is not None and existing.address == peer.address and existing.port == peer.port:
+            # Same endpoint — treat as TTL refresh, no callback
+            logger.log.debug(
+                "TTL refresh for peer: %s at %s:%d",
+                peer.name,
+                peer.address,
+                peer.port,
+            )
+            return
+
         logger.log.info("Discovered peer: %s at %s:%d", peer.name, peer.address, peer.port)
         if self._on_peer_added:
             try:
@@ -256,7 +383,32 @@ class DiscoveryService:
                 logger.log.exception("Error in peer added callback: %s", e)
 
     def _remove_peer(self, name: str) -> None:
-        """Remove a peer that is no longer available."""
+        """Schedule deferred removal of a peer.
+
+        A grace period absorbs the brief remove→add cycles caused by
+        mDNS TTL refreshes.  If the peer is re-added within the window
+        the removal is cancelled (see ``_add_peer``).
+        """
+        if name not in self._peers:
+            return
+
+        # If there is already a pending removal, let it run
+        if name in self._removal_timers:
+            return
+
+        timer = threading.Timer(_REMOVE_GRACE_PERIOD, self._confirm_remove_peer, args=(name,))
+        timer.daemon = True
+        self._removal_timers[name] = timer
+        timer.start()
+        logger.log.debug(
+            "Deferred removal for %s (%.0fs grace period)",
+            name,
+            _REMOVE_GRACE_PERIOD,
+        )
+
+    def _confirm_remove_peer(self, name: str) -> None:
+        """Actually remove a peer after the grace period elapsed."""
+        self._removal_timers.pop(name, None)
         if name in self._peers:
             del self._peers[name]
             logger.log.info("Peer removed: %s", name)
@@ -326,8 +478,7 @@ class _PeerListener(ServiceListener):
 
     def update_service(self, zc: Zeroconf, type_: str, name: str) -> None:
         """Called when a service is updated."""
-        # Treat update as remove + add
-        self.remove_service(zc, type_, name)
+        # Re-add handles both update and TTL-refresh logic
         self.add_service(zc, type_, name)
 
 

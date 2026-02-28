@@ -157,8 +157,8 @@ class TestDiscoveryService:
         # Peer should still be added
         assert service.get_peer("test-peer") == peer
 
-    def test_remove_peer(self):
-        """Test removing a peer."""
+    def test_remove_peer_deferred(self):
+        """Test removing a peer is deferred (grace period)."""
         service = DiscoveryService()
         peer = DiscoveredPeer(
             name="test-peer",
@@ -172,11 +172,34 @@ class TestDiscoveryService:
 
         service._remove_peer("test-peer")
 
+        # Peer should still be present during grace period
+        assert service.get_peer("test-peer") is not None
+        assert "test-peer" in service._removal_timers
+
+        # Cancel the timer to avoid leaking into other tests
+        service._removal_timers["test-peer"].cancel()
+
+    def test_confirm_remove_peer(self):
+        """Test confirmed removal actually removes the peer."""
+        service = DiscoveryService()
+        peer = DiscoveredPeer(
+            name="test-peer",
+            address="192.168.1.100",
+            port=5364,
+            hostname="test.local",
+            fingerprint="test:finger:print",
+            protocol_version=2,
+        )
+        service._add_peer(peer)
+
+        # Directly call confirmed removal (simulates timer firing)
+        service._confirm_remove_peer("test-peer")
+
         assert len(service.get_peers()) == 0
         assert service.get_peer("test-peer") is None
 
-    def test_remove_peer_with_callback(self):
-        """Test removing a peer triggers callback."""
+    def test_confirm_remove_peer_with_callback(self):
+        """Test confirmed removal triggers callback."""
         service = DiscoveryService()
         callback = MagicMock()
         service._on_peer_removed = callback
@@ -191,9 +214,39 @@ class TestDiscoveryService:
         )
         service._add_peer(peer)
 
-        service._remove_peer("test-peer")
+        service._confirm_remove_peer("test-peer")
 
         callback.assert_called_once_with("test-peer")
+
+    def test_remove_peer_cancelled_by_readd(self):
+        """Test deferred removal is cancelled when peer is re-added."""
+        service = DiscoveryService()
+        callback = MagicMock()
+        service._on_peer_added = callback
+
+        peer = DiscoveredPeer(
+            name="test-peer",
+            address="192.168.1.100",
+            port=5364,
+            hostname="test.local",
+            fingerprint="test:finger:print",
+            protocol_version=2,
+        )
+        service._add_peer(peer)
+        callback.reset_mock()
+
+        # Start deferred removal
+        service._remove_peer("test-peer")
+        assert "test-peer" in service._removal_timers
+
+        # Re-add same peer (TTL refresh)
+        service._add_peer(peer)
+
+        # Timer should be cancelled, peer still present
+        assert "test-peer" not in service._removal_timers
+        assert service.get_peer("test-peer") is not None
+        # Same address/port → no callback (TTL refresh)
+        callback.assert_not_called()
 
     def test_remove_peer_not_found(self):
         """Test removing a peer that doesn't exist."""
@@ -204,8 +257,60 @@ class TestDiscoveryService:
         # Should not raise
         service._remove_peer("nonexistent")
 
-        # Callback should not be called
+        # Callback should not be called, no timer created
         callback.assert_not_called()
+        assert "nonexistent" not in service._removal_timers
+
+    def test_add_peer_ttl_refresh_suppresses_callback(self):
+        """Test re-adding same peer with same address skips callback."""
+        service = DiscoveryService()
+        callback = MagicMock()
+        service._on_peer_added = callback
+
+        peer = DiscoveredPeer(
+            name="test-peer",
+            address="192.168.1.100",
+            port=5364,
+            hostname="test.local",
+            fingerprint="test:finger:print",
+            protocol_version=2,
+        )
+        service._add_peer(peer)
+        callback.assert_called_once()
+        callback.reset_mock()
+
+        # Re-add with same address/port → TTL refresh, no callback
+        service._add_peer(peer)
+        callback.assert_not_called()
+
+    def test_add_peer_address_change_fires_callback(self):
+        """Test re-adding peer with different address fires callback."""
+        service = DiscoveryService()
+        callback = MagicMock()
+        service._on_peer_added = callback
+
+        peer1 = DiscoveredPeer(
+            name="test-peer",
+            address="192.168.1.100",
+            port=5364,
+            hostname="test.local",
+            fingerprint="test:finger:print",
+            protocol_version=2,
+        )
+        service._add_peer(peer1)
+        callback.reset_mock()
+
+        # Re-add with new address → fires callback
+        peer2 = DiscoveredPeer(
+            name="test-peer",
+            address="192.168.1.200",
+            port=5364,
+            hostname="test.local",
+            fingerprint="test:finger:print",
+            protocol_version=2,
+        )
+        service._add_peer(peer2)
+        callback.assert_called_once_with(peer2)
 
     def test_stop_clears_peers(self):
         """Test stopping service clears peers."""
@@ -374,8 +479,8 @@ class TestPeerListener:
         # No peer should be added
         assert len(service.get_peers()) == 0
 
-    def test_remove_service(self):
-        """Test remove_service removes peer."""
+    def test_remove_service_defers_removal(self):
+        """Test remove_service starts deferred removal."""
         from pytodo_qt.net.discovery import _PeerListener
 
         service = DiscoveryService()
@@ -395,10 +500,16 @@ class TestPeerListener:
         mock_zc = MagicMock()
         listener.remove_service(mock_zc, SERVICE_TYPE, f"test-peer.{SERVICE_TYPE}")
 
+        # Peer is still present during grace period
+        assert service.get_peer("test-peer") is not None
+        assert "test-peer" in service._removal_timers
+
+        # Confirmed removal works
+        service._confirm_remove_peer("test-peer")
         assert service.get_peer("test-peer") is None
 
     def test_update_service(self):
-        """Test update_service re-adds peer."""
+        """Test update_service re-adds peer with updated info."""
         from pytodo_qt.net.discovery import _PeerListener
 
         service = DiscoveryService()
@@ -415,7 +526,7 @@ class TestPeerListener:
         )
         service._add_peer(peer)
 
-        # Mock updated service info
+        # Mock updated service info with new address/port
         mock_zc = MagicMock()
         mock_info = MagicMock()
         mock_info.parsed_addresses.return_value = ["192.168.1.101"]  # New address
@@ -432,7 +543,7 @@ class TestPeerListener:
 
             listener.update_service(mock_zc, SERVICE_TYPE, f"test-peer.{SERVICE_TYPE}")
 
-        # Peer should be updated
+        # Peer should be updated (address changed so callback fires)
         updated_peer = service.get_peer("test-peer")
         assert updated_peer is not None
         assert updated_peer.address == "192.168.1.101"
