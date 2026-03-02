@@ -704,9 +704,15 @@ class MainWindow(QMainWindow):
             return
 
         logger.log.info("Auto-push to %d trusted peer(s)", len(devices))
+        any_success = False
+        any_failure = False
         for device in devices:
             peer = online_peers[device.fingerprint]
+            peer_label = device.name or device.fingerprint[:19]
             try:
+                self.status_bar_widget.set_sync_status(
+                    "syncing", "push", f"Auto-push: {peer_label}"
+                )
                 allowed_list_ids = self._storage.get_syncable_list_ids_for_device(device.id)
                 push_data = json.dumps(self._database.to_dict_for_device(allowed_list_ids)).encode(
                     "utf-8"
@@ -717,18 +723,19 @@ class MainWindow(QMainWindow):
                 result = await self._sync_queue.execute(push_op)
                 if result.success:
                     self._track_device(device.fingerprint, f"{peer.address}:{peer.port}")
-                    logger.log.debug(
-                        "Auto-push to %s succeeded",
-                        device.name or device.fingerprint[:19],
-                    )
+                    any_success = True
+                    logger.log.info("Auto-push to %s succeeded", peer_label)
                 else:
-                    logger.log.debug(
-                        "Auto-push to %s failed: %s",
-                        device.name or device.fingerprint[:19],
-                        result.status.name,
-                    )
+                    any_failure = True
+                    logger.log.warning("Auto-push to %s failed: %s", peer_label, result.status.name)
             except Exception as e:
-                logger.log.debug("Auto-push to %s error: %s", device.name, e)
+                any_failure = True
+                logger.log.warning("Auto-push to %s error: %s", peer_label, e)
+
+        if any_failure:
+            self.status_bar_widget.set_sync_status("error")
+        elif any_success:
+            self.status_bar_widget.set_sync_status("success", auto=True)
 
     def _on_auto_sync(self) -> None:
         """Handle periodic auto-sync: full pull+push with online trusted peers."""
