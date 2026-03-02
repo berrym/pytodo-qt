@@ -108,7 +108,7 @@ class TestMergeNameCollision:
         remote_data = json.dumps(remote_db.to_dict()).encode("utf-8")
 
         window = self._make_merge_window(db)
-        merged, _, _ = MainWindow._merge_sync_data_internal(window, remote_data, "Mac")
+        merged, _, _, _ = MainWindow._merge_sync_data_internal(window, remote_data, "Mac")
 
         assert merged == 1
         # List should keep original name
@@ -130,7 +130,7 @@ class TestMergeNameCollision:
         remote_data = json.dumps(remote_db.to_dict()).encode("utf-8")
 
         window = self._make_merge_window(db)
-        merged, _, _ = MainWindow._merge_sync_data_internal(window, remote_data, "Mac")
+        merged, _, _, _ = MainWindow._merge_sync_data_internal(window, remote_data, "Mac")
 
         assert merged == 1
         added = db.get_list(remote_list.id)
@@ -177,7 +177,7 @@ class TestMergeNameCollision:
         remote_data = json.dumps(remote_db.to_dict()).encode("utf-8")
 
         window = self._make_merge_window(db)
-        merged, _, _ = MainWindow._merge_sync_data_internal(window, remote_data, "Mac")
+        merged, _, _, _ = MainWindow._merge_sync_data_internal(window, remote_data, "Mac")
 
         assert merged == 1  # New item added
         # Name should NOT be changed — same UUID means same list
@@ -238,7 +238,7 @@ class TestMergeListMetadataLWW:
         remote_data = json.dumps(remote_db.to_dict()).encode("utf-8")
 
         window = self._make_merge_window(db)
-        merged, _, _ = MainWindow._merge_sync_data_internal(window, remote_data)
+        merged, _, _, _ = MainWindow._merge_sync_data_internal(window, remote_data)
 
         assert merged >= 1
         assert local_list.deleted is True
@@ -261,7 +261,7 @@ class TestMergeListMetadataLWW:
         remote_data = json.dumps(remote_db.to_dict()).encode("utf-8")
 
         window = self._make_merge_window(db)
-        merged, _, _ = MainWindow._merge_sync_data_internal(window, remote_data)
+        merged, _, _, _ = MainWindow._merge_sync_data_internal(window, remote_data)
 
         assert merged >= 1
         assert local_list.deleted is False
@@ -283,7 +283,7 @@ class TestMergeListMetadataLWW:
         remote_data = json.dumps(remote_db.to_dict()).encode("utf-8")
 
         window = self._make_merge_window(db)
-        merged, _, _ = MainWindow._merge_sync_data_internal(window, remote_data)
+        merged, _, _, _ = MainWindow._merge_sync_data_internal(window, remote_data)
 
         assert merged >= 1
         assert local_list.name == "Groceries"
@@ -307,7 +307,7 @@ class TestMergeListMetadataLWW:
         remote_data = json.dumps(remote_db.to_dict()).encode("utf-8")
 
         window = self._make_merge_window(db)
-        merged, _, _ = MainWindow._merge_sync_data_internal(window, remote_data, "Mac")
+        merged, _, _, _ = MainWindow._merge_sync_data_internal(window, remote_data, "Mac")
 
         assert merged >= 1
         assert local_list.name == "Groceries (from Mac)"
@@ -354,7 +354,7 @@ class TestMergeListMetadataLWW:
         remote_data = json.dumps(remote_db.to_dict()).encode("utf-8")
 
         window = self._make_merge_window(db)
-        _, local_newer, _ = MainWindow._merge_sync_data_internal(window, remote_data)
+        _, local_newer, _, _ = MainWindow._merge_sync_data_internal(window, remote_data)
 
         assert local_list.name == "Shopping"
         assert local_list.deleted is False
@@ -400,7 +400,7 @@ class TestMergeListMetadataLWW:
         remote_data = json.dumps(remote_db.to_dict()).encode("utf-8")
 
         window = self._make_merge_window(db)
-        merged, _, _ = MainWindow._merge_sync_data_internal(window, remote_data)
+        merged, _, _, _ = MainWindow._merge_sync_data_internal(window, remote_data)
 
         assert merged >= 1
         assert local_list.items[item.id].reminder == "Oat Milk"
@@ -429,7 +429,7 @@ class TestMergeListMetadataLWW:
         remote_data = json.dumps(remote_db.to_dict()).encode("utf-8")
 
         window = self._make_merge_window(db)
-        merged, _, _ = MainWindow._merge_sync_data_internal(window, remote_data)
+        merged, _, _, _ = MainWindow._merge_sync_data_internal(window, remote_data)
 
         assert merged >= 2  # List metadata + item
         assert local_list.deleted is True

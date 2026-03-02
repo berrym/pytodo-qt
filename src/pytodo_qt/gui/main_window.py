@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
         self._printer = QPrinter()
         self._server: AsyncServer | None = None
         self._auto_syncing_devices: set[UUID] = set()
+        self._unseen_changes: set[UUID] = set()  # Lists with unviewed sync changes
         self._event_loop = asyncio.get_event_loop()  # Store for thread-safe scheduling
 
         # Undo/redo
@@ -630,7 +631,10 @@ class MainWindow(QMainWindow):
             pull_result = await self._sync_queue.execute(pull_op)
             pull_ok = pull_result.success
             if pull_ok:
-                self._merge_sync_data_internal(pull_result.data, device.name or peer.hostname)
+                _, _, _, changed = self._merge_sync_data_internal(
+                    pull_result.data, device.name or peer.hostname
+                )
+                self._record_unseen_changes(changed)
 
             # Skip push if pull had a connection error (peer not ready)
             if pull_result.status == SyncStatus.CONNECTION_RETRY:
@@ -777,7 +781,10 @@ class MainWindow(QMainWindow):
                 pull_result = await self._sync_queue.execute(pull_op)
                 pull_ok = pull_result.success
                 if pull_ok:
-                    self._merge_sync_data_internal(pull_result.data, device.name or peer.hostname)
+                    _, _, _, changed = self._merge_sync_data_internal(
+                        pull_result.data, device.name or peer.hostname
+                    )
+                    self._record_unseen_changes(changed)
 
                 # Skip push if pull had a connection error (peer not ready)
                 if pull_result.status == SyncStatus.CONNECTION_RETRY:
@@ -846,7 +853,10 @@ class MainWindow(QMainWindow):
                 device = self._storage.get_device_by_fingerprint(peer_fingerprint)
                 if device:
                     peer_name = device.name
-            merged, local_newer, identical = self._merge_sync_data_internal(data, peer_name)
+            merged, local_newer, identical, changed = self._merge_sync_data_internal(
+                data, peer_name
+            )
+            self._record_unseen_changes(changed)
             if merged > 0:
                 self._save_database()
                 self._refresh_ui()
@@ -860,12 +870,25 @@ class MainWindow(QMainWindow):
             self.status_bar_widget.set_sync_status("error")
             logger.log.exception("Error processing sync data: %s", e)
 
-    def _merge_sync_data_internal(self, data: bytes, peer_name: str = "") -> tuple[int, int, int]:
-        """Internal merge logic, returns (merged_count, local_newer_count, identical_count)."""
+    def _record_unseen_changes(self, changed_list_ids: set[UUID]) -> None:
+        """Record lists with unviewed sync changes, excluding the active list."""
+        self._unseen_changes |= changed_list_ids
+        if self._database.active_list_id:
+            self._unseen_changes.discard(self._database.active_list_id)
+
+    def _merge_sync_data_internal(
+        self, data: bytes, peer_name: str = ""
+    ) -> tuple[int, int, int, set[UUID]]:
+        """Internal merge logic.
+
+        Returns:
+            (merged_count, local_newer_count, identical_count, changed_list_ids)
+        """
         remote_db = Database.from_dict(json.loads(data.decode("utf-8")))
         merged_count = 0
         local_newer_count = 0
         identical_count = 0
+        changed_list_ids: set[UUID] = set()
 
         for list_id, remote_list in remote_db.lists.items():
             if list_id in self._database.lists:
@@ -879,12 +902,14 @@ class MainWindow(QMainWindow):
                     local_list.deleted = remote_list.deleted
                     local_list.updated_at = remote_list.updated_at
                     merged_count += 1
+                    changed_list_ids.add(list_id)
                 for item_id, remote_item in remote_list.items.items():
                     if item_id in local_list.items:
                         local_item = local_list.items[item_id]
                         if remote_item.updated_at > local_item.updated_at:
                             local_list.items[item_id] = remote_item
                             merged_count += 1
+                            changed_list_ids.add(list_id)
                         elif remote_item.updated_at < local_item.updated_at:
                             local_newer_count += 1
                         else:
@@ -892,14 +917,16 @@ class MainWindow(QMainWindow):
                     else:
                         local_list.items[item_id] = remote_item
                         merged_count += 1
+                        changed_list_ids.add(list_id)
             else:
                 remote_list.name = self._database.resolve_name_collision(
                     remote_list.name, peer_name
                 )
                 self._database.lists[list_id] = remote_list
                 merged_count += len(remote_list.items)
+                changed_list_ids.add(list_id)
 
-        return merged_count, local_newer_count, identical_count
+        return merged_count, local_newer_count, identical_count, changed_list_ids
 
     def _load_database(self) -> None:
         """Load the database from SQLite, migrating from JSON if needed."""
@@ -969,6 +996,7 @@ class MainWindow(QMainWindow):
                 self._config_manager.save()
 
             self.list_selector.set_database(self._database)
+            self.list_selector.set_unseen(self._unseen_changes)
             self.todo_table.set_list(self._database.active_list)
             self._update_status()
         finally:
@@ -1175,6 +1203,11 @@ class MainWindow(QMainWindow):
     def _on_list_changed(self, todo_list: TodoList | None) -> None:
         """Handle list selection change."""
         self.todo_table.set_list(todo_list)
+
+        # Clear unseen indicator for the list being viewed
+        if todo_list:
+            self._unseen_changes.discard(todo_list.id)
+            self.list_selector.set_unseen(self._unseen_changes)
 
         # Update config
         if todo_list:
@@ -1384,7 +1417,10 @@ class MainWindow(QMainWindow):
                 pull_op = create_pull_operation(peer.address, peer.port, device_id=device.id)
                 pull_result = await self._sync_queue.execute(pull_op)
                 if pull_result.success:
-                    self._merge_sync_data_internal(pull_result.data, device.name or peer.hostname)
+                    _, _, _, changed = self._merge_sync_data_internal(
+                        pull_result.data, device.name or peer.hostname
+                    )
+                    self._record_unseen_changes(changed)
 
                 # Push (filtered by sync rules)
                 allowed_list_ids = self._storage.get_syncable_list_ids_for_device(device.id)
@@ -1525,9 +1561,10 @@ class MainWindow(QMainWindow):
                         dev = self._storage.get_device_by_fingerprint(peer_fingerprint)
                         if dev:
                             peer_name = dev.name
-                    merged, local_newer, _ = self._merge_sync_data_internal(
+                    merged, local_newer, _, changed = self._merge_sync_data_internal(
                         result.data, peer_name or host
                     )
+                    self._record_unseen_changes(changed)
                     self._save_database()
                     self._refresh_ui()
                     self.status_bar_widget.set_sync_status("success")
@@ -1626,7 +1663,10 @@ class MainWindow(QMainWindow):
     def _merge_sync_data(self, data: bytes, peer_name: str = "") -> None:
         """Merge received sync data into local database."""
         try:
-            merged, local_newer, identical = self._merge_sync_data_internal(data, peer_name)
+            merged, local_newer, identical, changed = self._merge_sync_data_internal(
+                data, peer_name
+            )
+            self._record_unseen_changes(changed)
             self._save_database()
             self._refresh_ui()
             self.status_bar_widget.set_sync_status("success")

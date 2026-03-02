@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QIcon, QPixmap
+from PyQt6.QtGui import QBrush, QColor, QIcon, QPainter, QPixmap, QStandardItemModel
 from PyQt6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 
 from ...core.logger import Logger
 from ...core.models import Database, TodoList
+from ..styles.themes import get_colors
 
 if TYPE_CHECKING:
     pass
@@ -45,6 +46,7 @@ class ListSelectorWidget(QWidget):
         super().__init__(parent)
         self._database: Database | None = None
         self._updating = False  # Prevent signal loops
+        self._unseen_list_ids: set[UUID] = set()
 
         self._setup_ui()
 
@@ -93,6 +95,11 @@ class ListSelectorWidget(QWidget):
         self._database = database
         self.refresh()
 
+    def set_unseen(self, list_ids: set[UUID]) -> None:
+        """Update which lists have unviewed sync changes."""
+        self._unseen_list_ids = list_ids
+        self._apply_unseen_styling()
+
     def refresh(self) -> None:
         """Refresh the combo box with current lists."""
         self._updating = True
@@ -120,6 +127,9 @@ class ListSelectorWidget(QWidget):
             has_lists = self.combo.count() > 0
             self.delete_btn.setEnabled(has_lists)
             self.rename_btn.setEnabled(has_lists)
+
+            # Apply unseen indicators after rebuilding items
+            self._apply_unseen_styling()
 
         finally:
             self._updating = False
@@ -169,6 +179,66 @@ class ListSelectorWidget(QWidget):
             lst = self._database.get_list(list_id)
             self.list_changed.emit(lst)
             logger.log.info("Switched to list: %s", lst.name if lst else "None")
+
+    def _apply_unseen_styling(self) -> None:
+        """Apply visual indicators for lists with unviewed sync changes."""
+        colors = get_colors()
+        highlight = colors["highlight"]
+
+        # Widget-level: colored border when any unseen changes exist
+        if self._unseen_list_ids:
+            self.combo.setStyleSheet(f"QComboBox {{ border: 2px solid {highlight}; }}")
+        else:
+            self.combo.setStyleSheet("")
+
+        # Per-item: dot icon and text color for individual unseen lists
+        model = self.combo.model()
+        if not isinstance(model, QStandardItemModel):
+            return
+
+        dot_icon = self._make_dot_icon(highlight)
+        accent_brush = QBrush(QColor(highlight))
+
+        for i in range(model.rowCount()):
+            item = model.item(i)
+            if item is None:
+                continue
+            list_id = self.combo.itemData(i)
+            if list_id in self._unseen_list_ids:
+                item.setForeground(accent_brush)
+                # Only set dot icon for non-private lists (private keep their lock)
+                if not item.icon().isNull():
+                    pass  # Keep existing lock icon
+                else:
+                    item.setIcon(dot_icon)
+            else:
+                # Clear previously applied unseen styling
+                item.setForeground(QBrush())
+                # Remove dot icon; private lists keep their lock
+                if self._database:
+                    lst = self._database.get_list(list_id)
+                    if not lst or not lst.private:
+                        item.setIcon(QIcon())
+
+    def _make_dot_icon(self, color: str) -> QIcon:
+        """Generate a notification dot icon using the given theme color."""
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QColor(color))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(3, 3, 10, 10)
+        painter.end()
+        icon = QIcon()
+        for mode in (
+            QIcon.Mode.Normal,
+            QIcon.Mode.Active,
+            QIcon.Mode.Disabled,
+            QIcon.Mode.Selected,
+        ):
+            icon.addPixmap(pixmap, mode)
+        return icon
 
     def _load_icon(self, name: str) -> QIcon:
         """Load an icon from the icons directory."""
