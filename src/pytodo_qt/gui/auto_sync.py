@@ -77,6 +77,7 @@ class AutoSyncScheduler(QWidget):
         """Local data changed. Restart the debounce timer."""
         if not self._running or self._delay_seconds <= 0:
             return
+        logger.log.debug("Debounce timer (re)started: %ds", self._delay_seconds)
         self._debounce_timer.start(self._delay_seconds * 1000)
 
     def update_config(self, delay_seconds: int, interval_minutes: int) -> None:
@@ -110,10 +111,10 @@ class AutoSyncScheduler(QWidget):
 
     def _on_debounce(self) -> None:
         """Debounce timer fired — emit push request."""
-        logger.log.debug("Auto-sync debounce fired, requesting push")
+        logger.log.info("Auto-sync debounce fired, requesting push")
         self.push_requested.emit()
 
     def _on_periodic(self) -> None:
         """Periodic timer fired — emit full sync request."""
-        logger.log.debug("Auto-sync periodic timer fired, requesting sync")
+        logger.log.info("Auto-sync periodic timer fired, requesting sync")
         self.sync_requested.emit()

@@ -681,8 +681,9 @@ class MainWindow(QMainWindow):
     def _on_auto_push(self) -> None:
         """Handle debounced auto-push: push local data to online trusted peers."""
         if self._auto_syncing_devices:
-            logger.log.debug("Auto-push skipped: sync already in progress")
+            logger.log.info("Auto-push skipped: sync already in progress")
             return
+        logger.log.info("Auto-push triggered")
         asyncio.ensure_future(self._async_auto_push())
 
     async def _async_auto_push(self) -> None:
@@ -690,6 +691,7 @@ class MainWindow(QMainWindow):
         discovery = get_discovery_service()
         online_peers = {p.fingerprint: p for p in discovery.get_peers() if not p.is_local}
         if not online_peers:
+            logger.log.info("Auto-push: no online peers found")
             return
 
         devices = [
@@ -698,9 +700,10 @@ class MainWindow(QMainWindow):
             if d.trust_level == "trusted" and d.fingerprint in online_peers
         ]
         if not devices:
+            logger.log.info("Auto-push: no trusted devices among online peers")
             return
 
-        logger.log.debug("Auto-push to %d trusted peer(s)", len(devices))
+        logger.log.info("Auto-push to %d trusted peer(s)", len(devices))
         for device in devices:
             peer = online_peers[device.fingerprint]
             try:
@@ -730,8 +733,9 @@ class MainWindow(QMainWindow):
     def _on_auto_sync(self) -> None:
         """Handle periodic auto-sync: full pull+push with online trusted peers."""
         if self._auto_syncing_devices:
-            logger.log.debug("Auto-sync periodic skipped: sync already in progress")
+            logger.log.info("Auto-sync periodic skipped: sync already in progress")
             return
+        logger.log.info("Auto-sync periodic triggered")
         asyncio.ensure_future(self._async_auto_periodic_sync())
 
     async def _async_auto_periodic_sync(self) -> None:
@@ -739,6 +743,7 @@ class MainWindow(QMainWindow):
         discovery = get_discovery_service()
         online_peers = {p.fingerprint: p for p in discovery.get_peers() if not p.is_local}
         if not online_peers:
+            logger.log.info("Periodic auto-sync: no online peers found")
             return
 
         devices = [
@@ -747,6 +752,7 @@ class MainWindow(QMainWindow):
             if d.trust_level == "trusted" and d.fingerprint in online_peers
         ]
         if not devices:
+            logger.log.info("Periodic auto-sync: no trusted devices among online peers")
             return
 
         logger.log.info("Periodic auto-sync with %d trusted peer(s)", len(devices))
