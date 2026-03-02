@@ -37,6 +37,7 @@ from ..net.client import AsyncClient
 from ..net.discovery import get_discovery_service
 from ..net.server import AsyncServer
 from ..net.sync_queue import SyncQueue, SyncStatus, create_pull_operation, create_push_operation
+from .auto_sync import AutoSyncScheduler
 from .dialogs import (
     AddListDialog,
     AddTodoDialog,
@@ -81,6 +82,16 @@ class MainWindow(QMainWindow):
         self._undo_stack.setUndoLimit(50)
         self._refreshing = False
 
+        # Auto-sync scheduler (debounced push + periodic full sync)
+        self._auto_scheduler = AutoSyncScheduler(
+            delay_seconds=self._config.discovery.auto_sync_delay,
+            interval_minutes=self._config.discovery.auto_sync_interval,
+            parent=self,
+        )
+        self._undo_stack.indexChanged.connect(self._auto_scheduler.notify_change)
+        self._auto_scheduler.push_requested.connect(self._on_auto_push)
+        self._auto_scheduler.sync_requested.connect(self._on_auto_sync)
+
         self._setup_window()
         self._setup_actions()
         self._setup_menus()
@@ -106,6 +117,9 @@ class MainWindow(QMainWindow):
 
         # Start server
         self._start_server()
+
+        # Start auto-sync scheduler
+        self._auto_scheduler.start()
 
         # Show window
         self.show()
@@ -659,6 +673,84 @@ class MainWindow(QMainWindow):
             logger.log.exception("Auto-sync error with %s: %s", device.name, e)
         finally:
             self._auto_syncing_devices.discard(device.id)
+
+    def _on_auto_push(self) -> None:
+        """Handle debounced auto-push: push local data to online trusted peers."""
+        if self._auto_syncing_devices:
+            logger.log.debug("Auto-push skipped: sync already in progress")
+            return
+        asyncio.ensure_future(self._async_auto_push())
+
+    async def _async_auto_push(self) -> None:
+        """Push local data to all online trusted peers (change-triggered)."""
+        discovery = get_discovery_service()
+        online_peers = {p.fingerprint: p for p in discovery.get_peers() if not p.is_local}
+        if not online_peers:
+            return
+
+        devices = [
+            d
+            for d in self._storage.get_all_devices()
+            if d.trust_level == "trusted" and d.fingerprint in online_peers
+        ]
+        if not devices:
+            return
+
+        logger.log.debug("Auto-push to %d trusted peer(s)", len(devices))
+        for device in devices:
+            peer = online_peers[device.fingerprint]
+            try:
+                allowed_list_ids = self._storage.get_syncable_list_ids_for_device(device.id)
+                push_data = json.dumps(self._database.to_dict_for_device(allowed_list_ids)).encode(
+                    "utf-8"
+                )
+                push_op = create_push_operation(
+                    peer.address, peer.port, push_data, device_id=device.id
+                )
+                result = await self._sync_queue.execute(push_op)
+                if result.success:
+                    self._track_device(device.fingerprint, f"{peer.address}:{peer.port}")
+                    logger.log.debug(
+                        "Auto-push to %s succeeded",
+                        device.name or device.fingerprint[:19],
+                    )
+                else:
+                    logger.log.debug(
+                        "Auto-push to %s failed: %s",
+                        device.name or device.fingerprint[:19],
+                        result.status.name,
+                    )
+            except Exception as e:
+                logger.log.debug("Auto-push to %s error: %s", device.name, e)
+
+    def _on_auto_sync(self) -> None:
+        """Handle periodic auto-sync: full pull+push with online trusted peers."""
+        if self._auto_syncing_devices:
+            logger.log.debug("Auto-sync periodic skipped: sync already in progress")
+            return
+        asyncio.ensure_future(self._async_auto_periodic_sync())
+
+    async def _async_auto_periodic_sync(self) -> None:
+        """Periodic full pull+push with all online trusted peers."""
+        discovery = get_discovery_service()
+        online_peers = {p.fingerprint: p for p in discovery.get_peers() if not p.is_local}
+        if not online_peers:
+            return
+
+        devices = [
+            d
+            for d in self._storage.get_all_devices()
+            if d.trust_level == "trusted" and d.fingerprint in online_peers
+        ]
+        if not devices:
+            return
+
+        logger.log.info("Periodic auto-sync with %d trusted peer(s)", len(devices))
+        for device in devices:
+            if device.id in self._auto_syncing_devices:
+                continue
+            peer = online_peers[device.fingerprint]
+            await self._auto_sync_with_device(device, peer)
 
     async def _process_pending_syncs(
         self, device: Device, peer, pending: list[PendingSync]
@@ -1646,6 +1738,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, a0) -> None:  # noqa: N802
         """Handle window close."""
+        # Stop auto-sync scheduler
+        self._auto_scheduler.stop()
+
         # Stop sync queue
         asyncio.ensure_future(self._sync_queue.stop())
 

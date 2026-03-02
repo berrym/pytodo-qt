@@ -224,6 +224,40 @@ class SettingsDialog(QDialog):
         sync_layout.addWidget(info)
 
         layout.addWidget(sync_group)
+
+        # Auto-sync group
+        auto_group = QGroupBox("Automatic Sync")
+        auto_layout = QFormLayout(auto_group)
+
+        push_label = QLabel(
+            "Automatically push local changes to online trusted peers\n"
+            "after a quiet period with no further edits."
+        )
+        push_label.setWordWrap(True)
+        push_label.setStyleSheet("color: gray; font-style: italic;")
+        auto_layout.addRow(push_label)
+
+        self.auto_sync_delay_spin = QSpinBox()
+        self.auto_sync_delay_spin.setRange(0, 60)
+        self.auto_sync_delay_spin.setSuffix(" seconds")
+        self.auto_sync_delay_spin.setSpecialValueText("Disabled")
+        auto_layout.addRow("Auto-push delay:", self.auto_sync_delay_spin)
+
+        interval_label = QLabel(
+            "Periodically perform a full bidirectional sync (pull + push)\n"
+            "with all online trusted peers."
+        )
+        interval_label.setWordWrap(True)
+        interval_label.setStyleSheet("color: gray; font-style: italic;")
+        auto_layout.addRow(interval_label)
+
+        self.auto_sync_interval_spin = QSpinBox()
+        self.auto_sync_interval_spin.setRange(0, 120)
+        self.auto_sync_interval_spin.setSuffix(" minutes")
+        self.auto_sync_interval_spin.setSpecialValueText("Disabled")
+        auto_layout.addRow("Periodic sync interval:", self.auto_sync_interval_spin)
+
+        layout.addWidget(auto_group)
         layout.addStretch()
 
         return widget
@@ -276,6 +310,10 @@ class SettingsDialog(QDialog):
         self.service_name_edit.setText(config.discovery.service_name)
         self.auto_sync_check.setChecked(config.discovery.auto_sync_trusted)
 
+        # Sync
+        self.auto_sync_delay_spin.setValue(config.discovery.auto_sync_delay)
+        self.auto_sync_interval_spin.setValue(config.discovery.auto_sync_interval)
+
         # Appearance - block signals to prevent triggering theme change during load
         self.theme_combo.blockSignals(True)
         theme = config.appearance.theme
@@ -306,6 +344,10 @@ class SettingsDialog(QDialog):
         config.discovery.enabled = self.discovery_enabled_check.isChecked()
         config.discovery.service_name = self.service_name_edit.text()
         config.discovery.auto_sync_trusted = self.auto_sync_check.isChecked()
+
+        # Sync
+        config.discovery.auto_sync_delay = self.auto_sync_delay_spin.value()
+        config.discovery.auto_sync_interval = self.auto_sync_interval_spin.value()
 
         # Appearance
         old_theme = config.appearance.theme

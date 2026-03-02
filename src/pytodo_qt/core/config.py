@@ -52,6 +52,8 @@ class DiscoveryConfig:
     enabled: bool = True
     service_name: str = ""  # defaults to pytodo-{hostname}
     auto_sync_trusted: bool = False  # auto-sync when trusted devices come online
+    auto_sync_delay: int = 0  # seconds to debounce before auto-push (0 = disabled)
+    auto_sync_interval: int = 0  # minutes between periodic full syncs (0 = disabled)
 
     def get_service_name(self) -> str:
         """Get service name, defaulting to pytodo-{hostname}."""
@@ -107,6 +109,8 @@ class AppConfig:
         lines.append(f"enabled = {str(self.discovery.enabled).lower()}")
         lines.append(f'service_name = "{self.discovery.service_name}"')
         lines.append(f"auto_sync_trusted = {str(self.discovery.auto_sync_trusted).lower()}")
+        lines.append(f"auto_sync_delay = {self.discovery.auto_sync_delay}")
+        lines.append(f"auto_sync_interval = {self.discovery.auto_sync_interval}")
         lines.append("")
 
         # Appearance section
@@ -151,6 +155,8 @@ class AppConfig:
                 enabled=disc.get("enabled", True),
                 service_name=disc.get("service_name", ""),
                 auto_sync_trusted=disc.get("auto_sync_trusted", False),
+                auto_sync_delay=disc.get("auto_sync_delay", 0),
+                auto_sync_interval=disc.get("auto_sync_interval", 0),
             )
 
         if "appearance" in data:
