@@ -1719,6 +1719,10 @@ class MainWindow(QMainWindow):
         """Handle settings action."""
         dialog = SettingsDialog(self)
         if dialog.exec() == SettingsDialog.DialogCode.Accepted:
+            self._auto_scheduler.update_config(
+                delay_seconds=self._config.discovery.auto_sync_delay,
+                interval_minutes=self._config.discovery.auto_sync_interval,
+            )
             self._refresh_ui()
 
     def _on_print(self) -> None:
