@@ -60,7 +60,8 @@ class StatusBarWidget(QStatusBar):
 
         # Build all widgets
         self.progress_bar = QProgressBar()
-        self.progress_bar.setMaximumWidth(150)
+        self.progress_bar.setMinimumWidth(130)
+        self.progress_bar.setMaximumWidth(200)
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setFormat("%p% complete")
 

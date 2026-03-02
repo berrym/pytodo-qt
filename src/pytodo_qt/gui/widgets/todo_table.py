@@ -115,8 +115,10 @@ class DueDateLabel(QWidget):
         self.label = QLabel(format_due_date(self._due_date, self._complete))
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.label.setMinimumWidth(120)  # Fit "Overdue (99d)" or day names
         layout.addWidget(self.label)
+
+        # Ensure the widget itself reports enough width for "Overdue (99d)" etc.
+        self.setMinimumWidth(160)
 
     def mousePressEvent(self, a0) -> None:  # noqa: N802
         self._show_date_picker()
