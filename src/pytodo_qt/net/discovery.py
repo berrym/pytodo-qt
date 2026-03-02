@@ -78,6 +78,8 @@ class DiscoveryService:
     _start_port: int = 0
     _start_fingerprint: str = ""
     _start_protocol_version: int = 2
+    # Addresses we last registered with (our source of truth for change detection)
+    _registered_addresses: set[bytes] = field(default_factory=set)
 
     def start(
         self,
@@ -136,6 +138,7 @@ class DiscoveryService:
             )
 
             zc.register_service(self._service_info, allow_name_change=True)
+            self._registered_addresses = set(addresses)
             logger.log.info("Registered mDNS service: %s", service_name)
 
             # Start browsing for peers
@@ -190,6 +193,7 @@ class DiscoveryService:
             self._zeroconf = None
 
         self._peers.clear()
+        self._registered_addresses = set()
         self._listener = None
         logger.log.info("Discovery stopped")
 
@@ -212,20 +216,29 @@ class DiscoveryService:
         self._health_timer.start()
 
     def _run_health_check(self) -> None:
-        """Periodic health check: refresh addresses and re-broadcast."""
+        """Periodic health check: detect address changes and socket staleness."""
         if self._zeroconf is None or self._service_info is None:
             return
 
+        # Fast path: zeroconf event loop has stopped
+        if self._zeroconf.done:
+            logger.log.warning("Zeroconf instance stopped, restarting discovery")
+            self._restart()
+            return
+
         try:
-            new_addresses = self._get_local_addresses()
-            old_addresses = list(self._service_info.addresses)
+            new_addresses = set(self._get_local_addresses())
 
-            if set(new_addresses) != set(old_addresses):
+            if new_addresses != self._registered_addresses:
                 logger.log.info("Network addresses changed, updating service registration")
-                self._service_info.addresses = new_addresses
-
-            self._zeroconf.update_service(self._service_info)
-            logger.log.debug("Health check: refreshed mDNS service registration")
+                self._service_info.addresses = list(new_addresses)
+                self._registered_addresses = new_addresses
+                self._zeroconf.update_service(self._service_info)
+            else:
+                # Addresses unchanged — still probe update_service() to
+                # detect stale sockets (e.g. errno 49 after interface change)
+                self._zeroconf.update_service(self._service_info)
+                logger.log.debug("Health check: addresses unchanged")
 
         except Exception as e:
             logger.log.warning("Health check failed, restarting discovery: %s", e)

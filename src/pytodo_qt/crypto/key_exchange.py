@@ -111,7 +111,7 @@ class EphemeralKeyPair:
         """Generate a new X25519 ephemeral keypair."""
         private_key = X25519PrivateKey.generate()
         public_key = private_key.public_key()
-        logger.log.info("Generated X25519 ephemeral keypair")
+        logger.log.debug("Generated X25519 ephemeral keypair")
         return cls(private_key=private_key, public_key=public_key)
 
     def public_bytes(self) -> bytes:

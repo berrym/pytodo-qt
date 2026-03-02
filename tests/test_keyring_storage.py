@@ -183,6 +183,15 @@ class TestDeleteIdentity:
 class TestGetOrCreateIdentity:
     """Tests for get_or_create_identity function."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_identity_cache(self):
+        """Clear the cached identity before each test."""
+        import pytodo_qt.crypto.keyring_storage as ks
+
+        ks._cached_identity = None
+        yield
+        ks._cached_identity = None
+
     def test_get_existing_identity(self):
         """Test getting existing identity."""
         keypair = IdentityKeyPair.generate()

@@ -59,7 +59,7 @@ def _get_keyring():
 
         # Test if a backend is available
         backend = keyring.get_keyring()
-        logger.log.info("Using keyring backend: %s", type(backend).__name__)
+        logger.log.debug("Using keyring backend: %s", type(backend).__name__)
         return keyring
     except Exception as e:
         logger.log.warning("Keyring not available: %s", e)
@@ -140,19 +140,32 @@ def delete_identity() -> bool:
         return False
 
 
+_cached_identity: StoredIdentity | None = None
+
+
 def get_or_create_identity() -> StoredIdentity:
     """Get existing identity or create a new one.
+
+    The result is cached after the first successful call so that
+    repeated callers (main window, server, client) do not redundantly
+    hit the keyring and spam the log.
 
     Returns:
         StoredIdentity (existing or newly created)
     """
+    global _cached_identity
+    if _cached_identity is not None:
+        return _cached_identity
+
     try:
         existing = load_identity()
         if existing is not None:
+            _cached_identity = existing
             return existing
     except KeyringUnavailableError:
         # Fall back to file-based storage
-        return _get_or_create_identity_file()
+        _cached_identity = _get_or_create_identity_file()
+        return _cached_identity
     except KeyringError:
         pass
 
@@ -160,10 +173,13 @@ def get_or_create_identity() -> StoredIdentity:
     keypair = IdentityKeyPair.generate()
     try:
         fingerprint = store_identity(keypair)
-        return StoredIdentity(keypair=keypair, fingerprint=fingerprint)
+        identity = StoredIdentity(keypair=keypair, fingerprint=fingerprint)
     except KeyringError:
         # Fall back to file-based storage
-        return _store_identity_file(keypair)
+        identity = _store_identity_file(keypair)
+
+    _cached_identity = identity
+    return identity
 
 
 # File-based fallback storage

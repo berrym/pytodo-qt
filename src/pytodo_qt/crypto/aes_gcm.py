@@ -90,7 +90,7 @@ class AESGCMCipher:
         if len(key) != KEY_SIZE:
             raise ValueError(f"Key must be {KEY_SIZE} bytes, got {len(key)}")
         self._aesgcm = AESGCM(key)
-        logger.log.info("Initialized AES-256-GCM cipher")
+        logger.log.debug("Initialized AES-256-GCM cipher")
 
     def encrypt(self, plaintext: bytes, associated_data: bytes | None = None) -> EncryptedMessage:
         """Encrypt data with authentication.
@@ -108,7 +108,7 @@ class AESGCMCipher:
         try:
             nonce = os.urandom(NONCE_SIZE)
             ciphertext = self._aesgcm.encrypt(nonce, plaintext, associated_data)
-            logger.log.info("Encrypted %d bytes", len(plaintext))
+            logger.log.debug("Encrypted %d bytes", len(plaintext))
             return EncryptedMessage(nonce=nonce, ciphertext=ciphertext)
         except Exception as e:
             logger.log.exception("Encryption error: %s", e)
@@ -129,7 +129,7 @@ class AESGCMCipher:
         """
         try:
             plaintext = self._aesgcm.decrypt(message.nonce, message.ciphertext, associated_data)
-            logger.log.info("Decrypted %d bytes", len(plaintext))
+            logger.log.debug("Decrypted %d bytes", len(plaintext))
             return plaintext
         except Exception as e:
             logger.log.exception("Decryption error: %s", e)

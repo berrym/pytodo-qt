@@ -521,7 +521,7 @@ def apply_theme(app: QApplication, theme: Theme | None = None) -> None:
     app.setPalette(palette)
     app.setStyleSheet(get_stylesheet(theme))
 
-    logger.log.info("Applied theme: %s", theme.value)
+    logger.log.debug("Applied theme: %s", theme.value)
 
 
 def apply_current_theme() -> None:

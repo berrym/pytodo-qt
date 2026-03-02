@@ -635,3 +635,95 @@ class TestPeerListener:
         peer = service.get_peer("test-peer")
         assert peer is not None
         assert peer.address == "2001:db8::1"
+
+
+class TestHealthCheck:
+    """Tests for the periodic health check."""
+
+    def test_no_update_when_addresses_unchanged(self):
+        """Health check should not log changes when addresses are the same."""
+        service = DiscoveryService()
+        service._zeroconf = MagicMock()
+        service._zeroconf.done = False
+        service._service_info = MagicMock()
+        addrs = [socket.inet_aton("192.168.1.10")]
+        service._registered_addresses = set(addrs)
+
+        with (
+            patch.object(service, "_get_local_addresses", return_value=addrs),
+            patch.object(service, "_schedule_health_check"),
+        ):
+            service._run_health_check()
+
+        # update_service still called as health probe, but no address mutation
+        service._zeroconf.update_service.assert_called_once()
+        assert service._registered_addresses == set(addrs)
+
+    def test_no_false_positive_with_ipv6(self):
+        """Health check must not report changes when IPv6 addresses exist."""
+        service = DiscoveryService()
+        service._zeroconf = MagicMock()
+        service._zeroconf.done = False
+        service._service_info = MagicMock()
+        ipv4 = socket.inet_aton("192.168.1.10")
+        ipv6 = socket.inet_pton(socket.AF_INET6, "fd00::1")
+        addrs = [ipv4, ipv6]
+        service._registered_addresses = set(addrs)
+
+        with (
+            patch.object(service, "_get_local_addresses", return_value=addrs),
+            patch.object(service, "_schedule_health_check"),
+        ):
+            service._run_health_check()
+
+        # Addresses unchanged — registered_addresses must not change
+        assert service._registered_addresses == {ipv4, ipv6}
+
+    def test_update_when_addresses_changed(self):
+        """Health check should call update_service and update state on change."""
+        service = DiscoveryService()
+        service._zeroconf = MagicMock()
+        service._zeroconf.done = False
+        service._service_info = MagicMock()
+        old = [socket.inet_aton("192.168.1.10")]
+        new = [socket.inet_aton("192.168.1.20")]
+        service._registered_addresses = set(old)
+
+        with (
+            patch.object(service, "_get_local_addresses", return_value=new),
+            patch.object(service, "_schedule_health_check"),
+        ):
+            service._run_health_check()
+
+        service._zeroconf.update_service.assert_called_once_with(service._service_info)
+        assert service._registered_addresses == set(new)
+
+    def test_restart_when_zeroconf_done(self):
+        """Health check should restart when zeroconf.done is True."""
+        service = DiscoveryService()
+        service._zeroconf = MagicMock()
+        service._zeroconf.done = True
+        service._service_info = MagicMock()
+
+        with patch.object(service, "_restart") as mock_restart:
+            service._run_health_check()
+
+        mock_restart.assert_called_once()
+
+    def test_restart_when_update_service_fails(self):
+        """Health check should restart when update_service raises."""
+        service = DiscoveryService()
+        service._zeroconf = MagicMock()
+        service._zeroconf.done = False
+        service._zeroconf.update_service.side_effect = OSError("stale socket")
+        service._service_info = MagicMock()
+        addrs = [socket.inet_aton("192.168.1.10")]
+        service._registered_addresses = set(addrs)
+
+        with (
+            patch.object(service, "_get_local_addresses", return_value=addrs),
+            patch.object(service, "_restart") as mock_restart,
+        ):
+            service._run_health_check()
+
+        mock_restart.assert_called_once()

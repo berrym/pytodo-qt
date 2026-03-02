@@ -109,7 +109,7 @@ def derive_session_key(shared_secret: bytes, info: bytes, length: int = 32) -> b
         info=info,
     )
     key = hkdf.derive(shared_secret)
-    logger.log.info("Derived session key using HKDF")
+    logger.log.debug("Derived session key using HKDF")
     return key
 
 

@@ -148,9 +148,10 @@ def main():
     asyncio.set_event_loop(loop)
 
     # Apply theme
-    from .gui.styles import apply_current_theme
+    from .gui.styles import apply_current_theme, get_current_theme
 
     apply_current_theme()
+    logger.log.info("Applied theme: %s", get_current_theme().value)
 
     # Create main window
     logger.log.info("Starting pytodo-qt v%s", settings.__version__)
