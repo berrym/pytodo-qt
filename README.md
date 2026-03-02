@@ -6,6 +6,7 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![basedpyright](https://img.shields.io/badge/type%20checked-basedpyright-blue.svg)](https://github.com/DetachHead/basedpyright)
 
 A cross-platform to-do list manager with encrypted peer-to-peer synchronization.
 
@@ -180,4 +181,4 @@ basedpyright src/
 
 GPLv3 or later. See [COPYING](COPYING) for details.
 
-Copyright 2024 Michael Berry <trismegustis@gmail.com>
+Copyright 2024-2026 Michael Berry <trismegustis@gmail.com>

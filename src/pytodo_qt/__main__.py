@@ -22,6 +22,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import argparse
 import asyncio
+import ctypes
+import ctypes.util
 import sys
 
 from PyQt6.QtWidgets import QApplication
@@ -31,6 +33,49 @@ from .core import settings
 from .core.logger import Logger
 
 logger = Logger(__name__)
+
+_APP_DISPLAY_NAME = "PyTodo-Qt"
+
+
+def _set_macos_app_name() -> None:
+    """Set the macOS menu bar application name via NSBundle.
+
+    Must be called before QApplication() is created. Uses ctypes to
+    call into the Objective-C runtime (zero external dependencies).
+    """
+    if sys.platform != "darwin":
+        return
+
+    try:
+        objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))  # type: ignore[arg-type]
+
+        objc.objc_getClass.restype = ctypes.c_void_p
+        objc.sel_registerName.restype = ctypes.c_void_p
+        objc.objc_msgSend.restype = ctypes.c_void_p
+        objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+        NSBundle = objc.objc_getClass(b"NSBundle")
+        bundle = objc.objc_msgSend(NSBundle, objc.sel_registerName(b"mainBundle"))
+
+        info = objc.objc_msgSend(bundle, objc.sel_registerName(b"infoDictionary"))
+
+        # Create NSString key and value
+        NSString = objc.objc_getClass(b"NSString")
+        sel_str = objc.sel_registerName(b"stringWithUTF8String:")
+        objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_char_p]
+        key = objc.objc_msgSend(NSString, sel_str, b"CFBundleName")
+        value = objc.objc_msgSend(NSString, sel_str, _APP_DISPLAY_NAME.encode())
+
+        # Set CFBundleName in the info dictionary
+        objc.objc_msgSend.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        ]
+        objc.objc_msgSend(info, objc.sel_registerName(b"setObject:forKey:"), value, key)
+    except Exception:
+        pass  # Non-fatal — menu bar will just show "Python"
 
 
 def main():
@@ -137,9 +182,12 @@ def main():
     if args.theme is not None:
         config.appearance.theme = args.theme
 
+    # Set macOS menu bar name before Qt reads bundle info
+    _set_macos_app_name()
+
     # Create Qt application
     app = QApplication(sys.argv)
-    app.setApplicationName("pytodo-qt")
+    app.setApplicationName(_APP_DISPLAY_NAME)
     app.setApplicationVersion(settings.__version__)
     app.setOrganizationName("pytodo-qt")
 

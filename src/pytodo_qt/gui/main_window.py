@@ -1762,12 +1762,12 @@ class MainWindow(QMainWindow):
         """Handle about action."""
         QMessageBox.about(
             self,
-            "About pytodo-qt",
-            f"<b>pytodo-qt v{settings.__version__}</b><br><br>"
+            "About PyTodo-Qt",
+            f"<b>PyTodo-Qt v{settings.__version__}</b><br><br>"
             "A modern cross-platform to-do application with "
-            "secure synchronization.<br><br>"
+            "encrypted peer-to-peer synchronization.<br><br>"
             "License: <a href='http://www.fsf.org/licenses/gpl.html'>GPLv3</a><br><br>"
-            "<b>Copyright (C) 2024 Michael Berry</b>",
+            "<b>Copyright (C) 2024-2026 Michael Berry</b>",
         )
 
     def _on_about_qt(self) -> None:
