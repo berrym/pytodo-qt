@@ -11,11 +11,18 @@ A cross-platform to-do list manager with encrypted peer-to-peer synchronization.
 
 ## Features
 
-- **Multiple lists** - Organize tasks into separate lists
+- **Multiple lists** - Organize tasks into separate lists with private/shared control
 - **Priority levels** - High, normal, and low priority with color coding
+- **Due dates** - Date picker with overdue highlighting and filtering
+- **Search and filter** - Real-time filtering of todo items
+- **Undo/redo** - Full undo/redo for all operations
 - **Encrypted sync** - AES-256-GCM encryption with Ed25519 key exchange
+- **Device management** - Track peers by fingerprint with trust levels (normal/trusted/blocked)
+- **Sync groups** - Organize devices into groups and control which lists sync where
+- **Auto-sync** - Debounced push after changes and periodic full sync on configurable timers
+- **Offline queue** - Queue syncs for offline devices, auto-execute when they come online
 - **Auto-discovery** - Find other instances on your network via mDNS/Zeroconf
-- **Dark/light themes** - System-following or manual theme selection
+- **Dark/light themes** - WCAG AA contrast-compliant themes with system-following
 - **Cross-platform** - Linux, macOS, and Windows support
 
 ## Requirements
@@ -129,6 +136,9 @@ allow_push = true
 [discovery]
 enabled = true
 service_name = ""  # defaults to pytodo-{hostname}
+auto_sync_trusted = false  # auto-sync when trusted devices come online
+auto_sync_delay = 0  # seconds to debounce before auto-push (0 = disabled)
+auto_sync_interval = 0  # minutes between periodic full syncs (0 = disabled)
 
 [appearance]
 theme = "system"  # light, dark, system
@@ -142,6 +152,10 @@ pytodo-qt uses a secure peer-to-peer protocol for syncing between instances:
 2. **Key exchange** - Ed25519 identity keys with X25519 ephemeral session keys
 3. **Encryption** - All data encrypted with AES-256-GCM
 4. **Merge** - Last-write-wins conflict resolution with UUID-based items
+5. **Device management** - Track peers with trust levels and organize into sync groups
+6. **Sync rules** - Control which lists sync to which device groups
+7. **Auto-sync** - Debounced push after changes, periodic full sync, and sync on trusted device discovery
+8. **Offline queue** - Queue syncs for offline devices, auto-execute when they come online
 
 Identity keys are stored in your system keyring (GNOME Keyring, macOS Keychain, Windows Credential Locker).
 

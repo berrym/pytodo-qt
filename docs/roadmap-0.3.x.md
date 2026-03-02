@@ -9,7 +9,8 @@ This document outlines the remaining 0.3.x releases, focusing on foundational im
 | 0.3.7 | Platform-specific release binaries | Complete |
 | 0.3.8 | SQLite migration | Complete |
 | 0.3.9 | Private lists | **Complete** |
-| 0.3.10 | Users & access control | Planned |
+| 0.3.10 | Sync groups & UX | **Complete** |
+| 0.3.11 | Mobile access (Web UI) | Planned |
 
 Each release is backward compatible and delivers standalone value.
 
@@ -109,55 +110,97 @@ See [0.3.9 Private Lists Plan](./plans/0.3.9-private-lists.md) for details.
 
 ---
 
-## 0.3.10: Users & Access Control
+## 0.3.10: Sync Groups & UX
 
-**Goal:** Introduce user model and permission system, preparing for multi-user scenarios while working seamlessly in single-user mode.
+**Status:** Implementation complete. Ready for release.
 
-### Why Now
+**Goal:** Mature the sync system with device management, sync groups, and major UX improvements including undo/redo, due dates, search, and auto-sync.
 
-- Foundation for server mode (0.4.x)
-- Enables list sharing with permissions
-- Data model ready for collaboration features
-- Works transparently for single-user (no added complexity for simple use)
+### What Was Implemented
+
+This was the largest release in the 0.3.x series, delivering sync maturity and desktop UX polish across 30 commits.
+
+#### Sync & Device Management
+- **Device management** — auto-track devices by fingerprint, user-friendly naming, trust levels (normal/trusted/blocked)
+- **Sync groups** — organize devices into groups (e.g., "Work", "Home"), assign lists to groups
+- **List sync rules** — control which lists sync to which groups, per-list settings dialog
+- **Concurrency protection** — server-side sync lock, client-side SyncQueue with busy retry
+- **Offline queue** — queue syncs for offline devices, auto-execute when discovered online (7-day expiry)
+- **Auto-sync on discovery** — trusted devices trigger automatic bidirectional sync when they come online
+- **Auto-sync scheduler** — debounced push after local changes + periodic full sync on configurable timers
+- **Unseen change indicators** — two-level visual feedback: highlighted list selector border + per-item dot icons for lists with unviewed remote changes
+- **List metadata sync** — name, deleted, and updated_at fields sync between peers via LWW
+- **List name collision resolution** — auto-rename on conflict ("Shopping" → "Shopping (from Mac)")
+- **Active list switching** — automatically switches away from a list when sync marks it deleted
+
+#### Desktop UX
+- **Undo/redo system** — full QUndoStack with 10 command classes covering all mutation types
+- **Due dates** — date picker, overdue highlighting, 7-day relative display, filtering
+- **Search/filter bar** — real-time filtering of todo items
+- **List creation dialog** — create lists with optional private flag in one step
+- **WCAG AA themes** — contrast-compliant light and dark themes with system-following
+
+#### Robustness
+- **Discovery hardening** — Docker bridge filtering, TTL churn suppression, health check with auto-restart, 30s grace period for peer removal
+- **Cross-platform fixes** — font handling, tray icon visibility on dark Linux panels, Linux text clipping in status bar
+
+### Schema Changes
+
+SQLite schema v4 → v5 adds tables: `devices`, `sync_groups`, `device_groups`, `list_sync_rules`, `pending_syncs`.
+
+### Success Criteria - All Met
+
+- [x] Devices automatically tracked on first sync
+- [x] Sync groups organize devices logically
+- [x] List sync rules control which lists go where
+- [x] Concurrent syncs handled safely (no race conditions)
+- [x] Bulk sync works reliably with progress feedback
+- [x] Offline queue persists syncs for later execution
+- [x] Auto-sync triggers for trusted devices (configurable)
+- [x] Undo/redo for all mutation types
+- [x] Due dates with filtering and overdue highlighting
+- [x] Search/filter for todo items
+- [x] Migration preserves all existing functionality
+- [x] 606 tests passing
+- [x] No lint or type errors
+
+See [0.3.10 Sync Groups Plan](./plans/0.3.10-sync-groups.md) for the original detailed plan.
+
+---
+
+## 0.3.11: Mobile Access (Web UI)
+
+**Status:** Planned.
+
+**Goal:** Enable mobile access to pytodo-qt data via an embedded web server with a mobile-friendly interface.
+
+### Why
+
+- Users can sync between desktop/laptop devices but not phones or tablets
+- Mobile is where people often need quick todo access (on the go, in stores, commuting)
+- Web UI avoids app store distribution and works on any phone with a browser
 
 ### Scope
 
-#### User Model
-- Users table in database
-- Default "local" user created automatically
-- User has identity keypair (existing Ed25519 keys)
-- Single-user mode: everything owned by local user
+#### Phase 1: Embedded Web Server
+- FastAPI or Flask web server as optional mode
+- Simple, mobile-optimized HTML interface
+- Basic CRUD: view lists, view items, toggle complete, add item
+- Menu option or command-line flag to enable
+- Works on home wifi (same network)
 
-#### List Ownership
-- Every list has an owner (user)
-- Owner has full control (rename, delete, manage permissions)
+#### Phase 2: PWA Enhancement (Optional)
+- Service worker for offline caching
+- "Add to Home Screen" on phones
+- Background sync when connection restored
 
-#### Permission Levels
-- **Owner**: Full control, can delete list, manage permissions
-- **Editor**: Add/edit/delete items, cannot delete list
-- **Viewer**: Read-only access
+### Non-Goals
 
-#### Groups (Optional)
-- Group users for easier permission management
-- "Family" group, "Work" group, etc.
-- Assign permissions to groups, not just individuals
-- *May defer to 0.4.x if scope is too large*
+- Full feature parity with desktop (mobile should be focused/simplified)
+- App store distribution
+- Native mobile apps (evaluate after web UI proves out)
 
-### Single-User Experience
-
-For users who just want a todo app:
-- Everything works exactly as before
-- Local user owns all lists
-- No login, no accounts, no complexity
-- Permission system is invisible unless sharing
-
-### Success Criteria
-
-- Single-user workflow unchanged
-- Database schema supports multi-user
-- Permissions enforced in data layer
-- UI shows ownership/permissions for lists
-- Migration from 0.3.9 assigns all lists to local user
+See [Mobile Access Plan](./plans/mobile-access.md) for detailed evaluation of options.
 
 ---
 
@@ -171,8 +214,8 @@ Each release migrates data from the previous:
 0.3.8 (SQLite schema v3)
     ↓ automatic schema migration
 0.3.9 (SQLite schema v4 + private column)
-    ↓ schema migration
-0.3.10 (SQLite + users, ownership, permissions)
+    ↓ automatic schema migration
+0.3.10 (SQLite schema v5 + devices, sync groups, rules, offline queue)
 ```
 
 Users upgrading from any 0.3.x version get automatic migration. Original data is backed up before migration.
@@ -193,16 +236,19 @@ Quality over speed.
 
 ## Relationship to Vision
 
-These releases are grounded in the [Strategic Roadmap](./vision/strategic-roadmap.md) but don't commit to it. After 0.3.10, pytodo-qt will have:
+These releases are grounded in the [Strategic Roadmap](./vision/strategic-roadmap.md) but don't commit to it. After 0.3.10, pytodo-qt has:
 
-- A proper database (SQLite)
+- A proper database (SQLite with automatic migration)
 - Privacy controls (private lists)
-- User/permission model
+- Device management and sync groups
+- Full undo/redo, due dates, search, and auto-sync
+- Robust encrypted P2P sync with offline queuing
 
 This foundation supports multiple futures:
 - Continue as enhanced desktop app
+- Add mobile access via web UI (0.3.11)
 - Add server mode (0.4.x vision)
-- Fork into new project
+- Add user/permission model for collaboration
 - Something else entirely
 
 The work is valuable regardless of which path follows.
