@@ -181,25 +181,15 @@ class StatusBarWidget(QStatusBar):
         """Clear the temporary message."""
         self._message_label.setText("")
 
-    def set_sync_status(
-        self, state: str, direction: str = "", peer: str = "", auto: bool = False
-    ) -> None:
+    def set_sync_status(self, state: str, auto: bool = False) -> None:
         """Set the sync status display.
 
         Args:
             state: One of "idle", "syncing", "success", "error"
-            direction: "push", "pull", or "" for idle
-            peer: Peer name/address for context
             auto: True if this is an auto-sync operation
         """
         if state == "syncing":
-            if direction == "push":
-                text = f"Pushing to {peer}..." if peer else "Pushing..."
-            elif direction == "pull":
-                text = f"Pulling from {peer}..." if peer else "Pulling..."
-            else:
-                text = "Syncing..."
-            self.sync_status_label.setText(text)
+            self.sync_status_label.setText("Syncing")
             self.sync_status_label.setStyleSheet("color: #4A90D9;")  # Blue
         elif state == "success":
             self._last_sync_time = datetime.now()

@@ -411,30 +411,10 @@ class TestStatusBarUpdateStats:
 class TestStatusBarSyncStatus:
     """Test set_sync_status method."""
 
-    def test_syncing_push(self, status_bar):
-        """Syncing push state should display push message."""
-        status_bar.set_sync_status("syncing", direction="push", peer="Mac")
-        assert "Pushing to Mac" in status_bar.sync_status_label.text()
-
-    def test_syncing_pull(self, status_bar):
-        """Syncing pull state should display pull message."""
-        status_bar.set_sync_status("syncing", direction="pull", peer="Linux")
-        assert "Pulling from Linux" in status_bar.sync_status_label.text()
-
-    def test_syncing_push_no_peer(self, status_bar):
-        """Syncing push without peer name should show generic message."""
-        status_bar.set_sync_status("syncing", direction="push")
-        assert status_bar.sync_status_label.text() == "Pushing..."
-
-    def test_syncing_pull_no_peer(self, status_bar):
-        """Syncing pull without peer name should show generic message."""
-        status_bar.set_sync_status("syncing", direction="pull")
-        assert status_bar.sync_status_label.text() == "Pulling..."
-
-    def test_syncing_no_direction(self, status_bar):
-        """Syncing without direction should show generic message."""
+    def test_syncing_shows_syncing(self, status_bar):
+        """Syncing state should display 'Syncing'."""
         status_bar.set_sync_status("syncing")
-        assert status_bar.sync_status_label.text() == "Syncing..."
+        assert status_bar.sync_status_label.text() == "Syncing"
 
     def test_syncing_color_is_blue(self, status_bar):
         """Syncing state should have blue color."""

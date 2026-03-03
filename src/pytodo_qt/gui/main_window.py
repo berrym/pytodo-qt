@@ -111,9 +111,6 @@ class MainWindow(QMainWindow):
         self._start_discovery()
 
         # Start sync queue
-        self._sync_queue.operation_progress.connect(
-            lambda op_id, msg: self.status_bar_widget.show_message(msg)
-        )
         asyncio.ensure_future(self._sync_queue.start())
 
         # Start server
@@ -633,11 +630,7 @@ class MainWindow(QMainWindow):
             )
             await asyncio.sleep(delay)
 
-            self.status_bar_widget.set_sync_status(
-                "syncing",
-                "sync",
-                f"Auto-sync: {device.name or 'Trusted device'}",
-            )
+            self.status_bar_widget.set_sync_status("syncing")
 
             # Pull first
             pull_op = create_pull_operation(peer.address, peer.port, device_id=device.id)
@@ -723,9 +716,7 @@ class MainWindow(QMainWindow):
             peer = online_peers[device.fingerprint]
             peer_label = device.name or device.fingerprint[:19]
             try:
-                self.status_bar_widget.set_sync_status(
-                    "syncing", "push", f"Auto-push: {peer_label}"
-                )
+                self.status_bar_widget.set_sync_status("syncing")
                 allowed_list_ids = self._storage.get_syncable_list_ids_for_device(device.id)
                 push_data = json.dumps(self._database.to_dict_for_device(allowed_list_ids)).encode(
                     "utf-8"
@@ -796,11 +787,7 @@ class MainWindow(QMainWindow):
             self._offline_queue.record_attempt(sync)
 
             try:
-                self.status_bar_widget.set_sync_status(
-                    "syncing",
-                    "sync",
-                    f"Processing queued sync: {device.name or 'Device'}",
-                )
+                self.status_bar_widget.set_sync_status("syncing")
 
                 # Pull first
                 pull_op = create_pull_operation(peer.address, peer.port, device_id=device.id)
@@ -872,7 +859,7 @@ class MainWindow(QMainWindow):
 
     def _on_sync_received(self, data: bytes, peer_fingerprint: str = "") -> None:
         """Handle received sync data from incoming push."""
-        self.status_bar_widget.set_sync_status("syncing", "pull", "remote")
+        self.status_bar_widget.set_sync_status("syncing")
         try:
             peer_name = ""
             if peer_fingerprint:
@@ -1508,15 +1495,10 @@ class MainWindow(QMainWindow):
         success_count = 0
         fail_count = 0
         queued_count = 0
-        total = len(devices)
 
-        for i, device in enumerate(devices, 1):
+        for device in devices:
             # Update status bar with progress
-            self.status_bar_widget.set_sync_status(
-                "syncing",
-                "sync",
-                f"{operation_name}: {device.name or 'Device'} ({i}/{total})",
-            )
+            self.status_bar_widget.set_sync_status("syncing")
 
             # Find peer for device
             peer = None
@@ -1670,7 +1652,7 @@ class MainWindow(QMainWindow):
         """Perform sync pull from specified host."""
 
         async def do_pull():
-            self.status_bar_widget.set_sync_status("syncing", "pull", f"{host}:{port}")
+            self.status_bar_widget.set_sync_status("syncing")
             try:
                 logger.log.debug("Menu pull: connecting to %s:%d", host, port)
                 pull_op = create_pull_operation(host, port)
@@ -1726,7 +1708,7 @@ class MainWindow(QMainWindow):
         """Perform sync push to specified host (excludes private lists)."""
 
         async def do_push():
-            self.status_bar_widget.set_sync_status("syncing", "push", f"{host}:{port}")
+            self.status_bar_widget.set_sync_status("syncing")
             try:
                 logger.log.debug("Menu push: connecting to %s:%d", host, port)
                 data = json.dumps(self._database.to_dict_for_sync()).encode("utf-8")
