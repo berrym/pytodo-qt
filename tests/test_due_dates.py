@@ -73,6 +73,41 @@ class TestDueDateHelpers:
         else:
             assert result == yesterday.strftime("%b %d, %Y")
 
+    def test_format_due_date_today_completed(self):
+        """Completed item due today should show date, not 'Today'."""
+        today = date.today()
+        result = format_due_date(today, complete=True)
+        assert result != "Today"
+        assert result == today.strftime("%b %d")
+
+    def test_format_due_date_tomorrow_completed(self):
+        """Completed item due tomorrow should show date, not 'Tomorrow'."""
+        tomorrow = date.today() + timedelta(days=1)
+        result = format_due_date(tomorrow, complete=True)
+        assert result != "Tomorrow"
+        assert result == tomorrow.strftime("%b %d")
+
+    def test_format_due_date_this_week_completed(self):
+        """Completed item due this week should show date, not day name."""
+        three_days = date.today() + timedelta(days=3)
+        result = format_due_date(three_days, complete=True)
+        assert result != three_days.strftime("%A")
+        if three_days.year == date.today().year:
+            assert result == three_days.strftime("%b %d")
+
+    def test_format_due_date_future_completed(self):
+        """Completed item with future date should show absolute date."""
+        future = date.today() + timedelta(days=15)
+        result = format_due_date(future, complete=True)
+        if future.year == date.today().year:
+            assert result == future.strftime("%b %d")
+        else:
+            assert result == future.strftime("%b %d, %Y")
+
+    def test_format_due_date_none_completed(self):
+        """Completed item with no due date should return empty string."""
+        assert format_due_date(None, complete=True) == ""
+
     def test_format_due_date_exactly_7_days(self):
         """Test that exactly 7 days out shows date, not day name."""
         in_7_days = date.today() + timedelta(days=7)

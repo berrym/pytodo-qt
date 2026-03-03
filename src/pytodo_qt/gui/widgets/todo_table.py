@@ -6,15 +6,18 @@ Table widget for displaying and editing to-do items.
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 from PyQt6.QtCore import QDate, Qt, pyqtSignal
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QDateEdit,
     QDialog,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -29,6 +32,7 @@ from ...core.logger import Logger
 from ...core.models import (
     TodoList,
     format_due_date,
+    format_recurrence,
     is_due_this_week,
     is_due_today,
     is_overdue,
@@ -101,21 +105,48 @@ class DueDateLabel(QWidget):
 
     date_changed = pyqtSignal(object)  # Emits date or None
 
-    def __init__(self, due_date: date | None, complete: bool = False, parent=None):
+    def __init__(
+        self,
+        due_date: date | None,
+        complete: bool = False,
+        recurring: bool = False,
+        parent=None,
+    ):
         super().__init__(parent)
         self._due_date = due_date
         self._complete = complete
+        self._recurring = recurring
         self._setup_ui()
 
     def _setup_ui(self) -> None:
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 0, 4, 0)
 
-        self._complete = False
+        # Center icon + label as a group within the cell
+        layout.addStretch()
+
+        if self._recurring:
+            icon_path = Path(__file__).parent.parent / "icons" / "repeat.svg"
+            if icon_path.exists():
+                icon_label = QLabel()
+                pixmap = QPixmap(str(icon_path)).scaled(
+                    14,
+                    14,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                icon_label.setPixmap(pixmap)
+                if self._complete:
+                    opacity = QGraphicsOpacityEffect(icon_label)
+                    opacity.setOpacity(0.4)
+                    icon_label.setGraphicsEffect(opacity)
+                layout.addWidget(icon_label)
+
         self.label = QLabel(format_due_date(self._due_date, self._complete))
-        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.label)
+
+        layout.addStretch()
 
         # Ensure the widget itself reports enough width for "Overdue (99d)" etc.
         self.setMinimumWidth(160)
@@ -223,6 +254,8 @@ class TodoTableWidget(QTableWidget):
             filtered = [i for i in filtered if is_due_this_week(i.due_date)]
         elif self._filter_state.due_date == 4:  # No Due Date
             filtered = [i for i in filtered if i.due_date is None]
+        elif self._filter_state.due_date == 5:  # Recurring
+            filtered = [i for i in filtered if i.is_recurring]
         return filtered
 
     def refresh(self) -> None:
@@ -289,13 +322,18 @@ class TodoTableWidget(QTableWidget):
             else:
                 reminder_edit.setFont(self._normal_font)
 
+            if item.is_recurring:
+                recurrence_text = format_recurrence(item)
+                if recurrence_text:
+                    reminder_edit.setToolTip(recurrence_text)
+
             self.setCellWidget(row, 1, reminder_edit)
 
             # Due date widget
-            due_widget = DueDateLabel(item.due_date, item.complete)
+            due_widget = DueDateLabel(item.due_date, item.complete, recurring=item.is_recurring)
             due_widget.date_changed.connect(lambda d, r=row: self._on_due_date_changed(r, d))
 
-            # Apply styling based on due date status (not for completed items)
+            # Apply styling based on due date status
             if not item.complete:
                 if is_overdue(item.due_date):
                     due_widget.label.setStyleSheet(
@@ -307,6 +345,8 @@ class TodoTableWidget(QTableWidget):
                     )
                 elif item.due_date and is_due_this_week(item.due_date):
                     due_widget.label.setStyleSheet(f"color: {colors['due_soon']};")
+            elif item.due_date:
+                due_widget.label.setStyleSheet(f"color: {colors['completed_text']};")
 
             self.setCellWidget(row, 2, due_widget)
 
