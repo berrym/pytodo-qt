@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import calendar
 import json
-import time
+import time as _time_mod
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -21,7 +21,7 @@ logger = Logger(__name__)
 
 def _now_timestamp() -> int:
     """Get current timestamp in milliseconds."""
-    return int(time.time() * 1000)
+    return int(_time_mod.time() * 1000)
 
 
 def _uuid_factory() -> UUID:
@@ -38,6 +38,7 @@ class TodoItem:
     priority: int = 2  # 1=High, 2=Normal, 3=Low
     complete: bool = False
     due_date: date | None = None
+    due_time: time | None = None  # Optional time-of-day for due date
     recurrence_type: str | None = None  # "daily", "weekly", "monthly", "yearly"
     recurrence_interval: int = 1  # Every N units
     recurrence_end_date: date | None = None  # Optional end date
@@ -74,6 +75,7 @@ class TodoItem:
             "priority": self.priority,
             "complete": self.complete,
             "due_date": self.due_date.isoformat() if self.due_date else None,
+            "due_time": self.due_time.isoformat() if self.due_time else None,
             "recurrence_type": self.recurrence_type,
             "recurrence_interval": self.recurrence_interval,
             "recurrence_end_date": (
@@ -91,6 +93,8 @@ class TodoItem:
         """Create from dictionary."""
         due_date_str = data.get("due_date")
         due_date = date.fromisoformat(due_date_str) if due_date_str else None
+        due_time_str = data.get("due_time")
+        due_time = time.fromisoformat(due_time_str) if due_time_str else None
         end_date_str = data.get("recurrence_end_date")
         recurrence_end_date = date.fromisoformat(end_date_str) if end_date_str else None
         return cls(
@@ -99,6 +103,7 @@ class TodoItem:
             priority=data.get("priority", 2),
             complete=data.get("complete", False),
             due_date=due_date,
+            due_time=due_time,
             recurrence_type=data.get("recurrence_type"),
             recurrence_interval=data.get("recurrence_interval", 1),
             recurrence_end_date=recurrence_end_date,
@@ -560,6 +565,7 @@ def create_todo_item(
     reminder: str,
     priority: int = 2,
     due_date: date | None = None,
+    due_time: time | None = None,
     recurrence_type: str | None = None,
     recurrence_interval: int = 1,
     recurrence_end_date: date | None = None,
@@ -570,6 +576,7 @@ def create_todo_item(
         reminder=reminder,
         priority=priority,
         due_date=due_date,
+        due_time=due_time,
         recurrence_type=recurrence_type,
         recurrence_interval=recurrence_interval,
         recurrence_end_date=recurrence_end_date,
@@ -597,40 +604,102 @@ def create_pending_sync(device_id: UUID, list_ids: list[UUID] | None = None) -> 
     return PendingSync(device_id=device_id, list_ids=list_ids or [])
 
 
-def format_due_date(due_date: date | None, complete: bool = False) -> str:
+def _format_time(t: time, time_format: str = "system") -> str:
+    """Format a time value respecting the configured format."""
+    if time_format == "24h":
+        return t.strftime("%H:%M")
+    elif time_format == "12h":
+        h = t.hour % 12 or 12
+        return f"{h}:{t.minute:02d} {'AM' if t.hour < 12 else 'PM'}"
+    else:  # "system" — detect from locale
+        try:
+            formatted = t.strftime("%X")  # Locale time, e.g. "14:30:00"
+            # Strip seconds — find last colon-separated group of exactly 2 digits
+            parts = formatted.rsplit(":", 1)
+            if len(parts) == 2 and len(parts[1]) <= 2:
+                return parts[0]
+            # Handle "2:30:00 PM" → "2:30 PM"
+            return parts[0] + parts[1][2:]
+        except Exception:
+            return t.strftime("%H:%M")
+
+
+def _format_overdue_delta(due_date: date, due_time: time | None = None) -> str:
+    """Format overdue duration. Two-unit for timed items, single-unit for date-only."""
+    now = datetime.now()
+    if due_time is not None:
+        due_dt = datetime.combine(due_date, due_time)
+    else:
+        due_dt = datetime.combine(due_date + timedelta(days=1), time(0, 0))
+    if now <= due_dt:
+        return ""
+    delta = now - due_dt
+    total_minutes = int(delta.total_seconds() // 60)
+    days = delta.days
+    hours = (total_minutes % (24 * 60)) // 60
+    minutes = total_minutes % 60
+    if due_time is None:
+        return f"Overdue ({(date.today() - due_date).days}d)"
+    if days > 0:
+        return f"Overdue ({days}d {hours}h)" if hours else f"Overdue ({days}d)"
+    elif hours > 0:
+        return f"Overdue ({hours}h {minutes}m)" if minutes else f"Overdue ({hours}h)"
+    else:
+        return f"Overdue ({max(minutes, 1)}m)"
+
+
+def format_due_date(
+    due_date: date | None,
+    complete: bool = False,
+    due_time: time | None = None,
+    time_format: str = "system",
+) -> str:
     """Format due date for display: 'Today', 'Tomorrow', 'Overdue (2d)', 'Jan 15'.
 
     Args:
         due_date: The due date to format, or None.
         complete: Whether the item is completed. Completed items always show
             the absolute date instead of urgency text like "Today" or "Overdue".
+        due_time: Optional time-of-day. When set, appended to date strings and
+            enables sub-day overdue granularity.
+        time_format: Time display format — "system", "12h", or "24h".
     """
     if due_date is None:
         return ""
     today = date.today()
+    time_suffix = f" {_format_time(due_time, time_format)}" if due_time else ""
     if complete:
-        # Completed items never show urgency text — just the date
         if due_date.year == today.year:
-            return due_date.strftime("%b %d")
-        return due_date.strftime("%b %d, %Y")
+            return due_date.strftime("%b %d") + time_suffix
+        return due_date.strftime("%b %d, %Y") + time_suffix
     delta = (due_date - today).days
     if delta < 0:
-        return f"Overdue ({abs(delta)}d)"
+        return _format_overdue_delta(due_date, due_time)
     elif delta == 0:
-        return "Today"
+        # Check if timed item is past its time today
+        if due_time is not None and datetime.now().time() > due_time:
+            return _format_overdue_delta(due_date, due_time)
+        return "Today" + time_suffix
     elif delta == 1:
-        return "Tomorrow"
+        return "Tomorrow" + time_suffix
     elif delta < 7:
-        return due_date.strftime("%A")  # Day name (unambiguous within 2-6 days)
+        return due_date.strftime("%A") + time_suffix
     elif due_date.year == today.year:
-        return due_date.strftime("%b %d")
+        return due_date.strftime("%b %d") + time_suffix
     else:
-        return due_date.strftime("%b %d, %Y")
+        return due_date.strftime("%b %d, %Y") + time_suffix
 
 
-def is_overdue(due_date: date | None) -> bool:
-    """Check if the due date is in the past."""
-    return due_date is not None and due_date < date.today()
+def is_overdue(due_date: date | None, due_time: time | None = None) -> bool:
+    """Check if the due date (and optional time) is in the past."""
+    if due_date is None:
+        return False
+    today = date.today()
+    if due_date < today:
+        return True
+    if due_date == today and due_time is not None:
+        return datetime.now().time() > due_time
+    return False
 
 
 def is_due_today(due_date: date | None) -> bool:

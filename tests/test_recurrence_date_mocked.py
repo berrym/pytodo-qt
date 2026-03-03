@@ -463,6 +463,7 @@ class TestToggleCompleteRecurringCommandMocked:
         cmd = ToggleCompleteRecurringCommand(window, lst.id, item.id, due, next_due, 0, ended)
         cmd.redo()
 
+        assert item.due_date is not None
         assert item.due_date == date(2026, 3, 11)  # Next Wednesday
         assert item.due_date.weekday() == 2  # Wednesday
         assert item.complete is False
@@ -572,6 +573,7 @@ class TestToggleCompleteRecurringCommandMocked:
 
             assert item.complete is False
             assert item.recurrence_count == i + 1
+            assert item.due_date is not None
             assert item.due_date == date(2026, 7, 1) + timedelta(days=i + 1)
             due = item.due_date
 
@@ -592,6 +594,7 @@ class TestToggleCompleteRecurringCommandMocked:
 
         # Next Monday from Thursday: Mon weekday=0, Thu weekday=3
         # days_ahead = 0-3 = -3 → -3+7 = 4 → Thursday + 4 = Monday Mar 9
+        assert item.due_date is not None
         assert item.due_date == date(2026, 3, 9)
         assert item.due_date.weekday() == 0  # Monday
         assert item.complete is False

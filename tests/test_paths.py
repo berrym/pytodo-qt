@@ -227,8 +227,8 @@ class TestMigration:
             legacy_config.write_text("[server]\nport = 5364\n")
 
             new_config_dir = Path(tmpdir) / "config" / "pytodo-qt"
-            Path(tmpdir) / "data" / "pytodo-qt"
-            Path(tmpdir) / "state" / "pytodo-qt"
+            _new_data_dir = Path(tmpdir) / "data" / "pytodo-qt"
+            _new_state_dir = Path(tmpdir) / "state" / "pytodo-qt"
 
             with (
                 patch("pytodo_qt.core.paths.get_legacy_dir", return_value=legacy_dir),

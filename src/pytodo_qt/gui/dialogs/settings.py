@@ -280,6 +280,18 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(theme_group)
 
+        # Time display group
+        time_group = QGroupBox("Time Display")
+        time_layout = QFormLayout(time_group)
+
+        self.time_format_combo = QComboBox()
+        self.time_format_combo.addItem("System default", "system")
+        self.time_format_combo.addItem("12-hour (2:30 PM)", "12h")
+        self.time_format_combo.addItem("24-hour (14:30)", "24h")
+        time_layout.addRow("Time format:", self.time_format_combo)
+
+        layout.addWidget(time_group)
+
         # Preview note
         note = QLabel("Theme changes are applied immediately.")
         note.setStyleSheet("color: gray; font-style: italic;")
@@ -323,6 +335,13 @@ class SettingsDialog(QDialog):
                 break
         self.theme_combo.blockSignals(False)
 
+        # Time format
+        time_format = config.appearance.time_format
+        for i in range(self.time_format_combo.count()):
+            if self.time_format_combo.itemData(i) == time_format:
+                self.time_format_combo.setCurrentIndex(i)
+                break
+
     def _save_settings(self) -> bool:
         """Save settings from UI to config."""
         config = self._config
@@ -353,6 +372,7 @@ class SettingsDialog(QDialog):
         old_theme = config.appearance.theme
         new_theme = self.theme_combo.currentData()
         config.appearance.theme = new_theme
+        config.appearance.time_format = self.time_format_combo.currentData()
 
         # Save to file
         if not self._config_manager.save():

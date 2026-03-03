@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 
 from ...core.logger import Logger
 from ...core.models import TodoItem
+from ..widgets.time_combo import TimeComboBox
 
 if TYPE_CHECKING:
     pass
@@ -83,6 +84,21 @@ class AddTodoDialog(QDialog):
         due_date_layout.addWidget(self.due_date_checkbox)
         due_date_layout.addWidget(self.due_date_edit, 1)
         form.addRow("Due Date:", due_date_layout)
+
+        # Due time with checkbox
+        due_time_layout = QHBoxLayout()
+
+        self.due_time_checkbox = QCheckBox("Set due time")
+        self.due_time_checkbox.setEnabled(False)
+        self.due_time_checkbox.stateChanged.connect(self._on_due_time_toggled)
+
+        self.due_time_edit = TimeComboBox()
+        self.due_time_edit.setEnabled(False)
+        self.due_time_edit.default_to_next_hour()
+
+        due_time_layout.addWidget(self.due_time_checkbox)
+        due_time_layout.addWidget(self.due_time_edit, 1)
+        form.addRow("Due Time:", due_time_layout)
 
         # Recurrence section
         self.recurrence_checkbox = QCheckBox("Repeat")
@@ -167,9 +183,15 @@ class AddTodoDialog(QDialog):
         """Handle due date checkbox toggle."""
         enabled = state == Qt.CheckState.Checked.value
         self.due_date_edit.setEnabled(enabled)
+        self.due_time_checkbox.setEnabled(enabled)
         self.recurrence_checkbox.setEnabled(enabled)
         if not enabled:
+            self.due_time_checkbox.setChecked(False)
             self.recurrence_checkbox.setChecked(False)
+
+    def _on_due_time_toggled(self, state: int) -> None:
+        """Handle due time checkbox toggle."""
+        self.due_time_edit.setEnabled(state == Qt.CheckState.Checked.value)
 
     def _on_recurrence_toggled(self, state: int) -> None:
         """Handle recurrence checkbox toggle."""
@@ -198,9 +220,12 @@ class AddTodoDialog(QDialog):
         priority = self.priority_combo.currentData()
 
         due_date = None
+        due_time = None
         if self.due_date_checkbox.isChecked():
             qdate = self.due_date_edit.date()
             due_date = date(qdate.year(), qdate.month(), qdate.day())
+            if self.due_time_checkbox.isChecked():
+                due_time = self.due_time_edit.get_time()
 
         recurrence_type = None
         recurrence_interval = 1
@@ -220,6 +245,7 @@ class AddTodoDialog(QDialog):
             reminder=reminder,
             priority=priority,
             due_date=due_date,
+            due_time=due_time,
             recurrence_type=recurrence_type,
             recurrence_interval=recurrence_interval,
             recurrence_end_date=recurrence_end_date,

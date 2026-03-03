@@ -8,7 +8,7 @@ sync LWW resolution works correctly after undo/redo.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -211,6 +211,7 @@ class EditDueDateCommand(QUndoCommand):
         item_id: UUID,
         old_due_date: date | None,
         new_due_date: date | None,
+        old_due_time: time | None = None,
     ) -> None:
         super().__init__("Change due date")
         self._window = window
@@ -218,6 +219,7 @@ class EditDueDateCommand(QUndoCommand):
         self._item_id = item_id
         self._old_due_date = old_due_date
         self._new_due_date = new_due_date
+        self._old_due_time = old_due_time
 
     def redo(self) -> None:
         todo_list = self._window._database.lists.get(self._list_id)
@@ -226,6 +228,8 @@ class EditDueDateCommand(QUndoCommand):
         item = todo_list.get_item(self._item_id)
         if item:
             item.due_date = self._new_due_date
+            if self._new_due_date is None:
+                item.due_time = None
             item.mark_updated()
         self._window._save_database()
         self._window._refresh_ui()
@@ -237,6 +241,49 @@ class EditDueDateCommand(QUndoCommand):
         item = todo_list.get_item(self._item_id)
         if item:
             item.due_date = self._old_due_date
+            if self._old_due_date is None or self._old_due_time is not None:
+                item.due_time = self._old_due_time
+            item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+
+class EditDueTimeCommand(QUndoCommand):
+    """Change an item's due time."""
+
+    def __init__(
+        self,
+        window: MainWindow,
+        list_id: UUID,
+        item_id: UUID,
+        old_due_time: time | None,
+        new_due_time: time | None,
+    ) -> None:
+        super().__init__("Change due time")
+        self._window = window
+        self._list_id = list_id
+        self._item_id = item_id
+        self._old_due_time = old_due_time
+        self._new_due_time = new_due_time
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if item:
+            item.due_time = self._new_due_time
+            item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if item:
+            item.due_time = self._old_due_time
             item.mark_updated()
         self._window._save_database()
         self._window._refresh_ui()

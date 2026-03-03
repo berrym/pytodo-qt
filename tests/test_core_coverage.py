@@ -237,7 +237,7 @@ class TestMigrateSchema4To5:
             assert "idx_devices_fingerprint" in indexes
             assert "idx_devices_trust_level" in indexes
 
-            assert storage.get_schema_version() == 7
+            assert storage.get_schema_version() == 8
             storage.close()
 
 

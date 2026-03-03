@@ -865,10 +865,10 @@ class TestDueDateLabel:
         assert w.label.text() == "Today"
 
     def test_minimum_width(self, qtbot):
-        """DueDateLabel should have a minimum width of 160."""
+        """DueDateLabel should have a minimum width of 180."""
         w = DueDateLabel(date.today())
         qtbot.addWidget(w)
-        assert w.minimumWidth() == 160
+        assert w.minimumWidth() == 180
 
     def test_cursor_is_pointing_hand(self, qtbot):
         """Label should have pointing hand cursor."""

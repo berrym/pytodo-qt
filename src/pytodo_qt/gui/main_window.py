@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from PyQt6.QtCore import pyqtSlot
+from PyQt6.QtCore import QTimer, pyqtSlot
 from PyQt6.QtGui import QAction, QIcon, QKeySequence, QPixmap, QShortcut, QTextDocument, QUndoStack
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt6.QtWidgets import (
@@ -121,6 +121,11 @@ class MainWindow(QMainWindow):
 
         # Start auto-sync scheduler
         self._auto_scheduler.start()
+
+        # Overdue refresh timer — checks every 60s if timed items have become overdue
+        self._overdue_timer = QTimer(self)
+        self._overdue_timer.timeout.connect(self._check_timed_overdue)
+        self._overdue_timer.start(60_000)
 
         # Show window
         self.show()
@@ -385,6 +390,7 @@ class MainWindow(QMainWindow):
         self.todo_table.item_priority_changed.connect(self._on_item_priority_changed)
         self.todo_table.item_reminder_changed.connect(self._on_item_reminder_changed)
         self.todo_table.item_due_date_changed.connect(self._on_item_due_date_changed)
+        self.todo_table.item_due_time_changed.connect(self._on_item_due_time_changed)
         layout.addWidget(self.todo_table)
 
         self.setCentralWidget(central)
@@ -999,6 +1005,19 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Save Error", f"Failed to save database: {e}")
             return False
 
+    def _check_timed_overdue(self) -> None:
+        """Refresh UI if any today-items with times may have become overdue."""
+        from datetime import date
+
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        today = date.today()
+        for item in active_list.active_items():
+            if item.due_date == today and item.due_time is not None and not item.complete:
+                self._refresh_ui()
+                return
+
     def _refresh_ui(self) -> None:
         """Refresh all UI components."""
         self._refreshing = True
@@ -1309,7 +1328,27 @@ class MainWindow(QMainWindow):
             if item:
                 from .commands import EditDueDateCommand
 
-                cmd = EditDueDateCommand(self, active_list.id, item_id, item.due_date, due_date)
+                cmd = EditDueDateCommand(
+                    self,
+                    active_list.id,
+                    item_id,
+                    item.due_date,
+                    due_date,
+                    old_due_time=item.due_time,
+                )
+                self._undo_stack.push(cmd)
+
+    def _on_item_due_time_changed(self, item_id: UUID, due_time) -> None:
+        """Handle item due time change."""
+        if self._refreshing:
+            return
+        active_list = self._database.active_list
+        if active_list:
+            item = active_list.get_item(item_id)
+            if item:
+                from .commands import EditDueTimeCommand
+
+                cmd = EditDueTimeCommand(self, active_list.id, item_id, item.due_time, due_time)
                 self._undo_stack.push(cmd)
 
     def _on_edit_recurrence(self) -> None:

@@ -181,7 +181,9 @@ class TestMergeNameCollision:
 
         assert merged == 1  # New item added
         # Name should NOT be changed — same UUID means same list
-        assert db.get_list(local_list.id).name == "Shopping"
+        local = db.get_list(local_list.id)
+        assert local is not None
+        assert local.name == "Shopping"
 
     def test_multiple_new_lists_collision(self):
         """Multiple new lists with same name each get unique renames."""

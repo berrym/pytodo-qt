@@ -179,6 +179,7 @@ class TestConfigManagerExtended:
                 manager.load()
 
             # Modify in memory
+            assert manager._config is not None
             manager._config.server.port = 9999
 
             # Reload should reset

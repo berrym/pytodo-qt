@@ -67,6 +67,7 @@ class AppearanceConfig:
     """UI appearance settings."""
 
     theme: str = "system"  # light, dark, system
+    time_format: str = "system"  # system, 12h, 24h
 
 
 @dataclass
@@ -116,6 +117,7 @@ class AppConfig:
         # Appearance section
         lines.append("[appearance]")
         lines.append(f'theme = "{self.appearance.theme}"')
+        lines.append(f'time_format = "{self.appearance.time_format}"')
         lines.append("")
 
         return "\n".join(lines)
@@ -163,6 +165,7 @@ class AppConfig:
             app = data["appearance"]
             config.appearance = AppearanceConfig(
                 theme=app.get("theme", "system"),
+                time_format=app.get("time_format", "system"),
             )
 
         return config

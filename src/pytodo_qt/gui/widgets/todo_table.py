@@ -5,7 +5,7 @@ Table widget for displaying and editing to-do items.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -14,6 +14,7 @@ from PyQt6.QtCore import QDate, Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QDateEdit,
     QDialog,
@@ -38,6 +39,7 @@ from ...core.models import (
     is_overdue,
 )
 from ..styles.themes import get_colors, make_font
+from .time_combo import TimeComboBox
 
 if TYPE_CHECKING:
     from .search_filter import FilterState
@@ -47,12 +49,18 @@ logger = Logger(__name__)
 
 
 class DueDatePickerDialog(QDialog):
-    """Simple dialog for picking or clearing a due date."""
+    """Dialog for picking or clearing a due date and optional time."""
 
-    def __init__(self, current_date: date | None, parent=None):
+    def __init__(
+        self,
+        current_date: date | None,
+        current_time: time | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Set Due Date")
         self._date = current_date
+        self._time = current_time
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -66,6 +74,22 @@ class DueDatePickerDialog(QDialog):
         else:
             self.date_edit.setDate(QDate.currentDate())
         layout.addWidget(self.date_edit)
+
+        # Time picker with checkbox
+        time_layout = QHBoxLayout()
+        self.time_checkbox = QCheckBox("Set due time")
+        self.time_checkbox.stateChanged.connect(self._on_time_toggled)
+        time_layout.addWidget(self.time_checkbox)
+
+        self.time_edit = TimeComboBox()
+        self.time_edit.setEnabled(False)
+        if self._time:
+            self.time_edit.set_time(self._time)
+            self.time_checkbox.setChecked(True)
+        else:
+            self.time_edit.default_to_next_hour()
+        time_layout.addWidget(self.time_edit, 1)
+        layout.addLayout(time_layout)
 
         # Buttons
         btn_layout = QHBoxLayout()
@@ -87,35 +111,51 @@ class DueDatePickerDialog(QDialog):
 
         layout.addLayout(btn_layout)
 
+    def _on_time_toggled(self, state: int) -> None:
+        self.time_edit.setEnabled(state == Qt.CheckState.Checked.value)
+
     def _on_ok(self) -> None:
         qdate = self.date_edit.date()
         self._date = date(qdate.year(), qdate.month(), qdate.day())
+        if self.time_checkbox.isChecked():
+            self._time = self.time_edit.get_time()
+        else:
+            self._time = None
         self.accept()
 
     def _on_clear(self) -> None:
         self._date = None
+        self._time = None
         self.accept()
 
     def get_date(self) -> date | None:
         return self._date
+
+    def get_time(self) -> time | None:
+        return self._time
 
 
 class DueDateLabel(QWidget):
     """Clickable due date label that opens date picker on click."""
 
     date_changed = pyqtSignal(object)  # Emits date or None
+    time_changed = pyqtSignal(object)  # Emits time or None
 
     def __init__(
         self,
         due_date: date | None,
         complete: bool = False,
         recurring: bool = False,
+        due_time: time | None = None,
+        time_format: str = "system",
         parent=None,
     ):
         super().__init__(parent)
         self._due_date = due_date
+        self._due_time = due_time
         self._complete = complete
         self._recurring = recurring
+        self._time_format = time_format
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -142,25 +182,37 @@ class DueDateLabel(QWidget):
                     icon_label.setGraphicsEffect(opacity)
                 layout.addWidget(icon_label)
 
-        self.label = QLabel(format_due_date(self._due_date, self._complete))
+        self.label = QLabel(
+            format_due_date(self._due_date, self._complete, self._due_time, self._time_format)
+        )
         self.label.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.label)
 
         layout.addStretch()
 
-        # Ensure the widget itself reports enough width for "Overdue (99d)" etc.
-        self.setMinimumWidth(160)
+        # Ensure the widget itself reports enough width for time-inclusive strings
+        self.setMinimumWidth(180)
 
     def mousePressEvent(self, a0) -> None:  # noqa: N802
         self._show_date_picker()
 
     def _show_date_picker(self) -> None:
-        """Show date picker dialog."""
-        dialog = DueDatePickerDialog(self._due_date, self)
+        """Show date/time picker dialog."""
+        dialog = DueDatePickerDialog(self._due_date, self._due_time, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._due_date = dialog.get_date()
-            self.label.setText(format_due_date(self._due_date, self._complete))
-            self.date_changed.emit(self._due_date)
+            new_date = dialog.get_date()
+            new_time = dialog.get_time()
+            old_date = self._due_date
+            old_time = self._due_time
+            self._due_date = new_date
+            self._due_time = new_time
+            self.label.setText(
+                format_due_date(self._due_date, self._complete, self._due_time, self._time_format)
+            )
+            if new_date != old_date:
+                self.date_changed.emit(self._due_date)
+            if new_time != old_time:
+                self.time_changed.emit(self._due_time)
 
 
 class TodoTableWidget(QTableWidget):
@@ -170,6 +222,7 @@ class TodoTableWidget(QTableWidget):
     item_priority_changed = pyqtSignal(object, int)  # (item_id, new_priority)
     item_reminder_changed = pyqtSignal(object, str)  # (item_id, new_text)
     item_due_date_changed = pyqtSignal(object, object)  # (item_id, new_date or None)
+    item_due_time_changed = pyqtSignal(object, object)  # (item_id, new_time or None)
     item_selected = pyqtSignal(object)  # (item_id or None)
 
     def __init__(self, parent=None):
@@ -247,7 +300,7 @@ class TodoTableWidget(QTableWidget):
             filtered = [i for i in filtered if i.complete]
         # Due date filters
         if self._filter_state.due_date == 1:  # Overdue
-            filtered = [i for i in filtered if is_overdue(i.due_date)]
+            filtered = [i for i in filtered if is_overdue(i.due_date, i.due_time)]
         elif self._filter_state.due_date == 2:  # Today
             filtered = [i for i in filtered if is_due_today(i.due_date)]
         elif self._filter_state.due_date == 3:  # This Week
@@ -268,18 +321,30 @@ class TodoTableWidget(QTableWidget):
 
         colors = get_colors()
 
-        # Sort items: items with due dates first (by date, then priority), then items without
+        # Sort items: items with due dates first (by date/time, then priority), then items without
         def sort_key(item):
             if item.due_date is None:
-                return (1, item.priority, item.reminder.lower())  # No date sorts last
+                return (1, "", "", item.priority, item.reminder.lower())
             else:
-                return (0, item.due_date.isoformat(), item.priority, item.reminder.lower())
+                time_key = item.due_time.isoformat() if item.due_time else ""
+                return (
+                    0,
+                    item.due_date.isoformat(),
+                    time_key,
+                    item.priority,
+                    item.reminder.lower(),
+                )
 
         items = sorted(self._current_list.active_items(), key=sort_key)
 
         # Apply filter if active
         if self._filter_state is not None and self._filter_state.is_active:
             items = self._apply_filter(items)
+
+        # Load time format config once for all rows
+        from ...core.config import ConfigManager
+
+        time_fmt = ConfigManager().load().appearance.time_format
 
         for row, item in enumerate(items):
             self.insertRow(row)
@@ -330,12 +395,19 @@ class TodoTableWidget(QTableWidget):
             self.setCellWidget(row, 1, reminder_edit)
 
             # Due date widget
-            due_widget = DueDateLabel(item.due_date, item.complete, recurring=item.is_recurring)
+            due_widget = DueDateLabel(
+                item.due_date,
+                item.complete,
+                recurring=item.is_recurring,
+                due_time=item.due_time,
+                time_format=time_fmt,
+            )
             due_widget.date_changed.connect(lambda d, r=row: self._on_due_date_changed(r, d))
+            due_widget.time_changed.connect(lambda t, r=row: self._on_due_time_changed(r, t))
 
             # Apply styling based on due date status
             if not item.complete:
-                if is_overdue(item.due_date):
+                if is_overdue(item.due_date, item.due_time):
                     due_widget.label.setStyleSheet(
                         f"color: {colors['due_overdue']}; font-weight: bold;"
                     )
@@ -392,6 +464,12 @@ class TodoTableWidget(QTableWidget):
         item_id = self._item_id_map.get(row)
         if item_id is not None:
             self.item_due_date_changed.emit(item_id, due_date)
+
+    def _on_due_time_changed(self, row: int, due_time: time | None) -> None:
+        """Handle due time change from inline picker."""
+        item_id = self._item_id_map.get(row)
+        if item_id is not None:
+            self.item_due_time_changed.emit(item_id, due_time)
 
     def _on_selection_changed(self) -> None:
         """Handle selection change."""
