@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -58,6 +58,11 @@ CREATE TABLE IF NOT EXISTS items (
     priority INTEGER NOT NULL DEFAULT 2,
     complete INTEGER NOT NULL DEFAULT 0,
     due_date TEXT,
+    recurrence_type TEXT,
+    recurrence_interval INTEGER NOT NULL DEFAULT 1,
+    recurrence_end_date TEXT,
+    recurrence_end_count INTEGER,
+    recurrence_count INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     deleted INTEGER NOT NULL DEFAULT 0,
@@ -247,6 +252,7 @@ class DatabaseStorage:
         self._migrate_schema_3_to_4()
         self._migrate_schema_4_to_5()
         self._migrate_schema_5_to_6()
+        self._migrate_schema_6_to_7()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -324,6 +330,29 @@ class DatabaseStorage:
             logger.log.info("Migrated schema 5->6: added due_date column")
 
         self.set_schema_version(6)
+
+    def _migrate_schema_6_to_7(self) -> None:
+        """Migrate schema from version 6 to 7 (add recurrence columns)."""
+        current_version = self.get_schema_version()
+        if current_version >= 7:
+            return
+
+        cursor = self.connection.execute("PRAGMA table_info(items)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if "recurrence_type" not in columns:
+            self.connection.execute("ALTER TABLE items ADD COLUMN recurrence_type TEXT")
+            self.connection.execute(
+                "ALTER TABLE items ADD COLUMN recurrence_interval INTEGER NOT NULL DEFAULT 1"
+            )
+            self.connection.execute("ALTER TABLE items ADD COLUMN recurrence_end_date TEXT")
+            self.connection.execute("ALTER TABLE items ADD COLUMN recurrence_end_count INTEGER")
+            self.connection.execute(
+                "ALTER TABLE items ADD COLUMN recurrence_count INTEGER NOT NULL DEFAULT 0"
+            )
+            logger.log.info("Migrated schema 6->7: added recurrence columns")
+
+        self.set_schema_version(7)
 
     def get_schema_version(self) -> int:
         """Get current schema version."""
@@ -501,8 +530,11 @@ class DatabaseStorage:
         self.connection.execute(
             """
             INSERT OR REPLACE INTO items
-            (id, list_id, reminder, priority, complete, due_date, created_at, updated_at, deleted)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, list_id, reminder, priority, complete, due_date,
+             recurrence_type, recurrence_interval, recurrence_end_date,
+             recurrence_end_count, recurrence_count,
+             created_at, updated_at, deleted)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(item.id),
@@ -511,6 +543,11 @@ class DatabaseStorage:
                 item.priority,
                 1 if item.complete else 0,
                 item.due_date.isoformat() if item.due_date else None,
+                item.recurrence_type,
+                item.recurrence_interval,
+                item.recurrence_end_date.isoformat() if item.recurrence_end_date else None,
+                item.recurrence_end_count,
+                item.recurrence_count,
                 item.created_at,
                 item.updated_at,
                 1 if item.deleted else 0,
@@ -543,12 +580,32 @@ class DatabaseStorage:
         except (KeyError, IndexError):
             due_date = None
 
+        # Handle recurrence columns (v7+)
+        try:
+            recurrence_type = row["recurrence_type"]
+            recurrence_interval = row["recurrence_interval"] or 1
+            end_date_str = row["recurrence_end_date"]
+            recurrence_end_date = date.fromisoformat(end_date_str) if end_date_str else None
+            recurrence_end_count = row["recurrence_end_count"]
+            recurrence_count = row["recurrence_count"] or 0
+        except (KeyError, IndexError):
+            recurrence_type = None
+            recurrence_interval = 1
+            recurrence_end_date = None
+            recurrence_end_count = None
+            recurrence_count = 0
+
         return TodoItem(
             id=UUID(row["id"]),
             reminder=row["reminder"],
             priority=row["priority"],
             complete=bool(row["complete"]),
             due_date=due_date,
+            recurrence_type=recurrence_type,
+            recurrence_interval=recurrence_interval,
+            recurrence_end_date=recurrence_end_date,
+            recurrence_end_count=recurrence_end_count,
+            recurrence_count=recurrence_count,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             deleted=bool(row["deleted"]),

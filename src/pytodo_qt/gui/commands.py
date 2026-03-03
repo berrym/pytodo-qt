@@ -242,6 +242,100 @@ class EditDueDateCommand(QUndoCommand):
         self._window._refresh_ui()
 
 
+class ToggleCompleteRecurringCommand(QUndoCommand):
+    """Complete a recurring item: advance due date and reset completion."""
+
+    def __init__(
+        self,
+        window: MainWindow,
+        list_id: UUID,
+        item_id: UUID,
+        old_due_date: date | None,
+        new_due_date: date | None,
+        old_count: int,
+        recurrence_ended: bool,
+    ) -> None:
+        super().__init__("Complete recurring item")
+        self._window = window
+        self._list_id = list_id
+        self._item_id = item_id
+        self._old_due_date = old_due_date
+        self._new_due_date = new_due_date
+        self._old_count = old_count
+        self._ended = recurrence_ended
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if not item:
+            return
+        item.recurrence_count = self._old_count + 1
+        if self._ended:
+            item.complete = True
+        else:
+            item.complete = False
+            item.due_date = self._new_due_date
+        item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if not item:
+            return
+        item.complete = False
+        item.due_date = self._old_due_date
+        item.recurrence_count = self._old_count
+        item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+
+class EditRecurrenceCommand(QUndoCommand):
+    """Change an item's recurrence settings."""
+
+    def __init__(
+        self,
+        window: MainWindow,
+        list_id: UUID,
+        item_id: UUID,
+        old_recurrence: tuple[str | None, int, date | None, int | None],
+        new_recurrence: tuple[str | None, int, date | None, int | None],
+    ) -> None:
+        super().__init__("Edit recurrence")
+        self._window = window
+        self._list_id = list_id
+        self._item_id = item_id
+        self._old = old_recurrence
+        self._new = new_recurrence
+
+    def _apply(self, values: tuple[str | None, int, date | None, int | None]) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if not item:
+            return
+        item.recurrence_type = values[0]
+        item.recurrence_interval = values[1]
+        item.recurrence_end_date = values[2]
+        item.recurrence_end_count = values[3]
+        item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+    def redo(self) -> None:
+        self._apply(self._new)
+
+    def undo(self) -> None:
+        self._apply(self._old)
+
+
 class AddListCommand(QUndoCommand):
     """Add a new todo list."""
 

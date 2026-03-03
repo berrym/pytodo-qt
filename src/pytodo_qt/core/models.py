@@ -5,6 +5,7 @@ Sync-aware data models with UUIDs and Lamport timestamps.
 
 from __future__ import annotations
 
+import calendar
 import json
 import time
 from collections.abc import Iterator
@@ -37,9 +38,19 @@ class TodoItem:
     priority: int = 2  # 1=High, 2=Normal, 3=Low
     complete: bool = False
     due_date: date | None = None
+    recurrence_type: str | None = None  # "daily", "weekly", "monthly", "yearly"
+    recurrence_interval: int = 1  # Every N units
+    recurrence_end_date: date | None = None  # Optional end date
+    recurrence_end_count: int | None = None  # Optional max occurrences
+    recurrence_count: int = 0  # Completed occurrences so far
     created_at: int = field(default_factory=_now_timestamp)
     updated_at: int = field(default_factory=_now_timestamp)
     deleted: bool = False  # Tombstone for sync
+
+    @property
+    def is_recurring(self) -> bool:
+        """Check if this item has a recurrence rule."""
+        return self.recurrence_type is not None
 
     def mark_updated(self) -> None:
         """Mark item as updated with current timestamp."""
@@ -63,6 +74,13 @@ class TodoItem:
             "priority": self.priority,
             "complete": self.complete,
             "due_date": self.due_date.isoformat() if self.due_date else None,
+            "recurrence_type": self.recurrence_type,
+            "recurrence_interval": self.recurrence_interval,
+            "recurrence_end_date": (
+                self.recurrence_end_date.isoformat() if self.recurrence_end_date else None
+            ),
+            "recurrence_end_count": self.recurrence_end_count,
+            "recurrence_count": self.recurrence_count,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "deleted": self.deleted,
@@ -73,12 +91,19 @@ class TodoItem:
         """Create from dictionary."""
         due_date_str = data.get("due_date")
         due_date = date.fromisoformat(due_date_str) if due_date_str else None
+        end_date_str = data.get("recurrence_end_date")
+        recurrence_end_date = date.fromisoformat(end_date_str) if end_date_str else None
         return cls(
             id=UUID(data["id"]) if isinstance(data["id"], str) else data["id"],
             reminder=data.get("reminder", ""),
             priority=data.get("priority", 2),
             complete=data.get("complete", False),
             due_date=due_date,
+            recurrence_type=data.get("recurrence_type"),
+            recurrence_interval=data.get("recurrence_interval", 1),
+            recurrence_end_date=recurrence_end_date,
+            recurrence_end_count=data.get("recurrence_end_count"),
+            recurrence_count=data.get("recurrence_count", 0),
             created_at=data.get("created_at", _now_timestamp()),
             updated_at=data.get("updated_at", _now_timestamp()),
             deleted=data.get("deleted", False),
@@ -531,9 +556,25 @@ class PendingSync:
         )
 
 
-def create_todo_item(reminder: str, priority: int = 2, due_date: date | None = None) -> TodoItem:
+def create_todo_item(
+    reminder: str,
+    priority: int = 2,
+    due_date: date | None = None,
+    recurrence_type: str | None = None,
+    recurrence_interval: int = 1,
+    recurrence_end_date: date | None = None,
+    recurrence_end_count: int | None = None,
+) -> TodoItem:
     """Create a new todo item."""
-    return TodoItem(reminder=reminder, priority=priority, due_date=due_date)
+    return TodoItem(
+        reminder=reminder,
+        priority=priority,
+        due_date=due_date,
+        recurrence_type=recurrence_type,
+        recurrence_interval=recurrence_interval,
+        recurrence_end_date=recurrence_end_date,
+        recurrence_end_count=recurrence_end_count,
+    )
 
 
 def create_todo_list(name: str) -> TodoList:
@@ -561,18 +602,19 @@ def format_due_date(due_date: date | None, complete: bool = False) -> str:
 
     Args:
         due_date: The due date to format, or None.
-        complete: Whether the item is completed. Completed items don't show as overdue.
+        complete: Whether the item is completed. Completed items always show
+            the absolute date instead of urgency text like "Today" or "Overdue".
     """
     if due_date is None:
         return ""
     today = date.today()
+    if complete:
+        # Completed items never show urgency text — just the date
+        if due_date.year == today.year:
+            return due_date.strftime("%b %d")
+        return due_date.strftime("%b %d, %Y")
     delta = (due_date - today).days
     if delta < 0:
-        if complete:
-            # Completed items show the date, not "Overdue"
-            if due_date.year == today.year:
-                return due_date.strftime("%b %d")
-            return due_date.strftime("%b %d, %Y")
         return f"Overdue ({abs(delta)}d)"
     elif delta == 0:
         return "Today"
@@ -602,3 +644,87 @@ def is_due_this_week(due_date: date | None) -> bool:
         return False
     today = date.today()
     return today <= due_date <= today + timedelta(days=7)
+
+
+def compute_next_due_date(
+    current_due: date,
+    recurrence_type: str,
+    interval: int = 1,
+) -> date:
+    """Compute the next due date for a recurring item.
+
+    Calculates from today to avoid cascading completions for overdue items.
+    Preserves day-of-week for weekly and day-of-month for monthly patterns.
+    """
+    today = date.today()
+    if recurrence_type == "daily":
+        return today + timedelta(days=interval)
+    elif recurrence_type == "weekly":
+        original_weekday = current_due.weekday()
+        days_ahead = original_weekday - today.weekday()
+        if days_ahead <= 0:
+            days_ahead += 7 * interval
+        elif interval > 1:
+            days_ahead += 7 * (interval - 1)
+        return today + timedelta(days=days_ahead)
+    elif recurrence_type == "monthly":
+        target_month = today.month + interval
+        target_year = today.year + (target_month - 1) // 12
+        target_month = ((target_month - 1) % 12) + 1
+        max_day = calendar.monthrange(target_year, target_month)[1]
+        target_day = min(current_due.day, max_day)
+        return date(target_year, target_month, target_day)
+    elif recurrence_type == "yearly":
+        target_year = today.year + interval
+        if current_due.month == 2 and current_due.day == 29 and not calendar.isleap(target_year):
+            return date(target_year, 2, 28)
+        return date(target_year, current_due.month, current_due.day)
+    else:
+        msg = f"Unknown recurrence type: {recurrence_type}"
+        raise ValueError(msg)
+
+
+def is_recurrence_ended(item: TodoItem, next_due: date | None = None) -> bool:
+    """Check if a recurring item has reached its end condition."""
+    if not item.is_recurring:
+        return True
+    if (
+        item.recurrence_end_count is not None
+        and item.recurrence_count + 1 >= item.recurrence_end_count
+    ):
+        return True
+    return (
+        item.recurrence_end_date is not None
+        and next_due is not None
+        and next_due > item.recurrence_end_date
+    )
+
+
+def format_recurrence(item: TodoItem) -> str:
+    """Format recurrence rule for display (e.g., 'Every day', 'Every 2 weeks')."""
+    if not item.is_recurring or item.recurrence_type is None:
+        return ""
+    type_singular = {
+        "daily": "day",
+        "weekly": "week",
+        "monthly": "month",
+        "yearly": "year",
+    }
+    type_plural = {
+        "daily": "days",
+        "weekly": "weeks",
+        "monthly": "months",
+        "yearly": "years",
+    }
+    if item.recurrence_interval == 1:
+        text = f"Every {type_singular.get(item.recurrence_type, item.recurrence_type)}"
+    else:
+        text = (
+            f"Every {item.recurrence_interval} "
+            f"{type_plural.get(item.recurrence_type, item.recurrence_type)}"
+        )
+    if item.recurrence_end_count is not None:
+        text += f" ({item.recurrence_count}/{item.recurrence_end_count} completed)"
+    elif item.recurrence_end_date is not None:
+        text += f" (until {item.recurrence_end_date.strftime('%b %d, %Y')})"
+    return text

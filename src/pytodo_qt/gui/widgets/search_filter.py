@@ -105,6 +105,7 @@ class SearchFilterWidget(QWidget):
         self.due_date_combo.addItem("Due Today", 2)
         self.due_date_combo.addItem("This Week", 3)
         self.due_date_combo.addItem("No Due Date", 4)
+        self.due_date_combo.addItem("Recurring", 5)
         self.due_date_combo.currentIndexChanged.connect(self._on_combo_changed)
         layout.addWidget(self.due_date_combo)
 

@@ -199,6 +199,11 @@ class MainWindow(QMainWindow):
         self.toggle_todo_action.setToolTip("Toggle completion status (%)")
         self.toggle_todo_action.triggered.connect(self._on_toggle_todo)
 
+        self.edit_recurrence_action = QAction("Edit &Recurrence...", self)
+        self.edit_recurrence_action.setShortcut("Ctrl+Shift+R")
+        self.edit_recurrence_action.setToolTip("Edit recurrence settings (Ctrl+Shift+R)")
+        self.edit_recurrence_action.triggered.connect(self._on_edit_recurrence)
+
         # List actions
         self.add_list_action = QAction("Add &List", self)
         self.add_list_action.setShortcut("Ctrl++")
@@ -289,6 +294,8 @@ class MainWindow(QMainWindow):
             todo_menu.addAction(self.add_todo_action)
             todo_menu.addAction(self.delete_todo_action)
             todo_menu.addAction(self.toggle_todo_action)
+            todo_menu.addSeparator()
+            todo_menu.addAction(self.edit_recurrence_action)
 
         # List menu
         list_menu = menu_bar.addMenu("&List")
@@ -1098,18 +1105,55 @@ class MainWindow(QMainWindow):
         if active_list is None:
             return
 
-        # Capture current completion state for each item before toggling
-        item_states: list[tuple[UUID, bool]] = []
+        # Split items into recurring (completing) and normal groups
+        normal_states: list[tuple[UUID, bool]] = []
+        recurring_commands = []
+
         for item_id in item_ids:
             item = active_list.get_item(item_id)
-            if item:
-                item_states.append((item_id, item.complete))
+            if not item:
+                continue
+            # Use recurring path only for incomplete recurring items whose
+            # recurrence hasn't already been exhausted.
+            already_exhausted = (
+                item.recurrence_end_count is not None
+                and item.recurrence_count >= item.recurrence_end_count
+            )
+            if (
+                item.is_recurring
+                and not item.complete
+                and not already_exhausted
+                and item.due_date
+                and item.recurrence_type
+            ):
+                from ..core.models import compute_next_due_date, is_recurrence_ended
+                from .commands import ToggleCompleteRecurringCommand
 
-        if item_states:
+                next_due = compute_next_due_date(
+                    item.due_date, item.recurrence_type, item.recurrence_interval
+                )
+                ended = is_recurrence_ended(item, next_due)
+                cmd = ToggleCompleteRecurringCommand(
+                    self,
+                    active_list.id,
+                    item_id,
+                    old_due_date=item.due_date,
+                    new_due_date=None if ended else next_due,
+                    old_count=item.recurrence_count,
+                    recurrence_ended=ended,
+                )
+                recurring_commands.append(cmd)
+            else:
+                normal_states.append((item_id, item.complete))
+
+        if normal_states:
             from .commands import ToggleCompleteCommand
 
-            cmd = ToggleCompleteCommand(self, active_list.id, item_states)
+            cmd = ToggleCompleteCommand(self, active_list.id, normal_states)
             self._undo_stack.push(cmd)
+
+        for rcmd in recurring_commands:
+            self._undo_stack.push(rcmd)
 
     def _on_add_list(self) -> None:
         """Handle add list action."""
@@ -1266,6 +1310,35 @@ class MainWindow(QMainWindow):
                 from .commands import EditDueDateCommand
 
                 cmd = EditDueDateCommand(self, active_list.id, item_id, item.due_date, due_date)
+                self._undo_stack.push(cmd)
+
+    def _on_edit_recurrence(self) -> None:
+        """Handle edit recurrence action."""
+        item_ids = self.todo_table.get_selected_item_ids()
+        if len(item_ids) != 1:
+            return
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        item = active_list.get_item(item_ids[0])
+        if not item:
+            return
+
+        from .dialogs.edit_recurrence import EditRecurrenceDialog
+
+        dialog = EditRecurrenceDialog(item, self)
+        if dialog.exec() == dialog.DialogCode.Accepted:
+            new_rec = dialog.get_recurrence()
+            old_rec = (
+                item.recurrence_type,
+                item.recurrence_interval,
+                item.recurrence_end_date,
+                item.recurrence_end_count,
+            )
+            if new_rec != old_rec:
+                from .commands import EditRecurrenceCommand
+
+                cmd = EditRecurrenceCommand(self, active_list.id, item.id, old_rec, new_rec)
                 self._undo_stack.push(cmd)
 
     def _on_filter_changed(self, filter_state) -> None:
