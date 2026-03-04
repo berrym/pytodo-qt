@@ -72,6 +72,7 @@ class StatusBarWidget(QStatusBar):
         self._message_label = QLabel()
         self.status_label = QLabel()
         self.server_status_label = QLabel()
+        self.web_status_label = QLabel()
         self.pending_sync_label = QLabel()
         self.sync_status_label = QLabel()
 
@@ -116,6 +117,8 @@ class StatusBarWidget(QStatusBar):
         layout.addWidget(self._create_separator())
         layout.addWidget(self.sync_status_label)
         layout.addWidget(self._create_separator())
+        layout.addWidget(self.web_status_label)
+        layout.addWidget(self._create_separator())
         layout.addWidget(self.server_status_label)
         layout.addWidget(self._create_separator())
         layout.addWidget(self.status_label)
@@ -126,6 +129,7 @@ class StatusBarWidget(QStatusBar):
         self.update_stats(0, 0, 0, 0, 0)
         self.update_pomodoro_display("idle")
         self.set_status("Ready")
+        self.set_web_status(False)
         self.set_server_status(False, "", 0)
         self.set_sync_status("idle")
         self.set_pending_sync_count(0)
@@ -176,6 +180,15 @@ class StatusBarWidget(QStatusBar):
         else:
             self.server_status_label.setText("Server: Off")
             self.server_status_label.setStyleSheet("color: gray;")
+
+    def set_web_status(self, running: bool, port: int = 0) -> None:
+        """Set the web server status display."""
+        if running:
+            self.web_status_label.setText(f"Web: :{port}")
+            self.web_status_label.setStyleSheet("color: green;")
+        else:
+            self.web_status_label.setText("Web: Off")
+            self.web_status_label.setStyleSheet("color: gray;")
 
     def show_message(self, message: str, timeout: int = 3000) -> None:
         """Show a temporary message without disrupting layout."""

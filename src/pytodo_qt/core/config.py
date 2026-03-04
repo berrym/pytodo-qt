@@ -74,6 +74,14 @@ class PomodoroConfig:
 
 
 @dataclass
+class WebConfig:
+    """Embedded web server settings."""
+
+    enabled: bool = False  # Disabled by default
+    port: int = 8080
+
+
+@dataclass
 class AppearanceConfig:
     """UI appearance settings."""
 
@@ -91,6 +99,7 @@ class AppConfig:
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     appearance: AppearanceConfig = field(default_factory=AppearanceConfig)
     pomodoro: PomodoroConfig = field(default_factory=PomodoroConfig)
+    web: WebConfig = field(default_factory=WebConfig)
 
     def to_toml(self) -> str:
         """Convert config to TOML string."""
@@ -139,6 +148,12 @@ class AppConfig:
         lines.append(f"long_break_duration = {self.pomodoro.long_break_duration}")
         lines.append(f"sessions_before_long_break = {self.pomodoro.sessions_before_long_break}")
         lines.append(f"auto_start_break = {str(self.pomodoro.auto_start_break).lower()}")
+        lines.append("")
+
+        # Web section
+        lines.append("[web]")
+        lines.append(f"enabled = {str(self.web.enabled).lower()}")
+        lines.append(f"port = {self.web.port}")
         lines.append("")
 
         return "\n".join(lines)
@@ -197,6 +212,13 @@ class AppConfig:
                 long_break_duration=pom.get("long_break_duration", 15),
                 sessions_before_long_break=pom.get("sessions_before_long_break", 4),
                 auto_start_break=pom.get("auto_start_break", True),
+            )
+
+        if "web" in data:
+            w = data["web"]
+            config.web = WebConfig(
+                enabled=w.get("enabled", False),
+                port=w.get("port", 8080),
             )
 
         return config

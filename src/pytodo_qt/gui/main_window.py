@@ -38,6 +38,7 @@ from ..net.client import AsyncClient
 from ..net.discovery import get_discovery_service
 from ..net.server import AsyncServer
 from ..net.sync_queue import SyncQueue, SyncStatus, create_pull_operation, create_push_operation
+from ..web.server import WebServer
 from .auto_sync import AutoSyncScheduler
 from .dialogs import (
     AddListDialog,
@@ -109,6 +110,9 @@ class MainWindow(QMainWindow):
         self._pomodoro_display_timer.setInterval(1000)
         self._pomodoro_display_timer.timeout.connect(self._update_pomodoro_display)
 
+        # Web server
+        self._web_server: WebServer | None = None
+
         self._setup_window()
         self._setup_actions()
         self._setup_menus()
@@ -131,6 +135,9 @@ class MainWindow(QMainWindow):
 
         # Start server
         self._start_server()
+
+        # Start web server
+        self._start_web_server()
 
         # Start auto-sync scheduler
         self._auto_scheduler.start()
@@ -911,6 +918,40 @@ class MainWindow(QMainWindow):
             asyncio.ensure_future(self._server.stop())
         except Exception as e:
             logger.log.warning("Error stopping server: %s", e)
+
+    def _start_web_server(self) -> None:
+        """Start the embedded web server if enabled."""
+        if not self._config.web.enabled:
+            return
+        try:
+            self._web_server = WebServer(
+                database=self._database,
+                save_callback=self._web_save_and_refresh,
+                config=self._config.web,
+            )
+            asyncio.ensure_future(
+                self._web_server.start(host="0.0.0.0", port=self._config.web.port)
+            )
+            self.status_bar_widget.set_web_status(True, port=self._config.web.port)
+            logger.log.info("Web server started on port %d", self._config.web.port)
+        except Exception as e:
+            logger.log.warning("Failed to start web server: %s", e)
+
+    def _stop_web_server(self) -> None:
+        """Stop the embedded web server."""
+        if self._web_server is None:
+            return
+        try:
+            asyncio.ensure_future(self._web_server.stop())
+            self._web_server = None
+            self.status_bar_widget.set_web_status(False)
+        except Exception as e:
+            logger.log.warning("Error stopping web server: %s", e)
+
+    def _web_save_and_refresh(self) -> None:
+        """Save database and refresh UI after a web API write."""
+        self._storage.save_database(self._database)
+        self._refresh_ui()
 
     def _get_sync_data(self) -> bytes:
         """Get database as bytes for sync (excludes private lists)."""
@@ -1969,6 +2010,11 @@ class MainWindow(QMainWindow):
                 interval_minutes=self._config.discovery.auto_sync_interval,
             )
             self._pomodoro.update_config(self._config.pomodoro)
+            # Restart web server if config changed
+            if self._config.web.enabled and self._web_server is None:
+                self._start_web_server()
+            elif not self._config.web.enabled and self._web_server is not None:
+                self._stop_web_server()
             self._refresh_ui()
 
     def _on_import_ics(self) -> None:
@@ -2102,6 +2148,9 @@ class MainWindow(QMainWindow):
 
         # Stop server
         self._stop_server()
+
+        # Stop web server
+        self._stop_web_server()
 
         # Stop discovery service
         self._stop_discovery()

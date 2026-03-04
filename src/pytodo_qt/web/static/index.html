@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#2196F3" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1a1a2e" media="(prefers-color-scheme: dark)">
+  <title>PyTodo-Qt</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header id="header">
+    <h1>PyTodo-Qt</h1>
+    <select id="list-select"></select>
+  </header>
+
+  <main id="main">
+    <form id="add-form">
+      <input type="text" id="add-input" placeholder="Add new item..." autocomplete="off">
+      <button type="submit" id="add-btn" aria-label="Add">+</button>
+    </form>
+    <div id="items-container"></div>
+    <p id="empty-msg" class="hidden">No items in this list.</p>
+  </main>
+
+  <footer id="footer">
+    <span id="status-text"></span>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -155,6 +155,22 @@ def main():
         help="UI theme",
     )
 
+    # Web UI options
+    web_group = arg_parser.add_argument_group("Web UI Options")
+
+    web_group.add_argument(
+        "--web",
+        type=str,
+        choices=["yes", "no"],
+        help="Enable/disable embedded web server",
+    )
+
+    web_group.add_argument(
+        "--web-port",
+        type=int,
+        help="Web server port (default: 8080)",
+    )
+
     # General options
     arg_parser.add_argument(
         "-V",
@@ -181,6 +197,10 @@ def main():
         config.discovery.enabled = args.discovery == "yes"
     if args.theme is not None:
         config.appearance.theme = args.theme
+    if args.web is not None:
+        config.web.enabled = args.web == "yes"
+    if args.web_port is not None:
+        config.web.port = args.web_port
 
     # Set macOS menu bar name before Qt reads bundle info
     _set_macos_app_name()
