@@ -289,6 +289,47 @@ class EditDueTimeCommand(QUndoCommand):
         self._window._refresh_ui()
 
 
+class EditTagsCommand(QUndoCommand):
+    """Change an item's tags."""
+
+    def __init__(
+        self,
+        window: MainWindow,
+        list_id: UUID,
+        item_id: UUID,
+        old_tags: list[str],
+        new_tags: list[str],
+    ) -> None:
+        super().__init__("Edit tags")
+        self._window = window
+        self._list_id = list_id
+        self._item_id = item_id
+        self._old_tags = list(old_tags)
+        self._new_tags = list(new_tags)
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if item:
+            item.tags = list(self._new_tags)
+            item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if item:
+            item.tags = list(self._old_tags)
+            item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+
 class ToggleCompleteRecurringCommand(QUndoCommand):
     """Complete a recurring item: advance due date and reset completion."""
 

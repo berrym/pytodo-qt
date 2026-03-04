@@ -610,7 +610,9 @@ class TestTodoTableWidgetSetList:
         todo_table.set_list(sample_list)
         for row in range(todo_table.rowCount()):
             widget = todo_table.cellWidget(row, 1)
-            assert isinstance(widget, QLineEdit)
+            # Column 1 is now a container with a QLineEdit inside
+            line_edit = widget.findChild(QLineEdit) if widget else None
+            assert line_edit is not None
 
     def test_due_date_widget_in_column_2(self, todo_table, sample_list):
         """Each row should have a DueDateLabel in column 2."""
@@ -626,8 +628,9 @@ class TestTodoTableWidgetSetList:
             item_id = todo_table.get_item_id_at_row(row)
             item = sample_list.items.get(item_id)
             if item and item.complete:
-                reminder_edit = todo_table.cellWidget(row, 1)
-                assert isinstance(reminder_edit, QLineEdit)
+                container = todo_table.cellWidget(row, 1)
+                reminder_edit = container.findChild(QLineEdit) if container else None
+                assert reminder_edit is not None
                 assert reminder_edit.font().strikeOut()
 
     def test_item_id_map(self, todo_table, sample_list):
@@ -669,8 +672,9 @@ class TestTodoTableWidgetSignals:
         """Pressing enter in reminder field should emit item_reminder_changed."""
         todo_table.set_list(sample_list)
         with qtbot.waitSignal(todo_table.item_reminder_changed, timeout=500):
-            reminder_edit = todo_table.cellWidget(0, 1)
-            assert isinstance(reminder_edit, QLineEdit)
+            container = todo_table.cellWidget(0, 1)
+            reminder_edit = container.findChild(QLineEdit)
+            assert reminder_edit is not None
             reminder_edit.setText("Updated text")
             reminder_edit.returnPressed.emit()
 

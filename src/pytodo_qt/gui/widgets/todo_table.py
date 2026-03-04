@@ -291,7 +291,11 @@ class TodoTableWidget(QTableWidget):
         filtered = items
         if self._filter_state.text:
             search = self._filter_state.text.lower()
-            filtered = [i for i in filtered if search in i.reminder.lower()]
+            filtered = [
+                i
+                for i in filtered
+                if search in i.reminder.lower() or any(search in tag.lower() for tag in i.tags)
+            ]
         if self._filter_state.priority != 0:
             filtered = [i for i in filtered if i.priority == self._filter_state.priority]
         if self._filter_state.status == 1:
@@ -309,6 +313,9 @@ class TodoTableWidget(QTableWidget):
             filtered = [i for i in filtered if i.due_date is None]
         elif self._filter_state.due_date == 5:  # Recurring
             filtered = [i for i in filtered if i.is_recurring]
+        # Tag filter
+        if self._filter_state.tag:
+            filtered = [i for i in filtered if self._filter_state.tag in i.tags]
         return filtered
 
     def refresh(self) -> None:
@@ -372,7 +379,12 @@ class TodoTableWidget(QTableWidget):
 
             self.setCellWidget(row, 0, priority_combo)
 
-            # Reminder text field
+            # Reminder column: text field + optional tag chips
+            reminder_container = QWidget()
+            reminder_layout = QHBoxLayout(reminder_container)
+            reminder_layout.setContentsMargins(0, 0, 0, 0)
+            reminder_layout.setSpacing(4)
+
             reminder_edit = QLineEdit(item.reminder)
             reminder_edit.setMinimumHeight(32)
             reminder_edit.returnPressed.connect(lambda r=row: self._on_reminder_changed(r))
@@ -387,12 +399,30 @@ class TodoTableWidget(QTableWidget):
             else:
                 reminder_edit.setFont(self._normal_font)
 
+            tooltip_parts = []
             if item.is_recurring:
                 recurrence_text = format_recurrence(item)
                 if recurrence_text:
-                    reminder_edit.setToolTip(recurrence_text)
+                    tooltip_parts.append(recurrence_text)
+            if item.tags:
+                tooltip_parts.append(f"Tags: {', '.join(item.tags)}")
+            if tooltip_parts:
+                reminder_edit.setToolTip("\n".join(tooltip_parts))
 
-            self.setCellWidget(row, 1, reminder_edit)
+            reminder_layout.addWidget(reminder_edit, 1)
+
+            # Tag chips
+            if item.tags:
+                for tag in item.tags:
+                    chip = QLabel(tag)
+                    chip.setStyleSheet(
+                        f"background-color: {colors['highlight']}; "
+                        f"color: {colors.get('highlight_text', '#ffffff')}; "
+                        "border-radius: 8px; padding: 1px 6px; font-size: 10px;"
+                    )
+                    reminder_layout.addWidget(chip)
+
+            self.setCellWidget(row, 1, reminder_container)
 
             # Due date widget
             due_widget = DueDateLabel(
@@ -455,7 +485,10 @@ class TodoTableWidget(QTableWidget):
         if item_id is None:
             return
 
-        reminder_edit = self.cellWidget(row, 1)
+        container = self.cellWidget(row, 1)
+        if container is None:
+            return
+        reminder_edit = container.findChild(QLineEdit)
         if isinstance(reminder_edit, QLineEdit):
             self.item_reminder_changed.emit(item_id, reminder_edit.text())
 

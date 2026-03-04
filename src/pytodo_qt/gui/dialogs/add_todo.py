@@ -100,6 +100,12 @@ class AddTodoDialog(QDialog):
         due_time_layout.addWidget(self.due_time_edit, 1)
         form.addRow("Due Time:", due_time_layout)
 
+        # Tags input
+        self.tags_edit = QLineEdit()
+        self.tags_edit.setPlaceholderText("e.g. @work, @errands, @quick")
+        self.tags_edit.setToolTip("Comma-separated tags (@ prefix added automatically)")
+        form.addRow("Tags:", self.tags_edit)
+
         # Recurrence section
         self.recurrence_checkbox = QCheckBox("Repeat")
         self.recurrence_checkbox.setEnabled(False)
@@ -241,11 +247,24 @@ class AddTodoDialog(QDialog):
             elif self.end_count_radio.isChecked():
                 recurrence_end_count = self.end_count_spin.value()
 
+        # Parse tags
+        tags_text = self.tags_edit.text().strip()
+        tags: list[str] = []
+        if tags_text:
+            for tag in tags_text.replace(",", " ").split():
+                tag = tag.strip()
+                if tag:
+                    if not tag.startswith("@"):
+                        tag = f"@{tag}"
+                    if tag not in tags:
+                        tags.append(tag)
+
         self._item = TodoItem(
             reminder=reminder,
             priority=priority,
             due_date=due_date,
             due_time=due_time,
+            tags=tags,
             recurrence_type=recurrence_type,
             recurrence_interval=recurrence_interval,
             recurrence_end_date=recurrence_end_date,

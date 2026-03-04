@@ -39,6 +39,7 @@ class TodoItem:
     complete: bool = False
     due_date: date | None = None
     due_time: time | None = None  # Optional time-of-day for due date
+    tags: list[str] = field(default_factory=list)  # Free-form text tags
     recurrence_type: str | None = None  # "daily", "weekly", "monthly", "yearly"
     recurrence_interval: int = 1  # Every N units
     recurrence_end_date: date | None = None  # Optional end date
@@ -76,6 +77,7 @@ class TodoItem:
             "complete": self.complete,
             "due_date": self.due_date.isoformat() if self.due_date else None,
             "due_time": self.due_time.isoformat() if self.due_time else None,
+            "tags": self.tags,
             "recurrence_type": self.recurrence_type,
             "recurrence_interval": self.recurrence_interval,
             "recurrence_end_date": (
@@ -104,6 +106,7 @@ class TodoItem:
             complete=data.get("complete", False),
             due_date=due_date,
             due_time=due_time,
+            tags=data.get("tags", []),
             recurrence_type=data.get("recurrence_type"),
             recurrence_interval=data.get("recurrence_interval", 1),
             recurrence_end_date=recurrence_end_date,
@@ -566,6 +569,7 @@ def create_todo_item(
     priority: int = 2,
     due_date: date | None = None,
     due_time: time | None = None,
+    tags: list[str] | None = None,
     recurrence_type: str | None = None,
     recurrence_interval: int = 1,
     recurrence_end_date: date | None = None,
@@ -577,6 +581,7 @@ def create_todo_item(
         priority=priority,
         due_date=due_date,
         due_time=due_time,
+        tags=tags or [],
         recurrence_type=recurrence_type,
         recurrence_interval=recurrence_interval,
         recurrence_end_date=recurrence_end_date,

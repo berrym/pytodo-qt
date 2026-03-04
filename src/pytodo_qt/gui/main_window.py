@@ -1024,9 +1024,19 @@ class MainWindow(QMainWindow):
             self.list_selector.set_database(self._database)
             self.list_selector.set_unseen(self._unseen_changes)
             self.todo_table.set_list(self._database.active_list)
+            self._update_tags()
             self._update_status()
         finally:
             self._refreshing = False
+
+    def _update_tags(self) -> None:
+        """Update the tag filter combo with tags from the active list."""
+        active_list = self._database.active_list
+        tags: set[str] = set()
+        if active_list:
+            for item in active_list.active_items():
+                tags.update(item.tags)
+        self.search_filter.update_tags(sorted(tags))
 
     def _update_status(self) -> None:
         """Update the status bar."""

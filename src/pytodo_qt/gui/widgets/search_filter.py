@@ -32,11 +32,18 @@ class FilterState:
     priority: int = 0  # 0=All, 1=High, 2=Normal, 3=Low
     status: int = 0  # 0=All, 1=Active, 2=Completed
     due_date: int = 0  # 0=All, 1=Overdue, 2=Today, 3=This Week, 4=No Due Date
+    tag: str = ""  # Empty = all, otherwise filter by specific tag
 
     @property
     def is_active(self) -> bool:
         """Return True if any filter is active."""
-        return bool(self.text) or self.priority != 0 or self.status != 0 or self.due_date != 0
+        return (
+            bool(self.text)
+            or self.priority != 0
+            or self.status != 0
+            or self.due_date != 0
+            or bool(self.tag)
+        )
 
 
 class SearchFilterWidget(QWidget):
@@ -109,6 +116,13 @@ class SearchFilterWidget(QWidget):
         self.due_date_combo.currentIndexChanged.connect(self._on_combo_changed)
         layout.addWidget(self.due_date_combo)
 
+        # Tag combo
+        self.tag_combo = QComboBox()
+        self.tag_combo.setMinimumHeight(32)
+        self.tag_combo.addItem("Tag: All", "")
+        self.tag_combo.currentIndexChanged.connect(self._on_combo_changed)
+        layout.addWidget(self.tag_combo)
+
     def _load_icon(self, name: str) -> QIcon:
         """Load an icon from the icons directory."""
         icon_dir = Path(__file__).parent.parent / "icons"
@@ -165,6 +179,7 @@ class SearchFilterWidget(QWidget):
             priority=self.priority_combo.currentData() or 0,
             status=self.status_combo.currentData() or 0,
             due_date=self.due_date_combo.currentData() or 0,
+            tag=self.tag_combo.currentData() or "",
         )
 
     def clear_filters(self) -> None:
@@ -173,12 +188,31 @@ class SearchFilterWidget(QWidget):
         self.priority_combo.setCurrentIndex(0)
         self.status_combo.setCurrentIndex(0)
         self.due_date_combo.setCurrentIndex(0)
+        self.tag_combo.setCurrentIndex(0)
         self._emit_filter()
 
     def focus_search(self) -> None:
         """Focus the search field and select all text."""
         self.search_edit.setFocus()
         self.search_edit.selectAll()
+
+    def update_tags(self, tags: list[str]) -> None:
+        """Update the tag filter combo with available tags.
+
+        Preserves the current selection if the tag still exists.
+        """
+        current_tag = self.tag_combo.currentData() or ""
+        self.tag_combo.blockSignals(True)
+        self.tag_combo.clear()
+        self.tag_combo.addItem("Tag: All", "")
+        for tag in sorted(tags):
+            self.tag_combo.addItem(tag, tag)
+        # Restore selection
+        if current_tag:
+            idx = self.tag_combo.findData(current_tag)
+            if idx >= 0:
+                self.tag_combo.setCurrentIndex(idx)
+        self.tag_combo.blockSignals(False)
 
     def handle_escape(self) -> None:
         """Handle escape key: clear filters if active, then unfocus."""

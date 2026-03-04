@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS items (
     complete INTEGER NOT NULL DEFAULT 0,
     due_date TEXT,
     due_time TEXT,
+    tags TEXT,
     recurrence_type TEXT,
     recurrence_interval INTEGER NOT NULL DEFAULT 1,
     recurrence_end_date TEXT,
@@ -255,6 +256,7 @@ class DatabaseStorage:
         self._migrate_schema_5_to_6()
         self._migrate_schema_6_to_7()
         self._migrate_schema_7_to_8()
+        self._migrate_schema_8_to_9()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -370,6 +372,21 @@ class DatabaseStorage:
             logger.log.info("Migrated schema 7->8: added due_time column")
 
         self.set_schema_version(8)
+
+    def _migrate_schema_8_to_9(self) -> None:
+        """Migrate schema from version 8 to 9 (add tags column)."""
+        current_version = self.get_schema_version()
+        if current_version >= 9:
+            return
+
+        cursor = self.connection.execute("PRAGMA table_info(items)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if "tags" not in columns:
+            self.connection.execute("ALTER TABLE items ADD COLUMN tags TEXT")
+            logger.log.info("Migrated schema 8->9: added tags column")
+
+        self.set_schema_version(9)
 
     def get_schema_version(self) -> int:
         """Get current schema version."""
@@ -544,14 +561,16 @@ class DatabaseStorage:
             list_id: UUID of the list this item belongs to
             item: TodoItem to save
         """
+        import json
+
         self.connection.execute(
             """
             INSERT OR REPLACE INTO items
-            (id, list_id, reminder, priority, complete, due_date, due_time,
+            (id, list_id, reminder, priority, complete, due_date, due_time, tags,
              recurrence_type, recurrence_interval, recurrence_end_date,
              recurrence_end_count, recurrence_count,
              created_at, updated_at, deleted)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(item.id),
@@ -561,6 +580,7 @@ class DatabaseStorage:
                 1 if item.complete else 0,
                 item.due_date.isoformat() if item.due_date else None,
                 item.due_time.isoformat() if item.due_time else None,
+                json.dumps(item.tags) if item.tags else None,
                 item.recurrence_type,
                 item.recurrence_interval,
                 item.recurrence_end_date.isoformat() if item.recurrence_end_date else None,
@@ -589,6 +609,7 @@ class DatabaseStorage:
 
     def _row_to_item(self, row: sqlite3.Row) -> TodoItem:
         """Convert a database row to a TodoItem."""
+        import json
         from datetime import date, time
 
         # Handle due_date column (may not exist in older databases during migration)
@@ -604,6 +625,13 @@ class DatabaseStorage:
             due_time = time.fromisoformat(due_time_str) if due_time_str else None
         except (KeyError, IndexError):
             due_time = None
+
+        # Handle tags column (v9+)
+        try:
+            tags_str = row["tags"]
+            tags = json.loads(tags_str) if tags_str else []
+        except (KeyError, IndexError):
+            tags = []
 
         # Handle recurrence columns (v7+)
         try:
@@ -627,6 +655,7 @@ class DatabaseStorage:
             complete=bool(row["complete"]),
             due_date=due_date,
             due_time=due_time,
+            tags=tags,
             recurrence_type=recurrence_type,
             recurrence_interval=recurrence_interval,
             recurrence_end_date=recurrence_end_date,
