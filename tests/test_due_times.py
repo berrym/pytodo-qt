@@ -202,8 +202,13 @@ class TestFormatTime:
 # ---------------------------------------------------------------------------
 class TestFormatDueDateWithTime:
     def test_today_with_time(self):
-        today = date.today()
-        result = format_due_date(today, due_time=time(14, 30), time_format="12h")
+        fake_today = date(2026, 3, 15)
+        fake_now = datetime(2026, 3, 15, 8, 0)
+        with (
+            patch("pytodo_qt.core.models.date", _mock_date(fake_today)),
+            patch("pytodo_qt.core.models.datetime", _mock_datetime(fake_now)),
+        ):
+            result = format_due_date(fake_today, due_time=time(14, 30), time_format="12h")
         assert result == "Today 2:30 PM"
 
     def test_tomorrow_with_time(self):
@@ -255,8 +260,13 @@ class TestFormatDueDateWithTime:
         assert result == "Overdue (1d)"
 
     def test_24h_format(self):
-        today = date.today()
-        result = format_due_date(today, due_time=time(14, 30), time_format="24h")
+        fake_today = date(2026, 3, 15)
+        fake_now = datetime(2026, 3, 15, 8, 0)
+        with (
+            patch("pytodo_qt.core.models.date", _mock_date(fake_today)),
+            patch("pytodo_qt.core.models.datetime", _mock_datetime(fake_now)),
+        ):
+            result = format_due_date(fake_today, due_time=time(14, 30), time_format="24h")
         assert result == "Today 14:30"
 
 

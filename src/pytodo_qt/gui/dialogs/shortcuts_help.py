@@ -21,8 +21,12 @@ _SHORTCUTS: list[tuple[str, str, str]] = [
     ("Items", "+", "Add new to-do"),
     ("Items", "-", "Delete selected to-do(s)"),
     ("Items", "%", "Toggle completion"),
+    ("Items", "Ctrl+Shift+T", "Edit tags"),
+    ("Items", "Ctrl+D", "Edit due date"),
     ("Items", "Ctrl+Shift+R", "Edit recurrence"),
     ("Items", "Ctrl+T", "Start focus session"),
+    ("Items", "Ctrl+Space", "Pause/resume focus session"),
+    ("Items", "Ctrl+.", "Stop focus session"),
     # Lists
     ("Lists", "Ctrl++", "Add new list"),
     ("Lists", "Ctrl+-", "Delete current list"),

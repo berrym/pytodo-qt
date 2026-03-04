@@ -257,7 +257,9 @@ class TestExportRecurrence:
         item.recurrence_end_date = date(2026, 12, 31)
         rrule = _build_rrule(item)
         assert rrule is not None
-        assert len(rrule["UNTIL"]) == 1
+        until = rrule["UNTIL"]
+        assert isinstance(until, list)
+        assert len(until) == 1
 
     def test_no_recurrence(self):
         item = create_todo_item("Test")

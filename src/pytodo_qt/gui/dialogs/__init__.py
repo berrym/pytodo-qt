@@ -2,6 +2,7 @@
 
 from .add_list import AddListDialog
 from .add_todo import AddTodoDialog
+from .batch_due_date import BatchDueDateDialog
 from .device_manager import DeviceManagerDialog
 from .list_sync_settings import ListSyncSettingsDialog
 from .peer_manager import PeerManagerDialog
@@ -12,6 +13,7 @@ from .sync import SyncDialog
 __all__ = [
     "AddListDialog",
     "AddTodoDialog",
+    "BatchDueDateDialog",
     "DeviceManagerDialog",
     "ListSyncSettingsDialog",
     "PeerManagerDialog",

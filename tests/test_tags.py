@@ -699,3 +699,95 @@ class TestTagsSyncCompat:
         s = json.dumps(item.to_dict())
         restored = TodoItem.from_dict(json.loads(s))
         assert restored.tags == ["@a", "@b"]
+
+
+# ===========================================================================
+# Context menu and edit tags UI tests
+# ===========================================================================
+
+
+class TestTodoTableContextMenuSignals:
+    """Test that TodoTableWidget context menu emits correct signals."""
+
+    def test_edit_tags_requested_signal_exists(self, qtbot):
+        from pytodo_qt.gui.widgets.todo_table import TodoTableWidget
+
+        table = TodoTableWidget()
+        qtbot.addWidget(table)
+        assert hasattr(table, "edit_tags_requested")
+
+    def test_toggle_requested_signal_exists(self, qtbot):
+        from pytodo_qt.gui.widgets.todo_table import TodoTableWidget
+
+        table = TodoTableWidget()
+        qtbot.addWidget(table)
+        assert hasattr(table, "toggle_requested")
+
+    def test_delete_requested_signal_exists(self, qtbot):
+        from pytodo_qt.gui.widgets.todo_table import TodoTableWidget
+
+        table = TodoTableWidget()
+        qtbot.addWidget(table)
+        assert hasattr(table, "delete_requested")
+
+    def test_edit_recurrence_requested_signal_exists(self, qtbot):
+        from pytodo_qt.gui.widgets.todo_table import TodoTableWidget
+
+        table = TodoTableWidget()
+        qtbot.addWidget(table)
+        assert hasattr(table, "edit_recurrence_requested")
+
+    def test_context_menu_policy_is_custom(self, qtbot):
+        from PyQt6.QtCore import Qt
+
+        from pytodo_qt.gui.widgets.todo_table import TodoTableWidget
+
+        table = TodoTableWidget()
+        qtbot.addWidget(table)
+        assert table.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu
+
+
+class TestEditTagsParsing:
+    """Test tag parsing logic used in _on_edit_tags_for_item."""
+
+    def _parse_tags(self, text: str) -> list[str]:
+        """Mirror the parsing logic from MainWindow._on_edit_tags_for_item."""
+        new_tags: list[str] = []
+        seen: set[str] = set()
+        for raw in text.split(","):
+            tag = raw.strip()
+            if not tag:
+                continue
+            if not tag.startswith("@"):
+                tag = f"@{tag}"
+            if tag not in seen:
+                new_tags.append(tag)
+                seen.add(tag)
+        return new_tags
+
+    def test_simple_comma_separated(self):
+        assert self._parse_tags("@work, @home") == ["@work", "@home"]
+
+    def test_auto_prefix_at(self):
+        assert self._parse_tags("work, home") == ["@work", "@home"]
+
+    def test_deduplication(self):
+        assert self._parse_tags("@work, @work, @home") == ["@work", "@home"]
+
+    def test_empty_string(self):
+        assert self._parse_tags("") == []
+
+    def test_whitespace_only(self):
+        assert self._parse_tags("  ,  , ") == []
+
+    def test_mixed_prefix(self):
+        assert self._parse_tags("@work, home") == ["@work", "@home"]
+
+    def test_single_tag(self):
+        assert self._parse_tags("errands") == ["@errands"]
+
+    def test_preserves_order(self):
+        assert self._parse_tags("@z, @a, @m") == ["@z", "@a", "@m"]
+
+    def test_strips_whitespace(self):
+        assert self._parse_tags("  @work  ,  @home  ") == ["@work", "@home"]

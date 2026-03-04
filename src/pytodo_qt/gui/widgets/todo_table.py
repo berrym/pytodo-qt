@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from PyQt6.QtCore import QDate, Qt, pyqtSignal
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import QDate, QPoint, Qt, pyqtSignal
+from PyQt6.QtGui import QAction, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QTableWidget,
@@ -47,6 +48,15 @@ if TYPE_CHECKING:
 
 
 logger = Logger(__name__)
+
+
+class ClickableLabel(QLabel):
+    """QLabel that emits a clicked signal on mouse press."""
+
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, ev) -> None:  # noqa: N802
+        self.clicked.emit()
 
 
 class DueDatePickerDialog(QDialog):
@@ -225,6 +235,10 @@ class TodoTableWidget(QTableWidget):
     item_due_date_changed = pyqtSignal(object, object)  # (item_id, new_date or None)
     item_due_time_changed = pyqtSignal(object, object)  # (item_id, new_time or None)
     item_selected = pyqtSignal(object)  # (item_id or None)
+    edit_tags_requested = pyqtSignal(object)  # (item_id)
+    toggle_requested = pyqtSignal()
+    delete_requested = pyqtSignal()
+    edit_recurrence_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -274,6 +288,41 @@ class TodoTableWidget(QTableWidget):
 
         # Connect selection changed
         self.itemSelectionChanged.connect(self._on_selection_changed)
+
+        # Context menu
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
+
+    def _on_context_menu(self, pos: QPoint) -> None:
+        """Show context menu for the table."""
+        item_ids = self.get_selected_item_ids()
+        if not item_ids:
+            return
+
+        menu = QMenu(self)
+
+        if len(item_ids) == 1:
+            edit_tags_action = QAction("Edit Tags...", self)
+            edit_tags_action.triggered.connect(lambda: self.edit_tags_requested.emit(item_ids[0]))
+            menu.addAction(edit_tags_action)
+
+            edit_rec_action = QAction("Edit Recurrence...", self)
+            edit_rec_action.triggered.connect(self.edit_recurrence_requested.emit)
+            menu.addAction(edit_rec_action)
+
+            menu.addSeparator()
+
+        toggle_action = QAction("Toggle Complete", self)
+        toggle_action.triggered.connect(self.toggle_requested.emit)
+        menu.addAction(toggle_action)
+
+        delete_action = QAction("Delete", self)
+        delete_action.triggered.connect(self.delete_requested.emit)
+        menu.addAction(delete_action)
+
+        viewport = self.viewport()
+        assert viewport is not None
+        menu.exec(viewport.mapToGlobal(pos))
 
     def set_list(self, todo_list: TodoList | None) -> None:
         """Set the list to display."""
@@ -412,17 +461,31 @@ class TodoTableWidget(QTableWidget):
 
             reminder_layout.addWidget(reminder_edit, 1)
 
-            # Tag chips
+            # Tag chips (show max 2 inline, overflow badge for the rest)
+            _MAX_VISIBLE_TAGS = 2
             if item.tags:
-                for tag in item.tags:
+                chip_style = (
+                    f"background-color: {colors['highlight']}; "
+                    f"color: {colors.get('highlight_text', '#ffffff')}; "
+                    "border-radius: 8px; padding: 1px 6px; font-size: 10px;"
+                )
+                for tag in item.tags[:_MAX_VISIBLE_TAGS]:
                     chip = QLabel(tag)
-                    chip.setStyleSheet(
-                        f"background-color: {colors['highlight']}; "
-                        f"color: {colors.get('highlight_text', '#ffffff')}; "
-                        "border-radius: 8px; padding: 1px 6px; font-size: 10px;"
-                    )
+                    chip.setStyleSheet(chip_style)
                     chip.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
                     reminder_layout.addWidget(chip)
+                overflow = len(item.tags) - _MAX_VISIBLE_TAGS
+                if overflow > 0:
+                    badge = ClickableLabel(f"+{overflow}")
+                    badge.setStyleSheet(
+                        f"background-color: {colors['button']}; "
+                        f"color: {colors['text']}; "
+                        "border-radius: 8px; padding: 1px 6px; font-size: 10px;"
+                    )
+                    badge.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+                    badge.setCursor(Qt.CursorShape.PointingHandCursor)
+                    badge.clicked.connect(lambda iid=item.id, b=badge: self._show_tag_popup(iid, b))
+                    reminder_layout.addWidget(badge)
 
             self.setCellWidget(row, 1, reminder_container)
 
@@ -502,6 +565,47 @@ class TodoTableWidget(QTableWidget):
         item_id = self._item_id_map.get(row)
         if item_id is not None:
             self.item_due_time_changed.emit(item_id, due_time)
+
+    def _show_tag_popup(self, item_id: UUID, badge: QWidget) -> None:
+        """Show a popup with all overflow tags as styled chips."""
+        if self._current_list is None:
+            return
+        item = self._current_list.get_item(item_id)
+        if not item or len(item.tags) <= 2:
+            return
+
+        colors = get_colors()
+        chip_style = (
+            f"background-color: {colors['highlight']}; "
+            f"color: {colors.get('highlight_text', '#ffffff')}; "
+            "border-radius: 8px; padding: 2px 8px; font-size: 10px;"
+        )
+
+        popup = QWidget(self, Qt.WindowType.Popup)
+        layout = QHBoxLayout(popup)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(4)
+
+        for tag in item.tags[2:]:
+            chip = QLabel(tag)
+            chip.setStyleSheet(chip_style)
+            layout.addWidget(chip)
+
+        edit_btn = QPushButton("Edit...")
+        edit_btn.setFixedHeight(20)
+        edit_btn.setStyleSheet("font-size: 10px; padding: 1px 6px;")
+        edit_btn.clicked.connect(lambda: self._on_popup_edit(popup, item_id))
+        layout.addWidget(edit_btn)
+
+        popup.adjustSize()
+        pos = badge.mapToGlobal(QPoint(0, badge.height() + 2))
+        popup.move(pos)
+        popup.show()
+
+    def _on_popup_edit(self, popup: QWidget, item_id: UUID) -> None:
+        """Handle 'Edit...' click in tag popup."""
+        popup.close()
+        self.edit_tags_requested.emit(item_id)
 
     def _on_selection_changed(self) -> None:
         """Handle selection change."""

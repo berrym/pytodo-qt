@@ -98,7 +98,7 @@ class MainWindow(QMainWindow):
             interval_minutes=self._config.discovery.auto_sync_interval,
             parent=self,
         )
-        self._undo_stack.indexChanged.connect(self._auto_scheduler.notify_change)
+        self._undo_stack.indexChanged.connect(self._on_undo_index_changed)
         self._auto_scheduler.push_requested.connect(self._on_auto_push)
         self._auto_scheduler.sync_requested.connect(self._on_auto_sync)
 
@@ -193,19 +193,44 @@ class MainWindow(QMainWindow):
             frame.moveCenter(center)
             self.move(frame.topLeft())
 
+    @staticmethod
+    def _tip(description: str, shortcut: str = "") -> str:
+        """Build a tooltip with platform-native shortcut text.
+
+        Uses QKeySequence.NativeText so macOS shows ⌘/⇧/⌥ symbols
+        instead of Ctrl/Shift/Alt.
+        """
+        if not shortcut:
+            return description
+        native = QKeySequence(shortcut).toString(QKeySequence.SequenceFormat.NativeText)
+        return f"{description} ({native})"
+
+    def _on_undo_text_changed(self, text: str) -> None:
+        """Update undo tooltip when the undo stack description changes."""
+        label = f"Undo {text}" if text else "Undo"
+        self.undo_action.setToolTip(f"{label} ({self._undo_native})")
+
+    def _on_redo_text_changed(self, text: str) -> None:
+        """Update redo tooltip when the redo stack description changes."""
+        label = f"Redo {text}" if text else "Redo"
+        self.redo_action.setToolTip(f"{label} ({self._redo_native})")
+
     def _setup_actions(self) -> None:
         """Create all actions."""
         # File actions
         self.import_ics_action = QAction("&Import from .ics...", self)
         self.import_ics_action.setShortcut("Ctrl+I")
+        self.import_ics_action.setToolTip(self._tip("Import from .ics file", "Ctrl+I"))
         self.import_ics_action.triggered.connect(self._on_import_ics)
 
         self.export_ics_action = QAction("&Export List as .ics...", self)
         self.export_ics_action.setShortcut("Ctrl+E")
+        self.export_ics_action.setToolTip(self._tip("Export list as .ics file", "Ctrl+E"))
         self.export_ics_action.triggered.connect(self._on_export_ics)
 
         self.print_action = QAction("&Print", self)
         self.print_action.setShortcut("Ctrl+P")
+        self.print_action.setToolTip(self._tip("Print current list", "Ctrl+P"))
         self.print_action.triggered.connect(self._on_print)
 
         self.settings_action = QAction("&Settings...", self)
@@ -213,54 +238,76 @@ class MainWindow(QMainWindow):
 
         self.exit_action = QAction(self._get_icon("exit.svg"), "E&xit", self)
         self.exit_action.setShortcut("Ctrl+Q")
-        self.exit_action.setToolTip("Exit application (Ctrl+Q)")
+        self.exit_action.setToolTip(self._tip("Exit application", "Ctrl+Q"))
         self.exit_action.triggered.connect(self.close)
 
         # Todo actions
         self.add_todo_action = QAction(self._get_icon("plus.svg"), "&Add To-Do", self)
         self.add_todo_action.setShortcut("+")
-        self.add_todo_action.setToolTip("Add new to-do (+)")
+        self.add_todo_action.setToolTip(self._tip("Add new to-do", "+"))
         self.add_todo_action.triggered.connect(self._on_add_todo)
 
         self.delete_todo_action = QAction(self._get_icon("minus.svg"), "&Delete To-Do", self)
         self.delete_todo_action.setShortcut("-")
-        self.delete_todo_action.setToolTip("Delete selected to-do (-)")
+        self.delete_todo_action.setToolTip(self._tip("Delete selected to-do", "-"))
         self.delete_todo_action.triggered.connect(self._on_delete_todo)
 
         self.toggle_todo_action = QAction(self._get_icon("toggle.svg"), "&Toggle Complete", self)
         self.toggle_todo_action.setShortcut("%")
-        self.toggle_todo_action.setToolTip("Toggle completion status (%)")
+        self.toggle_todo_action.setToolTip(self._tip("Toggle completion status", "%"))
         self.toggle_todo_action.triggered.connect(self._on_toggle_todo)
 
-        self.edit_recurrence_action = QAction("Edit &Recurrence...", self)
+        self.edit_tags_action = QAction(self._get_icon("tag.svg"), "Edit &Tags...", self)
+        self.edit_tags_action.setShortcut("Ctrl+Shift+T")
+        self.edit_tags_action.setToolTip(self._tip("Edit tags", "Ctrl+Shift+T"))
+        self.edit_tags_action.triggered.connect(self._on_edit_tags)
+
+        self.edit_recurrence_action = QAction(
+            self._get_icon("clock.svg"), "Edit &Recurrence...", self
+        )
         self.edit_recurrence_action.setShortcut("Ctrl+Shift+R")
-        self.edit_recurrence_action.setToolTip("Edit recurrence settings (Ctrl+Shift+R)")
+        self.edit_recurrence_action.setToolTip(self._tip("Edit recurrence", "Ctrl+Shift+R"))
         self.edit_recurrence_action.triggered.connect(self._on_edit_recurrence)
+
+        self.edit_due_date_action = QAction(
+            self._get_icon("calendar.svg"), "Edit Due &Date...", self
+        )
+        self.edit_due_date_action.setShortcut("Ctrl+D")
+        self.edit_due_date_action.setToolTip(self._tip("Edit due date", "Ctrl+D"))
+        self.edit_due_date_action.triggered.connect(self._on_edit_due_date)
 
         # List actions
         self.add_list_action = QAction("Add &List", self)
         self.add_list_action.setShortcut("Ctrl++")
+        self.add_list_action.setToolTip(self._tip("Add new list", "Ctrl++"))
         self.add_list_action.triggered.connect(self._on_add_list)
 
         self.delete_list_action = QAction("&Delete List", self)
         self.delete_list_action.setShortcut("Ctrl+-")
+        self.delete_list_action.setToolTip(self._tip("Delete current list", "Ctrl+-"))
         self.delete_list_action.triggered.connect(self._on_delete_list)
 
         self.rename_list_action = QAction("&Rename List", self)
         self.rename_list_action.setShortcut("Ctrl+R")
+        self.rename_list_action.setToolTip(self._tip("Rename current list", "Ctrl+R"))
         self.rename_list_action.triggered.connect(self._on_rename_list)
 
         self.toggle_private_action = QAction("Toggle &Private", self)
         self.toggle_private_action.setShortcut("Ctrl+Shift+P")
+        self.toggle_private_action.setToolTip(
+            self._tip("Toggle list private/shared", "Ctrl+Shift+P")
+        )
         self.toggle_private_action.triggered.connect(self._on_toggle_private)
 
         # Sync actions
         self.sync_pull_action = QAction("&Pull from Remote...", self)
         self.sync_pull_action.setShortcut("F6")
+        self.sync_pull_action.setToolTip(self._tip("Pull from remote", "F6"))
         self.sync_pull_action.triggered.connect(self._on_sync_pull)
 
         self.sync_push_action = QAction("Pu&sh to Remote...", self)
         self.sync_push_action.setShortcut("F7")
+        self.sync_push_action.setToolTip(self._tip("Push to remote", "F7"))
         self.sync_push_action.triggered.connect(self._on_sync_push)
 
         self.peer_manager_action = QAction("&Peer Manager...", self)
@@ -286,20 +333,39 @@ class MainWindow(QMainWindow):
         self.undo_action = undo_action
         self.undo_action.setShortcut(QKeySequence.StandardKey.Undo)
         self.undo_action.setIcon(self._get_icon("undo.svg"))
+        self._undo_native = QKeySequence(QKeySequence.StandardKey.Undo).toString(
+            QKeySequence.SequenceFormat.NativeText
+        )
 
         redo_action = self._undo_stack.createRedoAction(self, "&Redo")
         assert redo_action is not None
         self.redo_action = redo_action
         self.redo_action.setShortcut(QKeySequence.StandardKey.Redo)
         self.redo_action.setIcon(self._get_icon("redo.svg"))
+        self._redo_native = QKeySequence(QKeySequence.StandardKey.Redo).toString(
+            QKeySequence.SequenceFormat.NativeText
+        )
+        self._undo_stack.undoTextChanged.connect(self._on_undo_text_changed)
+        self._undo_stack.redoTextChanged.connect(self._on_redo_text_changed)
+        self._on_undo_text_changed(self._undo_stack.undoText())
+        self._on_redo_text_changed(self._undo_stack.redoText())
 
-        # Focus timer action
+        # Focus timer actions
         self.start_focus_action = QAction("Start &Focus Session", self)
         self.start_focus_action.setShortcut("Ctrl+T")
-        self.start_focus_action.setToolTip("Start focus timer on selected item (Ctrl+T)")
+        self.start_focus_action.setToolTip(
+            self._tip("Start focus timer on selected item", "Ctrl+T")
+        )
         self.start_focus_action.triggered.connect(self._on_start_focus)
 
+        self.pause_focus_action = QAction("&Pause/Resume Focus", self)
+        self.pause_focus_action.setShortcut("Ctrl+Space")
+        self.pause_focus_action.setToolTip(self._tip("Pause or resume focus timer", "Ctrl+Space"))
+        self.pause_focus_action.triggered.connect(self._on_pause_focus)
+
         self.stop_focus_action = QAction("S&top Focus Session", self)
+        self.stop_focus_action.setShortcut("Ctrl+.")
+        self.stop_focus_action.setToolTip(self._tip("Stop focus timer", "Ctrl+."))
         self.stop_focus_action.triggered.connect(self._on_stop_focus)
 
         # Help actions
@@ -358,9 +424,12 @@ class MainWindow(QMainWindow):
             todo_menu.addAction(self.delete_todo_action)
             todo_menu.addAction(self.toggle_todo_action)
             todo_menu.addSeparator()
+            todo_menu.addAction(self.edit_tags_action)
+            todo_menu.addAction(self.edit_due_date_action)
             todo_menu.addAction(self.edit_recurrence_action)
             todo_menu.addSeparator()
             todo_menu.addAction(self.start_focus_action)
+            todo_menu.addAction(self.pause_focus_action)
             todo_menu.addAction(self.stop_focus_action)
 
         # List menu
@@ -383,7 +452,9 @@ class MainWindow(QMainWindow):
             # Sync All Trusted action
             self.sync_all_action = QAction("Sync &All Trusted", self)
             self.sync_all_action.setShortcut("Ctrl+Shift+S")
-            self.sync_all_action.setToolTip("Sync with all online trusted devices")
+            self.sync_all_action.setToolTip(
+                self._tip("Sync with all online trusted devices", "Ctrl+Shift+S")
+            )
             self.sync_all_action.triggered.connect(self._on_sync_all_trusted)
             sync_menu.addAction(self.sync_all_action)
 
@@ -425,6 +496,10 @@ class MainWindow(QMainWindow):
             toolbar.addAction(self.delete_todo_action)
             toolbar.addAction(self.toggle_todo_action)
             toolbar.addSeparator()
+            toolbar.addAction(self.edit_tags_action)
+            toolbar.addAction(self.edit_recurrence_action)
+            toolbar.addAction(self.edit_due_date_action)
+            toolbar.addSeparator()
             toolbar.addAction(self.exit_action)
 
     def _setup_central_widget(self) -> None:
@@ -454,6 +529,10 @@ class MainWindow(QMainWindow):
         self.todo_table.item_reminder_changed.connect(self._on_item_reminder_changed)
         self.todo_table.item_due_date_changed.connect(self._on_item_due_date_changed)
         self.todo_table.item_due_time_changed.connect(self._on_item_due_time_changed)
+        self.todo_table.edit_tags_requested.connect(self._on_edit_tags_for_item)
+        self.todo_table.toggle_requested.connect(self._on_toggle_todo)
+        self.todo_table.delete_requested.connect(self._on_delete_todo)
+        self.todo_table.edit_recurrence_requested.connect(self._on_edit_recurrence)
         layout.addWidget(self.todo_table)
 
         self.setCentralWidget(central)
@@ -749,6 +828,13 @@ class MainWindow(QMainWindow):
             logger.log.exception("Auto-sync error with %s: %s", device.name, e)
         finally:
             self._auto_syncing_devices.discard(device.id)
+
+    def _on_undo_index_changed(self) -> None:
+        """Notify auto-sync scheduler of changes, skipping private lists."""
+        active_list = self._database.active_list
+        if active_list and active_list.private:
+            return
+        self._auto_scheduler.notify_change()
 
     def _on_auto_push(self) -> None:
         """Handle debounced auto-push: push local data to online trusted peers."""
@@ -1483,6 +1569,116 @@ class MainWindow(QMainWindow):
                 cmd = EditRecurrenceCommand(self, active_list.id, item.id, old_rec, new_rec)
                 self._undo_stack.push(cmd)
 
+    def _on_edit_tags(self) -> None:
+        """Handle edit tags action (from menu/shortcut)."""
+        item_ids = self.todo_table.get_selected_item_ids()
+        if len(item_ids) != 1:
+            return
+        self._on_edit_tags_for_item(item_ids[0])
+
+    def _on_edit_tags_for_item(self, item_id: UUID) -> None:
+        """Show tag editor for a specific item."""
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        item = active_list.get_item(item_id)
+        if not item:
+            return
+
+        current_text = ", ".join(item.tags) if item.tags else ""
+        text, ok = QInputDialog.getText(
+            self,
+            "Edit Tags",
+            "Tags (comma-separated, e.g. @work, @errands):",
+            text=current_text,
+        )
+        if not ok:
+            return
+
+        # Parse tags: split by comma, strip, deduplicate, prefix @ if missing
+        new_tags: list[str] = []
+        seen: set[str] = set()
+        for raw in text.split(","):
+            tag = raw.strip()
+            if not tag:
+                continue
+            if not tag.startswith("@"):
+                tag = f"@{tag}"
+            if tag not in seen:
+                new_tags.append(tag)
+                seen.add(tag)
+
+        if new_tags != item.tags:
+            from .commands import EditTagsCommand
+
+            cmd = EditTagsCommand(self, active_list.id, item.id, item.tags, new_tags)
+            self._undo_stack.push(cmd)
+
+    def _on_edit_due_date(self) -> None:
+        """Handle edit due date action — single or multi-select."""
+        item_ids = self.todo_table.get_selected_item_ids()
+        if not item_ids:
+            return
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+
+        if len(item_ids) == 1:
+            # Single item — use existing DueDatePickerDialog
+            item = active_list.get_item(item_ids[0])
+            if not item:
+                return
+            from .widgets.todo_table import DueDatePickerDialog
+
+            dialog = DueDatePickerDialog(item.due_date, item.due_time, self)
+            if dialog.exec() == dialog.DialogCode.Accepted:
+                new_date = dialog.get_date()
+                new_time = dialog.get_time()
+                if new_date != item.due_date:
+                    from .commands import EditDueDateCommand
+
+                    cmd = EditDueDateCommand(
+                        self, active_list.id, item.id, item.due_date, new_date, item.due_time
+                    )
+                    self._undo_stack.push(cmd)
+                if new_time != item.due_time:
+                    from .commands import EditDueTimeCommand
+
+                    cmd = EditDueTimeCommand(self, active_list.id, item.id, item.due_time, new_time)
+                    self._undo_stack.push(cmd)
+        else:
+            # Multiple items — use BatchDueDateDialog
+            items = [active_list.get_item(iid) for iid in item_ids]
+            valid_items = [i for i in items if i is not None]
+            if not valid_items:
+                return
+
+            from .dialogs.batch_due_date import BatchDueDateDialog
+
+            dialog = BatchDueDateDialog(valid_items, self)
+            if dialog.exec() == dialog.DialogCode.Accepted:
+                changes = dialog.get_changes()
+                if not changes:
+                    return
+                from .commands import EditDueDateCommand, EditDueTimeCommand
+
+                self._undo_stack.beginMacro("Edit due dates")
+                for item_id, new_date, new_time in changes:
+                    item = active_list.get_item(item_id)
+                    if not item:
+                        continue
+                    if new_date != item.due_date:
+                        cmd = EditDueDateCommand(
+                            self, active_list.id, item.id, item.due_date, new_date, item.due_time
+                        )
+                        self._undo_stack.push(cmd)
+                    if new_time != item.due_time:
+                        cmd_t = EditDueTimeCommand(
+                            self, active_list.id, item.id, item.due_time, new_time
+                        )
+                        self._undo_stack.push(cmd_t)
+                self._undo_stack.endMacro()
+
     def _on_filter_changed(self, filter_state) -> None:
         """Handle filter state change."""
         self.todo_table.set_filter(filter_state)
@@ -1518,6 +1714,16 @@ class MainWindow(QMainWindow):
             return
         self._pomodoro.start(item.id, item.reminder)
         self._pomodoro_display_timer.start()
+
+    def _on_pause_focus(self) -> None:
+        """Toggle pause/resume on the focus timer."""
+        from .widgets.pomodoro import TimerState
+
+        state = self._pomodoro.state
+        if state == TimerState.WORKING:
+            self._pomodoro.pause()
+        elif state == TimerState.PAUSED:
+            self._pomodoro.resume()
 
     def _on_stop_focus(self) -> None:
         """Stop the focus timer."""
