@@ -41,6 +41,8 @@ _SHORTCUTS: list[tuple[str, str, str]] = [
     ("Sync", "F7", "Push to remote"),
     ("Sync", "Ctrl+Shift+S", "Sync all trusted devices"),
     # Application
+    ("Application", "Ctrl+I", "Import from .ics"),
+    ("Application", "Ctrl+E", "Export list as .ics"),
     ("Application", "Ctrl+P", "Print"),
     ("Application", "Ctrl+Q", "Quit"),
     ("Application", "F1", "Show this help"),

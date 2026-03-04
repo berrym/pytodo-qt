@@ -16,6 +16,7 @@ from PyQt6.QtCore import QTimer, pyqtSlot
 from PyQt6.QtGui import QAction, QIcon, QKeySequence, QPixmap, QShortcut, QTextDocument, QUndoStack
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt6.QtWidgets import (
+    QFileDialog,
     QInputDialog,
     QMainWindow,
     QMenu,
@@ -188,6 +189,14 @@ class MainWindow(QMainWindow):
     def _setup_actions(self) -> None:
         """Create all actions."""
         # File actions
+        self.import_ics_action = QAction("&Import from .ics...", self)
+        self.import_ics_action.setShortcut("Ctrl+I")
+        self.import_ics_action.triggered.connect(self._on_import_ics)
+
+        self.export_ics_action = QAction("&Export List as .ics...", self)
+        self.export_ics_action.setShortcut("Ctrl+E")
+        self.export_ics_action.triggered.connect(self._on_export_ics)
+
         self.print_action = QAction("&Print", self)
         self.print_action.setShortcut("Ctrl+P")
         self.print_action.triggered.connect(self._on_print)
@@ -320,6 +329,9 @@ class MainWindow(QMainWindow):
         # File menu
         file_menu = menu_bar.addMenu("&File")
         if file_menu:
+            file_menu.addAction(self.import_ics_action)
+            file_menu.addAction(self.export_ics_action)
+            file_menu.addSeparator()
             file_menu.addAction(self.print_action)
             file_menu.addSeparator()
             file_menu.addAction(self.settings_action)
@@ -1958,6 +1970,72 @@ class MainWindow(QMainWindow):
             )
             self._pomodoro.update_config(self._config.pomodoro)
             self._refresh_ui()
+
+    def _on_import_ics(self) -> None:
+        """Import items from an .ics file into the active list."""
+        from ..core.caldav import import_ics_to_items
+
+        active_list = self._database.active_list
+        if active_list is None:
+            QMessageBox.warning(self, "Import", "No list selected.")
+            return
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import from .ics", "", "iCalendar Files (*.ics);;All Files (*)"
+        )
+        if not path:
+            return
+
+        try:
+            data = Path(path).read_bytes()
+            items = import_ics_to_items(data)
+        except Exception as e:
+            QMessageBox.critical(self, "Import Error", f"Could not parse file:\n{e}")
+            return
+
+        if not items:
+            QMessageBox.information(
+                self, "Import", "No tasks found in file (may contain only events)."
+            )
+            return
+
+        completed = 0
+        for item in items:
+            active_list.add_item(item)
+            self._storage.save_item(active_list.id, item)
+            if item.complete:
+                completed += 1
+
+        self.status_bar_widget.show_message(
+            f"Imported {len(items)} items ({completed} completed) from {Path(path).name}"
+        )
+        self._refresh_ui()
+
+    def _on_export_ics(self) -> None:
+        """Export the active list as an .ics file."""
+        from ..core.caldav import export_list_to_ics
+
+        active_list = self._database.active_list
+        if active_list is None:
+            QMessageBox.warning(self, "Export", "No list selected.")
+            return
+
+        default_name = f"{active_list.name}.ics"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export List as .ics", default_name, "iCalendar Files (*.ics);;All Files (*)"
+        )
+        if not path:
+            return
+
+        try:
+            ics_data = export_list_to_ics(active_list)
+            Path(path).write_bytes(ics_data)
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Could not write file:\n{e}")
+            return
+
+        count = active_list.active_item_count()
+        self.status_bar_widget.show_message(f"Exported {count} items to {Path(path).name}")
 
     def _on_print(self) -> None:
         """Handle print action."""
