@@ -45,6 +45,7 @@ class TodoItem:
     recurrence_end_date: date | None = None  # Optional end date
     recurrence_end_count: int | None = None  # Optional max occurrences
     recurrence_count: int = 0  # Completed occurrences so far
+    time_spent: int = 0  # Total seconds of completed focus sessions
     created_at: int = field(default_factory=_now_timestamp)
     updated_at: int = field(default_factory=_now_timestamp)
     deleted: bool = False  # Tombstone for sync
@@ -85,6 +86,7 @@ class TodoItem:
             ),
             "recurrence_end_count": self.recurrence_end_count,
             "recurrence_count": self.recurrence_count,
+            "time_spent": self.time_spent,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "deleted": self.deleted,
@@ -112,6 +114,7 @@ class TodoItem:
             recurrence_end_date=recurrence_end_date,
             recurrence_end_count=data.get("recurrence_end_count"),
             recurrence_count=data.get("recurrence_count", 0),
+            time_spent=data.get("time_spent", 0),
             created_at=data.get("created_at", _now_timestamp()),
             updated_at=data.get("updated_at", _now_timestamp()),
             deleted=data.get("deleted", False),

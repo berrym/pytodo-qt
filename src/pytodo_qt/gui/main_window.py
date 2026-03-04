@@ -45,11 +45,18 @@ from .dialogs import (
     ListSyncSettingsDialog,
     PeerManagerDialog,
     SettingsDialog,
+    ShortcutsHelpDialog,
     SyncDialog,
 )
 from .styles import apply_current_theme
 from .styles.themes import Theme, get_system_theme
-from .widgets import ListSelectorWidget, SearchFilterWidget, StatusBarWidget, TodoTableWidget
+from .widgets import (
+    ListSelectorWidget,
+    PomodoroWidget,
+    SearchFilterWidget,
+    StatusBarWidget,
+    TodoTableWidget,
+)
 
 if TYPE_CHECKING:
     pass
@@ -92,6 +99,14 @@ class MainWindow(QMainWindow):
         self._undo_stack.indexChanged.connect(self._auto_scheduler.notify_change)
         self._auto_scheduler.push_requested.connect(self._on_auto_push)
         self._auto_scheduler.sync_requested.connect(self._on_auto_sync)
+
+        # Focus timer
+        self._pomodoro = PomodoroWidget(self._config.pomodoro, self)
+        self._pomodoro.session_completed.connect(self._on_pomodoro_session_completed)
+        self._pomodoro.state_changed.connect(self._on_pomodoro_state_changed)
+        self._pomodoro_display_timer = QTimer(self)
+        self._pomodoro_display_timer.setInterval(1000)
+        self._pomodoro_display_timer.timeout.connect(self._update_pomodoro_display)
 
         self._setup_window()
         self._setup_actions()
@@ -262,12 +277,39 @@ class MainWindow(QMainWindow):
         self.redo_action.setShortcut(QKeySequence.StandardKey.Redo)
         self.redo_action.setIcon(self._get_icon("redo.svg"))
 
+        # Focus timer action
+        self.start_focus_action = QAction("Start &Focus Session", self)
+        self.start_focus_action.setShortcut("Ctrl+T")
+        self.start_focus_action.setToolTip("Start focus timer on selected item (Ctrl+T)")
+        self.start_focus_action.triggered.connect(self._on_start_focus)
+
+        self.stop_focus_action = QAction("S&top Focus Session", self)
+        self.stop_focus_action.triggered.connect(self._on_stop_focus)
+
+        # Help actions
+        self.shortcuts_help_action = QAction("&Keyboard Shortcuts", self)
+        self.shortcuts_help_action.setShortcut("F1")
+        self.shortcuts_help_action.triggered.connect(self._on_shortcuts_help)
+
         # Search shortcuts
         self.search_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
         self.search_shortcut.activated.connect(self._on_search_focus)
 
         self.escape_shortcut = QShortcut(QKeySequence("Escape"), self)
         self.escape_shortcut.activated.connect(self._on_search_escape)
+
+        # List switching shortcuts: Ctrl+1..9
+        for i in range(1, 10):
+            shortcut = QShortcut(QKeySequence(f"Ctrl+{i}"), self)
+            shortcut.activated.connect(lambda idx=i - 1: self._on_switch_list_by_index(idx))
+            setattr(self, f"_list_shortcut_{i}", shortcut)  # prevent GC
+
+        # Ctrl+Left/Right to cycle lists
+        self._list_prev_shortcut = QShortcut(QKeySequence("Ctrl+Left"), self)
+        self._list_prev_shortcut.activated.connect(lambda: self.list_selector.cycle_list(-1))
+
+        self._list_next_shortcut = QShortcut(QKeySequence("Ctrl+Right"), self)
+        self._list_next_shortcut.activated.connect(lambda: self.list_selector.cycle_list(1))
 
     def _setup_menus(self) -> None:
         """Create the menu bar."""
@@ -298,6 +340,9 @@ class MainWindow(QMainWindow):
             todo_menu.addAction(self.toggle_todo_action)
             todo_menu.addSeparator()
             todo_menu.addAction(self.edit_recurrence_action)
+            todo_menu.addSeparator()
+            todo_menu.addAction(self.start_focus_action)
+            todo_menu.addAction(self.stop_focus_action)
 
         # List menu
         list_menu = menu_bar.addMenu("&List")
@@ -345,6 +390,8 @@ class MainWindow(QMainWindow):
         # Help menu
         help_menu = menu_bar.addMenu("&Help")
         if help_menu:
+            help_menu.addAction(self.shortcuts_help_action)
+            help_menu.addSeparator()
             help_menu.addAction(self.about_action)
             help_menu.addAction(self.about_qt_action)
 
@@ -1389,6 +1436,75 @@ class MainWindow(QMainWindow):
         """Handle Escape shortcut."""
         self.search_filter.handle_escape()
 
+    def _on_switch_list_by_index(self, index: int) -> None:
+        """Handle Ctrl+1..9 shortcut to switch list by position."""
+        self.list_selector.set_current_by_index(index)
+
+    def _on_shortcuts_help(self) -> None:
+        """Handle F1 shortcut to show keyboard shortcuts help."""
+        dialog = ShortcutsHelpDialog(self)
+        dialog.exec()
+
+    def _on_start_focus(self) -> None:
+        """Start a focus timer on the selected item."""
+        item_ids = self.todo_table.get_selected_item_ids()
+        if not item_ids:
+            self.status_bar_widget.show_message("Select an item to start focus timer")
+            return
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        item = active_list.get_item(item_ids[0])
+        if item is None:
+            return
+        self._pomodoro.start(item.id, item.reminder)
+        self._pomodoro_display_timer.start()
+
+    def _on_stop_focus(self) -> None:
+        """Stop the focus timer."""
+        self._pomodoro.stop()
+        self._pomodoro_display_timer.stop()
+        self.status_bar_widget.update_pomodoro_display("idle")
+
+    def _on_pomodoro_session_completed(self, item_id: object, seconds: int) -> None:
+        """Handle completed focus session — add time to item."""
+        from uuid import UUID as _UUID
+
+        if not isinstance(item_id, _UUID):
+            return
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        item = active_list.get_item(item_id)
+        if item is None:
+            return
+        item.time_spent += seconds
+        item.mark_updated()
+        self._save_database()
+        self._refresh_ui()
+        from .widgets.pomodoro import PomodoroWidget
+
+        spent_str = PomodoroWidget.format_time_spent(item.time_spent)
+        self.status_bar_widget.show_message(f"Focus session complete! Total: {spent_str}")
+
+    def _on_pomodoro_state_changed(self, state: str) -> None:
+        """Handle focus timer state transition."""
+        if state == "idle":
+            self._pomodoro_display_timer.stop()
+            self.status_bar_widget.update_pomodoro_display("idle")
+        else:
+            if not self._pomodoro_display_timer.isActive():
+                self._pomodoro_display_timer.start()
+            self._update_pomodoro_display()
+
+    def _update_pomodoro_display(self) -> None:
+        """Update status bar with current timer state."""
+        from .widgets.pomodoro import PomodoroWidget
+
+        state = self._pomodoro.state.value
+        time_str = PomodoroWidget.format_time(self._pomodoro.remaining_seconds)
+        self.status_bar_widget.update_pomodoro_display(state, time_str)
+
     def _populate_sync_group_menu(self) -> None:
         """Populate the sync group submenu with available groups."""
         if self.sync_group_menu is None:
@@ -1840,6 +1956,7 @@ class MainWindow(QMainWindow):
                 delay_seconds=self._config.discovery.auto_sync_delay,
                 interval_minutes=self._config.discovery.auto_sync_interval,
             )
+            self._pomodoro.update_config(self._config.pomodoro)
             self._refresh_ui()
 
     def _on_print(self) -> None:

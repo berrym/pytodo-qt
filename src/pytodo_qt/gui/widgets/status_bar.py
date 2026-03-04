@@ -66,6 +66,7 @@ class StatusBarWidget(QStatusBar):
         self.progress_bar.setFormat("%p% complete")
 
         self.list_count_label = QLabel()
+        self.pomodoro_label = QLabel()
         self.item_count_label = QLabel()
         self.total_label = QLabel()
         self._message_label = QLabel()
@@ -94,6 +95,9 @@ class StatusBarWidget(QStatusBar):
 
         # Left section: stats
         layout.addWidget(self.progress_bar)
+        self._pomodoro_separator = self._create_separator()
+        layout.addWidget(self._pomodoro_separator)
+        layout.addWidget(self.pomodoro_label)
         layout.addWidget(self._create_separator())
         layout.addWidget(self.list_count_label)
         layout.addWidget(self._create_separator())
@@ -120,6 +124,7 @@ class StatusBarWidget(QStatusBar):
 
         # Initialize
         self.update_stats(0, 0, 0, 0, 0)
+        self.update_pomodoro_display("idle")
         self.set_status("Ready")
         self.set_server_status(False, "", 0)
         self.set_sync_status("idle")
@@ -215,6 +220,32 @@ class StatusBarWidget(QStatusBar):
             self.sync_status_label.setText(f"{prefix} {time_ago}")
         else:
             self.sync_status_label.setText("Not synced")
+
+    def update_pomodoro_display(self, state: str, time_str: str = "") -> None:
+        """Update the Pomodoro timer display in the status bar.
+
+        Args:
+            state: One of "idle", "working", "break", "paused"
+            time_str: Formatted remaining time (e.g., "23:41")
+        """
+        if state == "idle" or not time_str:
+            self.pomodoro_label.setVisible(False)
+            self._pomodoro_separator.setVisible(False)
+        elif state == "working":
+            self.pomodoro_label.setText(f"\U0001f345 {time_str}")
+            self.pomodoro_label.setStyleSheet("color: #E74C3C; font-weight: bold;")
+            self.pomodoro_label.setVisible(True)
+            self._pomodoro_separator.setVisible(True)
+        elif state == "break":
+            self.pomodoro_label.setText(f"\u2615 {time_str}")
+            self.pomodoro_label.setStyleSheet("color: #27AE60; font-weight: bold;")
+            self.pomodoro_label.setVisible(True)
+            self._pomodoro_separator.setVisible(True)
+        elif state == "paused":
+            self.pomodoro_label.setText(f"\u23f8 {time_str}")
+            self.pomodoro_label.setStyleSheet("color: #F39C12; font-weight: bold;")
+            self.pomodoro_label.setVisible(True)
+            self._pomodoro_separator.setVisible(True)
 
     def set_pending_sync_count(self, count: int) -> None:
         """Set the pending sync count display.

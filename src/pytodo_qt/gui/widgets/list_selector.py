@@ -164,6 +164,21 @@ class ListSelectorWidget(QWidget):
                 return True
         return False
 
+    def set_current_by_index(self, index: int) -> bool:
+        """Set the current list by combo box index (0-based)."""
+        if 0 <= index < self.combo.count():
+            self.combo.setCurrentIndex(index)
+            return True
+        return False
+
+    def cycle_list(self, direction: int) -> None:
+        """Cycle to the next (direction=1) or previous (direction=-1) list."""
+        count = self.combo.count()
+        if count <= 1:
+            return
+        new_index = (self.combo.currentIndex() + direction) % count
+        self.combo.setCurrentIndex(new_index)
+
     def _on_selection_changed(self, index: int) -> None:
         """Handle selection change in combo box."""
         if self._updating:

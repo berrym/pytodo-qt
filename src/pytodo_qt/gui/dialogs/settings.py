@@ -67,6 +67,7 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self._create_security_tab(), "Security")
         self.tabs.addTab(self._create_sync_tab(), "Sync")
         self.tabs.addTab(self._create_appearance_tab(), "Appearance")
+        self.tabs.addTab(self._create_pomodoro_tab(), "Focus Timer")
 
         # Button box
         button_box = QDialogButtonBox(
@@ -301,6 +302,41 @@ class SettingsDialog(QDialog):
 
         return widget
 
+    def _create_pomodoro_tab(self) -> QWidget:
+        """Create the Focus Timer settings tab."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        group = QGroupBox("Focus Timer")
+        form = QFormLayout(group)
+
+        self.work_duration_spin = QSpinBox()
+        self.work_duration_spin.setRange(1, 120)
+        self.work_duration_spin.setSuffix(" minutes")
+        form.addRow("Work duration:", self.work_duration_spin)
+
+        self.break_duration_spin = QSpinBox()
+        self.break_duration_spin.setRange(1, 30)
+        self.break_duration_spin.setSuffix(" minutes")
+        form.addRow("Break duration:", self.break_duration_spin)
+
+        self.long_break_spin = QSpinBox()
+        self.long_break_spin.setRange(5, 60)
+        self.long_break_spin.setSuffix(" minutes")
+        form.addRow("Long break:", self.long_break_spin)
+
+        self.sessions_spin = QSpinBox()
+        self.sessions_spin.setRange(2, 10)
+        form.addRow("Sessions before long break:", self.sessions_spin)
+
+        self.auto_break_check = QCheckBox("Auto-start break after work session")
+        form.addRow("", self.auto_break_check)
+
+        layout.addWidget(group)
+        layout.addStretch()
+
+        return widget
+
     def _load_settings(self) -> None:
         """Load current settings into the UI."""
         config = self._config
@@ -342,6 +378,13 @@ class SettingsDialog(QDialog):
                 self.time_format_combo.setCurrentIndex(i)
                 break
 
+        # Pomodoro
+        self.work_duration_spin.setValue(config.pomodoro.work_duration)
+        self.break_duration_spin.setValue(config.pomodoro.break_duration)
+        self.long_break_spin.setValue(config.pomodoro.long_break_duration)
+        self.sessions_spin.setValue(config.pomodoro.sessions_before_long_break)
+        self.auto_break_check.setChecked(config.pomodoro.auto_start_break)
+
     def _save_settings(self) -> bool:
         """Save settings from UI to config."""
         config = self._config
@@ -373,6 +416,13 @@ class SettingsDialog(QDialog):
         new_theme = self.theme_combo.currentData()
         config.appearance.theme = new_theme
         config.appearance.time_format = self.time_format_combo.currentData()
+
+        # Pomodoro
+        config.pomodoro.work_duration = self.work_duration_spin.value()
+        config.pomodoro.break_duration = self.break_duration_spin.value()
+        config.pomodoro.long_break_duration = self.long_break_spin.value()
+        config.pomodoro.sessions_before_long_break = self.sessions_spin.value()
+        config.pomodoro.auto_start_break = self.auto_break_check.isChecked()
 
         # Save to file
         if not self._config_manager.save():

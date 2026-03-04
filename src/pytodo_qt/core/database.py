@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS items (
     recurrence_end_date TEXT,
     recurrence_end_count INTEGER,
     recurrence_count INTEGER NOT NULL DEFAULT 0,
+    time_spent INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     deleted INTEGER NOT NULL DEFAULT 0,
@@ -257,6 +258,7 @@ class DatabaseStorage:
         self._migrate_schema_6_to_7()
         self._migrate_schema_7_to_8()
         self._migrate_schema_8_to_9()
+        self._migrate_schema_9_to_10()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -387,6 +389,23 @@ class DatabaseStorage:
             logger.log.info("Migrated schema 8->9: added tags column")
 
         self.set_schema_version(9)
+
+    def _migrate_schema_9_to_10(self) -> None:
+        """Migrate schema from version 9 to 10 (add time_spent column)."""
+        current_version = self.get_schema_version()
+        if current_version >= 10:
+            return
+
+        cursor = self.connection.execute("PRAGMA table_info(items)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if "time_spent" not in columns:
+            self.connection.execute(
+                "ALTER TABLE items ADD COLUMN time_spent INTEGER NOT NULL DEFAULT 0"
+            )
+            logger.log.info("Migrated schema 9->10: added time_spent column")
+
+        self.set_schema_version(10)
 
     def get_schema_version(self) -> int:
         """Get current schema version."""
@@ -568,9 +587,9 @@ class DatabaseStorage:
             INSERT OR REPLACE INTO items
             (id, list_id, reminder, priority, complete, due_date, due_time, tags,
              recurrence_type, recurrence_interval, recurrence_end_date,
-             recurrence_end_count, recurrence_count,
+             recurrence_end_count, recurrence_count, time_spent,
              created_at, updated_at, deleted)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(item.id),
@@ -586,6 +605,7 @@ class DatabaseStorage:
                 item.recurrence_end_date.isoformat() if item.recurrence_end_date else None,
                 item.recurrence_end_count,
                 item.recurrence_count,
+                item.time_spent,
                 item.created_at,
                 item.updated_at,
                 1 if item.deleted else 0,
@@ -648,6 +668,12 @@ class DatabaseStorage:
             recurrence_end_count = None
             recurrence_count = 0
 
+        # Handle time_spent column (v10+)
+        try:
+            time_spent = row["time_spent"] or 0
+        except (KeyError, IndexError):
+            time_spent = 0
+
         return TodoItem(
             id=UUID(row["id"]),
             reminder=row["reminder"],
@@ -661,6 +687,7 @@ class DatabaseStorage:
             recurrence_end_date=recurrence_end_date,
             recurrence_end_count=recurrence_end_count,
             recurrence_count=recurrence_count,
+            time_spent=time_spent,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             deleted=bool(row["deleted"]),

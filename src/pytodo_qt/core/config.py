@@ -63,6 +63,17 @@ class DiscoveryConfig:
 
 
 @dataclass
+class PomodoroConfig:
+    """Focus timer settings."""
+
+    work_duration: int = 25  # minutes (1-120)
+    break_duration: int = 5  # minutes (1-30)
+    long_break_duration: int = 15  # minutes (5-60)
+    sessions_before_long_break: int = 4  # (2-10)
+    auto_start_break: bool = True
+
+
+@dataclass
 class AppearanceConfig:
     """UI appearance settings."""
 
@@ -79,6 +90,7 @@ class AppConfig:
     security: SecurityConfig = field(default_factory=SecurityConfig)
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     appearance: AppearanceConfig = field(default_factory=AppearanceConfig)
+    pomodoro: PomodoroConfig = field(default_factory=PomodoroConfig)
 
     def to_toml(self) -> str:
         """Convert config to TOML string."""
@@ -118,6 +130,15 @@ class AppConfig:
         lines.append("[appearance]")
         lines.append(f'theme = "{self.appearance.theme}"')
         lines.append(f'time_format = "{self.appearance.time_format}"')
+        lines.append("")
+
+        # Pomodoro section
+        lines.append("[pomodoro]")
+        lines.append(f"work_duration = {self.pomodoro.work_duration}")
+        lines.append(f"break_duration = {self.pomodoro.break_duration}")
+        lines.append(f"long_break_duration = {self.pomodoro.long_break_duration}")
+        lines.append(f"sessions_before_long_break = {self.pomodoro.sessions_before_long_break}")
+        lines.append(f"auto_start_break = {str(self.pomodoro.auto_start_break).lower()}")
         lines.append("")
 
         return "\n".join(lines)
@@ -166,6 +187,16 @@ class AppConfig:
             config.appearance = AppearanceConfig(
                 theme=app.get("theme", "system"),
                 time_format=app.get("time_format", "system"),
+            )
+
+        if "pomodoro" in data:
+            pom = data["pomodoro"]
+            config.pomodoro = PomodoroConfig(
+                work_duration=pom.get("work_duration", 25),
+                break_duration=pom.get("break_duration", 5),
+                long_break_duration=pom.get("long_break_duration", 15),
+                sessions_before_long_break=pom.get("sessions_before_long_break", 4),
+                auto_start_break=pom.get("auto_start_break", True),
             )
 
         return config
