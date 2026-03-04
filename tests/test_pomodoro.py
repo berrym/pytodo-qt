@@ -13,17 +13,12 @@ Covers:
 
 from __future__ import annotations
 
-import time
-from unittest.mock import MagicMock
 from uuid import uuid4
-
-import pytest
 
 from pytodo_qt.core.config import AppConfig, PomodoroConfig
 from pytodo_qt.core.database import SCHEMA_VERSION, DatabaseStorage
 from pytodo_qt.core.models import TodoItem, create_todo_item, create_todo_list
 from pytodo_qt.gui.widgets.pomodoro import PomodoroWidget, TimerState
-
 
 # ===========================================================================
 # PomodoroConfig tests
