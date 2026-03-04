@@ -217,7 +217,7 @@ QTableWidget {{
 }}
 
 QTableWidget::item {{
-    padding: 8px;
+    padding: 4px;
     border-bottom: 1px solid {colors["border"]};
 }}
 

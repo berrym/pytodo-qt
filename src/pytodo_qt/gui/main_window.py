@@ -1025,6 +1025,12 @@ class MainWindow(QMainWindow):
                             changed_list_ids.add(list_id)
                         elif remote_item.updated_at < local_item.updated_at:
                             local_newer_count += 1
+                        elif remote_item.to_dict() != local_item.to_dict():
+                            # Same timestamp but different data (e.g. new fields
+                            # from schema upgrade) — adopt remote version
+                            local_list.items[item_id] = remote_item
+                            merged_count += 1
+                            changed_list_ids.add(list_id)
                         else:
                             identical_count += 1
                     else:

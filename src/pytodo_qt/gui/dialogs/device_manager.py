@@ -1956,6 +1956,9 @@ class DeviceManagerDialog(QDialog):
                                 merged += 1
                             elif remote_item.updated_at < local_item.updated_at:
                                 local_newer += 1
+                            elif remote_item.to_dict() != local_item.to_dict():
+                                local_list.items[item_id] = remote_item
+                                merged += 1
                             else:
                                 identical += 1
                         else:

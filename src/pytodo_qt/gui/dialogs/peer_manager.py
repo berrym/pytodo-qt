@@ -375,6 +375,9 @@ class PeerManagerDialog(QDialog):
                                 merged_count += 1
                             elif remote_item.updated_at < local_item.updated_at:
                                 local_newer_count += 1
+                            elif remote_item.to_dict() != local_item.to_dict():
+                                local_list.items[item_id] = remote_item
+                                merged_count += 1
                             else:
                                 identical_count += 1
                         else:

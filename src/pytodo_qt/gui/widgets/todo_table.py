@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QVBoxLayout,
     QWidget,
@@ -259,7 +260,7 @@ class TodoTableWidget(QTableWidget):
         # Set row height so text is readable
         v_header = self.verticalHeader()
         if v_header:
-            v_header.setDefaultSectionSize(36)
+            v_header.setDefaultSectionSize(42)
 
         # Selection behavior
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -355,7 +356,7 @@ class TodoTableWidget(QTableWidget):
 
         for row, item in enumerate(items):
             self.insertRow(row)
-            self.setRowHeight(row, 36)
+            self.setRowHeight(row, 42)
             self._item_id_map[row] = item.id
 
             # Priority combo box
@@ -420,6 +421,7 @@ class TodoTableWidget(QTableWidget):
                         f"color: {colors.get('highlight_text', '#ffffff')}; "
                         "border-radius: 8px; padding: 1px 6px; font-size: 10px;"
                     )
+                    chip.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
                     reminder_layout.addWidget(chip)
 
             self.setCellWidget(row, 1, reminder_container)
@@ -451,9 +453,6 @@ class TodoTableWidget(QTableWidget):
                 due_widget.label.setStyleSheet(f"color: {colors['completed_text']};")
 
             self.setCellWidget(row, 2, due_widget)
-
-        # Resize rows to fit widget contents
-        self.resizeRowsToContents()
 
         logger.log.info("Refreshed table with %d items", len(items))
 
