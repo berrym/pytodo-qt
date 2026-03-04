@@ -55,6 +55,7 @@ class WebServer:
 
         # Static file serving
         app.router.add_get("/", self._serve_index)
+        app.router.add_get("/sw.js", self._serve_sw)
         if _STATIC_DIR.is_dir():
             app.router.add_static("/static", _STATIC_DIR)
 
@@ -89,3 +90,13 @@ class WebServer:
         if index_path.exists():
             return web.FileResponse(index_path)
         return web.Response(text="PyTodo-Qt Web UI", content_type="text/html")
+
+    async def _serve_sw(self, request: web.Request) -> web.StreamResponse:
+        """Serve service worker from root scope."""
+        sw_path = _STATIC_DIR / "sw.js"
+        if sw_path.exists():
+            return web.FileResponse(
+                sw_path,
+                headers={"Service-Worker-Allowed": "/"},
+            )
+        return web.Response(status=404)

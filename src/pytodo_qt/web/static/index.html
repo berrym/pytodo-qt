@@ -7,8 +7,11 @@
   <meta name="theme-color" content="#1a1a2e" media="(prefers-color-scheme: dark)">
   <title>PyTodo-Qt</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
 </head>
 <body>
+  <div id="offline-banner" class="hidden">Offline — changes will sync when reconnected</div>
   <header id="header">
     <h1>PyTodo-Qt</h1>
     <select id="list-select"></select>
@@ -28,5 +31,12 @@
   </footer>
 
   <script src="/static/app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(function (err) {
+        console.warn("SW registration failed:", err);
+      });
+    }
+  </script>
 </body>
 </html>

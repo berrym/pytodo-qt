@@ -52,6 +52,16 @@ body {
   flex-direction: column;
 }
 
+/* Offline banner */
+#offline-banner {
+  background: #ff9800;
+  color: #fff;
+  text-align: center;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
 /* Header */
 #header {
   background: var(--accent);

@@ -3,8 +3,10 @@
   "use strict";
 
   const API = "/api";
+  var OFFLINE_QUEUE_KEY = "pytodo_offline_queue";
   let currentListId = null;
   let pollTimer = null;
+  let isOnline = navigator.onLine;
 
   // DOM refs
   const listSelect = document.getElementById("list-select");
@@ -13,6 +15,7 @@
   const itemsContainer = document.getElementById("items-container");
   const emptyMsg = document.getElementById("empty-msg");
   const statusText = document.getElementById("status-text");
+  const offlineBanner = document.getElementById("offline-banner");
 
   // --- API helpers ---
 
@@ -49,6 +52,67 @@
   async function deleteItem(itemId) {
     return api("/items/" + itemId, { method: "DELETE" });
   }
+
+  // --- Offline queue ---
+
+  function getOfflineQueue() {
+    try {
+      return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || "[]");
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveOfflineQueue(queue) {
+    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+  }
+
+  function enqueueOfflineEdit(path, opts) {
+    var queue = getOfflineQueue();
+    queue.push({ path: path, opts: opts, timestamp: Date.now() });
+    saveOfflineQueue(queue);
+  }
+
+  async function replayOfflineQueue() {
+    var queue = getOfflineQueue();
+    if (queue.length === 0) return;
+
+    var remaining = [];
+    for (var i = 0; i < queue.length; i++) {
+      try {
+        await fetch(API + queue[i].path, queue[i].opts);
+      } catch (e) {
+        remaining.push(queue[i]);
+      }
+    }
+    saveOfflineQueue(remaining);
+    if (remaining.length === 0) {
+      await refreshCurrentList();
+    }
+  }
+
+  function updateOnlineStatus(online) {
+    isOnline = online;
+    if (offlineBanner) {
+      if (online) {
+        offlineBanner.classList.add("hidden");
+      } else {
+        offlineBanner.classList.remove("hidden");
+      }
+    }
+  }
+
+  window.addEventListener("online", function () {
+    updateOnlineStatus(true);
+    replayOfflineQueue();
+    refreshCurrentList();
+    startPolling();
+  });
+
+  window.addEventListener("offline", function () {
+    updateOnlineStatus(false);
+    stopPolling();
+  });
 
   // --- Rendering ---
 
@@ -171,19 +235,33 @@
   // --- Event handlers ---
 
   async function onToggle(itemId) {
+    var path = "/items/" + itemId + "/toggle";
+    var opts = { method: "PATCH" };
+    if (!isOnline) {
+      enqueueOfflineEdit(path, opts);
+      return;
+    }
     try {
       await toggleItem(itemId);
       await refreshCurrentList();
     } catch (e) {
+      enqueueOfflineEdit(path, opts);
       console.error("Toggle failed:", e);
     }
   }
 
   async function onDelete(itemId) {
+    var path = "/items/" + itemId;
+    var opts = { method: "DELETE" };
+    if (!isOnline) {
+      enqueueOfflineEdit(path, opts);
+      return;
+    }
     try {
       await deleteItem(itemId);
       await refreshCurrentList();
     } catch (e) {
+      enqueueOfflineEdit(path, opts);
       console.error("Delete failed:", e);
     }
   }
@@ -193,11 +271,24 @@
     var text = addInput.value.trim();
     if (!text || !currentListId) return;
 
+    var path = "/lists/" + currentListId + "/items";
+    var opts = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reminder: text }),
+    };
+    if (!isOnline) {
+      enqueueOfflineEdit(path, opts);
+      addInput.value = "";
+      return;
+    }
     try {
       await addItem(currentListId, text);
       addInput.value = "";
       await refreshCurrentList();
     } catch (err) {
+      enqueueOfflineEdit(path, opts);
+      addInput.value = "";
       console.error("Add failed:", err);
     }
   });
