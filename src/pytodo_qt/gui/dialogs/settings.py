@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -88,21 +89,54 @@ class SettingsDialog(QDialog):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        # Database settings group
-        db_group = QGroupBox("Database")
-        db_layout = QFormLayout(db_group)
+        # Sort order group
+        sort_group = QGroupBox("Sort Order")
+        sort_layout = QFormLayout(sort_group)
 
-        self.sort_key_combo = QComboBox()
-        self.sort_key_combo.addItems(["Priority", "Reminder"])
-        db_layout.addRow("Sort by:", self.sort_key_combo)
+        dimensions = [
+            ("Completion", "completion"),
+            ("Due Date", "due_date"),
+            ("Priority", "priority"),
+        ]
 
-        self.reverse_sort_check = QCheckBox("Reverse sort order")
-        db_layout.addRow("", self.reverse_sort_check)
+        self._sort_combos: list[QComboBox] = []
+        self._sort_reverses: list[QCheckBox] = []
 
-        layout.addWidget(db_group)
+        for label_text in ["Primary:", "Secondary:", "Tertiary:"]:
+            combo = QComboBox()
+            for display, value in dimensions:
+                combo.addItem(display, value)
+            reverse = QCheckBox("Reverse")
+            row_layout = QHBoxLayout()
+            row_layout.addWidget(combo, 1)
+            row_layout.addWidget(reverse)
+            sort_layout.addRow(label_text, row_layout)
+            self._sort_combos.append(combo)
+            self._sort_reverses.append(reverse)
+            combo.currentIndexChanged.connect(lambda _idx, c=combo: self._on_sort_tier_changed(c))
+
+        layout.addWidget(sort_group)
         layout.addStretch()
 
         return widget
+
+    def _on_sort_tier_changed(self, changed_combo: QComboBox) -> None:
+        """Enforce no-duplicate constraint by swapping dimensions."""
+        new_value = changed_combo.currentData()
+        for combo in self._sort_combos:
+            if combo is not changed_combo and combo.currentData() == new_value:
+                all_values = {"completion", "due_date", "priority"}
+                used = {c.currentData() for c in self._sort_combos if c is not combo}
+                missing = all_values - used
+                if missing:
+                    old_value = missing.pop()
+                    combo.blockSignals(True)
+                    for i in range(combo.count()):
+                        if combo.itemData(i) == old_value:
+                            combo.setCurrentIndex(i)
+                            break
+                    combo.blockSignals(False)
+                break
 
     def _create_network_tab(self) -> QWidget:
         """Create the Network settings tab."""
@@ -362,10 +396,26 @@ class SettingsDialog(QDialog):
         """Load current settings into the UI."""
         config = self._config
 
-        # General
-        sort_key = config.database.sort_key
-        self.sort_key_combo.setCurrentIndex(0 if sort_key == "priority" else 1)
-        self.reverse_sort_check.setChecked(config.database.reverse_sort)
+        # Sort order
+        tier_values = [
+            config.database.sort_tier1,
+            config.database.sort_tier2,
+            config.database.sort_tier3,
+        ]
+        tier_reverses = [
+            config.database.sort_tier1_reverse,
+            config.database.sort_tier2_reverse,
+            config.database.sort_tier3_reverse,
+        ]
+        for combo, value in zip(self._sort_combos, tier_values, strict=True):
+            combo.blockSignals(True)
+            for i in range(combo.count()):
+                if combo.itemData(i) == value:
+                    combo.setCurrentIndex(i)
+                    break
+            combo.blockSignals(False)
+        for check, rev in zip(self._sort_reverses, tier_reverses, strict=True):
+            check.setChecked(rev)
 
         # Network
         self.server_enabled_check.setChecked(config.server.enabled)
@@ -414,11 +464,13 @@ class SettingsDialog(QDialog):
         """Save settings from UI to config."""
         config = self._config
 
-        # General
-        config.database.sort_key = (
-            "priority" if self.sort_key_combo.currentIndex() == 0 else "reminder"
-        )
-        config.database.reverse_sort = self.reverse_sort_check.isChecked()
+        # Sort order
+        config.database.sort_tier1 = self._sort_combos[0].currentData()
+        config.database.sort_tier1_reverse = self._sort_reverses[0].isChecked()
+        config.database.sort_tier2 = self._sort_combos[1].currentData()
+        config.database.sort_tier2_reverse = self._sort_reverses[1].isChecked()
+        config.database.sort_tier3 = self._sort_combos[2].currentData()
+        config.database.sort_tier3_reverse = self._sort_reverses[2].isChecked()
 
         # Network
         config.server.enabled = self.server_enabled_check.isChecked()

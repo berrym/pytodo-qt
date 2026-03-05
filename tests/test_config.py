@@ -6,6 +6,7 @@ from pathlib import Path
 from pytodo_qt.core.config import (
     AppConfig,
     ConfigManager,
+    DatabaseConfig,
     DiscoveryConfig,
 )
 
@@ -18,8 +19,12 @@ class TestAppConfig:
         config = AppConfig()
 
         assert config.database.active_list == ""
-        assert config.database.sort_key == "priority"
-        assert config.database.reverse_sort is False
+        assert config.database.sort_tier1 == "completion"
+        assert config.database.sort_tier1_reverse is False
+        assert config.database.sort_tier2 == "due_date"
+        assert config.database.sort_tier2_reverse is False
+        assert config.database.sort_tier3 == "priority"
+        assert config.database.sort_tier3_reverse is False
 
         assert config.server.enabled is True
         assert config.server.address == "0.0.0.0"
@@ -50,8 +55,12 @@ class TestAppConfig:
         data = {
             "database": {
                 "active_list": "My List",
-                "sort_key": "reminder",
-                "reverse_sort": True,
+                "sort_tier1": "priority",
+                "sort_tier1_reverse": True,
+                "sort_tier2": "completion",
+                "sort_tier2_reverse": False,
+                "sort_tier3": "due_date",
+                "sort_tier3_reverse": True,
             },
             "server": {
                 "enabled": False,
@@ -62,12 +71,47 @@ class TestAppConfig:
         config = AppConfig.from_dict(data)
 
         assert config.database.active_list == "My List"
-        assert config.database.sort_key == "reminder"
-        assert config.database.reverse_sort is True
+        assert config.database.sort_tier1 == "priority"
+        assert config.database.sort_tier1_reverse is True
+        assert config.database.sort_tier2 == "completion"
+        assert config.database.sort_tier3 == "due_date"
+        assert config.database.sort_tier3_reverse is True
         assert config.server.enabled is False
         assert config.server.port == 8080
         # Defaults for unspecified values
         assert config.security.protocol_version == 2
+
+    def test_from_dict_missing_sort_tiers_gets_defaults(self):
+        """Old TOML files missing sort tier fields get sensible defaults."""
+        data = {
+            "database": {
+                "active_list": "Old Config",
+                "sort_key": "priority",
+                "reverse_sort": True,
+            },
+        }
+        config = AppConfig.from_dict(data)
+        assert config.database.sort_tier1 == "completion"
+        assert config.database.sort_tier1_reverse is False
+        assert config.database.sort_tier2 == "due_date"
+        assert config.database.sort_tier3 == "priority"
+
+    def test_sort_tiers_helper(self):
+        """Test sort_tiers() returns list of (dimension, reverse) tuples."""
+        config = DatabaseConfig(
+            sort_tier1="priority",
+            sort_tier1_reverse=True,
+            sort_tier2="completion",
+            sort_tier2_reverse=False,
+            sort_tier3="due_date",
+            sort_tier3_reverse=True,
+        )
+        tiers = config.sort_tiers()
+        assert tiers == [
+            ("priority", True),
+            ("completion", False),
+            ("due_date", True),
+        ]
 
 
 class TestConfigManager:
@@ -236,8 +280,9 @@ push = no
             config = manager._migrate_from_ini()
 
             assert config.database.active_list == "WorkItems"
-            assert config.database.sort_key == "reminder"
-            assert config.database.reverse_sort is True
+            # Old sort_key/reverse_sort INI fields are no longer migrated;
+            # new sort tier fields get defaults
+            assert config.database.sort_tier1 == "completion"
             assert config.server.enabled is False
             assert config.server.address == "192.168.1.1"
             assert config.server.port == 7777

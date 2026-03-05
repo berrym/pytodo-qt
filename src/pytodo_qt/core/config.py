@@ -23,8 +23,20 @@ class DatabaseConfig:
     """Database and list settings."""
 
     active_list: str = ""
-    sort_key: str = "priority"
-    reverse_sort: bool = False
+    sort_tier1: str = "completion"
+    sort_tier1_reverse: bool = False
+    sort_tier2: str = "due_date"
+    sort_tier2_reverse: bool = False
+    sort_tier3: str = "priority"
+    sort_tier3_reverse: bool = False
+
+    def sort_tiers(self) -> list[tuple[str, bool]]:
+        """Return sort tiers as [(dimension, reverse), ...]."""
+        return [
+            (self.sort_tier1, self.sort_tier1_reverse),
+            (self.sort_tier2, self.sort_tier2_reverse),
+            (self.sort_tier3, self.sort_tier3_reverse),
+        ]
 
 
 @dataclass
@@ -108,8 +120,12 @@ class AppConfig:
         # Database section
         lines.append("[database]")
         lines.append(f'active_list = "{self.database.active_list}"')
-        lines.append(f'sort_key = "{self.database.sort_key}"')
-        lines.append(f"reverse_sort = {str(self.database.reverse_sort).lower()}")
+        lines.append(f'sort_tier1 = "{self.database.sort_tier1}"')
+        lines.append(f"sort_tier1_reverse = {str(self.database.sort_tier1_reverse).lower()}")
+        lines.append(f'sort_tier2 = "{self.database.sort_tier2}"')
+        lines.append(f"sort_tier2_reverse = {str(self.database.sort_tier2_reverse).lower()}")
+        lines.append(f'sort_tier3 = "{self.database.sort_tier3}"')
+        lines.append(f"sort_tier3_reverse = {str(self.database.sort_tier3_reverse).lower()}")
         lines.append("")
 
         # Server section
@@ -167,8 +183,12 @@ class AppConfig:
             db = data["database"]
             config.database = DatabaseConfig(
                 active_list=db.get("active_list", ""),
-                sort_key=db.get("sort_key", "priority"),
-                reverse_sort=db.get("reverse_sort", False),
+                sort_tier1=db.get("sort_tier1", "completion"),
+                sort_tier1_reverse=db.get("sort_tier1_reverse", False),
+                sort_tier2=db.get("sort_tier2", "due_date"),
+                sort_tier2_reverse=db.get("sort_tier2_reverse", False),
+                sort_tier3=db.get("sort_tier3", "priority"),
+                sort_tier3_reverse=db.get("sort_tier3_reverse", False),
             )
 
         if "server" in data:
@@ -309,8 +329,6 @@ class ConfigManager:
             if "database" in ini:
                 db_section = ini["database"]
                 config.database.active_list = db_section.get("active_list", "")
-                config.database.sort_key = db_section.get("sort_key", "priority")
-                config.database.reverse_sort = db_section.get("reverse_sort", "no").lower() == "yes"
 
             # Migrate server section
             if "server" in ini:

@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 
 from ...core.logger import Logger
 from ...core.models import (
+    TodoItem,
     TodoList,
     format_due_date,
     format_recurrence,
@@ -49,6 +50,27 @@ if TYPE_CHECKING:
 
 
 logger = Logger(__name__)
+
+
+def _sort_fragment(item: TodoItem, dimension: str, reverse: bool) -> tuple:
+    """Return a comparable tuple fragment for one sort dimension."""
+    if dimension == "completion":
+        val = 1 if item.complete else 0
+        return (-val,) if reverse else (val,)
+    elif dimension == "due_date":
+        if item.due_date is None:
+            return (1, 0, 0)
+        date_ord = item.due_date.toordinal()
+        time_secs = (
+            item.due_time.hour * 3600 + item.due_time.minute * 60 + item.due_time.second
+            if item.due_time
+            else -1
+        )
+        return (0, -date_ord, -time_secs) if reverse else (0, date_ord, time_secs)
+    elif dimension == "priority":
+        val = item.priority
+        return (-val,) if reverse else (val,)
+    return ()
 
 
 class ClickableLabel(QLabel):
@@ -283,7 +305,7 @@ class TodoTableWidget(QTableWidget):
         # Corner button: toggle select-all / deselect-all
         corner = self.findChild(QAbstractButton)
         if corner:
-            corner.disconnect()
+            corner.clicked.disconnect()
             corner.clicked.connect(self._on_corner_clicked)
 
         # Selection behavior
@@ -344,6 +366,12 @@ class TodoTableWidget(QTableWidget):
                 if vp:
                     vp.installEventFilter(self)
                     self._v_header_filter_installed = True
+
+    def resizeEvent(self, e) -> None:  # noqa: N802
+        """Update ellipsis visibility when table resizes (e.g. scrollbar appears)."""
+        super().resizeEvent(e)
+        if self._ellipsis_pairs:
+            self._update_ellipsis_visibility()
 
     def _on_corner_clicked(self) -> None:
         """Toggle between select-all and deselect-all."""
@@ -435,30 +463,34 @@ class TodoTableWidget(QTableWidget):
 
         colors = get_colors()
 
-        # Sort items: items with due dates first (by date/time, then priority), then items without
-        def sort_key(item):
-            if item.due_date is None:
-                return (1, "", "", item.priority, item.reminder.lower())
-            else:
-                time_key = item.due_time.isoformat() if item.due_time else ""
-                return (
-                    0,
-                    item.due_date.isoformat(),
-                    time_key,
-                    item.priority,
-                    item.reminder.lower(),
-                )
+        # Load config once for sort order and time format
+        from ...core.config import ConfigManager
 
-        items = sorted(self._current_list.active_items(), key=sort_key)
+        try:
+            config = ConfigManager().load()
+            sort_tiers = config.database.sort_tiers()
+            time_fmt = config.appearance.time_format
+        except Exception:
+            logger.log.exception("Failed to load config for table refresh")
+            sort_tiers = [("completion", False), ("due_date", False), ("priority", False)]
+            time_fmt = "system"
+
+        def sort_key(item):
+            key: list = []
+            for dimension, reverse in sort_tiers:
+                key.extend(_sort_fragment(item, dimension, reverse))
+            key.append(item.reminder.lower())
+            return tuple(key)
+
+        try:
+            items = sorted(self._current_list.active_items(), key=sort_key)
+        except Exception:
+            logger.log.exception("Sort failed, falling back to unsorted")
+            items = list(self._current_list.active_items())
 
         # Apply filter if active
         if self._filter_state is not None and self._filter_state.is_active:
             items = self._apply_filter(items)
-
-        # Load time format config once for all rows
-        from ...core.config import ConfigManager
-
-        time_fmt = ConfigManager().load().appearance.time_format
 
         for row, item in enumerate(items):
             self.insertRow(row)
@@ -589,14 +621,18 @@ class TodoTableWidget(QTableWidget):
             self.setCellWidget(row, 2, due_widget)
 
         logger.log.info("Refreshed table with %d items", len(items))
-        QTimer.singleShot(0, self._update_ellipsis_visibility)
+        # Defer ellipsis check until cell widgets have been laid out and sized
+        QTimer.singleShot(50, self._update_ellipsis_visibility)
 
     def _update_ellipsis_visibility(self) -> None:
         """Show/hide ellipsis indicators based on whether reminder text is truncated."""
         for edit, ellipsis in self._ellipsis_pairs:
+            available = edit.contentsRect().width()
+            # Skip widgets not yet laid out (e.g. last row at edge of viewport)
+            if available <= 0:
+                ellipsis.setVisible(False)
+                continue
             text_width = edit.fontMetrics().horizontalAdvance(edit.text())
-            # Account for QLineEdit internal margins
-            available = edit.width() - 2 * edit.textMargins().left() - 6
             ellipsis.setVisible(text_width > available)
 
     def get_selected_item_ids(self) -> list[UUID]:
