@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from PyQt6.QtCore import QDate, QEvent, QPoint, Qt, pyqtSignal
+from PyQt6.QtCore import QDate, QEvent, QPoint, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QMouseEvent, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractButton,
@@ -247,6 +247,7 @@ class TodoTableWidget(QTableWidget):
         self._item_id_map: dict[int, UUID] = {}  # row -> item_id
         self._filter_state: FilterState | None = None
         self._v_header_filter_installed = False
+        self._ellipsis_pairs: list[tuple[QLineEdit, ClickableLabel]] = []
 
         # Setup table
         self._setup_table()
@@ -272,6 +273,7 @@ class TodoTableWidget(QTableWidget):
             # Set minimum width for Due column to fit "Overdue (99d)" or day names
             header.setMinimumSectionSize(80)
             self.setColumnWidth(2, 130)
+            header.sectionResized.connect(self._update_ellipsis_visibility)
 
         # Set row height so text is readable
         v_header = self.verticalHeader()
@@ -426,6 +428,7 @@ class TodoTableWidget(QTableWidget):
         """Refresh the table contents."""
         self.setRowCount(0)
         self._item_id_map.clear()
+        self._ellipsis_pairs.clear()
 
         if self._current_list is None:
             return
@@ -514,6 +517,20 @@ class TodoTableWidget(QTableWidget):
                 reminder_edit.setToolTip("\n".join(tooltip_parts))
 
             reminder_layout.addWidget(reminder_edit, 1)
+            reminder_edit.setCursorPosition(0)
+            reminder_edit.editingFinished.connect(lambda re=reminder_edit: re.setCursorPosition(0))
+
+            # Ellipsis indicator for viewing full reminder text (shown only when truncated)
+            ellipsis = ClickableLabel("…")
+            ellipsis.setStyleSheet(f"color: {colors['completed_text']}; font-size: 10px;")
+            ellipsis.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            ellipsis.setCursor(Qt.CursorShape.PointingHandCursor)
+            ellipsis.clicked.connect(
+                lambda iid=item.id, e=ellipsis: self._show_reminder_popup(iid, e)
+            )
+            ellipsis.setVisible(False)
+            reminder_layout.addWidget(ellipsis)
+            self._ellipsis_pairs.append((reminder_edit, ellipsis))
 
             # Tag chips (show max 2 inline, overflow badge for the rest)
             _MAX_VISIBLE_TAGS = 2
@@ -572,6 +589,15 @@ class TodoTableWidget(QTableWidget):
             self.setCellWidget(row, 2, due_widget)
 
         logger.log.info("Refreshed table with %d items", len(items))
+        QTimer.singleShot(0, self._update_ellipsis_visibility)
+
+    def _update_ellipsis_visibility(self) -> None:
+        """Show/hide ellipsis indicators based on whether reminder text is truncated."""
+        for edit, ellipsis in self._ellipsis_pairs:
+            text_width = edit.fontMetrics().horizontalAdvance(edit.text())
+            # Account for QLineEdit internal margins
+            available = edit.width() - 2 * edit.textMargins().left() - 6
+            ellipsis.setVisible(text_width > available)
 
     def get_selected_item_ids(self) -> list[UUID]:
         """Get IDs of selected items."""
@@ -619,6 +645,30 @@ class TodoTableWidget(QTableWidget):
         item_id = self._item_id_map.get(row)
         if item_id is not None:
             self.item_due_time_changed.emit(item_id, due_time)
+
+    def _show_reminder_popup(self, item_id: UUID, anchor: QWidget) -> None:
+        """Show a popup with the full reminder text."""
+        if self._current_list is None:
+            return
+        item = self._current_list.get_item(item_id)
+        if not item:
+            return
+
+        colors = get_colors()
+        popup = QWidget(self, Qt.WindowType.Popup)
+        layout = QVBoxLayout(popup)
+        layout.setContentsMargins(8, 6, 8, 6)
+
+        label = QLabel(item.reminder)
+        label.setWordWrap(True)
+        label.setMaximumWidth(400)
+        label.setStyleSheet(f"color: {colors['text']}; font-size: 12px;")
+        layout.addWidget(label)
+
+        popup.adjustSize()
+        pos = anchor.mapToGlobal(QPoint(0, anchor.height() + 2))
+        popup.move(pos)
+        popup.show()
 
     def _show_tag_popup(self, item_id: UUID, badge: QWidget) -> None:
         """Show a popup with all overflow tags as styled chips."""
