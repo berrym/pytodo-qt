@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from PyQt6.QtCore import QDate, QPoint, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QPixmap
+from PyQt6.QtCore import QDate, QEvent, QPoint, Qt, pyqtSignal
+from PyQt6.QtGui import QAction, QMouseEvent, QPixmap
 from PyQt6.QtWidgets import (
+    QAbstractButton,
     QAbstractItemView,
     QCheckBox,
     QComboBox,
@@ -245,6 +246,7 @@ class TodoTableWidget(QTableWidget):
         self._current_list: TodoList | None = None
         self._item_id_map: dict[int, UUID] = {}  # row -> item_id
         self._filter_state: FilterState | None = None
+        self._v_header_filter_installed = False
 
         # Setup table
         self._setup_table()
@@ -275,6 +277,12 @@ class TodoTableWidget(QTableWidget):
         v_header = self.verticalHeader()
         if v_header:
             v_header.setDefaultSectionSize(42)
+
+        # Corner button: toggle select-all / deselect-all
+        corner = self.findChild(QAbstractButton)
+        if corner:
+            corner.disconnect()
+            corner.clicked.connect(self._on_corner_clicked)
 
         # Selection behavior
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -323,6 +331,52 @@ class TodoTableWidget(QTableWidget):
         viewport = self.viewport()
         assert viewport is not None
         menu.exec(viewport.mapToGlobal(pos))
+
+    def showEvent(self, a0) -> None:  # noqa: N802
+        """Install header viewport event filter on first show."""
+        super().showEvent(a0)
+        if not self._v_header_filter_installed:
+            v_header = self.verticalHeader()
+            if v_header:
+                vp = v_header.viewport()
+                if vp:
+                    vp.installEventFilter(self)
+                    self._v_header_filter_installed = True
+
+    def _on_corner_clicked(self) -> None:
+        """Toggle between select-all and deselect-all."""
+        sm = self.selectionModel()
+        if sm and len(sm.selectedRows()) == self.rowCount():
+            self.clearSelection()
+        else:
+            self.selectAll()
+
+    def eventFilter(self, object, event):  # noqa: N802, A002
+        """Toggle row selection when vertical header is clicked."""
+        v_header = self.verticalHeader()
+        if (
+            v_header
+            and object is v_header.viewport()
+            and isinstance(event, QMouseEvent)
+            and event.type() == QEvent.Type.MouseButtonPress
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            row = v_header.logicalIndexAt(event.position().toPoint())
+            sm = self.selectionModel()
+            m = self.model()
+            if row >= 0 and sm and m:
+                if sm.isRowSelected(row):
+                    sm.select(
+                        m.index(row, 0),
+                        sm.SelectionFlag.Deselect | sm.SelectionFlag.Rows,
+                    )
+                else:
+                    sm.select(
+                        m.index(row, 0),
+                        sm.SelectionFlag.Select | sm.SelectionFlag.Rows,
+                    )
+                return True
+        return super().eventFilter(object, event)
 
     def set_list(self, todo_list: TodoList | None) -> None:
         """Set the list to display."""
