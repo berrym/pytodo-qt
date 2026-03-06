@@ -110,6 +110,9 @@ class MainWindow(QMainWindow):
         self._pomodoro_display_timer.setInterval(1000)
         self._pomodoro_display_timer.timeout.connect(self._update_pomodoro_display)
 
+        # Floating focus timer dialog (lazy-created)
+        self._focus_timer_dialog = None
+
         # Web server
         self._web_server: WebServer | None = None
 
@@ -351,19 +354,19 @@ class MainWindow(QMainWindow):
         self._on_redo_text_changed(self._undo_stack.redoText())
 
         # Focus timer actions
-        self.start_focus_action = QAction("Start &Focus Session", self)
+        self.start_focus_action = QAction(self._get_icon("play.svg"), "Start &Focus Session", self)
         self.start_focus_action.setShortcut("Ctrl+T")
         self.start_focus_action.setToolTip(
             self._tip("Start focus timer on selected item", "Ctrl+T")
         )
         self.start_focus_action.triggered.connect(self._on_start_focus)
 
-        self.pause_focus_action = QAction("&Pause/Resume Focus", self)
+        self.pause_focus_action = QAction(self._get_icon("pause.svg"), "&Pause/Resume Focus", self)
         self.pause_focus_action.setShortcut("Ctrl+Space")
         self.pause_focus_action.setToolTip(self._tip("Pause or resume focus timer", "Ctrl+Space"))
         self.pause_focus_action.triggered.connect(self._on_pause_focus)
 
-        self.stop_focus_action = QAction("S&top Focus Session", self)
+        self.stop_focus_action = QAction(self._get_icon("stop.svg"), "S&top Focus Session", self)
         self.stop_focus_action.setShortcut("Ctrl+.")
         self.stop_focus_action.setToolTip(self._tip("Stop focus timer", "Ctrl+."))
         self.stop_focus_action.triggered.connect(self._on_stop_focus)
@@ -500,6 +503,10 @@ class MainWindow(QMainWindow):
             toolbar.addAction(self.edit_recurrence_action)
             toolbar.addAction(self.edit_due_date_action)
             toolbar.addSeparator()
+            toolbar.addAction(self.start_focus_action)
+            toolbar.addAction(self.pause_focus_action)
+            toolbar.addAction(self.stop_focus_action)
+            toolbar.addSeparator()
             toolbar.addAction(self.exit_action)
 
     def _setup_central_widget(self) -> None:
@@ -533,6 +540,7 @@ class MainWindow(QMainWindow):
         self.todo_table.toggle_requested.connect(self._on_toggle_todo)
         self.todo_table.delete_requested.connect(self._on_delete_todo)
         self.todo_table.edit_recurrence_requested.connect(self._on_edit_recurrence)
+        self.todo_table.focus_requested.connect(self._on_context_menu_focus)
         layout.addWidget(self.todo_table)
 
         self.setCentralWidget(central)
@@ -540,6 +548,7 @@ class MainWindow(QMainWindow):
     def _setup_status_bar(self) -> None:
         """Set up the status bar."""
         self.status_bar_widget = StatusBarWidget()
+        self.status_bar_widget.pomodoro_clicked.connect(self._show_focus_timer_dialog)
         self.setStatusBar(self.status_bar_widget)
 
     def _setup_tray_icon(self) -> None:
@@ -1706,12 +1715,42 @@ class MainWindow(QMainWindow):
         if not item_ids:
             self.status_bar_widget.show_message("Select an item to start focus timer")
             return
+        self._start_focus_on_item(item_ids[0])
+
+    def _on_context_menu_focus(self, item_id: object) -> None:
+        """Handle 'Start Focus Session' from context menu."""
+        from uuid import UUID as _UUID
+
+        if isinstance(item_id, _UUID):
+            self._start_focus_on_item(item_id)
+
+    def _start_focus_on_item(self, item_id: UUID) -> None:
+        """Start a focus timer on the given item, prompting if one is already active."""
+        from .widgets.pomodoro import TimerState
+
         active_list = self._database.active_list
         if active_list is None:
             return
-        item = active_list.get_item(item_ids[0])
+        item = active_list.get_item(item_id)
         if item is None:
             return
+
+        # If a session is running on a different item, prompt
+        if (
+            self._pomodoro.state in (TimerState.WORKING, TimerState.BREAK, TimerState.PAUSED)
+            and self._pomodoro.item_id is not None
+            and self._pomodoro.item_id != item_id
+        ):
+            current_name = self._pomodoro.item_name or "another item"
+            result = QMessageBox.question(
+                self,
+                "Focus Session Active",
+                f'A focus session is active on "{current_name}".\nStop it and start a new one?',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if result != QMessageBox.StandardButton.Yes:
+                return
+
         self._pomodoro.start(item.id, item.reminder)
         self._pomodoro_display_timer.start()
 
@@ -1730,6 +1769,8 @@ class MainWindow(QMainWindow):
         self._pomodoro.stop()
         self._pomodoro_display_timer.stop()
         self.status_bar_widget.update_pomodoro_display("idle")
+        if self._focus_timer_dialog is not None:
+            self._focus_timer_dialog.hide()
 
     def _on_pomodoro_session_completed(self, item_id: object, seconds: int) -> None:
         """Handle completed focus session — add time to item."""
@@ -1757,18 +1798,95 @@ class MainWindow(QMainWindow):
         if state == "idle":
             self._pomodoro_display_timer.stop()
             self.status_bar_widget.update_pomodoro_display("idle")
+            if self._focus_timer_dialog is not None:
+                self._focus_timer_dialog.hide()
         else:
             if not self._pomodoro_display_timer.isActive():
                 self._pomodoro_display_timer.start()
             self._update_pomodoro_display()
 
+        # System notifications for state transitions
+        if state == "break" and self.tray_icon is not None:
+            self.tray_icon.showMessage(
+                "Focus Session Complete",
+                "Time for a break!",
+                QSystemTrayIcon.MessageIcon.Information,
+                5000,
+            )
+        elif state == "working" and self._pomodoro.session_count > 0 and self.tray_icon is not None:
+            self.tray_icon.showMessage(
+                "Break Over",
+                "Ready for the next session?",
+                QSystemTrayIcon.MessageIcon.Information,
+                5000,
+            )
+
     def _update_pomodoro_display(self) -> None:
-        """Update status bar with current timer state."""
+        """Update status bar and floating dialog with current timer state."""
         from .widgets.pomodoro import PomodoroWidget
 
         state = self._pomodoro.state.value
         time_str = PomodoroWidget.format_time(self._pomodoro.remaining_seconds)
         self.status_bar_widget.update_pomodoro_display(state, time_str)
+
+        if self._focus_timer_dialog is not None and self._focus_timer_dialog.isVisible():
+            self._focus_timer_dialog.update_display(
+                state,
+                self._pomodoro.remaining_seconds,
+                self._pomodoro.item_name,
+                self._pomodoro.session_count,
+                self._pomodoro.sessions_before_long_break,
+                self._pomodoro_total_duration(),
+            )
+
+    def _pomodoro_total_duration(self) -> int:
+        """Get the total duration in seconds for the current pomodoro phase."""
+        from .widgets.pomodoro import TimerState
+
+        pom = self._config.pomodoro
+        state = self._pomodoro.state
+        if state in (TimerState.WORKING, TimerState.PAUSED):
+            return pom.work_duration * 60
+        if state == TimerState.BREAK:
+            sc = self._pomodoro.session_count
+            if sc > 0 and sc % pom.sessions_before_long_break == 0:
+                return pom.long_break_duration * 60
+            return pom.break_duration * 60
+        return 0
+
+    def _show_focus_timer_dialog(self) -> None:
+        """Show the floating focus timer window."""
+        from .dialogs.focus_timer import FocusTimerDialog
+        from .widgets.pomodoro import TimerState
+
+        if self._pomodoro.state == TimerState.IDLE:
+            self.status_bar_widget.show_message("No focus session active")
+            return
+
+        if self._focus_timer_dialog is None:
+            self._focus_timer_dialog = FocusTimerDialog(self)
+            self._focus_timer_dialog.pause_requested.connect(self._on_pause_focus)
+            self._focus_timer_dialog.stop_requested.connect(self._on_stop_focus)
+            self._focus_timer_dialog.skip_break_requested.connect(self._on_skip_break)
+
+        self._focus_timer_dialog.update_display(
+            self._pomodoro.state.value,
+            self._pomodoro.remaining_seconds,
+            self._pomodoro.item_name,
+            self._pomodoro.session_count,
+            self._pomodoro.sessions_before_long_break,
+            self._pomodoro_total_duration(),
+        )
+        self._focus_timer_dialog.show()
+        self._focus_timer_dialog.raise_()
+        self._focus_timer_dialog.activateWindow()
+
+    def _on_skip_break(self) -> None:
+        """Skip the current break and start the next work session."""
+        from .widgets.pomodoro import TimerState
+
+        if self._pomodoro.state == TimerState.BREAK:
+            self._pomodoro._start_work_session()
 
     def _populate_sync_group_menu(self) -> None:
         """Populate the sync group submenu with available groups."""

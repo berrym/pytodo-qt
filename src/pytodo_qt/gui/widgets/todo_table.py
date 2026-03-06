@@ -262,6 +262,7 @@ class TodoTableWidget(QTableWidget):
     toggle_requested = pyqtSignal()
     delete_requested = pyqtSignal()
     edit_recurrence_requested = pyqtSignal()
+    focus_requested = pyqtSignal(object)  # (item_id)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -341,6 +342,12 @@ class TodoTableWidget(QTableWidget):
             edit_rec_action = QAction("Edit Recurrence...", self)
             edit_rec_action.triggered.connect(self.edit_recurrence_requested.emit)
             menu.addAction(edit_rec_action)
+
+            focus_action = QAction("Start Focus Session", self)
+            focus_action.triggered.connect(
+                lambda checked=False, iid=item_ids[0]: self.focus_requested.emit(iid)
+            )
+            menu.addAction(focus_action)
 
             menu.addSeparator()
 

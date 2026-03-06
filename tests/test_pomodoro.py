@@ -465,3 +465,135 @@ class TestUpdateConfig:
         widget = PomodoroWidget(config)
         qtbot.addWidget(widget)
         assert widget.sessions_before_long_break == 6
+
+
+# ===========================================================================
+# FocusTimerDialog tests
+# ===========================================================================
+
+
+class TestFocusTimerDialog:
+    def test_dialog_creation(self, qtbot):
+        from PyQt6.QtCore import Qt
+
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+        flags = dialog.windowFlags()
+        assert flags & Qt.WindowType.WindowStaysOnTopHint
+
+    def test_update_display_working(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+        dialog.show()
+        dialog.update_display("working", 1500, "Write tests", 1, 4)
+        assert dialog._time_label.text() == "25:00"
+        assert dialog._item_label.text() == "Write tests"
+        assert "2 of 4" in dialog._session_label.text()
+        assert not dialog._skip_btn.isVisible()
+
+    def test_update_display_break(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+        dialog.show()
+        dialog.update_display("break", 300, "Write tests", 1, 4)
+        assert dialog._time_label.text() == "05:00"
+        assert dialog._skip_btn.isVisible()
+
+    def test_update_display_paused(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+        dialog.show()
+        dialog.update_display("paused", 600, "Write tests", 0, 4)
+        assert "\u25b6" in dialog._pause_btn.text()  # Resume icon
+
+    def test_hide_on_idle(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+        dialog.show()
+        assert dialog.isVisible()
+        dialog.update_display("idle", 0, "", 0, 4)
+        assert not dialog.isVisible()
+
+    def test_pause_signal(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+        dialog.show()
+        dialog.update_display("working", 1500, "Test", 0, 4)
+        with qtbot.waitSignal(dialog.pause_requested, timeout=1000):
+            dialog._pause_btn.click()
+
+    def test_stop_signal(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+        dialog.show()
+        with qtbot.waitSignal(dialog.stop_requested, timeout=1000):
+            dialog._stop_btn.click()
+
+    def test_skip_signal(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+        dialog.show()
+        dialog.update_display("break", 300, "Test", 1, 4)
+        with qtbot.waitSignal(dialog.skip_break_requested, timeout=1000):
+            dialog._skip_btn.click()
+
+    def test_close_hides_instead_of_destroying(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+        dialog.show()
+        dialog.close()
+        # Dialog should still exist and be re-showable
+        assert not dialog.isVisible()
+        dialog.show()
+        assert dialog.isVisible()
+
+    def test_progress_bar_updates(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+        dialog.show()
+        dialog.update_display("working", 750, "Test", 0, 4, total_duration=1500)
+        assert dialog._progress_bar.maximum() == 1500
+        assert dialog._progress_bar.value() == 750
+
+
+# ===========================================================================
+# Context menu and status bar signal tests
+# ===========================================================================
+
+
+class TestContextMenuFocus:
+    def test_focus_requested_signal_exists(self, qtbot):
+        from pytodo_qt.gui.widgets.todo_table import TodoTableWidget
+
+        table = TodoTableWidget()
+        qtbot.addWidget(table)
+        assert hasattr(table, "focus_requested")
+
+
+class TestStatusBarClick:
+    def test_pomodoro_clicked_signal_exists(self, qtbot):
+        from pytodo_qt.gui.widgets.status_bar import StatusBarWidget
+
+        bar = StatusBarWidget()
+        qtbot.addWidget(bar)
+        assert hasattr(bar, "pomodoro_clicked")

@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -53,6 +53,8 @@ class StatusBarWidget(QStatusBar):
     QStatusBar's showMessage() from hiding left-side widgets.
     """
 
+    pomodoro_clicked = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # Disable QStatusBar's built-in size grip -- we manage layout ourselves
@@ -67,6 +69,8 @@ class StatusBarWidget(QStatusBar):
 
         self.list_count_label = QLabel()
         self.pomodoro_label = QLabel()
+        self.pomodoro_label.installEventFilter(self)
+        self.pomodoro_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.item_count_label = QLabel()
         self.total_label = QLabel()
         self._message_label = QLabel()
@@ -141,6 +145,18 @@ class StatusBarWidget(QStatusBar):
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         sep.setFixedWidth(10)
         return sep
+
+    def eventFilter(self, a0, a1) -> bool:  # noqa: N802
+        """Detect clicks on the pomodoro label."""
+        if (
+            a0 is self.pomodoro_label
+            and a1 is not None
+            and a1.type() == QEvent.Type.MouseButtonPress
+            and self.pomodoro_label.isVisible()
+        ):
+            self.pomodoro_clicked.emit()
+            return True
+        return super().eventFilter(a0, a1)
 
     def update_stats(
         self,
