@@ -6,9 +6,11 @@ Enhanced status bar widget.
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -19,6 +21,8 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.logger import Logger
+
+_ICONS_DIR = Path(__file__).parent.parent / "icons"
 
 if TYPE_CHECKING:
     pass
@@ -68,9 +72,22 @@ class StatusBarWidget(QStatusBar):
         self.progress_bar.setFormat("%p% complete")
 
         self.list_count_label = QLabel()
+        self._pomodoro_icon_label = QLabel()
+        self._pomodoro_icon_label.setFixedSize(16, 16)
+        self._pomodoro_icon_label.setScaledContents(True)
+        self._pomodoro_icon_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.pomodoro_label = QLabel()
-        self.pomodoro_label.installEventFilter(self)
         self.pomodoro_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Install event filters after both labels exist to avoid AttributeError
+        self._pomodoro_icon_label.installEventFilter(self)
+        self.pomodoro_label.installEventFilter(self)
+
+        # Pre-load pomodoro state icons
+        self._pomodoro_pixmaps: dict[str, QPixmap] = {}
+        for state_name in ("work", "break", "pause"):
+            path = _ICONS_DIR / f"pomodoro-{state_name}.svg"
+            if path.exists():
+                self._pomodoro_pixmaps[state_name] = QPixmap(str(path))
         self.item_count_label = QLabel()
         self.total_label = QLabel()
         self._message_label = QLabel()
@@ -102,6 +119,7 @@ class StatusBarWidget(QStatusBar):
         layout.addWidget(self.progress_bar)
         self._pomodoro_separator = self._create_separator()
         layout.addWidget(self._pomodoro_separator)
+        layout.addWidget(self._pomodoro_icon_label)
         layout.addWidget(self.pomodoro_label)
         layout.addWidget(self._create_separator())
         layout.addWidget(self.list_count_label)
@@ -149,7 +167,7 @@ class StatusBarWidget(QStatusBar):
     def eventFilter(self, a0, a1) -> bool:  # noqa: N802
         """Detect clicks on the pomodoro label."""
         if (
-            a0 is self.pomodoro_label
+            a0 in (self.pomodoro_label, self._pomodoro_icon_label)
             and a1 is not None
             and a1.type() == QEvent.Type.MouseButtonPress
             and self.pomodoro_label.isVisible()
@@ -258,23 +276,36 @@ class StatusBarWidget(QStatusBar):
             time_str: Formatted remaining time (e.g., "23:41")
         """
         if state == "idle" or not time_str:
+            self._pomodoro_icon_label.setVisible(False)
             self.pomodoro_label.setVisible(False)
             self._pomodoro_separator.setVisible(False)
         elif state == "working":
-            self.pomodoro_label.setText(f"\U0001f345 {time_str}")
+            self._set_pomodoro_icon("work")
+            self.pomodoro_label.setText(time_str)
             self.pomodoro_label.setStyleSheet("color: #E74C3C; font-weight: bold;")
+            self._pomodoro_icon_label.setVisible(True)
             self.pomodoro_label.setVisible(True)
             self._pomodoro_separator.setVisible(True)
         elif state == "break":
-            self.pomodoro_label.setText(f"\u2615 {time_str}")
+            self._set_pomodoro_icon("break")
+            self.pomodoro_label.setText(time_str)
             self.pomodoro_label.setStyleSheet("color: #27AE60; font-weight: bold;")
+            self._pomodoro_icon_label.setVisible(True)
             self.pomodoro_label.setVisible(True)
             self._pomodoro_separator.setVisible(True)
         elif state == "paused":
-            self.pomodoro_label.setText(f"\u23f8 {time_str}")
+            self._set_pomodoro_icon("pause")
+            self.pomodoro_label.setText(time_str)
             self.pomodoro_label.setStyleSheet("color: #F39C12; font-weight: bold;")
+            self._pomodoro_icon_label.setVisible(True)
             self.pomodoro_label.setVisible(True)
             self._pomodoro_separator.setVisible(True)
+
+    def _set_pomodoro_icon(self, state_name: str) -> None:
+        """Set the pomodoro icon pixmap for the given state."""
+        pixmap = self._pomodoro_pixmaps.get(state_name)
+        if pixmap:
+            self._pomodoro_icon_label.setPixmap(pixmap)
 
     def set_pending_sync_count(self, count: int) -> None:
         """Set the pending sync count display.

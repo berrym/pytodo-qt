@@ -37,8 +37,9 @@ class FocusTimerDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Focus Timer")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
-        self.setFixedWidth(300)
+        self.setMinimumWidth(300)
         self._setup_ui()
+        self.adjustSize()
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -77,14 +78,17 @@ class FocusTimerDialog(QDialog):
         btn_layout.setSpacing(8)
 
         self._pause_btn = QPushButton("\u23f8 Pause")
+        self._pause_btn.setMinimumWidth(80)
         self._pause_btn.clicked.connect(self.pause_requested.emit)
         btn_layout.addWidget(self._pause_btn)
 
         self._stop_btn = QPushButton("\u25a0 Stop")
+        self._stop_btn.setMinimumWidth(80)
         self._stop_btn.clicked.connect(self.stop_requested.emit)
         btn_layout.addWidget(self._stop_btn)
 
         self._skip_btn = QPushButton("\u23ed Skip")
+        self._skip_btn.setMinimumWidth(80)
         self._skip_btn.clicked.connect(self.skip_break_requested.emit)
         self._skip_btn.setVisible(False)
         btn_layout.addWidget(self._skip_btn)
@@ -147,11 +151,14 @@ class FocusTimerDialog(QDialog):
         else:
             self._pause_btn.setText("\u23f8 Pause")
 
-        # Pause button enabled only during working/paused
-        self._pause_btn.setEnabled(state in ("working", "paused"))
+        # Pause button enabled during working, break, and paused
+        self._pause_btn.setEnabled(state in ("working", "break", "paused"))
 
         # Skip button visible only during break
-        self._skip_btn.setVisible(state == "break")
+        skip_visible = state == "break"
+        if self._skip_btn.isVisible() != skip_visible:
+            self._skip_btn.setVisible(skip_visible)
+            self.adjustSize()
 
     def closeEvent(self, a0) -> None:  # noqa: N802
         """Hide instead of closing so the dialog can be reopened."""

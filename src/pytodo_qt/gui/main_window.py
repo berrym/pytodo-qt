@@ -1759,7 +1759,7 @@ class MainWindow(QMainWindow):
         from .widgets.pomodoro import TimerState
 
         state = self._pomodoro.state
-        if state == TimerState.WORKING:
+        if state in (TimerState.WORKING, TimerState.BREAK):
             self._pomodoro.pause()
         elif state == TimerState.PAUSED:
             self._pomodoro.resume()
@@ -2335,6 +2335,8 @@ class MainWindow(QMainWindow):
         """Handle settings action."""
         dialog = SettingsDialog(self)
         if dialog.exec() == SettingsDialog.DialogCode.Accepted:
+            # Re-fetch config — reload() in SettingsDialog creates a new object
+            self._config = get_config()
             self._auto_scheduler.update_config(
                 delay_seconds=self._config.discovery.auto_sync_delay,
                 interval_minutes=self._config.discovery.auto_sync_interval,

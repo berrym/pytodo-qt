@@ -97,16 +97,17 @@ class PomodoroWidget(QWidget):
         self.state_changed.emit(self._state.value)
 
     def pause(self) -> None:
-        """Pause a running work session."""
-        if self._state == TimerState.WORKING:
+        """Pause a running work or break session."""
+        if self._state in (TimerState.WORKING, TimerState.BREAK):
+            self._paused_from = self._state
             self._timer.stop()
             self._state = TimerState.PAUSED
             self.state_changed.emit(self._state.value)
 
     def resume(self) -> None:
-        """Resume a paused work session."""
+        """Resume a paused session (returns to work or break)."""
         if self._state == TimerState.PAUSED:
-            self._state = TimerState.WORKING
+            self._state = getattr(self, "_paused_from", TimerState.WORKING)
             self._timer.start()
             self.state_changed.emit(self._state.value)
 
