@@ -278,9 +278,10 @@ class AddTodoDialog(QDialog):
         return self._item
 
     @classmethod
-    def create_item(cls, parent=None) -> TodoItem | None:
+    def create_item(cls, parent=None, title: str = "Add To-Do") -> TodoItem | None:
         """Convenience method to show dialog and get result."""
         dialog = cls(parent)
+        dialog.setWindowTitle(title)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             return dialog.get_item()
         return None

@@ -49,6 +49,12 @@ class TodoItem:
     created_at: int = field(default_factory=_now_timestamp)
     updated_at: int = field(default_factory=_now_timestamp)
     deleted: bool = False  # Tombstone for sync
+    parent_id: UUID | None = None  # None = top-level item
+
+    @property
+    def is_subtask(self) -> bool:
+        """Check if this item is a subtask (has a parent)."""
+        return self.parent_id is not None
 
     @property
     def is_recurring(self) -> bool:
@@ -90,6 +96,7 @@ class TodoItem:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "deleted": self.deleted,
+            "parent_id": str(self.parent_id) if self.parent_id else None,
         }
 
     @classmethod
@@ -101,6 +108,8 @@ class TodoItem:
         due_time = time.fromisoformat(due_time_str) if due_time_str else None
         end_date_str = data.get("recurrence_end_date")
         recurrence_end_date = date.fromisoformat(end_date_str) if end_date_str else None
+        parent_id_str = data.get("parent_id")
+        parent_id = UUID(parent_id_str) if parent_id_str else None
         return cls(
             id=UUID(data["id"]) if isinstance(data["id"], str) else data["id"],
             reminder=data.get("reminder", ""),
@@ -118,6 +127,7 @@ class TodoItem:
             created_at=data.get("created_at", _now_timestamp()),
             updated_at=data.get("updated_at", _now_timestamp()),
             deleted=data.get("deleted", False),
+            parent_id=parent_id,
         )
 
     @classmethod
@@ -192,6 +202,21 @@ class TodoList:
     def completed_count(self) -> int:
         """Count completed non-deleted items."""
         return sum(1 for item in self.active_items() if item.complete)
+
+    def get_children(self, parent_id: UUID) -> list[TodoItem]:
+        """Get active children of a parent item, sorted by created_at."""
+        return sorted(
+            (i for i in self.active_items() if i.parent_id == parent_id),
+            key=lambda i: i.created_at,
+        )
+
+    def child_count(self, parent_id: UUID) -> int:
+        """Count active children of a parent item."""
+        return sum(1 for i in self.active_items() if i.parent_id == parent_id)
+
+    def child_completed_count(self, parent_id: UUID) -> int:
+        """Count completed active children of a parent item."""
+        return sum(1 for i in self.active_items() if i.parent_id == parent_id and i.complete)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -577,6 +602,7 @@ def create_todo_item(
     recurrence_interval: int = 1,
     recurrence_end_date: date | None = None,
     recurrence_end_count: int | None = None,
+    parent_id: UUID | None = None,
 ) -> TodoItem:
     """Create a new todo item."""
     return TodoItem(
@@ -589,6 +615,7 @@ def create_todo_item(
         recurrence_interval=recurrence_interval,
         recurrence_end_date=recurrence_end_date,
         recurrence_end_count=recurrence_end_count,
+        parent_id=parent_id,
     )
 
 

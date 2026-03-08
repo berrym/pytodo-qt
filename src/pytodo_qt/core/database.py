@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS items (
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     deleted INTEGER NOT NULL DEFAULT 0,
+    parent_id TEXT,
     FOREIGN KEY (list_id) REFERENCES lists(id)
 )
 """
@@ -259,10 +260,14 @@ class DatabaseStorage:
         self._migrate_schema_7_to_8()
         self._migrate_schema_8_to_9()
         self._migrate_schema_9_to_10()
+        self._migrate_schema_10_to_11()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
             conn.execute(index_sql)
+
+        # Create v11+ indexes (after migration ensures parent_id column exists)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_items_parent_id ON items(parent_id)")
 
         logger.log.debug("Database schema initialized")
 
@@ -406,6 +411,24 @@ class DatabaseStorage:
             logger.log.info("Migrated schema 9->10: added time_spent column")
 
         self.set_schema_version(10)
+
+    def _migrate_schema_10_to_11(self) -> None:
+        """Migrate schema from version 10 to 11 (add parent_id column)."""
+        current_version = self.get_schema_version()
+        if current_version >= 11:
+            return
+
+        cursor = self.connection.execute("PRAGMA table_info(items)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if "parent_id" not in columns:
+            self.connection.execute("ALTER TABLE items ADD COLUMN parent_id TEXT")
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_items_parent_id ON items(parent_id)"
+            )
+            logger.log.info("Migrated schema 10->11: added parent_id column")
+
+        self.set_schema_version(11)
 
     def get_schema_version(self) -> int:
         """Get current schema version."""
@@ -588,8 +611,8 @@ class DatabaseStorage:
             (id, list_id, reminder, priority, complete, due_date, due_time, tags,
              recurrence_type, recurrence_interval, recurrence_end_date,
              recurrence_end_count, recurrence_count, time_spent,
-             created_at, updated_at, deleted)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             created_at, updated_at, deleted, parent_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(item.id),
@@ -609,6 +632,7 @@ class DatabaseStorage:
                 item.created_at,
                 item.updated_at,
                 1 if item.deleted else 0,
+                str(item.parent_id) if item.parent_id else None,
             ),
         )
 
@@ -674,6 +698,13 @@ class DatabaseStorage:
         except (KeyError, IndexError):
             time_spent = 0
 
+        # Handle parent_id column (v11+)
+        try:
+            parent_id_str = row["parent_id"]
+            parent_id = UUID(parent_id_str) if parent_id_str else None
+        except (KeyError, IndexError):
+            parent_id = None
+
         return TodoItem(
             id=UUID(row["id"]),
             reminder=row["reminder"],
@@ -691,6 +722,7 @@ class DatabaseStorage:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             deleted=bool(row["deleted"]),
+            parent_id=parent_id,
         )
 
     # Bulk operations (for sync and migration)

@@ -272,6 +272,14 @@ class MainWindow(QMainWindow):
         self.edit_recurrence_action.setToolTip(self._tip("Edit recurrence", "Ctrl+Shift+R"))
         self.edit_recurrence_action.triggered.connect(self._on_edit_recurrence)
 
+        self.add_subtask_action = QAction("Add &Subtask...", self)
+        self.add_subtask_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
+        self.add_subtask_action.setToolTip(
+            self._tip("Add subtask to selected item", "Ctrl+Shift+N")
+        )
+        self.add_subtask_action.triggered.connect(lambda: self._on_add_subtask())
+        self.addAction(self.add_subtask_action)
+
         self.edit_due_date_action = QAction(
             self._get_icon("calendar.svg"), "Edit Due &Date...", self
         )
@@ -424,6 +432,7 @@ class MainWindow(QMainWindow):
         todo_menu = menu_bar.addMenu("&To-Do")
         if todo_menu:
             todo_menu.addAction(self.add_todo_action)
+            todo_menu.addAction(self.add_subtask_action)
             todo_menu.addAction(self.delete_todo_action)
             todo_menu.addAction(self.toggle_todo_action)
             todo_menu.addSeparator()
@@ -541,6 +550,7 @@ class MainWindow(QMainWindow):
         self.todo_table.delete_requested.connect(self._on_delete_todo)
         self.todo_table.edit_recurrence_requested.connect(self._on_edit_recurrence)
         self.todo_table.focus_requested.connect(self._on_context_menu_focus)
+        self.todo_table.add_subtask_requested.connect(self._on_add_subtask)
         layout.addWidget(self.todo_table)
 
         self.setCentralWidget(central)
@@ -1294,6 +1304,32 @@ class MainWindow(QMainWindow):
             from .commands import AddItemCommand
 
             cmd = AddItemCommand(self, self._database.active_list.id, item)
+            self._undo_stack.push(cmd)
+
+    def _on_add_subtask(self, parent_id: UUID | None = None) -> None:
+        """Handle add subtask action."""
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+
+        # If no parent_id given, use selected item
+        if parent_id is None:
+            selected = self.todo_table.get_selected_item_ids()
+            if len(selected) != 1:
+                return
+            parent_id = selected[0]
+
+        # Validate parent exists and is not itself a subtask
+        parent = active_list.get_item(parent_id)
+        if not parent or parent.parent_id is not None:
+            return
+
+        item = AddTodoDialog.create_item(self, title="Add Subtask")
+        if item is not None:
+            item.parent_id = parent_id
+            from .commands import AddItemCommand
+
+            cmd = AddItemCommand(self, active_list.id, item)
             self._undo_stack.push(cmd)
 
     def _on_delete_todo(self) -> None:

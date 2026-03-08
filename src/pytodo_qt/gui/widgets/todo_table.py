@@ -5,6 +5,7 @@ Table widget for displaying and editing to-do items.
 
 from __future__ import annotations
 
+import contextlib
 from datetime import date, time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -228,6 +229,10 @@ class DueDateLabel(QWidget):
         self.setMinimumWidth(180)
 
     def mousePressEvent(self, a0) -> None:  # noqa: N802
+        if a0 is not None and a0.button() == Qt.MouseButton.RightButton:
+            # Let right-click propagate to parent table for context menu
+            a0.ignore()
+            return
         self._show_date_picker()
 
     def _show_date_picker(self) -> None:
@@ -263,6 +268,7 @@ class TodoTableWidget(QTableWidget):
     delete_requested = pyqtSignal()
     edit_recurrence_requested = pyqtSignal()
     focus_requested = pyqtSignal(object)  # (item_id)
+    add_subtask_requested = pyqtSignal(object)  # (parent_id)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -271,6 +277,8 @@ class TodoTableWidget(QTableWidget):
         self._filter_state: FilterState | None = None
         self._v_header_filter_installed = False
         self._ellipsis_pairs: list[tuple[QLineEdit, ClickableLabel]] = []
+        self._collapsed_parents: set[UUID] = set()
+        self._context_row_ids: set[UUID] = set()
 
         # Setup table
         self._setup_table()
@@ -349,6 +357,15 @@ class TodoTableWidget(QTableWidget):
             )
             menu.addAction(focus_action)
 
+            # Only allow adding subtasks to top-level items
+            item = self._current_list.get_item(item_ids[0]) if self._current_list else None
+            if item and item.parent_id is None:
+                add_subtask_action = QAction("Add Subtask...", self)
+                add_subtask_action.triggered.connect(
+                    lambda checked=False, iid=item_ids[0]: self.add_subtask_requested.emit(iid)
+                )
+                menu.addAction(add_subtask_action)
+
             menu.addSeparator()
 
         toggle_action = QAction("Toggle Complete", self)
@@ -426,7 +443,11 @@ class TodoTableWidget(QTableWidget):
         self.refresh()
 
     def _apply_filter(self, items: list) -> list:
-        """Filter items based on current filter state."""
+        """Filter items based on current filter state.
+
+        When a child matches but its parent doesn't, the parent is added as a
+        context row (muted styling, read-only) so the hierarchy remains visible.
+        """
         if self._filter_state is None:
             return items
         filtered = items
@@ -457,13 +478,84 @@ class TodoTableWidget(QTableWidget):
         # Tag filter
         if self._filter_state.tag:
             filtered = [i for i in filtered if self._filter_state.tag in i.tags]
+
+        # Pull in parent context rows for children whose parents aren't in results
+        filtered_ids = {i.id for i in filtered}
+        items_by_id = {i.id: i for i in items}
+        self._context_row_ids.clear()
+        parents_to_add: list[TodoItem] = []
+        for item in filtered:
+            if item.parent_id and item.parent_id not in filtered_ids:
+                parent = items_by_id.get(item.parent_id)
+                if parent and parent.id not in self._context_row_ids:
+                    self._context_row_ids.add(parent.id)
+                    parents_to_add.append(parent)
+                    filtered_ids.add(parent.id)
+        filtered.extend(parents_to_add)
         return filtered
+
+    def _build_display_order(self, items: list[TodoItem], sort_key) -> list[tuple[TodoItem, bool]]:
+        """Build hierarchical display order: parents followed by their children.
+
+        Returns list of (item, is_child) tuples.
+        """
+        active_ids = {i.id for i in items}
+        top_level: list[TodoItem] = []
+        children_by_parent: dict[UUID, list[TodoItem]] = {}
+
+        for item in items:
+            if item.parent_id is None or item.parent_id not in active_ids:
+                # Top-level item or orphan (parent deleted/filtered)
+                top_level.append(item)
+            else:
+                children_by_parent.setdefault(item.parent_id, []).append(item)
+
+        # Sort top-level items
+        with contextlib.suppress(Exception):
+            top_level.sort(key=sort_key)
+
+        # Sort children within each group
+        for children in children_by_parent.values():
+            with contextlib.suppress(Exception):
+                children.sort(key=sort_key)
+
+        result: list[tuple[TodoItem, bool]] = []
+        for item in top_level:
+            result.append((item, False))
+            if item.id not in self._collapsed_parents:
+                for child in children_by_parent.get(item.id, []):
+                    result.append((child, True))
+        return result
+
+    def _toggle_collapse(self, parent_id: UUID) -> None:
+        """Toggle collapse state of a parent item."""
+        if parent_id in self._collapsed_parents:
+            self._collapsed_parents.discard(parent_id)
+        else:
+            self._collapsed_parents.add(parent_id)
+        self.refresh()
+
+    def keyPressEvent(self, e) -> None:  # noqa: N802
+        """Handle keyboard shortcuts for collapse/expand."""
+        if self._current_list and e is not None:
+            selected = self.get_selected_item_ids()
+            if len(selected) == 1:
+                item = self._current_list.get_item(selected[0])
+                if item and item.parent_id is None:
+                    if e.key() == Qt.Key.Key_Left and item.id not in self._collapsed_parents:
+                        self._toggle_collapse(item.id)
+                        return
+                    if e.key() == Qt.Key.Key_Right and item.id in self._collapsed_parents:
+                        self._toggle_collapse(item.id)
+                        return
+        super().keyPressEvent(e)
 
     def refresh(self) -> None:
         """Refresh the table contents."""
         self.setRowCount(0)
         self._item_id_map.clear()
         self._ellipsis_pairs.clear()
+        self._context_row_ids.clear()
 
         if self._current_list is None:
             return
@@ -499,7 +591,17 @@ class TodoTableWidget(QTableWidget):
         if self._filter_state is not None and self._filter_state.is_active:
             items = self._apply_filter(items)
 
-        for row, item in enumerate(items):
+        # Build hierarchical display order
+        display_items = self._build_display_order(items, sort_key)
+
+        # Pre-compute children info for parent badges
+        children_by_parent: dict[UUID, list[TodoItem]] = {}
+        for item in items:
+            if item.parent_id is not None:
+                children_by_parent.setdefault(item.parent_id, []).append(item)
+
+        for row, (item, is_child) in enumerate(display_items):
+            is_context = item.id in self._context_row_ids
             self.insertRow(row)
             self.setRowHeight(row, 42)
             self._item_id_map[row] = item.id
@@ -531,12 +633,40 @@ class TodoTableWidget(QTableWidget):
             reminder_layout.setContentsMargins(0, 0, 0, 0)
             reminder_layout.setSpacing(4)
 
+            # Child indentation
+            if is_child:
+                indent = QWidget()
+                indent.setFixedWidth(24)
+                reminder_layout.addWidget(indent)
+                prefix = QLabel("\u203a")  # Single right-pointing angle quotation mark
+                prefix.setStyleSheet(f"color: {colors['completed_text']}; font-size: 14px;")
+                prefix.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+                reminder_layout.addWidget(prefix)
+
+            # Parent expand/collapse toggle
+            has_children = item.id in children_by_parent
+            if has_children and not is_child:
+                collapsed = item.id in self._collapsed_parents
+                toggle_char = "\u25b6" if collapsed else "\u25bc"  # ▶ or ▼
+                toggle_btn = ClickableLabel(toggle_char)
+                toggle_btn.setStyleSheet(
+                    f"color: {colors['completed_text']}; font-size: 10px; padding: 0 2px;"
+                )
+                toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                toggle_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+                toggle_btn.clicked.connect(lambda pid=item.id: self._toggle_collapse(pid))
+                reminder_layout.addWidget(toggle_btn)
+
             reminder_edit = QLineEdit(item.reminder)
             reminder_edit.setMinimumHeight(32)
             reminder_edit.returnPressed.connect(lambda r=row: self._on_reminder_changed(r))
 
             # Style based on completion status
-            if item.complete:
+            if is_context:
+                reminder_edit.setFont(self._normal_font)
+                reminder_edit.setStyleSheet(f"color: {colors['completed_text']};")
+                reminder_edit.setReadOnly(True)
+            elif item.complete:
                 reminder_edit.setFont(self._completed_font)
                 reminder_edit.setStyleSheet(
                     f"color: {colors['completed_text']}; "
@@ -570,6 +700,24 @@ class TodoTableWidget(QTableWidget):
             ellipsis.setVisible(False)
             reminder_layout.addWidget(ellipsis)
             self._ellipsis_pairs.append((reminder_edit, ellipsis))
+
+            # Parent progress badge [completed/total]
+            if has_children and not is_child:
+                children = children_by_parent[item.id]
+                completed = sum(1 for c in children if c.complete)
+                total = len(children)
+                badge_text = f"[{completed}/{total}]"
+                badge_label = QLabel(badge_text)
+                badge_color = (
+                    colors.get("due_today", "#4CAF50")
+                    if completed == total
+                    else colors["completed_text"]
+                )
+                badge_label.setStyleSheet(
+                    f"color: {badge_color}; font-size: 10px; font-weight: bold;"
+                )
+                badge_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+                reminder_layout.addWidget(badge_label)
 
             # Tag chips (show max 2 inline, overflow badge for the rest)
             _MAX_VISIBLE_TAGS = 2
@@ -627,7 +775,7 @@ class TodoTableWidget(QTableWidget):
 
             self.setCellWidget(row, 2, due_widget)
 
-        logger.log.info("Refreshed table with %d items", len(items))
+        logger.log.info("Refreshed table with %d items", len(display_items))
         # Defer ellipsis check until cell widgets have been laid out and sized
         QTimer.singleShot(50, self._update_ellipsis_visibility)
 

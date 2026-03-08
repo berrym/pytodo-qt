@@ -57,11 +57,20 @@ class DeleteItemsCommand(QUndoCommand):
         self._window = window
         self._list_id = list_id
         self._item_ids = item_ids
+        self._orphaned_children: list[tuple[UUID, UUID | None]] = []  # (child_id, old_parent_id)
 
     def redo(self) -> None:
         todo_list = self._window._database.lists.get(self._list_id)
         if not todo_list:
             return
+        deleted_ids = set(self._item_ids)
+        # Find children that will be orphaned and promote them to top-level
+        self._orphaned_children.clear()
+        for item in todo_list.items.values():
+            if not item.deleted and item.parent_id in deleted_ids and item.id not in deleted_ids:
+                self._orphaned_children.append((item.id, item.parent_id))
+                item.parent_id = None
+                item.mark_updated()
         for item_id in self._item_ids:
             todo_list.remove_item(item_id)
         self._window._save_database()
@@ -71,6 +80,12 @@ class DeleteItemsCommand(QUndoCommand):
         todo_list = self._window._database.lists.get(self._list_id)
         if not todo_list:
             return
+        # Restore orphaned children's parent_id
+        for child_id, old_parent_id in self._orphaned_children:
+            child = todo_list.items.get(child_id)
+            if child:
+                child.parent_id = old_parent_id
+                child.mark_updated()
         for item_id in self._item_ids:
             item = todo_list.items.get(item_id)
             if item:
@@ -532,6 +547,47 @@ class RenameListCommand(QUndoCommand):
             return
         todo_list.name = self._old_name
         todo_list.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+
+class ReparentCommand(QUndoCommand):
+    """Change an item's parent (move between top-level and subtask)."""
+
+    def __init__(
+        self,
+        window: MainWindow,
+        list_id: UUID,
+        item_id: UUID,
+        old_parent_id: UUID | None,
+        new_parent_id: UUID | None,
+    ) -> None:
+        super().__init__("Reparent item")
+        self._window = window
+        self._list_id = list_id
+        self._item_id = item_id
+        self._old_parent_id = old_parent_id
+        self._new_parent_id = new_parent_id
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if item:
+            item.parent_id = self._new_parent_id
+            item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if item:
+            item.parent_id = self._old_parent_id
+            item.mark_updated()
         self._window._save_database()
         self._window._refresh_ui()
 

@@ -379,7 +379,7 @@ class TestTimeSpentField:
 
 class TestSchemaV10:
     def test_current_version_is_10(self):
-        assert SCHEMA_VERSION == 10
+        assert SCHEMA_VERSION == 11
 
     def test_fresh_database_has_time_spent_column(self, tmp_path):
         db_path = tmp_path / "test.db"
