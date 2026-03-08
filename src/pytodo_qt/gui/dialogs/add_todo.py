@@ -106,6 +106,14 @@ class AddTodoDialog(QDialog):
         self.tags_edit.setToolTip("Comma-separated tags (@ prefix added automatically)")
         form.addRow("Tags:", self.tags_edit)
 
+        # Estimated focus sessions
+        self.estimated_pomodoros_spin = QSpinBox()
+        self.estimated_pomodoros_spin.setRange(0, 99)
+        self.estimated_pomodoros_spin.setValue(0)
+        self.estimated_pomodoros_spin.setSpecialValueText("None")
+        self.estimated_pomodoros_spin.setToolTip("Estimated number of focus sessions to complete")
+        form.addRow("Estimated Sessions:", self.estimated_pomodoros_spin)
+
         # Recurrence section
         self.recurrence_checkbox = QCheckBox("Repeat")
         self.recurrence_checkbox.setEnabled(False)
@@ -259,6 +267,8 @@ class AddTodoDialog(QDialog):
                     if tag not in tags:
                         tags.append(tag)
 
+        estimated_pomodoros = self.estimated_pomodoros_spin.value()
+
         self._item = TodoItem(
             reminder=reminder,
             priority=priority,
@@ -269,6 +279,7 @@ class AddTodoDialog(QDialog):
             recurrence_interval=recurrence_interval,
             recurrence_end_date=recurrence_end_date,
             recurrence_end_count=recurrence_end_count,
+            estimated_pomodoros=estimated_pomodoros,
         )
         logger.log.info("Created new todo item: %s", reminder[:50])
         self.accept()

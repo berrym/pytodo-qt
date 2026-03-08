@@ -378,8 +378,8 @@ class TestTimeSpentField:
 
 
 class TestSchemaV10:
-    def test_current_version_is_10(self):
-        assert SCHEMA_VERSION == 11
+    def test_current_version_is_12(self):
+        assert SCHEMA_VERSION == 12
 
     def test_fresh_database_has_time_spent_column(self, tmp_path):
         db_path = tmp_path / "test.db"
@@ -772,3 +772,131 @@ class TestDeletionStopsFocusTimer:
         MainWindow._on_delete_todo(window)
 
         window._on_stop_focus.assert_not_called()
+
+
+# ===========================================================================
+# Phase B: Per-task pomodoro tracking tests
+# ===========================================================================
+
+
+class TestPomodoroCountField:
+    def test_default_zero(self):
+        item = TodoItem()
+        assert item.pomodoro_count == 0
+        assert item.estimated_pomodoros == 0
+
+    def test_set_values(self):
+        item = TodoItem(pomodoro_count=3, estimated_pomodoros=4)
+        assert item.pomodoro_count == 3
+        assert item.estimated_pomodoros == 4
+
+    def test_serialization_roundtrip(self):
+        item = create_todo_item("Test")
+        item.pomodoro_count = 5
+        item.estimated_pomodoros = 8
+        d = item.to_dict()
+        assert d["pomodoro_count"] == 5
+        assert d["estimated_pomodoros"] == 8
+        restored = TodoItem.from_dict(d)
+        assert restored.pomodoro_count == 5
+        assert restored.estimated_pomodoros == 8
+
+    def test_from_dict_missing_fields(self):
+        d = {"id": str(uuid4()), "reminder": "Old"}
+        item = TodoItem.from_dict(d)
+        assert item.pomodoro_count == 0
+        assert item.estimated_pomodoros == 0
+
+    def test_create_todo_item_with_estimate(self):
+        item = create_todo_item("Plan", estimated_pomodoros=4)
+        assert item.estimated_pomodoros == 4
+        assert item.pomodoro_count == 0
+
+
+class TestSchemaV12:
+    def test_fresh_database_has_pomodoro_columns(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        storage = DatabaseStorage(db_path)
+        cursor = storage.connection.execute("PRAGMA table_info(items)")
+        columns = [row[1] for row in cursor.fetchall()]
+        assert "pomodoro_count" in columns
+        assert "estimated_pomodoros" in columns
+        storage.close()
+
+    def test_save_and_load_pomodoro_fields(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        storage = DatabaseStorage(db_path)
+
+        lst = create_todo_list("Test")
+        item = create_todo_item("Focus", estimated_pomodoros=4)
+        item.pomodoro_count = 2
+        lst.add_item(item)
+
+        storage.save_list(lst)
+        storage.save_item(lst.id, item)
+
+        loaded = storage.get_item(item.id)
+        assert loaded is not None
+        assert loaded.pomodoro_count == 2
+        assert loaded.estimated_pomodoros == 4
+        storage.close()
+
+
+class TestEditTimeSpentCommandWithPomodoro:
+    def test_redo_increments_pomodoro_count(self):
+        from pytodo_qt.core.models import Database, create_todo_item, create_todo_list
+        from pytodo_qt.gui.commands import EditTimeSpentCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Focus task")
+        item.pomodoro_count = 2
+        lst.add_item(item)
+        db.add_list(lst)
+        db.set_active_list(lst.id)
+        window = _make_window(db)
+
+        cmd = EditTimeSpentCommand(window, lst.id, item.id, 0, 1500, 2)
+        cmd.redo()
+
+        assert item.pomodoro_count == 3
+        assert item.time_spent == 1500
+
+    def test_undo_restores_pomodoro_count(self):
+        from pytodo_qt.core.models import Database, create_todo_item, create_todo_list
+        from pytodo_qt.gui.commands import EditTimeSpentCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Focus task")
+        item.pomodoro_count = 2
+        lst.add_item(item)
+        db.add_list(lst)
+        db.set_active_list(lst.id)
+        window = _make_window(db)
+
+        cmd = EditTimeSpentCommand(window, lst.id, item.id, 0, 1500, 2)
+        cmd.redo()
+        cmd.undo()
+
+        assert item.pomodoro_count == 2
+        assert item.time_spent == 0
+
+    def test_default_pomodoro_count_zero(self):
+        """Backward compat: old callers without pomodoro_count param."""
+        from pytodo_qt.core.models import Database, create_todo_item, create_todo_list
+        from pytodo_qt.gui.commands import EditTimeSpentCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Focus task")
+        lst.add_item(item)
+        db.add_list(lst)
+        db.set_active_list(lst.id)
+        window = _make_window(db)
+
+        cmd = EditTimeSpentCommand(window, lst.id, item.id, 0, 1500)
+        cmd.redo()
+
+        assert item.pomodoro_count == 1
+        assert item.time_spent == 1500

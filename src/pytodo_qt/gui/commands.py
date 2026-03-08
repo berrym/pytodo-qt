@@ -593,7 +593,7 @@ class ReparentCommand(QUndoCommand):
 
 
 class EditTimeSpentCommand(QUndoCommand):
-    """Add focus session time to an item (undo-able)."""
+    """Add focus session time and increment pomodoro count (undo-able)."""
 
     def __init__(
         self,
@@ -602,6 +602,7 @@ class EditTimeSpentCommand(QUndoCommand):
         item_id: UUID,
         old_time_spent: int,
         seconds_to_add: int,
+        old_pomodoro_count: int = 0,
     ) -> None:
         super().__init__("Focus session")
         self._window = window
@@ -609,6 +610,8 @@ class EditTimeSpentCommand(QUndoCommand):
         self._item_id = item_id
         self._old_time_spent = old_time_spent
         self._new_time_spent = old_time_spent + seconds_to_add
+        self._old_pomodoro_count = old_pomodoro_count
+        self._new_pomodoro_count = old_pomodoro_count + 1
 
     def redo(self) -> None:
         todo_list = self._window._database.lists.get(self._list_id)
@@ -617,6 +620,7 @@ class EditTimeSpentCommand(QUndoCommand):
         item = todo_list.get_item(self._item_id)
         if item:
             item.time_spent = self._new_time_spent
+            item.pomodoro_count = self._new_pomodoro_count
             item.mark_updated()
         self._window._save_database()
         self._window._refresh_ui()
@@ -628,6 +632,7 @@ class EditTimeSpentCommand(QUndoCommand):
         item = todo_list.get_item(self._item_id)
         if item:
             item.time_spent = self._old_time_spent
+            item.pomodoro_count = self._old_pomodoro_count
             item.mark_updated()
         self._window._save_database()
         self._window._refresh_ui()

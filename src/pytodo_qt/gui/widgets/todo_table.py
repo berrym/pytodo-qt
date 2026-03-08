@@ -688,6 +688,11 @@ class TodoTableWidget(QTableWidget):
                 tooltip_parts.append(
                     f"Time spent: {PomodoroWidget.format_time_spent(item.time_spent)}"
                 )
+            if item.pomodoro_count > 0 or item.estimated_pomodoros > 0:
+                pomo_text = f"Sessions: {item.pomodoro_count}"
+                if item.estimated_pomodoros > 0:
+                    pomo_text += f" / {item.estimated_pomodoros} estimated"
+                tooltip_parts.append(pomo_text)
             if tooltip_parts:
                 reminder_edit.setToolTip("\n".join(tooltip_parts))
 
@@ -716,6 +721,39 @@ class TodoTableWidget(QTableWidget):
                 time_label.setStyleSheet(f"color: {colors['completed_text']}; font-size: 10px;")
                 time_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
                 reminder_layout.addWidget(time_label)
+
+            # Inline pomodoro count with tomato icon
+            if item.pomodoro_count > 0 or item.estimated_pomodoros > 0:
+                pomo_container = QHBoxLayout()
+                pomo_container.setContentsMargins(0, 0, 0, 0)
+                pomo_container.setSpacing(2)
+
+                icon_path = Path(__file__).parent.parent / "icons" / "pomodoro-work.svg"
+                if icon_path.exists():
+                    pomo_icon = QLabel()
+                    pomo_pixmap = QPixmap(str(icon_path)).scaled(
+                        12,
+                        12,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                    pomo_icon.setPixmap(pomo_pixmap)
+                    pomo_icon.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+                    pomo_container.addWidget(pomo_icon)
+
+                if item.estimated_pomodoros > 0:
+                    pomo_text = f"{item.pomodoro_count}/{item.estimated_pomodoros}"
+                else:
+                    pomo_text = str(item.pomodoro_count)
+                pomo_label = QLabel(pomo_text)
+                pomo_label.setStyleSheet(f"color: {colors['completed_text']}; font-size: 10px;")
+                pomo_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+                pomo_container.addWidget(pomo_label)
+
+                pomo_widget = QWidget()
+                pomo_widget.setLayout(pomo_container)
+                pomo_widget.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+                reminder_layout.addWidget(pomo_widget)
 
             # Parent progress badge [completed/total]
             if has_children and not is_child:

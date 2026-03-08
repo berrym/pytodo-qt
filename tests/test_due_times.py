@@ -668,7 +668,7 @@ class TestDatabaseDueTime:
 
         db_path = tmp_path / "test.db"
         storage = DatabaseStorage(db_path)
-        assert storage.get_schema_version() == 11
+        assert storage.get_schema_version() == 12
 
 
 # ---------------------------------------------------------------------------

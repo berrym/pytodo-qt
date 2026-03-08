@@ -1826,12 +1826,28 @@ class MainWindow(QMainWindow):
             return
         from .commands import EditTimeSpentCommand
 
-        cmd = EditTimeSpentCommand(self, active_list.id, item_id, item.time_spent, seconds)
+        cmd = EditTimeSpentCommand(
+            self, active_list.id, item_id, item.time_spent, seconds, item.pomodoro_count
+        )
         self._undo_stack.push(cmd)
         from .widgets.pomodoro import PomodoroWidget
 
         spent_str = PomodoroWidget.format_time_spent(item.time_spent)
-        self.status_bar_widget.show_message(f"Focus session complete! Total: {spent_str}")
+        sessions = item.pomodoro_count
+        self.status_bar_widget.show_message(
+            f"Focus session complete! Total: {spent_str} ({sessions} sessions)"
+        )
+
+        # Gentle breakdown suggestion when estimate is exceeded
+        if (
+            item.estimated_pomodoros > 0
+            and item.pomodoro_count == item.estimated_pomodoros
+            and not item.complete
+        ):
+            self.status_bar_widget.show_message(
+                "This task has reached its estimate \u2014 consider breaking it into subtasks",
+                5000,
+            )
 
     def _on_pomodoro_state_changed(self, state: str) -> None:
         """Handle focus timer state transition."""

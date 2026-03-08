@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS items (
     recurrence_end_count INTEGER,
     recurrence_count INTEGER NOT NULL DEFAULT 0,
     time_spent INTEGER NOT NULL DEFAULT 0,
+    pomodoro_count INTEGER NOT NULL DEFAULT 0,
+    estimated_pomodoros INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     deleted INTEGER NOT NULL DEFAULT 0,
@@ -261,6 +263,7 @@ class DatabaseStorage:
         self._migrate_schema_8_to_9()
         self._migrate_schema_9_to_10()
         self._migrate_schema_10_to_11()
+        self._migrate_schema_11_to_12()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -429,6 +432,27 @@ class DatabaseStorage:
             logger.log.info("Migrated schema 10->11: added parent_id column")
 
         self.set_schema_version(11)
+
+    def _migrate_schema_11_to_12(self) -> None:
+        """Migrate schema from version 11 to 12 (add pomodoro tracking columns)."""
+        current_version = self.get_schema_version()
+        if current_version >= 12:
+            return
+
+        cursor = self.connection.execute("PRAGMA table_info(items)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if "pomodoro_count" not in columns:
+            self.connection.execute(
+                "ALTER TABLE items ADD COLUMN pomodoro_count INTEGER NOT NULL DEFAULT 0"
+            )
+        if "estimated_pomodoros" not in columns:
+            self.connection.execute(
+                "ALTER TABLE items ADD COLUMN estimated_pomodoros INTEGER NOT NULL DEFAULT 0"
+            )
+            logger.log.info("Migrated schema 11->12: added pomodoro tracking columns")
+
+        self.set_schema_version(12)
 
     def get_schema_version(self) -> int:
         """Get current schema version."""
@@ -611,8 +635,9 @@ class DatabaseStorage:
             (id, list_id, reminder, priority, complete, due_date, due_time, tags,
              recurrence_type, recurrence_interval, recurrence_end_date,
              recurrence_end_count, recurrence_count, time_spent,
+             pomodoro_count, estimated_pomodoros,
              created_at, updated_at, deleted, parent_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(item.id),
@@ -629,6 +654,8 @@ class DatabaseStorage:
                 item.recurrence_end_count,
                 item.recurrence_count,
                 item.time_spent,
+                item.pomodoro_count,
+                item.estimated_pomodoros,
                 item.created_at,
                 item.updated_at,
                 1 if item.deleted else 0,
@@ -698,6 +725,16 @@ class DatabaseStorage:
         except (KeyError, IndexError):
             time_spent = 0
 
+        # Handle pomodoro tracking columns (v12+)
+        try:
+            pomodoro_count = row["pomodoro_count"] or 0
+        except (KeyError, IndexError):
+            pomodoro_count = 0
+        try:
+            estimated_pomodoros = row["estimated_pomodoros"] or 0
+        except (KeyError, IndexError):
+            estimated_pomodoros = 0
+
         # Handle parent_id column (v11+)
         try:
             parent_id_str = row["parent_id"]
@@ -719,6 +756,8 @@ class DatabaseStorage:
             recurrence_end_count=recurrence_end_count,
             recurrence_count=recurrence_count,
             time_spent=time_spent,
+            pomodoro_count=pomodoro_count,
+            estimated_pomodoros=estimated_pomodoros,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             deleted=bool(row["deleted"]),

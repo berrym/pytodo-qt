@@ -46,6 +46,8 @@ class TodoItem:
     recurrence_end_count: int | None = None  # Optional max occurrences
     recurrence_count: int = 0  # Completed occurrences so far
     time_spent: int = 0  # Total seconds of completed focus sessions
+    pomodoro_count: int = 0  # Completed focus sessions
+    estimated_pomodoros: int = 0  # User estimate (0 = no estimate)
     created_at: int = field(default_factory=_now_timestamp)
     updated_at: int = field(default_factory=_now_timestamp)
     deleted: bool = False  # Tombstone for sync
@@ -93,6 +95,8 @@ class TodoItem:
             "recurrence_end_count": self.recurrence_end_count,
             "recurrence_count": self.recurrence_count,
             "time_spent": self.time_spent,
+            "pomodoro_count": self.pomodoro_count,
+            "estimated_pomodoros": self.estimated_pomodoros,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "deleted": self.deleted,
@@ -124,6 +128,8 @@ class TodoItem:
             recurrence_end_count=data.get("recurrence_end_count"),
             recurrence_count=data.get("recurrence_count", 0),
             time_spent=data.get("time_spent", 0),
+            pomodoro_count=data.get("pomodoro_count", 0),
+            estimated_pomodoros=data.get("estimated_pomodoros", 0),
             created_at=data.get("created_at", _now_timestamp()),
             updated_at=data.get("updated_at", _now_timestamp()),
             deleted=data.get("deleted", False),
@@ -603,6 +609,7 @@ def create_todo_item(
     recurrence_end_date: date | None = None,
     recurrence_end_count: int | None = None,
     parent_id: UUID | None = None,
+    estimated_pomodoros: int = 0,
 ) -> TodoItem:
     """Create a new todo item."""
     return TodoItem(
@@ -616,6 +623,7 @@ def create_todo_item(
         recurrence_end_date=recurrence_end_date,
         recurrence_end_count=recurrence_end_count,
         parent_id=parent_id,
+        estimated_pomodoros=estimated_pomodoros,
     )
 
 
