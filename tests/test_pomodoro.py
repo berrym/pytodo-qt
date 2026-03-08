@@ -1598,8 +1598,8 @@ class TestDailyGoalDisplay:
         bar = StatusBarWidget()
         qtbot.addWidget(bar)
         bar.update_daily_goal(3, 8)
-        assert not bar._daily_goal_label.isHidden()
-        assert bar._daily_goal_label.text() == "Today: 3/8"
+        assert not bar._daily_goal_ring.isHidden()
+        assert bar._daily_goal_ring.toolTip() == "Today: 3/8 sessions"
 
     def test_status_bar_update_daily_goal_hides(self, qtbot):
         from pytodo_qt.gui.widgets.status_bar import StatusBarWidget
@@ -1607,9 +1607,9 @@ class TestDailyGoalDisplay:
         bar = StatusBarWidget()
         qtbot.addWidget(bar)
         bar.update_daily_goal(3, 8)
-        assert not bar._daily_goal_label.isHidden()
+        assert not bar._daily_goal_ring.isHidden()
         bar.update_daily_goal(0, 0)
-        assert bar._daily_goal_label.isHidden()
+        assert bar._daily_goal_ring.isHidden()
 
     def test_focus_timer_update_daily_goal_shows(self, qtbot):
         from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
@@ -1912,3 +1912,358 @@ class TestWebConnectDialog:
 
         result = _get_lan_ip()
         assert result is None or isinstance(result, str)
+
+
+# ===========================================================================
+# Phase E: Gamification & Habit Building tests
+# ===========================================================================
+
+
+class TestLifetimeSessionCount:
+    """Tests for DatabaseStorage.get_lifetime_work_session_count()."""
+
+    def test_empty_database(self, tmp_path):
+        storage = DatabaseStorage(tmp_path / "test.db")
+        assert storage.get_lifetime_work_session_count() == 0
+        storage.close()
+
+    def test_counts_only_completed_work_sessions(self, tmp_path):
+        from pytodo_qt.core.models import FocusSession
+
+        storage = DatabaseStorage(tmp_path / "test.db")
+        # Completed work session
+        storage.save_focus_session(
+            FocusSession(
+                item_id=uuid4(),
+                list_id=uuid4(),
+                start_time="2026-03-01T10:00:00",
+                end_time="2026-03-01T10:25:00",
+                duration_seconds=1500,
+                completed=True,
+                session_type="work",
+                date="2026-03-01",
+            )
+        )
+        # Incomplete work session (interrupted)
+        storage.save_focus_session(
+            FocusSession(
+                item_id=uuid4(),
+                list_id=uuid4(),
+                start_time="2026-03-01T11:00:00",
+                end_time="2026-03-01T11:10:00",
+                duration_seconds=600,
+                completed=False,
+                session_type="work",
+                date="2026-03-01",
+            )
+        )
+        # Completed break session (shouldn't count)
+        storage.save_focus_session(
+            FocusSession(
+                item_id=uuid4(),
+                list_id=uuid4(),
+                start_time="2026-03-01T10:25:00",
+                end_time="2026-03-01T10:30:00",
+                duration_seconds=300,
+                completed=True,
+                session_type="break",
+                date="2026-03-01",
+            )
+        )
+        assert storage.get_lifetime_work_session_count() == 1
+        storage.close()
+
+    def test_counts_across_multiple_dates(self, tmp_path):
+        from pytodo_qt.core.models import FocusSession
+
+        storage = DatabaseStorage(tmp_path / "test.db")
+        for day in range(1, 6):
+            storage.save_focus_session(
+                FocusSession(
+                    item_id=uuid4(),
+                    list_id=uuid4(),
+                    start_time=f"2026-03-{day:02d}T10:00:00",
+                    end_time=f"2026-03-{day:02d}T10:25:00",
+                    duration_seconds=1500,
+                    completed=True,
+                    session_type="work",
+                    date=f"2026-03-{day:02d}",
+                )
+            )
+        assert storage.get_lifetime_work_session_count() == 5
+        storage.close()
+
+
+class TestInterruptedSessionCount:
+    """Tests for DatabaseStorage.get_interrupted_session_count_for_date()."""
+
+    def test_empty_database(self, tmp_path):
+        storage = DatabaseStorage(tmp_path / "test.db")
+        assert storage.get_interrupted_session_count_for_date("2026-03-08") == 0
+        storage.close()
+
+    def test_counts_only_incomplete_work_sessions(self, tmp_path):
+        from pytodo_qt.core.models import FocusSession
+
+        storage = DatabaseStorage(tmp_path / "test.db")
+        # Completed work session
+        storage.save_focus_session(
+            FocusSession(
+                item_id=uuid4(),
+                list_id=uuid4(),
+                start_time="2026-03-08T10:00:00",
+                end_time="2026-03-08T10:25:00",
+                duration_seconds=1500,
+                completed=True,
+                session_type="work",
+                date="2026-03-08",
+            )
+        )
+        # Interrupted work session
+        storage.save_focus_session(
+            FocusSession(
+                item_id=uuid4(),
+                list_id=uuid4(),
+                start_time="2026-03-08T11:00:00",
+                end_time="2026-03-08T11:10:00",
+                duration_seconds=600,
+                completed=False,
+                session_type="work",
+                date="2026-03-08",
+            )
+        )
+        # Interrupted break (shouldn't count)
+        storage.save_focus_session(
+            FocusSession(
+                item_id=uuid4(),
+                list_id=uuid4(),
+                start_time="2026-03-08T12:00:00",
+                end_time="2026-03-08T12:03:00",
+                duration_seconds=180,
+                completed=False,
+                session_type="break",
+                date="2026-03-08",
+            )
+        )
+        assert storage.get_interrupted_session_count_for_date("2026-03-08") == 1
+        storage.close()
+
+
+class TestStreakInDatabase:
+    """Tests for DatabaseStorage.compute_current_streak()."""
+
+    def test_empty_database(self, tmp_path):
+        storage = DatabaseStorage(tmp_path / "test.db")
+        assert storage.compute_current_streak() == 0
+        storage.close()
+
+    def test_consecutive_days(self, tmp_path, monkeypatch):
+        from datetime import date, timedelta
+
+        from pytodo_qt.core.models import FocusSession
+
+        storage = DatabaseStorage(tmp_path / "test.db")
+        today = date.today()
+        # Create sessions for today and 2 previous days
+        for offset in range(3):
+            d = today - timedelta(days=offset)
+            storage.save_focus_session(
+                FocusSession(
+                    item_id=uuid4(),
+                    list_id=uuid4(),
+                    start_time=f"{d.isoformat()}T10:00:00",
+                    end_time=f"{d.isoformat()}T10:25:00",
+                    duration_seconds=1500,
+                    completed=True,
+                    session_type="work",
+                    date=d.isoformat(),
+                )
+            )
+        assert storage.compute_current_streak() == 3
+        storage.close()
+
+    def test_gap_breaks_streak(self, tmp_path):
+        from datetime import date, timedelta
+
+        from pytodo_qt.core.models import FocusSession
+
+        storage = DatabaseStorage(tmp_path / "test.db")
+        today = date.today()
+        # Session today
+        storage.save_focus_session(
+            FocusSession(
+                item_id=uuid4(),
+                list_id=uuid4(),
+                start_time=f"{today.isoformat()}T10:00:00",
+                end_time=f"{today.isoformat()}T10:25:00",
+                duration_seconds=1500,
+                completed=True,
+                session_type="work",
+                date=today.isoformat(),
+            )
+        )
+        # Session 2 days ago (gap yesterday)
+        two_days_ago = today - timedelta(days=2)
+        storage.save_focus_session(
+            FocusSession(
+                item_id=uuid4(),
+                list_id=uuid4(),
+                start_time=f"{two_days_ago.isoformat()}T10:00:00",
+                end_time=f"{two_days_ago.isoformat()}T10:25:00",
+                duration_seconds=1500,
+                completed=True,
+                session_type="work",
+                date=two_days_ago.isoformat(),
+            )
+        )
+        assert storage.compute_current_streak() == 1
+        storage.close()
+
+    def test_daily_goal_threshold(self, tmp_path):
+        from datetime import date
+
+        from pytodo_qt.core.models import FocusSession
+
+        storage = DatabaseStorage(tmp_path / "test.db")
+        today = date.today()
+        # Only 1 session today, but goal is 2
+        storage.save_focus_session(
+            FocusSession(
+                item_id=uuid4(),
+                list_id=uuid4(),
+                start_time=f"{today.isoformat()}T10:00:00",
+                end_time=f"{today.isoformat()}T10:25:00",
+                duration_seconds=1500,
+                completed=True,
+                session_type="work",
+                date=today.isoformat(),
+            )
+        )
+        assert storage.compute_current_streak(daily_goal=2) == 0
+        # Add second session
+        storage.save_focus_session(
+            FocusSession(
+                item_id=uuid4(),
+                list_id=uuid4(),
+                start_time=f"{today.isoformat()}T11:00:00",
+                end_time=f"{today.isoformat()}T11:25:00",
+                duration_seconds=1500,
+                completed=True,
+                session_type="work",
+                date=today.isoformat(),
+            )
+        )
+        assert storage.compute_current_streak(daily_goal=2) == 1
+        storage.close()
+
+
+class TestDailyGoalRingWidget:
+    """Tests for the DailyGoalRingWidget."""
+
+    def test_creation(self, qtbot):
+        from pytodo_qt.gui.widgets.status_bar import DailyGoalRingWidget
+
+        ring = DailyGoalRingWidget()
+        qtbot.addWidget(ring)
+        assert ring.width() == 22
+        assert ring.height() == 22
+
+    def test_hidden_when_no_goal(self, qtbot):
+        from pytodo_qt.gui.widgets.status_bar import DailyGoalRingWidget
+
+        ring = DailyGoalRingWidget()
+        qtbot.addWidget(ring)
+        ring.update_goal(3, 0)
+        assert not ring.isVisible()
+
+    def test_visible_when_goal_set(self, qtbot):
+        from pytodo_qt.gui.widgets.status_bar import DailyGoalRingWidget
+
+        ring = DailyGoalRingWidget()
+        qtbot.addWidget(ring)
+        ring.show()
+        ring.update_goal(3, 8)
+        assert ring.isVisible()
+        assert ring.toolTip() == "Today: 3/8 sessions"
+
+    def test_tooltip_updates(self, qtbot):
+        from pytodo_qt.gui.widgets.status_bar import DailyGoalRingWidget
+
+        ring = DailyGoalRingWidget()
+        qtbot.addWidget(ring)
+        ring.update_goal(5, 5)
+        assert ring.toolTip() == "Today: 5/5 sessions"
+
+    def test_paint_does_not_crash(self, qtbot):
+        from pytodo_qt.gui.widgets.status_bar import DailyGoalRingWidget
+
+        ring = DailyGoalRingWidget()
+        qtbot.addWidget(ring)
+        ring.update_goal(2, 4)
+        ring.show()
+        ring.repaint()  # Force paintEvent
+
+
+class TestFocusScore:
+    """Tests for focus score computation."""
+
+    def test_no_sessions_returns_negative(self, qtbot):
+        """No sessions today → score hidden (returns -1)."""
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+        dialog.update_focus_score(-1)
+        assert dialog._focus_score_label.isHidden()
+
+    def test_grade_mapping(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+        dialog.update_focus_score(95)
+        assert "A" in dialog._focus_score_label.text()
+        dialog.update_focus_score(80)
+        assert "B" in dialog._focus_score_label.text()
+        dialog.update_focus_score(65)
+        assert "C" in dialog._focus_score_label.text()
+        dialog.update_focus_score(45)
+        assert "D" in dialog._focus_score_label.text()
+        dialog.update_focus_score(30)
+        assert "F" in dialog._focus_score_label.text()
+
+    def test_streak_display(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+        dialog.update_streak(0)
+        assert dialog._streak_label.isHidden()
+        dialog.update_streak(5)
+        assert not dialog._streak_label.isHidden()
+        assert "5 days" in dialog._streak_label.text()
+        dialog.update_streak(1)
+        assert "1 day" in dialog._streak_label.text()
+        assert "days" not in dialog._streak_label.text()
+
+
+class TestMilestoneConfig:
+    """Tests for milestone_notifications config field."""
+
+    def test_default_enabled(self):
+        config = PomodoroConfig()
+        assert config.milestone_notifications is True
+
+    def test_toml_roundtrip(self):
+        import tomllib
+
+        config = AppConfig()
+        config.pomodoro.milestone_notifications = False
+        toml_str = config.to_toml()
+        data = tomllib.loads(toml_str)
+        restored = AppConfig.from_dict(data)
+        assert restored.pomodoro.milestone_notifications is False
+
+    def test_from_dict_default(self):
+        config = AppConfig.from_dict({"pomodoro": {}})
+        assert config.pomodoro.milestone_notifications is True

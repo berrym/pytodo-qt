@@ -9,8 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import QEvent, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -50,6 +50,65 @@ def _format_time_ago(dt: datetime) -> str:
         return f"{days}d ago"
 
 
+class DailyGoalRingWidget(QWidget):
+    """Circular progress ring showing daily goal completion."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(22, 22)
+        self._completed = 0
+        self._goal = 0
+
+    def update_goal(self, completed: int, goal: int) -> None:
+        self._completed = completed
+        self._goal = goal
+        self.setToolTip(f"Today: {completed}/{goal} sessions" if goal > 0 else "")
+        self.setVisible(goal > 0)
+        self.update()
+
+    def paintEvent(self, a0) -> None:  # noqa: N802
+        if self._goal <= 0:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw area with margin for pen width
+        pen_width = 2.5
+        margin = pen_width / 2 + 1
+        rect = QRectF(margin, margin, self.width() - 2 * margin, self.height() - 2 * margin)
+
+        # Background ring
+        bg_pen = QPen(QColor(180, 180, 180, 80), pen_width)
+        bg_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(bg_pen)
+        painter.drawArc(rect, 0, 360 * 16)
+
+        # Progress arc
+        ratio = min(1.0, self._completed / self._goal) if self._goal > 0 else 0.0
+        if ratio > 0:
+            color = QColor("#43a047") if self._completed >= self._goal else QColor("#4A90D9")
+            fg_pen = QPen(color, pen_width)
+            fg_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(fg_pen)
+            # Qt arcs: 90*16 is 12 o'clock, positive = counter-clockwise
+            span = int(-ratio * 360 * 16)
+            painter.drawArc(rect, 90 * 16, span)
+
+        # Center text
+        font = QFont()
+        font.setPointSize(7)
+        font.setBold(True)
+        painter.setFont(font)
+        text_color = (
+            QColor("#43a047")
+            if self._completed >= self._goal
+            else QColor(self.palette().text().color())
+        )
+        painter.setPen(text_color)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(self._completed))
+        painter.end()
+
+
 class StatusBarWidget(QStatusBar):
     """Enhanced status bar with progress and statistics.
 
@@ -78,9 +137,8 @@ class StatusBarWidget(QStatusBar):
         self._pomodoro_icon_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.pomodoro_label = QLabel()
         self.pomodoro_label.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._daily_goal_label = QLabel()
-        self._daily_goal_label.setStyleSheet("color: gray;")
-        self._daily_goal_label.hide()
+        self._daily_goal_ring = DailyGoalRingWidget()
+        self._daily_goal_ring.hide()
         # Install event filters after both labels exist to avoid AttributeError
         self._pomodoro_icon_label.installEventFilter(self)
         self.pomodoro_label.installEventFilter(self)
@@ -126,7 +184,7 @@ class StatusBarWidget(QStatusBar):
         layout.addWidget(self.pomodoro_label)
         self._daily_goal_separator = self._create_separator()
         layout.addWidget(self._daily_goal_separator)
-        layout.addWidget(self._daily_goal_label)
+        layout.addWidget(self._daily_goal_ring)
         self._daily_goal_separator.hide()
         layout.addWidget(self._create_separator())
         layout.addWidget(self.list_count_label)
@@ -322,11 +380,11 @@ class StatusBarWidget(QStatusBar):
             goal: Daily goal target (0 = no goal)
         """
         if goal <= 0:
-            self._daily_goal_label.hide()
+            self._daily_goal_ring.hide()
             self._daily_goal_separator.hide()
             return
-        self._daily_goal_label.setText(f"Today: {completed}/{goal}")
-        self._daily_goal_label.show()
+        self._daily_goal_ring.update_goal(completed, goal)
+        self._daily_goal_ring.show()
         self._daily_goal_separator.show()
 
     def set_pending_sync_count(self, count: int) -> None:

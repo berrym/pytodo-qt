@@ -86,6 +86,7 @@ class PomodoroConfig:
     sound_enabled: bool = False
     sound_volume: int = 50  # 0-100
     daily_goal: int = 0  # Target sessions per day (0 = no goal)
+    milestone_notifications: bool = True  # Show celebration notifications
 
 
 @dataclass
@@ -170,6 +171,9 @@ class AppConfig:
         lines.append(f"sound_enabled = {str(self.pomodoro.sound_enabled).lower()}")
         lines.append(f"sound_volume = {self.pomodoro.sound_volume}")
         lines.append(f"daily_goal = {self.pomodoro.daily_goal}")
+        lines.append(
+            f"milestone_notifications = {str(self.pomodoro.milestone_notifications).lower()}"
+        )
         lines.append("")
 
         # Web section
@@ -241,6 +245,7 @@ class AppConfig:
                 sound_enabled=pom.get("sound_enabled", False),
                 sound_volume=pom.get("sound_volume", 50),
                 daily_goal=pom.get("daily_goal", 0),
+                milestone_notifications=pom.get("milestone_notifications", True),
             )
 
         if "web" in data:

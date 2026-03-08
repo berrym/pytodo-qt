@@ -1243,6 +1243,42 @@ class DatabaseStorage:
         row = cursor.fetchone()
         return row[0] if row else 0
 
+    def get_lifetime_work_session_count(self) -> int:
+        """Count all completed work sessions ever recorded."""
+        row = self.connection.execute(
+            "SELECT COUNT(*) FROM focus_sessions WHERE session_type='work' AND completed=1"
+        ).fetchone()
+        return row[0] if row else 0
+
+    def get_interrupted_session_count_for_date(self, date_str: str) -> int:
+        """Count interrupted (incomplete) work sessions on a specific date."""
+        row = self.connection.execute(
+            "SELECT COUNT(*) FROM focus_sessions WHERE date=? AND session_type='work' AND completed=0",
+            (date_str,),
+        ).fetchone()
+        return row[0] if row else 0
+
+    def compute_current_streak(self, daily_goal: int = 0) -> int:
+        """Compute consecutive days with completed work sessions >= threshold.
+
+        If daily_goal > 0, a day counts only if sessions >= daily_goal.
+        Otherwise, any day with >= 1 completed work session counts.
+        """
+        from datetime import date, timedelta
+
+        streak = 0
+        current = date.today()
+        threshold = daily_goal if daily_goal > 0 else 1
+
+        while True:
+            count = self.get_work_session_count_for_date(current.isoformat())
+            if count >= threshold:
+                streak += 1
+                current -= timedelta(days=1)
+            else:
+                break
+        return streak
+
     def get_all_focus_sessions(self) -> list[FocusSession]:
         """Get all focus sessions (for sync)."""
         cursor = self.connection.execute("SELECT * FROM focus_sessions ORDER BY start_time")

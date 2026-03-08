@@ -406,6 +406,9 @@ class SettingsDialog(QDialog):
         self.daily_goal_spin.setSpecialValueText("Disabled")
         goal_form.addRow("Daily target:", self.daily_goal_spin)
 
+        self.milestone_check = QCheckBox("Show milestone celebrations")
+        goal_form.addRow("", self.milestone_check)
+
         layout.addWidget(goal_group)
         layout.addStretch()
 
@@ -498,6 +501,7 @@ class SettingsDialog(QDialog):
         self.sound_volume_slider.setValue(config.pomodoro.sound_volume)
         self.sound_volume_slider.setEnabled(config.pomodoro.sound_enabled)
         self.daily_goal_spin.setValue(config.pomodoro.daily_goal)
+        self.milestone_check.setChecked(config.pomodoro.milestone_notifications)
 
         # Web
         self.web_enabled_check.setChecked(config.web.enabled)
@@ -546,6 +550,7 @@ class SettingsDialog(QDialog):
         config.pomodoro.sound_enabled = self.sound_enabled_check.isChecked()
         config.pomodoro.sound_volume = self.sound_volume_slider.value()
         config.pomodoro.daily_goal = self.daily_goal_spin.value()
+        config.pomodoro.milestone_notifications = self.milestone_check.isChecked()
 
         # Web
         config.web.enabled = self.web_enabled_check.isChecked()

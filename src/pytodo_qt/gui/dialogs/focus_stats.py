@@ -285,21 +285,5 @@ class FocusStatsDialog(QDialog):
         return "(deleted)"
 
     def _compute_streak(self) -> int:
-        """Compute current streak of consecutive days with completed work sessions.
-
-        If daily_goal > 0, a day counts only if sessions >= daily_goal.
-        Otherwise, any day with >= 1 completed work session counts.
-        """
-        streak = 0
-        current = date.today()
-        goal = self._config.daily_goal
-
-        while True:
-            count = self._storage.get_work_session_count_for_date(current.isoformat())
-            threshold = goal if goal > 0 else 1
-            if count >= threshold:
-                streak += 1
-                current -= timedelta(days=1)
-            else:
-                break
-        return streak
+        """Compute current streak of consecutive days with completed work sessions."""
+        return self._storage.compute_current_streak(self._config.daily_goal)

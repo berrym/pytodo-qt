@@ -108,6 +108,20 @@ class FocusTimerDialog(QDialog):
         self._daily_goal_label.hide()
         layout.addWidget(self._daily_goal_label)
 
+        # Streak display
+        self._streak_label = QLabel()
+        self._streak_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._streak_label.setStyleSheet("color: gray;")
+        self._streak_label.hide()
+        layout.addWidget(self._streak_label)
+
+        # Focus score display
+        self._focus_score_label = QLabel()
+        self._focus_score_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._focus_score_label.setStyleSheet("color: gray;")
+        self._focus_score_label.hide()
+        layout.addWidget(self._focus_score_label)
+
         # Buttons
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
@@ -342,6 +356,40 @@ class FocusTimerDialog(QDialog):
             return
         self._daily_goal_label.setText(f"Today: {completed}/{goal} sessions")
         self._daily_goal_label.show()
+
+    def update_streak(self, streak: int) -> None:
+        """Update the streak display.
+
+        Args:
+            streak: Current consecutive days with focus sessions
+        """
+        if streak <= 0:
+            self._streak_label.hide()
+            return
+        self._streak_label.setText(f"Streak: {streak} day{'s' if streak != 1 else ''}")
+        self._streak_label.show()
+
+    def update_focus_score(self, score: int) -> None:
+        """Update the focus score display.
+
+        Args:
+            score: Focus score 0-100
+        """
+        if score < 0:
+            self._focus_score_label.hide()
+            return
+        if score >= 90:
+            grade = "A"
+        elif score >= 75:
+            grade = "B"
+        elif score >= 60:
+            grade = "C"
+        elif score >= 40:
+            grade = "D"
+        else:
+            grade = "F"
+        self._focus_score_label.setText(f"Score: {grade} ({score})")
+        self._focus_score_label.show()
 
     def closeEvent(self, a0) -> None:  # noqa: N802
         """Hide instead of closing so the dialog can be reopened."""

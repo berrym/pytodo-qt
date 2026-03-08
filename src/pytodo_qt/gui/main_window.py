@@ -116,6 +116,7 @@ class MainWindow(QMainWindow):
         self._pomodoro_display_timer = QTimer(self)
         self._pomodoro_display_timer.setInterval(1000)
         self._pomodoro_display_timer.timeout.connect(self._update_pomodoro_display)
+        self._best_streak = self._storage.compute_current_streak(self._config.pomodoro.daily_goal)
 
         # Floating focus timer dialog (lazy-created)
         self._focus_timer_dialog = None
@@ -1872,6 +1873,7 @@ class MainWindow(QMainWindow):
         )
         self._update_daily_goal()
         self._update_focus_item_progress()
+        self._check_milestones()
 
         from .widgets.pomodoro import PomodoroWidget
 
@@ -2027,6 +2029,85 @@ class MainWindow(QMainWindow):
         self.status_bar_widget.update_daily_goal(completed, goal)
         if self._focus_timer_dialog is not None:
             self._focus_timer_dialog.update_daily_goal(completed, goal)
+            streak = self._storage.compute_current_streak(goal)
+            self._focus_timer_dialog.update_streak(streak)
+            score = self._compute_focus_score(completed, goal, streak)
+            self._focus_timer_dialog.update_focus_score(score)
+
+    def _compute_focus_score(self, today_completed: int, goal: int, streak: int) -> int:
+        """Compute today's focus score (0-100).
+
+        Components:
+        - Goal ratio (0-40): completed / goal
+        - Completion rate (0-40): completed / (completed + interrupted)
+        - Streak bonus (0-20): 4 points per day
+        """
+        if today_completed <= 0:
+            return -1  # No sessions, hide score
+
+        from datetime import date
+
+        score = 0
+
+        # Goal component (0-40 points)
+        if goal > 0:
+            score += min(40, int(40 * today_completed / goal))
+        else:
+            score += min(40, today_completed * 10)
+
+        # Completion rate (0-40 points)
+        interrupted = self._storage.get_interrupted_session_count_for_date(date.today().isoformat())
+        total = today_completed + interrupted
+        if total > 0:
+            score += int(40 * today_completed / total)
+
+        # Streak bonus (0-20 points)
+        score += min(20, streak * 4)
+
+        return min(100, score)
+
+    def _check_milestones(self) -> None:
+        """Check for and celebrate focus session milestones."""
+        if not self._config.pomodoro.milestone_notifications:
+            return
+
+        today_count = self._get_today_session_count()
+        goal = self._config.pomodoro.daily_goal
+
+        # First session of the day
+        if today_count == 1:
+            self._notify_milestone("Good start!", "First focus session of the day")
+            return
+
+        # Daily goal reached
+        if goal > 0 and today_count == goal:
+            self._notify_milestone("Goal achieved!", f"Completed {goal} sessions today")
+            return
+
+        # Lifetime milestones
+        lifetime = self._storage.get_lifetime_work_session_count()
+        milestones = {10, 25, 50, 100, 250, 500, 1000}
+        if lifetime in milestones:
+            self._notify_milestone(f"Milestone: {lifetime}!", f"{lifetime} lifetime focus sessions")
+            return
+
+        # Streak record
+        streak = self._storage.compute_current_streak(goal)
+        if streak > self._best_streak:
+            self._best_streak = streak
+            if streak >= 3:
+                self._notify_milestone(f"{streak}-day streak!", "New personal best")
+
+    def _notify_milestone(self, title: str, message: str) -> None:
+        """Show a milestone notification via system tray and status bar toast."""
+        if self.tray_icon is not None:
+            self.tray_icon.showMessage(
+                title,
+                message,
+                QSystemTrayIcon.MessageIcon.Information,
+                5000,
+            )
+        self.status_bar_widget.show_message(f"{title} {message}")
 
     def _get_focused_item_stats(self) -> tuple[int, int]:
         """Get the focused item's (pomodoro_count, estimated_pomodoros)."""
