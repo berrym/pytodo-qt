@@ -592,6 +592,47 @@ class ReparentCommand(QUndoCommand):
         self._window._refresh_ui()
 
 
+class EditTimeSpentCommand(QUndoCommand):
+    """Add focus session time to an item (undo-able)."""
+
+    def __init__(
+        self,
+        window: MainWindow,
+        list_id: UUID,
+        item_id: UUID,
+        old_time_spent: int,
+        seconds_to_add: int,
+    ) -> None:
+        super().__init__("Focus session")
+        self._window = window
+        self._list_id = list_id
+        self._item_id = item_id
+        self._old_time_spent = old_time_spent
+        self._new_time_spent = old_time_spent + seconds_to_add
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if item:
+            item.time_spent = self._new_time_spent
+            item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if item:
+            item.time_spent = self._old_time_spent
+            item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+
 class TogglePrivateCommand(QUndoCommand):
     """Toggle a list's private/shared status."""
 

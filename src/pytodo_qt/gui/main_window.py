@@ -1343,6 +1343,10 @@ class MainWindow(QMainWindow):
         if active_list is None:
             return
 
+        # Stop focus timer if running on a deleted item
+        if self._pomodoro.item_id in item_ids:
+            self._on_stop_focus()
+
         from .commands import DeleteItemsCommand
 
         cmd = DeleteItemsCommand(self, active_list.id, item_ids)
@@ -1820,10 +1824,10 @@ class MainWindow(QMainWindow):
         item = active_list.get_item(item_id)
         if item is None:
             return
-        item.time_spent += seconds
-        item.mark_updated()
-        self._save_database()
-        self._refresh_ui()
+        from .commands import EditTimeSpentCommand
+
+        cmd = EditTimeSpentCommand(self, active_list.id, item_id, item.time_spent, seconds)
+        self._undo_stack.push(cmd)
         from .widgets.pomodoro import PomodoroWidget
 
         spent_str = PomodoroWidget.format_time_spent(item.time_spent)

@@ -682,6 +682,12 @@ class TodoTableWidget(QTableWidget):
                     tooltip_parts.append(recurrence_text)
             if item.tags:
                 tooltip_parts.append(f"Tags: {', '.join(item.tags)}")
+            if item.time_spent > 0:
+                from .pomodoro import PomodoroWidget
+
+                tooltip_parts.append(
+                    f"Time spent: {PomodoroWidget.format_time_spent(item.time_spent)}"
+                )
             if tooltip_parts:
                 reminder_edit.setToolTip("\n".join(tooltip_parts))
 
@@ -700,6 +706,16 @@ class TodoTableWidget(QTableWidget):
             ellipsis.setVisible(False)
             reminder_layout.addWidget(ellipsis)
             self._ellipsis_pairs.append((reminder_edit, ellipsis))
+
+            # Inline time spent label
+            if item.time_spent > 0:
+                from .pomodoro import PomodoroWidget
+
+                time_text = PomodoroWidget.format_time_spent(item.time_spent)
+                time_label = QLabel(time_text)
+                time_label.setStyleSheet(f"color: {colors['completed_text']}; font-size: 10px;")
+                time_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+                reminder_layout.addWidget(time_label)
 
             # Parent progress badge [completed/total]
             if has_children and not is_child:

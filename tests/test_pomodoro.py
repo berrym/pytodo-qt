@@ -597,3 +597,178 @@ class TestStatusBarClick:
         bar = StatusBarWidget()
         qtbot.addWidget(bar)
         assert hasattr(bar, "pomodoro_clicked")
+
+
+# ===========================================================================
+# EditTimeSpentCommand tests
+# ===========================================================================
+
+
+class _FakeConfigManager:
+    def save(self):
+        pass
+
+
+class _FakeConfig:
+    class database:
+        active_list = ""
+
+
+def _make_window(db=None):
+    from unittest.mock import MagicMock
+
+    from pytodo_qt.core.models import Database
+
+    window = MagicMock()
+    window._database = db or Database()
+    window._save_database = MagicMock()
+    window._refresh_ui = MagicMock()
+    window._config = _FakeConfig()
+    window._config_manager = _FakeConfigManager()
+    window.status_bar_widget = MagicMock()
+    return window
+
+
+class TestEditTimeSpentCommand:
+    def test_redo_adds_time(self):
+        from pytodo_qt.core.models import Database, create_todo_item, create_todo_list
+        from pytodo_qt.gui.commands import EditTimeSpentCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Focus task")
+        item.time_spent = 100
+        lst.add_item(item)
+        db.add_list(lst)
+        db.set_active_list(lst.id)
+        window = _make_window(db)
+
+        cmd = EditTimeSpentCommand(window, lst.id, item.id, 100, 1500)
+        cmd.redo()
+
+        assert item.time_spent == 1600
+
+    def test_undo_restores_time(self):
+        from pytodo_qt.core.models import Database, create_todo_item, create_todo_list
+        from pytodo_qt.gui.commands import EditTimeSpentCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Focus task")
+        item.time_spent = 100
+        lst.add_item(item)
+        db.add_list(lst)
+        db.set_active_list(lst.id)
+        window = _make_window(db)
+
+        cmd = EditTimeSpentCommand(window, lst.id, item.id, 100, 1500)
+        cmd.redo()
+        cmd.undo()
+
+        assert item.time_spent == 100
+
+    def test_noop_if_item_missing(self):
+        from pytodo_qt.core.models import Database, create_todo_list
+        from pytodo_qt.gui.commands import EditTimeSpentCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        db.add_list(lst)
+        db.set_active_list(lst.id)
+        window = _make_window(db)
+
+        cmd = EditTimeSpentCommand(window, lst.id, uuid4(), 0, 1500)
+        cmd.redo()  # Should not raise
+        cmd.undo()  # Should not raise
+
+    def test_noop_if_list_missing(self):
+        from pytodo_qt.core.models import Database
+        from pytodo_qt.gui.commands import EditTimeSpentCommand
+
+        db = Database()
+        window = _make_window(db)
+
+        cmd = EditTimeSpentCommand(window, uuid4(), uuid4(), 0, 1500)
+        cmd.redo()  # Should not raise
+        cmd.undo()  # Should not raise
+
+    def test_redo_marks_updated(self):
+        import time as _time
+
+        from pytodo_qt.core.models import Database, create_todo_item, create_todo_list
+        from pytodo_qt.gui.commands import EditTimeSpentCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Focus task")
+        lst.add_item(item)
+        db.add_list(lst)
+        db.set_active_list(lst.id)
+        window = _make_window(db)
+
+        ts_before = item.updated_at
+        _time.sleep(0.002)
+        cmd = EditTimeSpentCommand(window, lst.id, item.id, 0, 1500)
+        cmd.redo()
+        assert item.updated_at >= ts_before
+
+
+class TestDeletionStopsFocusTimer:
+    def test_delete_stops_timer_for_focused_item(self):
+        """Deleting an item that has the focus timer running should stop the timer."""
+        from unittest.mock import MagicMock
+
+        from pytodo_qt.core.models import Database, create_todo_item, create_todo_list
+
+        db = Database()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Focused task")
+        lst.add_item(item)
+        db.add_list(lst)
+        db.set_active_list(lst.id)
+
+        # Build a minimal mock MainWindow that has the attributes _on_delete_todo uses
+        window = MagicMock()
+        window._database = db
+        window._pomodoro = MagicMock()
+        window._pomodoro.item_id = item.id  # Timer running on this item
+        window._undo_stack = MagicMock()
+
+        # Bind the real _on_delete_todo method
+        from pytodo_qt.gui.main_window import MainWindow
+
+        window.todo_table = MagicMock()
+        window.todo_table.get_selected_item_ids.return_value = [item.id]
+
+        # Call the real method
+        MainWindow._on_delete_todo(window)
+
+        window._on_stop_focus.assert_called_once()
+
+    def test_delete_does_not_stop_timer_for_other_item(self):
+        """Deleting a different item should not stop the focus timer."""
+        from unittest.mock import MagicMock
+
+        from pytodo_qt.core.models import Database, create_todo_item, create_todo_list
+
+        db = Database()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Normal task")
+        lst.add_item(item)
+        db.add_list(lst)
+        db.set_active_list(lst.id)
+
+        window = MagicMock()
+        window._database = db
+        window._pomodoro = MagicMock()
+        window._pomodoro.item_id = uuid4()  # Timer on a different item
+        window._undo_stack = MagicMock()
+
+        from pytodo_qt.gui.main_window import MainWindow
+
+        window.todo_table = MagicMock()
+        window.todo_table.get_selected_item_ids.return_value = [item.id]
+
+        MainWindow._on_delete_todo(window)
+
+        window._on_stop_focus.assert_not_called()
