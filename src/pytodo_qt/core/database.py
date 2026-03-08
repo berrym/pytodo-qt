@@ -16,6 +16,7 @@ from .logger import Logger
 from .models import (
     Database,
     Device,
+    FocusSession,
     ListSyncRule,
     PendingSync,
     SyncGroup,
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -130,6 +131,20 @@ CREATE TABLE IF NOT EXISTS pending_syncs (
 )
 """
 
+_CREATE_FOCUS_SESSIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS focus_sessions (
+    id TEXT PRIMARY KEY,
+    item_id TEXT NOT NULL,
+    list_id TEXT NOT NULL,
+    start_time TEXT NOT NULL,
+    end_time TEXT NOT NULL,
+    duration_seconds INTEGER NOT NULL,
+    completed INTEGER NOT NULL DEFAULT 1,
+    session_type TEXT NOT NULL DEFAULT 'work',
+    date TEXT NOT NULL
+)
+"""
+
 _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_lists_deleted ON lists(deleted)",
     "CREATE INDEX IF NOT EXISTS idx_lists_name ON lists(name)",
@@ -146,6 +161,9 @@ _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_list_sync_rules_group_id ON list_sync_rules(group_id)",
     "CREATE INDEX IF NOT EXISTS idx_pending_syncs_device_id ON pending_syncs(device_id)",
     "CREATE INDEX IF NOT EXISTS idx_pending_syncs_expires_at ON pending_syncs(expires_at)",
+    # Focus sessions indexes
+    "CREATE INDEX IF NOT EXISTS idx_focus_sessions_item_id ON focus_sessions(item_id)",
+    "CREATE INDEX IF NOT EXISTS idx_focus_sessions_date ON focus_sessions(date)",
 ]
 
 # Indexes that require schema v6 or later (due_date column)
@@ -242,6 +260,7 @@ class DatabaseStorage:
         conn.execute(_CREATE_DEVICE_GROUPS_TABLE)
         conn.execute(_CREATE_LIST_SYNC_RULES_TABLE)
         conn.execute(_CREATE_PENDING_SYNCS_TABLE)
+        conn.execute(_CREATE_FOCUS_SESSIONS_TABLE)
 
         for index_sql in _CREATE_INDEXES:
             conn.execute(index_sql)
@@ -264,6 +283,7 @@ class DatabaseStorage:
         self._migrate_schema_9_to_10()
         self._migrate_schema_10_to_11()
         self._migrate_schema_11_to_12()
+        self._migrate_schema_12_to_13()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -453,6 +473,27 @@ class DatabaseStorage:
             logger.log.info("Migrated schema 11->12: added pomodoro tracking columns")
 
         self.set_schema_version(12)
+
+    def _migrate_schema_12_to_13(self) -> None:
+        """Migrate schema from version 12 to 13 (add focus_sessions table)."""
+        current_version = self.get_schema_version()
+        if current_version >= 13:
+            return
+
+        cursor = self.connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='focus_sessions'"
+        )
+        if cursor.fetchone() is None:
+            self.connection.execute(_CREATE_FOCUS_SESSIONS_TABLE)
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_focus_sessions_item_id ON focus_sessions(item_id)"
+            )
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_focus_sessions_date ON focus_sessions(date)"
+            )
+            logger.log.info("Migrated schema 12->13: added focus_sessions table")
+
+        self.set_schema_version(13)
 
     def get_schema_version(self) -> int:
         """Get current schema version."""
@@ -779,10 +820,17 @@ class DatabaseStorage:
         for lst in self.get_all_lists(include_deleted=True):
             db.lists[lst.id] = lst
 
+        # Load focus sessions
+        try:
+            db.focus_sessions = self.get_all_focus_sessions()
+        except Exception:
+            db.focus_sessions = []
+
         logger.log.info(
-            "Loaded database: %d lists, %d total items",
+            "Loaded database: %d lists, %d total items, %d focus sessions",
             len(db.lists),
             sum(len(lst.items) for lst in db.lists.values()),
+            len(db.focus_sessions),
         )
         return db
 
@@ -802,10 +850,15 @@ class DatabaseStorage:
                 for item in lst.items.values():
                     self.save_item(lst.id, item)
 
+            # Save focus sessions
+            for session in db.focus_sessions:
+                self.save_focus_session(session)
+
         logger.log.info(
-            "Saved database: %d lists, %d total items",
+            "Saved database: %d lists, %d total items, %d focus sessions",
             len(db.lists),
             sum(len(lst.items) for lst in db.lists.values()),
+            len(db.focus_sessions),
         )
 
     # Device operations
@@ -1124,9 +1177,69 @@ class DatabaseStorage:
             last_attempt=row["last_attempt"],
         )
 
+    # Focus session operations
+
+    def save_focus_session(self, session: FocusSession) -> None:
+        """Save a focus session (insert or update)."""
+        self.connection.execute(
+            """
+            INSERT OR REPLACE INTO focus_sessions
+            (id, item_id, list_id, start_time, end_time, duration_seconds,
+             completed, session_type, date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(session.id),
+                str(session.item_id),
+                str(session.list_id),
+                session.start_time,
+                session.end_time,
+                session.duration_seconds,
+                1 if session.completed else 0,
+                session.session_type,
+                session.date,
+            ),
+        )
+
+    def get_sessions_for_date(self, date_str: str) -> list[FocusSession]:
+        """Get all focus sessions for a specific date."""
+        cursor = self.connection.execute(
+            "SELECT * FROM focus_sessions WHERE date = ? ORDER BY start_time",
+            (date_str,),
+        )
+        return [self._row_to_focus_session(row) for row in cursor]
+
+    def get_sessions_for_item(self, item_id: UUID) -> list[FocusSession]:
+        """Get all focus sessions for a specific item."""
+        cursor = self.connection.execute(
+            "SELECT * FROM focus_sessions WHERE item_id = ? ORDER BY start_time",
+            (str(item_id),),
+        )
+        return [self._row_to_focus_session(row) for row in cursor]
+
+    def get_all_focus_sessions(self) -> list[FocusSession]:
+        """Get all focus sessions (for sync)."""
+        cursor = self.connection.execute("SELECT * FROM focus_sessions ORDER BY start_time")
+        return [self._row_to_focus_session(row) for row in cursor]
+
+    def _row_to_focus_session(self, row: sqlite3.Row) -> FocusSession:
+        """Convert a database row to a FocusSession."""
+        return FocusSession(
+            id=UUID(row["id"]),
+            item_id=UUID(row["item_id"]),
+            list_id=UUID(row["list_id"]),
+            start_time=row["start_time"],
+            end_time=row["end_time"],
+            duration_seconds=row["duration_seconds"],
+            completed=bool(row["completed"]),
+            session_type=row["session_type"],
+            date=row["date"],
+        )
+
     def clear(self) -> None:
         """Clear all data from the database (for testing)."""
         with self.transaction() as conn:
+            conn.execute("DELETE FROM focus_sessions")
             conn.execute("DELETE FROM pending_syncs")
             conn.execute("DELETE FROM list_sync_rules")
             conn.execute("DELETE FROM device_groups")

@@ -378,8 +378,8 @@ class TestTimeSpentField:
 
 
 class TestSchemaV10:
-    def test_current_version_is_12(self):
-        assert SCHEMA_VERSION == 12
+    def test_current_version_is_13(self):
+        assert SCHEMA_VERSION == 13
 
     def test_fresh_database_has_time_spent_column(self, tmp_path):
         db_path = tmp_path / "test.db"
@@ -985,3 +985,410 @@ class TestSoundPlayer:
         if _AVAILABLE:
             assert "work-complete" in player._effects
             assert "break-complete" in player._effects
+
+
+# ===========================================================================
+# Phase C: Session Logging tests
+# ===========================================================================
+
+
+class TestFocusSessionModel:
+    def test_defaults(self):
+        from pytodo_qt.core.models import FocusSession
+
+        session = FocusSession()
+        assert session.duration_seconds == 0
+        assert session.completed is True
+        assert session.session_type == "work"
+        assert session.date == ""
+
+    def test_to_dict_roundtrip(self):
+        from pytodo_qt.core.models import FocusSession
+
+        session = FocusSession(
+            item_id=uuid4(),
+            list_id=uuid4(),
+            start_time="2026-03-08T10:00:00",
+            end_time="2026-03-08T10:25:00",
+            duration_seconds=1500,
+            completed=True,
+            session_type="work",
+            date="2026-03-08",
+        )
+        d = session.to_dict()
+        assert d["duration_seconds"] == 1500
+        assert d["session_type"] == "work"
+
+        restored = FocusSession.from_dict(d)
+        assert restored.id == session.id
+        assert restored.item_id == session.item_id
+        assert restored.duration_seconds == 1500
+        assert restored.completed is True
+
+    def test_from_dict_missing_fields(self):
+        from pytodo_qt.core.models import FocusSession
+
+        d = {"id": str(uuid4()), "item_id": str(uuid4()), "list_id": str(uuid4())}
+        session = FocusSession.from_dict(d)
+        assert session.duration_seconds == 0
+        assert session.completed is True
+        assert session.session_type == "work"
+
+    def test_incomplete_session(self):
+        from pytodo_qt.core.models import FocusSession
+
+        session = FocusSession(completed=False, duration_seconds=600, session_type="work")
+        assert session.completed is False
+        d = session.to_dict()
+        restored = FocusSession.from_dict(d)
+        assert restored.completed is False
+
+    def test_create_focus_session_factory(self):
+        from pytodo_qt.core.models import create_focus_session
+
+        item_id = uuid4()
+        list_id = uuid4()
+        session = create_focus_session(
+            item_id=item_id,
+            list_id=list_id,
+            start_time="2026-03-08T10:00:00",
+            end_time="2026-03-08T10:25:00",
+            duration_seconds=1500,
+            date="2026-03-08",
+        )
+        assert session.item_id == item_id
+        assert session.list_id == list_id
+        assert session.completed is True
+
+
+class TestSchemaV13:
+    def test_fresh_database_has_focus_sessions_table(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        storage = DatabaseStorage(db_path)
+        cursor = storage.connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='focus_sessions'"
+        )
+        assert cursor.fetchone() is not None
+        storage.close()
+
+    def test_focus_sessions_columns(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        storage = DatabaseStorage(db_path)
+        cursor = storage.connection.execute("PRAGMA table_info(focus_sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        assert "item_id" in columns
+        assert "list_id" in columns
+        assert "start_time" in columns
+        assert "end_time" in columns
+        assert "duration_seconds" in columns
+        assert "completed" in columns
+        assert "session_type" in columns
+        assert "date" in columns
+        storage.close()
+
+    def test_save_and_load_focus_session(self, tmp_path):
+        from pytodo_qt.core.models import FocusSession
+
+        db_path = tmp_path / "test.db"
+        storage = DatabaseStorage(db_path)
+
+        session = FocusSession(
+            item_id=uuid4(),
+            list_id=uuid4(),
+            start_time="2026-03-08T10:00:00",
+            end_time="2026-03-08T10:25:00",
+            duration_seconds=1500,
+            completed=True,
+            session_type="work",
+            date="2026-03-08",
+        )
+        storage.save_focus_session(session)
+
+        loaded = storage.get_sessions_for_date("2026-03-08")
+        assert len(loaded) == 1
+        assert loaded[0].id == session.id
+        assert loaded[0].duration_seconds == 1500
+        storage.close()
+
+    def test_get_sessions_for_item(self, tmp_path):
+        from pytodo_qt.core.models import FocusSession
+
+        db_path = tmp_path / "test.db"
+        storage = DatabaseStorage(db_path)
+
+        item_id = uuid4()
+        for i in range(3):
+            session = FocusSession(
+                item_id=item_id,
+                list_id=uuid4(),
+                start_time=f"2026-03-08T{10 + i}:00:00",
+                end_time=f"2026-03-08T{10 + i}:25:00",
+                duration_seconds=1500,
+                date="2026-03-08",
+            )
+            storage.save_focus_session(session)
+
+        loaded = storage.get_sessions_for_item(item_id)
+        assert len(loaded) == 3
+        storage.close()
+
+    def test_get_all_focus_sessions(self, tmp_path):
+        from pytodo_qt.core.models import FocusSession
+
+        db_path = tmp_path / "test.db"
+        storage = DatabaseStorage(db_path)
+
+        for _ in range(5):
+            session = FocusSession(
+                item_id=uuid4(),
+                list_id=uuid4(),
+                start_time="2026-03-08T10:00:00",
+                end_time="2026-03-08T10:25:00",
+                duration_seconds=1500,
+                date="2026-03-08",
+            )
+            storage.save_focus_session(session)
+
+        loaded = storage.get_all_focus_sessions()
+        assert len(loaded) == 5
+        storage.close()
+
+    def test_load_database_includes_sessions(self, tmp_path):
+        from pytodo_qt.core.models import FocusSession
+
+        db_path = tmp_path / "test.db"
+        storage = DatabaseStorage(db_path)
+
+        lst = create_todo_list("Test")
+        storage.save_list(lst)
+
+        session = FocusSession(
+            item_id=uuid4(),
+            list_id=lst.id,
+            start_time="2026-03-08T10:00:00",
+            end_time="2026-03-08T10:25:00",
+            duration_seconds=1500,
+            date="2026-03-08",
+        )
+        storage.save_focus_session(session)
+
+        db = storage.load_database()
+        assert len(db.focus_sessions) == 1
+        assert db.focus_sessions[0].id == session.id
+        storage.close()
+
+
+class TestSessionSync:
+    def test_database_to_dict_includes_sessions(self):
+        from pytodo_qt.core.models import Database, FocusSession
+
+        db = Database()
+        session = FocusSession(
+            item_id=uuid4(),
+            list_id=uuid4(),
+            start_time="2026-03-08T10:00:00",
+            end_time="2026-03-08T10:25:00",
+            duration_seconds=1500,
+            date="2026-03-08",
+        )
+        db.focus_sessions.append(session)
+
+        d = db.to_dict()
+        assert "focus_sessions" in d
+        assert len(d["focus_sessions"]) == 1
+
+    def test_database_from_dict_parses_sessions(self):
+        from pytodo_qt.core.models import Database, FocusSession
+
+        session = FocusSession(
+            item_id=uuid4(),
+            list_id=uuid4(),
+            start_time="2026-03-08T10:00:00",
+            end_time="2026-03-08T10:25:00",
+            duration_seconds=1500,
+            date="2026-03-08",
+        )
+        data = {
+            "schema_version": 13,
+            "lists": {},
+            "focus_sessions": [session.to_dict()],
+        }
+        db = Database.from_dict(data)
+        assert len(db.focus_sessions) == 1
+        assert db.focus_sessions[0].id == session.id
+
+    def test_database_from_dict_missing_sessions(self):
+        from pytodo_qt.core.models import Database
+
+        data = {"schema_version": 13, "lists": {}}
+        db = Database.from_dict(data)
+        assert db.focus_sessions == []
+
+    def test_to_dict_for_sync_includes_sessions(self):
+        from pytodo_qt.core.models import Database, FocusSession
+
+        db = Database()
+        session = FocusSession(
+            item_id=uuid4(),
+            list_id=uuid4(),
+            start_time="2026-03-08T10:00:00",
+            end_time="2026-03-08T10:25:00",
+            duration_seconds=1500,
+            date="2026-03-08",
+        )
+        db.focus_sessions.append(session)
+        d = db.to_dict_for_sync()
+        assert len(d["focus_sessions"]) == 1
+
+
+class TestSessionStartTime:
+    def test_session_start_time_initialized_on_start(self, qtbot):
+        config = PomodoroConfig()
+        widget = PomodoroWidget(config)
+        qtbot.addWidget(widget)
+
+        assert widget.session_start_time is None
+        widget.start(uuid4())
+        assert widget.session_start_time is not None
+        widget.stop()
+
+    def test_session_start_time_cleared_on_stop(self, qtbot):
+        config = PomodoroConfig()
+        widget = PomodoroWidget(config)
+        qtbot.addWidget(widget)
+
+        widget.start(uuid4())
+        widget.stop()
+        assert widget.session_start_time is None
+
+    def test_session_completed_signal_includes_start_iso(self, qtbot):
+        config = PomodoroConfig(work_duration=1, auto_start_break=False)
+        widget = PomodoroWidget(config)
+        qtbot.addWidget(widget)
+
+        item_id = uuid4()
+        widget.start(item_id)
+        widget._remaining_seconds = 1
+
+        results = []
+
+        def handler(iid, secs, start_iso):
+            results.append((iid, secs, start_iso))
+
+        widget.session_completed.connect(handler)
+        widget._tick()
+
+        assert len(results) == 1
+        assert results[0][0] == item_id
+        assert results[0][1] == 60  # 1 min
+        assert len(results[0][2]) > 0  # start_iso not empty
+
+    def test_stopped_signal_emitted_during_work(self, qtbot):
+        config = PomodoroConfig(work_duration=25)
+        widget = PomodoroWidget(config)
+        qtbot.addWidget(widget)
+
+        item_id = uuid4()
+        widget.start(item_id)
+        widget._remaining_seconds = 25 * 60 - 120  # 2 minutes elapsed
+
+        results = []
+
+        def handler(iid, elapsed, start_iso, stype):
+            results.append((iid, elapsed, start_iso, stype))
+
+        widget.stopped.connect(handler)
+        widget.stop()
+
+        assert len(results) == 1
+        assert results[0][0] == item_id
+        assert results[0][1] == 120
+        assert results[0][3] == "work"
+
+    def test_stopped_signal_not_emitted_when_idle(self, qtbot):
+        config = PomodoroConfig()
+        widget = PomodoroWidget(config)
+        qtbot.addWidget(widget)
+
+        results = []
+
+        def handler(iid, elapsed, start_iso, stype):
+            results.append((iid, elapsed, start_iso, stype))
+
+        widget.stopped.connect(handler)
+        widget.stop()
+
+        assert len(results) == 0
+
+
+class TestTodaysSessions:
+    def test_update_sessions_displays_rows(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+
+        sessions = [
+            {
+                "start_time": "2026-03-08T10:00:00",
+                "end_time": "2026-03-08T10:25:00",
+                "duration_seconds": 1500,
+                "completed": True,
+                "session_type": "work",
+            },
+            {
+                "start_time": "2026-03-08T10:30:00",
+                "end_time": "2026-03-08T10:48:32",
+                "duration_seconds": 1112,
+                "completed": False,
+                "session_type": "work",
+            },
+        ]
+        dialog.update_sessions(sessions)
+
+        assert dialog._sessions_layout.count() == 2
+        assert "(2)" in dialog._sessions_toggle.text()
+
+    def test_update_sessions_clears_previous(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+
+        dialog.update_sessions(
+            [
+                {
+                    "start_time": "2026-03-08T10:00:00",
+                    "end_time": "2026-03-08T10:25:00",
+                    "duration_seconds": 1500,
+                    "completed": True,
+                    "session_type": "work",
+                },
+            ]
+        )
+        assert dialog._sessions_layout.count() == 1
+
+        dialog.update_sessions([])
+        assert dialog._sessions_layout.count() == 0
+
+    def test_toggle_sessions_expands_and_collapses(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+
+        assert not dialog._sessions_expanded
+        dialog._toggle_sessions()
+        assert dialog._sessions_expanded
+        assert "\u25bc" in dialog._sessions_toggle.text()
+        dialog._toggle_sessions()
+        assert not dialog._sessions_expanded
+        assert "\u25b6" in dialog._sessions_toggle.text()
+
+    def test_sessions_collapsed_by_default(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+
+        assert not dialog._sessions_expanded

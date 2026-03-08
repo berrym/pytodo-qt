@@ -1971,6 +1971,18 @@ class DeviceManagerDialog(QDialog):
                     self._database.lists[list_id] = remote_list
                     merged += len(remote_list.items)
 
+            # Merge focus sessions (append-only)
+            import contextlib
+
+            local_session_ids = {s.id for s in self._database.focus_sessions}
+            for session in remote_db.focus_sessions:
+                if session.id not in local_session_ids:
+                    self._database.focus_sessions.append(session)
+                    if self._storage is not None:
+                        with contextlib.suppress(Exception):
+                            self._storage.save_focus_session(session)
+                    merged += 1
+
             return merged, local_newer, identical
         except Exception as e:
             logger.log.exception("Error merging sync data: %s", e)

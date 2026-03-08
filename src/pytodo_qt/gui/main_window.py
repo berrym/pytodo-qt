@@ -105,6 +105,8 @@ class MainWindow(QMainWindow):
         # Focus timer
         self._pomodoro = PomodoroWidget(self._config.pomodoro, self)
         self._pomodoro.session_completed.connect(self._on_pomodoro_session_completed)
+        self._pomodoro.break_completed.connect(self._on_pomodoro_break_completed)
+        self._pomodoro.stopped.connect(self._on_pomodoro_stopped)
         self._pomodoro.state_changed.connect(self._on_pomodoro_state_changed)
 
         # Sound notifications
@@ -1155,6 +1157,17 @@ class MainWindow(QMainWindow):
                 merged_count += len(remote_list.items)
                 changed_list_ids.add(list_id)
 
+        # Merge focus sessions (append-only — unique by UUID)
+        import contextlib
+
+        local_session_ids = {s.id for s in self._database.focus_sessions}
+        for session in remote_db.focus_sessions:
+            if session.id not in local_session_ids:
+                self._database.focus_sessions.append(session)
+                with contextlib.suppress(Exception):
+                    self._storage.save_focus_session(session)
+                merged_count += 1
+
         return merged_count, local_newer_count, identical_count, changed_list_ids
 
     def _load_database(self) -> None:
@@ -1817,8 +1830,10 @@ class MainWindow(QMainWindow):
         if self._focus_timer_dialog is not None:
             self._focus_timer_dialog.hide()
 
-    def _on_pomodoro_session_completed(self, item_id: object, seconds: int) -> None:
-        """Handle completed focus session — add time to item."""
+    def _on_pomodoro_session_completed(
+        self, item_id: object, seconds: int, start_iso: str = ""
+    ) -> None:
+        """Handle completed focus session — add time to item and record session."""
         from uuid import UUID as _UUID
 
         if not isinstance(item_id, _UUID):
@@ -1835,6 +1850,12 @@ class MainWindow(QMainWindow):
             self, active_list.id, item_id, item.time_spent, seconds, item.pomodoro_count
         )
         self._undo_stack.push(cmd)
+
+        # Record focus session
+        self._record_focus_session(
+            item_id, active_list.id, start_iso, seconds, completed=True, session_type="work"
+        )
+
         from .widgets.pomodoro import PomodoroWidget
 
         spent_str = PomodoroWidget.format_time_spent(item.time_spent)
@@ -1885,6 +1906,91 @@ class MainWindow(QMainWindow):
                     QSystemTrayIcon.MessageIcon.Information,
                     5000,
                 )
+
+    def _on_pomodoro_break_completed(
+        self, item_id: object, seconds: int, start_iso: str = ""
+    ) -> None:
+        """Handle completed break session — record it."""
+        from uuid import UUID as _UUID
+
+        if not isinstance(item_id, _UUID):
+            return
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        self._record_focus_session(
+            item_id, active_list.id, start_iso, seconds, completed=True, session_type="break"
+        )
+
+    def _on_pomodoro_stopped(
+        self, item_id: object, elapsed: int, start_iso: str, session_type: str
+    ) -> None:
+        """Handle interrupted session — record if elapsed > 60s."""
+        from uuid import UUID as _UUID
+
+        if not isinstance(item_id, _UUID):
+            return
+        if elapsed < 60:
+            return  # Skip accidental starts
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        self._record_focus_session(
+            item_id, active_list.id, start_iso, elapsed, completed=False, session_type=session_type
+        )
+
+    def _record_focus_session(
+        self,
+        item_id: UUID,
+        list_id: UUID,
+        start_iso: str,
+        duration_seconds: int,
+        completed: bool,
+        session_type: str,
+    ) -> None:
+        """Create and persist a focus session record."""
+        from datetime import date, datetime
+
+        from ..core.models import FocusSession
+
+        session = FocusSession(
+            item_id=item_id,
+            list_id=list_id,
+            start_time=start_iso,
+            end_time=datetime.now().isoformat(),
+            duration_seconds=duration_seconds,
+            completed=completed,
+            session_type=session_type,
+            date=date.today().isoformat(),
+        )
+        self._database.focus_sessions.append(session)
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self._storage.save_focus_session(session)
+
+        # Update floating dialog if visible
+        self._update_focus_timer_sessions()
+
+    def _update_focus_timer_sessions(self) -> None:
+        """Push today's sessions to the floating timer dialog."""
+        if self._focus_timer_dialog is None or not self._focus_timer_dialog.isVisible():
+            return
+        from datetime import date
+
+        today = date.today().isoformat()
+        sessions = [
+            {
+                "start_time": s.start_time,
+                "end_time": s.end_time,
+                "duration_seconds": s.duration_seconds,
+                "completed": s.completed,
+                "session_type": s.session_type,
+            }
+            for s in self._database.focus_sessions
+            if s.date == today and s.session_type == "work"
+        ]
+        self._focus_timer_dialog.update_sessions(sessions)
 
     def _update_pomodoro_display(self) -> None:
         """Update status bar and floating dialog with current timer state."""
@@ -1942,6 +2048,7 @@ class MainWindow(QMainWindow):
             self._pomodoro.sessions_before_long_break,
             self._pomodoro_total_duration(),
         )
+        self._update_focus_timer_sessions()
         self._focus_timer_dialog.show()
         self._focus_timer_dialog.raise_()
         self._focus_timer_dialog.activateWindow()

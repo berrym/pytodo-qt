@@ -5,6 +5,7 @@ Focus timer widget implementing the Pomodoro Technique.
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -33,7 +34,9 @@ class PomodoroWidget(QWidget):
         state_changed(str): emitted on every state transition with state name
     """
 
-    session_completed = pyqtSignal(object, int)  # (item_id, seconds)
+    session_completed = pyqtSignal(object, int, str)  # (item_id, seconds, start_iso)
+    break_completed = pyqtSignal(object, int, str)  # (item_id, seconds, start_iso)
+    stopped = pyqtSignal(object, int, str, str)  # (item_id, elapsed, start_iso, session_type)
     state_changed = pyqtSignal(str)  # state name
 
     def __init__(self, config: PomodoroConfig, parent=None):
@@ -44,6 +47,7 @@ class PomodoroWidget(QWidget):
         self._item_name: str = ""
         self._remaining_seconds: int = 0
         self._session_count: int = 0  # completed sessions in current cycle
+        self._session_start_time: datetime | None = None
 
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
@@ -70,6 +74,10 @@ class PomodoroWidget(QWidget):
         return self._session_count
 
     @property
+    def session_start_time(self) -> datetime | None:
+        return self._session_start_time
+
+    @property
     def sessions_before_long_break(self) -> int:
         return self._config.sessions_before_long_break
 
@@ -88,12 +96,35 @@ class PomodoroWidget(QWidget):
         self._start_work_session()
 
     def stop(self) -> None:
-        """Stop the timer. Partial work sessions are discarded."""
+        """Stop the timer. Emits stopped signal for partial session tracking."""
+        was_state = self._state
+        if was_state == TimerState.PAUSED:
+            was_state = getattr(self, "_paused_from", TimerState.WORKING)
+        item_id = self._item_id
+        start_time = self._session_start_time
+
+        # Calculate elapsed time for partial session
+        if was_state in (TimerState.WORKING, TimerState.BREAK) and item_id is not None:
+            if was_state == TimerState.WORKING:
+                total = self._config.work_duration * 60
+            elif (
+                self._session_count > 0
+                and self._session_count % self._config.sessions_before_long_break == 0
+            ):
+                total = self._config.long_break_duration * 60
+            else:
+                total = self._config.break_duration * 60
+            elapsed = total - self._remaining_seconds
+            start_iso = start_time.isoformat() if start_time else ""
+            session_type = "work" if was_state == TimerState.WORKING else "break"
+            self.stopped.emit(item_id, elapsed, start_iso, session_type)
+
         self._timer.stop()
         self._state = TimerState.IDLE
         self._remaining_seconds = 0
         self._item_id = None
         self._item_name = ""
+        self._session_start_time = None
         self.state_changed.emit(self._state.value)
 
     def pause(self) -> None:
@@ -113,6 +144,7 @@ class PomodoroWidget(QWidget):
 
     def _start_work_session(self) -> None:
         self._remaining_seconds = self._config.work_duration * 60
+        self._session_start_time = datetime.now()
         self._state = TimerState.WORKING
         self._timer.start()
         self.state_changed.emit(self._state.value)
@@ -125,6 +157,7 @@ class PomodoroWidget(QWidget):
             self._remaining_seconds = self._config.long_break_duration * 60
         else:
             self._remaining_seconds = self._config.break_duration * 60
+        self._session_start_time = datetime.now()
         self._state = TimerState.BREAK
         self._timer.start()
         self.state_changed.emit(self._state.value)
@@ -142,8 +175,9 @@ class PomodoroWidget(QWidget):
     def _on_work_complete(self) -> None:
         duration_seconds = self._config.work_duration * 60
         self._session_count += 1
+        start_iso = self._session_start_time.isoformat() if self._session_start_time else ""
         if self._item_id is not None:
-            self.session_completed.emit(self._item_id, duration_seconds)
+            self.session_completed.emit(self._item_id, duration_seconds, start_iso)
         if self._config.auto_start_break:
             self._start_break()
         else:
@@ -151,6 +185,17 @@ class PomodoroWidget(QWidget):
             self.state_changed.emit(self._state.value)
 
     def _on_break_complete(self) -> None:
+        start_iso = self._session_start_time.isoformat() if self._session_start_time else ""
+        if self._item_id is not None:
+            break_duration = self._remaining_seconds  # already 0 at completion
+            if (
+                self._session_count > 0
+                and self._session_count % self._config.sessions_before_long_break == 0
+            ):
+                break_duration = self._config.long_break_duration * 60
+            else:
+                break_duration = self._config.break_duration * 60
+            self.break_completed.emit(self._item_id, break_duration, start_iso)
         if self._config.auto_start_break and self._item_id is not None:
             self._start_work_session()
         else:

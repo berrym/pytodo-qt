@@ -278,6 +278,7 @@ class Database:
     """Complete database with all lists."""
 
     lists: dict[UUID, TodoList] = field(default_factory=dict)
+    focus_sessions: list[FocusSession] = field(default_factory=list)
     active_list_id: UUID | None = None
     schema_version: int = 2
 
@@ -360,6 +361,7 @@ class Database:
             "schema_version": self.schema_version,
             "active_list_id": str(self.active_list_id) if self.active_list_id else None,
             "lists": {str(k): v.to_dict() for k, v in self.lists.items()},
+            "focus_sessions": [s.to_dict() for s in self.focus_sessions],
         }
 
     def to_dict_for_sync(self) -> dict[str, Any]:
@@ -368,6 +370,7 @@ class Database:
             "schema_version": self.schema_version,
             "active_list_id": str(self.active_list_id) if self.active_list_id else None,
             "lists": {str(k): v.to_dict() for k, v in self.lists.items() if not v.private},
+            "focus_sessions": [s.to_dict() for s in self.focus_sessions],
         }
 
     def to_dict_for_device(self, allowed_list_ids: set[UUID]) -> dict[str, Any]:
@@ -387,6 +390,9 @@ class Database:
                 for k, v in self.lists.items()
                 if k in allowed_list_ids and not v.private
             },
+            "focus_sessions": [
+                s.to_dict() for s in self.focus_sessions if s.list_id in allowed_list_ids
+            ],
         }
 
     def to_json(self) -> str:
@@ -405,12 +411,15 @@ class Database:
             lst = TodoList.from_dict(v)
             lists[lst.id] = lst
 
+        sessions = [FocusSession.from_dict(s) for s in data.get("focus_sessions", [])]
+
         active_id = data.get("active_list_id")
         if active_id and isinstance(active_id, str):
             active_id = UUID(active_id)
 
         return cls(
             lists=lists,
+            focus_sessions=sessions,
             active_list_id=active_id,
             schema_version=data.get("schema_version", 2),
         )
@@ -640,6 +649,73 @@ def create_device(fingerprint: str, name: str = "") -> Device:
 def create_sync_group(name: str) -> SyncGroup:
     """Create a new sync group."""
     return SyncGroup(name=name)
+
+
+@dataclass
+class FocusSession:
+    """A recorded focus timer session."""
+
+    id: UUID = field(default_factory=_uuid_factory)
+    item_id: UUID = field(default_factory=_uuid_factory)
+    list_id: UUID = field(default_factory=_uuid_factory)
+    start_time: str = ""  # ISO 8601 datetime
+    end_time: str = ""  # ISO 8601 datetime
+    duration_seconds: int = 0
+    completed: bool = True  # False if interrupted
+    session_type: str = "work"  # "work" or "break"
+    date: str = ""  # YYYY-MM-DD for easy grouping
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "id": str(self.id),
+            "item_id": str(self.item_id),
+            "list_id": str(self.list_id),
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "duration_seconds": self.duration_seconds,
+            "completed": self.completed,
+            "session_type": self.session_type,
+            "date": self.date,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FocusSession:
+        """Create from dictionary."""
+        return cls(
+            id=UUID(data["id"]) if isinstance(data["id"], str) else data["id"],
+            item_id=UUID(data["item_id"]) if isinstance(data["item_id"], str) else data["item_id"],
+            list_id=UUID(data["list_id"]) if isinstance(data["list_id"], str) else data["list_id"],
+            start_time=data.get("start_time", ""),
+            end_time=data.get("end_time", ""),
+            duration_seconds=data.get("duration_seconds", 0),
+            completed=data.get("completed", True),
+            session_type=data.get("session_type", "work"),
+            date=data.get("date", ""),
+        )
+
+
+def create_focus_session(
+    item_id: UUID,
+    list_id: UUID,
+    start_time: str,
+    end_time: str,
+    duration_seconds: int,
+    completed: bool = True,
+    session_type: str = "work",
+    date: str = "",
+) -> FocusSession:
+    """Create a new focus session record."""
+    return FocusSession(
+        item_id=item_id,
+        list_id=list_id,
+        start_time=start_time,
+        end_time=end_time,
+        duration_seconds=duration_seconds,
+        completed=completed,
+        session_type=session_type,
+        date=date,
+    )
 
 
 def create_pending_sync(device_id: UUID, list_ids: list[UUID] | None = None) -> PendingSync:

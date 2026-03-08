@@ -5,15 +5,19 @@ Floating always-on-top focus timer window.
 
 from __future__ import annotations
 
+from typing import Any
+
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QProgressBar,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
 
 
@@ -38,6 +42,7 @@ class FocusTimerDialog(QDialog):
         self.setWindowTitle("Focus Timer")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
         self.setMinimumWidth(300)
+        self._sessions_expanded = False
         self._setup_ui()
         self.adjustSize()
 
@@ -94,6 +99,83 @@ class FocusTimerDialog(QDialog):
         btn_layout.addWidget(self._skip_btn)
 
         layout.addLayout(btn_layout)
+
+        # Today's Sessions (collapsible)
+        self._sessions_toggle = QPushButton("\u25b6 Today's Sessions")
+        self._sessions_toggle.setFlat(True)
+        self._sessions_toggle.setStyleSheet("text-align: left; color: gray;")
+        self._sessions_toggle.clicked.connect(self._toggle_sessions)
+        layout.addWidget(self._sessions_toggle)
+
+        self._sessions_container = QWidget()
+        self._sessions_layout = QVBoxLayout(self._sessions_container)
+        self._sessions_layout.setContentsMargins(4, 0, 4, 0)
+        self._sessions_layout.setSpacing(2)
+        self._sessions_container.setVisible(False)
+        layout.addWidget(self._sessions_container)
+
+    def _toggle_sessions(self) -> None:
+        """Toggle the sessions section visibility."""
+        self._sessions_expanded = not self._sessions_expanded
+        self._sessions_container.setVisible(self._sessions_expanded)
+        arrow = "\u25bc" if self._sessions_expanded else "\u25b6"
+        count = self._sessions_layout.count()
+        self._sessions_toggle.setText(f"{arrow} Today's Sessions ({count})")
+        self.adjustSize()
+
+    def update_sessions(self, sessions: list[dict[str, Any]]) -> None:
+        """Update the Today's Sessions display.
+
+        Args:
+            sessions: List of dicts with keys: start_time, end_time,
+                      duration_seconds, completed, session_type
+        """
+        # Clear existing session labels
+        while self._sessions_layout.count():
+            item = self._sessions_layout.takeAt(0)
+            if item is not None:
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+
+        for i, s in enumerate(sessions, 1):
+            label = self._format_session_label(i, s)
+            self._sessions_layout.addWidget(label)
+
+        # Update toggle button text
+        arrow = "\u25bc" if self._sessions_expanded else "\u25b6"
+        self._sessions_toggle.setText(f"{arrow} Today's Sessions ({len(sessions)})")
+
+        if self._sessions_expanded:
+            self.adjustSize()
+
+    def _format_session_label(self, index: int, session: dict[str, Any]) -> QLabel:
+        """Create a formatted label for a session entry."""
+        duration = session.get("duration_seconds", 0)
+        m, s = divmod(duration, 60)
+        completed = session.get("completed", True)
+        mark = "\u2713" if completed else "\u2717"
+
+        # Parse times for display
+        start = session.get("start_time", "")
+        end = session.get("end_time", "")
+        time_range = ""
+        try:
+            from datetime import datetime
+
+            start_dt = datetime.fromisoformat(start)
+            end_dt = datetime.fromisoformat(end)
+            time_range = f"  ({start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')})"
+        except (ValueError, TypeError):
+            pass
+
+        text = f"Session {index}: {m:02d}:{s:02d} {mark}{time_range}"
+        label = QLabel(text)
+        label.setStyleSheet("color: gray; font-size: 11px;")
+
+        # Add separator line
+        label.setFrameShape(QFrame.Shape.NoFrame)
+        return label
 
     def update_display(
         self,
