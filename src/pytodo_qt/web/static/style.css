@@ -62,6 +62,31 @@ body {
   font-weight: 500;
 }
 
+/* PWA install banner */
+#install-banner {
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+#install-banner span {
+  flex: 1;
+}
+
+#install-dismiss {
+  background: transparent;
+  border: none;
+  color: rgba(255,255,255,0.8);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
 /* Header */
 #header {
   background: var(--accent);
@@ -174,6 +199,11 @@ body {
   background: var(--completed-bg);
 }
 
+.item.subtask {
+  margin-left: 28px;
+  border-left: 2px solid var(--accent);
+}
+
 .item-checkbox {
   width: 24px;
   height: 24px;
@@ -239,6 +269,14 @@ body {
   color: var(--tag-text);
   border-radius: 4px;
   font-size: 11px;
+}
+
+.item-pomodoro {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .item-actions {

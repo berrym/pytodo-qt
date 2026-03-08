@@ -143,16 +143,41 @@
     }
     emptyMsg.classList.add("hidden");
 
-    // Sort: incomplete first, then by priority (1=high first), then by reminder
-    items.sort(function (a, b) {
-      if (a.complete !== b.complete) return a.complete ? 1 : -1;
-      if (a.priority !== b.priority) return a.priority - b.priority;
-      return a.reminder.localeCompare(b.reminder);
+    // Separate top-level items and subtasks
+    var topLevel = [];
+    var childMap = {};  // parent_id -> [child items]
+    items.forEach(function (item) {
+      if (item.parent_id) {
+        if (!childMap[item.parent_id]) childMap[item.parent_id] = [];
+        childMap[item.parent_id].push(item);
+      } else {
+        topLevel.push(item);
+      }
     });
 
-    items.forEach(function (item) {
+    // Sort: incomplete first, then by priority (1=high first), then by reminder
+    function sortItems(arr) {
+      arr.sort(function (a, b) {
+        if (a.complete !== b.complete) return a.complete ? 1 : -1;
+        if (a.priority !== b.priority) return a.priority - b.priority;
+        return a.reminder.localeCompare(b.reminder);
+      });
+    }
+    sortItems(topLevel);
+
+    topLevel.forEach(function (item) {
       var el = createItemElement(item);
       itemsContainer.appendChild(el);
+      // Render subtasks indented below parent
+      var children = childMap[item.id];
+      if (children) {
+        sortItems(children);
+        children.forEach(function (child) {
+          var childEl = createItemElement(child);
+          childEl.classList.add("subtask");
+          itemsContainer.appendChild(childEl);
+        });
+      }
     });
   }
 
@@ -208,6 +233,18 @@
         span.textContent = tag;
         meta.appendChild(span);
       });
+    }
+
+    if (item.estimated_pomodoros > 0) {
+      var pom = document.createElement("span");
+      pom.className = "item-pomodoro";
+      pom.textContent = item.pomodoro_count + "/" + item.estimated_pomodoros + " \ud83c\udf45";
+      meta.appendChild(pom);
+    } else if (item.pomodoro_count > 0) {
+      var pom = document.createElement("span");
+      pom.className = "item-pomodoro";
+      pom.textContent = item.pomodoro_count + " \ud83c\udf45";
+      meta.appendChild(pom);
     }
 
     if (meta.childNodes.length > 0) {
@@ -362,6 +399,44 @@
       startPolling();
     }
   });
+
+  // --- Add to Home Screen banner ---
+  // beforeinstallprompt requires HTTPS (won't fire on LAN HTTP),
+  // so we show manual instructions instead.
+
+  var installBanner = document.getElementById("install-banner");
+  var installDismiss = document.getElementById("install-dismiss");
+  var INSTALL_DISMISSED_KEY = "pytodo_install_dismissed";
+
+  function showInstallBanner() {
+    if (!installBanner) return;
+    // Don't show if already in standalone/installed mode
+    if (window.matchMedia("(display-mode: standalone)").matches) return;
+    // Don't show if previously dismissed
+    if (localStorage.getItem(INSTALL_DISMISSED_KEY)) return;
+    installBanner.classList.remove("hidden");
+  }
+
+  if (installDismiss) {
+    installDismiss.addEventListener("click", function () {
+      if (installBanner) installBanner.classList.add("hidden");
+      localStorage.setItem(INSTALL_DISMISSED_KEY, "1");
+    });
+  }
+
+  // Set platform-specific instructions
+  var installText = document.getElementById("install-text");
+  if (installText) {
+    var ua = navigator.userAgent || "";
+    if (/iPhone|iPad|iPod/.test(ua)) {
+      installText.innerHTML = "Tap <b>Share</b> \u2192 <b>Add to Home Screen</b> for quick access";
+    } else {
+      installText.innerHTML = "Tap <b>\u22ee</b> menu \u2192 <b>Add to Home Screen</b> for quick access";
+    }
+  }
+
+  // Show after a short delay so it doesn't flash on standalone launch
+  setTimeout(showInstallBanner, 500);
 
   // --- Init ---
 

@@ -10,6 +10,7 @@ from .peer_manager import PeerManagerDialog
 from .settings import SettingsDialog
 from .shortcuts_help import ShortcutsHelpDialog
 from .sync import SyncDialog
+from .web_connect import WebConnectDialog
 
 __all__ = [
     "AddListDialog",
@@ -22,4 +23,5 @@ __all__ = [
     "SettingsDialog",
     "ShortcutsHelpDialog",
     "SyncDialog",
+    "WebConnectDialog",
 ]

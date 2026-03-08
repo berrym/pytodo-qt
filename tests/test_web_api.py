@@ -538,6 +538,46 @@ class TestToggleItem:
 # ===========================================================================
 
 
+class TestItemPomodoroFields:
+    @pytest.mark.asyncio
+    async def test_item_includes_pomodoro_fields(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.pomodoro_count = 3
+        item.estimated_pomodoros = 6
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}")
+            assert resp.status == 200
+            data = await resp.json()
+            found = next(i for i in data["items"] if i["id"] == str(item.id))
+            assert found["pomodoro_count"] == 3
+            assert found["estimated_pomodoros"] == 6
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_item_pomodoro_defaults_zero(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        list_id = str(lst.id)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{list_id}/items",
+                json={"reminder": "Fresh item"},
+            )
+            assert resp.status == 201
+            data = await resp.json()
+            assert data["pomodoro_count"] == 0
+            assert data["estimated_pomodoros"] == 0
+        finally:
+            await client.close()
+
+
 class TestStatus:
     @pytest.mark.asyncio
     async def test_status(self):

@@ -390,6 +390,9 @@ class MainWindow(QMainWindow):
         self.focus_stats_action = QAction("Focus &Stats...", self)
         self.focus_stats_action.triggered.connect(self._on_focus_stats)
 
+        self.web_connect_action = QAction("Mobile &Setup...", self)
+        self.web_connect_action.triggered.connect(self._on_web_connect)
+
         # Help actions
         self.shortcuts_help_action = QAction("&Keyboard Shortcuts", self)
         self.shortcuts_help_action.setShortcut("F1")
@@ -504,6 +507,7 @@ class MainWindow(QMainWindow):
         tools_menu = menu_bar.addMenu("&Tools")
         if tools_menu:
             tools_menu.addAction(self.focus_stats_action)
+            tools_menu.addAction(self.web_connect_action)
 
         # Help menu
         help_menu = menu_bar.addMenu("&Help")
@@ -1073,6 +1077,7 @@ class MainWindow(QMainWindow):
         """Save database and refresh UI after a web API write."""
         self._storage.save_database(self._database)
         self._refresh_ui()
+        self._auto_scheduler.notify_change()
 
     def _get_sync_data(self) -> bytes:
         """Get database as bytes for sync (excludes private lists)."""
@@ -2586,6 +2591,16 @@ class MainWindow(QMainWindow):
         from .dialogs.focus_stats import FocusStatsDialog
 
         dialog = FocusStatsDialog(self._database, self._storage, self._config.pomodoro, self)
+        dialog.exec()
+
+    def _on_web_connect(self) -> None:
+        """Show the QR code connection dialog for mobile Web UI setup."""
+        if self._web_server is None:
+            self.status_bar_widget.show_message("Web UI is not enabled. Enable it in Settings.")
+            return
+        from .dialogs.web_connect import WebConnectDialog
+
+        dialog = WebConnectDialog(self._config.web.port, self)
         dialog.exec()
 
     def _on_import_ics(self) -> None:

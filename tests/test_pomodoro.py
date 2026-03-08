@@ -1866,3 +1866,49 @@ class TestStreakComputation:
         dialog._storage = storage
         dialog._config = config
         assert dialog._compute_streak() == 0
+
+
+# ===========================================================================
+# WebConnectDialog tests
+# ===========================================================================
+
+
+class TestWebConnectDialog:
+    def test_dialog_creation_with_url(self, monkeypatch):
+        """Dialog creates successfully when LAN IP is detected."""
+        monkeypatch.setattr(
+            "pytodo_qt.gui.dialogs.web_connect._get_lan_ip",
+            lambda: "192.168.1.42",
+        )
+        from pytodo_qt.gui.dialogs.web_connect import WebConnectDialog
+
+        dialog = WebConnectDialog(8080)
+        assert dialog._url == "http://192.168.1.42:8080"
+        assert dialog._port == 8080
+
+    def test_dialog_creation_no_network(self, monkeypatch):
+        """Dialog handles missing network gracefully."""
+        monkeypatch.setattr(
+            "pytodo_qt.gui.dialogs.web_connect._get_lan_ip",
+            lambda: None,
+        )
+        from pytodo_qt.gui.dialogs.web_connect import WebConnectDialog
+
+        dialog = WebConnectDialog(8080)
+        assert dialog._url is None
+
+    def test_qr_pixmap_generated(self):
+        """QR code renders to a non-empty pixmap."""
+        from pytodo_qt.gui.dialogs.web_connect import _render_qr_pixmap
+
+        pixmap = _render_qr_pixmap("http://192.168.1.42:8080", size=200)
+        assert not pixmap.isNull()
+        assert pixmap.width() > 0
+        assert pixmap.height() > 0
+
+    def test_get_lan_ip_returns_string_or_none(self):
+        """_get_lan_ip returns a string IP or None."""
+        from pytodo_qt.gui.dialogs.web_connect import _get_lan_ip
+
+        result = _get_lan_ip()
+        assert result is None or isinstance(result, str)
