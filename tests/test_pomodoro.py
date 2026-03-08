@@ -900,3 +900,88 @@ class TestEditTimeSpentCommandWithPomodoro:
 
         assert item.pomodoro_count == 1
         assert item.time_spent == 1500
+
+
+# ===========================================================================
+# Phase F: Sound notification tests
+# ===========================================================================
+
+
+class TestSoundConfig:
+    def test_defaults(self):
+        config = PomodoroConfig()
+        assert config.sound_enabled is False
+        assert config.sound_volume == 50
+
+    def test_custom_values(self):
+        config = PomodoroConfig(sound_enabled=True, sound_volume=75)
+        assert config.sound_enabled is True
+        assert config.sound_volume == 75
+
+    def test_toml_roundtrip(self):
+        import tomllib
+
+        config = AppConfig()
+        config.pomodoro.sound_enabled = True
+        config.pomodoro.sound_volume = 80
+        toml_str = config.to_toml()
+        data = tomllib.loads(toml_str)
+        restored = AppConfig.from_dict(data)
+        assert restored.pomodoro.sound_enabled is True
+        assert restored.pomodoro.sound_volume == 80
+
+    def test_from_dict_missing_sound_fields(self):
+        config = AppConfig.from_dict({"pomodoro": {"work_duration": 30}})
+        assert config.pomodoro.sound_enabled is False
+        assert config.pomodoro.sound_volume == 50
+
+
+class TestSoundPlayer:
+    def test_creation(self):
+        from pytodo_qt.gui.widgets.sound_player import SoundPlayer
+
+        config = PomodoroConfig()
+        player = SoundPlayer(config)
+        assert player._enabled is False
+
+    def test_creation_enabled(self):
+        from pytodo_qt.gui.widgets.sound_player import SoundPlayer
+
+        config = PomodoroConfig(sound_enabled=True, sound_volume=75)
+        player = SoundPlayer(config)
+        assert player._enabled is True
+        assert player._volume == 0.75
+
+    def test_update_config(self):
+        from pytodo_qt.gui.widgets.sound_player import SoundPlayer
+
+        config = PomodoroConfig()
+        player = SoundPlayer(config)
+
+        new_config = PomodoroConfig(sound_enabled=True, sound_volume=90)
+        player.update_config(new_config)
+        assert player._enabled is True
+        assert player._volume == 0.9
+
+    def test_play_when_disabled_is_noop(self):
+        from pytodo_qt.gui.widgets.sound_player import SoundPlayer
+
+        config = PomodoroConfig(sound_enabled=False)
+        player = SoundPlayer(config)
+        player.play("work-complete")  # Should not raise
+
+    def test_play_unknown_sound_is_noop(self):
+        from pytodo_qt.gui.widgets.sound_player import SoundPlayer
+
+        config = PomodoroConfig(sound_enabled=True)
+        player = SoundPlayer(config)
+        player.play("nonexistent-sound")  # Should not raise
+
+    def test_effects_loaded(self):
+        from pytodo_qt.gui.widgets.sound_player import _AVAILABLE, SoundPlayer
+
+        config = PomodoroConfig(sound_enabled=True)
+        player = SoundPlayer(config)
+        if _AVAILABLE:
+            assert "work-complete" in player._effects
+            assert "break-complete" in player._effects

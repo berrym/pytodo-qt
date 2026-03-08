@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -19,6 +20,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSlider,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -368,6 +370,31 @@ class SettingsDialog(QDialog):
         form.addRow("", self.auto_break_check)
 
         layout.addWidget(group)
+
+        # Sound notifications group
+        sound_group = QGroupBox("Sound Notifications")
+        sound_form = QFormLayout(sound_group)
+
+        self.sound_enabled_check = QCheckBox("Enable sound notifications")
+        sound_form.addRow("", self.sound_enabled_check)
+
+        volume_layout = QHBoxLayout()
+        self.sound_volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self.sound_volume_slider.setRange(0, 100)
+        self.sound_volume_label = QLabel("50%")
+        self.sound_volume_label.setFixedWidth(40)
+        volume_layout.addWidget(self.sound_volume_slider)
+        volume_layout.addWidget(self.sound_volume_label)
+        sound_form.addRow("Volume:", volume_layout)
+
+        self.sound_enabled_check.stateChanged.connect(
+            lambda state: self.sound_volume_slider.setEnabled(bool(state))
+        )
+        self.sound_volume_slider.valueChanged.connect(
+            lambda val: self.sound_volume_label.setText(f"{val}%")
+        )
+
+        layout.addWidget(sound_group)
         layout.addStretch()
 
         return widget
@@ -455,6 +482,9 @@ class SettingsDialog(QDialog):
         self.long_break_spin.setValue(config.pomodoro.long_break_duration)
         self.sessions_spin.setValue(config.pomodoro.sessions_before_long_break)
         self.auto_break_check.setChecked(config.pomodoro.auto_start_break)
+        self.sound_enabled_check.setChecked(config.pomodoro.sound_enabled)
+        self.sound_volume_slider.setValue(config.pomodoro.sound_volume)
+        self.sound_volume_slider.setEnabled(config.pomodoro.sound_enabled)
 
         # Web
         self.web_enabled_check.setChecked(config.web.enabled)
@@ -500,6 +530,8 @@ class SettingsDialog(QDialog):
         config.pomodoro.long_break_duration = self.long_break_spin.value()
         config.pomodoro.sessions_before_long_break = self.sessions_spin.value()
         config.pomodoro.auto_start_break = self.auto_break_check.isChecked()
+        config.pomodoro.sound_enabled = self.sound_enabled_check.isChecked()
+        config.pomodoro.sound_volume = self.sound_volume_slider.value()
 
         # Web
         config.web.enabled = self.web_enabled_check.isChecked()

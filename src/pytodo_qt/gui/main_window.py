@@ -106,6 +106,11 @@ class MainWindow(QMainWindow):
         self._pomodoro = PomodoroWidget(self._config.pomodoro, self)
         self._pomodoro.session_completed.connect(self._on_pomodoro_session_completed)
         self._pomodoro.state_changed.connect(self._on_pomodoro_state_changed)
+
+        # Sound notifications
+        from .widgets.sound_player import SoundPlayer
+
+        self._sound_player = SoundPlayer(self._config.pomodoro, self)
         self._pomodoro_display_timer = QTimer(self)
         self._pomodoro_display_timer.setInterval(1000)
         self._pomodoro_display_timer.timeout.connect(self._update_pomodoro_display)
@@ -1861,21 +1866,25 @@ class MainWindow(QMainWindow):
                 self._pomodoro_display_timer.start()
             self._update_pomodoro_display()
 
-        # System notifications for state transitions
-        if state == "break" and self.tray_icon is not None:
-            self.tray_icon.showMessage(
-                "Focus Session Complete",
-                "Time for a break!",
-                QSystemTrayIcon.MessageIcon.Information,
-                5000,
-            )
-        elif state == "working" and self._pomodoro.session_count > 0 and self.tray_icon is not None:
-            self.tray_icon.showMessage(
-                "Break Over",
-                "Ready for the next session?",
-                QSystemTrayIcon.MessageIcon.Information,
-                5000,
-            )
+        # System notifications and sound for state transitions
+        if state == "break":
+            self._sound_player.play("work-complete")
+            if self.tray_icon is not None:
+                self.tray_icon.showMessage(
+                    "Focus Session Complete",
+                    "Time for a break!",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    5000,
+                )
+        elif state == "working" and self._pomodoro.session_count > 0:
+            self._sound_player.play("break-complete")
+            if self.tray_icon is not None:
+                self.tray_icon.showMessage(
+                    "Break Over",
+                    "Ready for the next session?",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    5000,
+                )
 
     def _update_pomodoro_display(self) -> None:
         """Update status bar and floating dialog with current timer state."""
@@ -2398,6 +2407,7 @@ class MainWindow(QMainWindow):
                 interval_minutes=self._config.discovery.auto_sync_interval,
             )
             self._pomodoro.update_config(self._config.pomodoro)
+            self._sound_player.update_config(self._config.pomodoro)
             # Restart web server if config changed
             if self._config.web.enabled and self._web_server is None:
                 self._start_web_server()

@@ -83,6 +83,8 @@ class PomodoroConfig:
     long_break_duration: int = 15  # minutes (5-60)
     sessions_before_long_break: int = 4  # (2-10)
     auto_start_break: bool = True
+    sound_enabled: bool = False
+    sound_volume: int = 50  # 0-100
 
 
 @dataclass
@@ -164,6 +166,8 @@ class AppConfig:
         lines.append(f"long_break_duration = {self.pomodoro.long_break_duration}")
         lines.append(f"sessions_before_long_break = {self.pomodoro.sessions_before_long_break}")
         lines.append(f"auto_start_break = {str(self.pomodoro.auto_start_break).lower()}")
+        lines.append(f"sound_enabled = {str(self.pomodoro.sound_enabled).lower()}")
+        lines.append(f"sound_volume = {self.pomodoro.sound_volume}")
         lines.append("")
 
         # Web section
@@ -232,6 +236,8 @@ class AppConfig:
                 long_break_duration=pom.get("long_break_duration", 15),
                 sessions_before_long_break=pom.get("sessions_before_long_break", 4),
                 auto_start_break=pom.get("auto_start_break", True),
+                sound_enabled=pom.get("sound_enabled", False),
+                sound_volume=pom.get("sound_volume", 50),
             )
 
         if "web" in data:
