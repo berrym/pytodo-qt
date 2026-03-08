@@ -1217,6 +1217,32 @@ class DatabaseStorage:
         )
         return [self._row_to_focus_session(row) for row in cursor]
 
+    def get_sessions_for_date_range(self, start_date: str, end_date: str) -> list[FocusSession]:
+        """Get all focus sessions in a date range, ordered by start_time."""
+        cursor = self.connection.execute(
+            "SELECT * FROM focus_sessions WHERE date >= ? AND date <= ? ORDER BY start_time",
+            (start_date, end_date),
+        )
+        return [self._row_to_focus_session(row) for row in cursor]
+
+    def get_work_session_count_for_date(self, date_str: str) -> int:
+        """Count completed work sessions for a specific date."""
+        cursor = self.connection.execute(
+            "SELECT COUNT(*) FROM focus_sessions WHERE date = ? AND session_type = 'work' AND completed = 1",
+            (date_str,),
+        )
+        row = cursor.fetchone()
+        return row[0] if row else 0
+
+    def get_work_duration_for_date(self, date_str: str) -> int:
+        """Sum duration_seconds of completed work sessions for a specific date."""
+        cursor = self.connection.execute(
+            "SELECT COALESCE(SUM(duration_seconds), 0) FROM focus_sessions WHERE date = ? AND session_type = 'work' AND completed = 1",
+            (date_str,),
+        )
+        row = cursor.fetchone()
+        return row[0] if row else 0
+
     def get_all_focus_sessions(self) -> list[FocusSession]:
         """Get all focus sessions (for sync)."""
         cursor = self.connection.execute("SELECT * FROM focus_sessions ORDER BY start_time")

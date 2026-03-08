@@ -395,6 +395,18 @@ class SettingsDialog(QDialog):
         )
 
         layout.addWidget(sound_group)
+
+        # Daily goal group
+        goal_group = QGroupBox("Daily Goal")
+        goal_form = QFormLayout(goal_group)
+
+        self.daily_goal_spin = QSpinBox()
+        self.daily_goal_spin.setRange(0, 24)
+        self.daily_goal_spin.setSuffix(" sessions")
+        self.daily_goal_spin.setSpecialValueText("Disabled")
+        goal_form.addRow("Daily target:", self.daily_goal_spin)
+
+        layout.addWidget(goal_group)
         layout.addStretch()
 
         return widget
@@ -485,6 +497,7 @@ class SettingsDialog(QDialog):
         self.sound_enabled_check.setChecked(config.pomodoro.sound_enabled)
         self.sound_volume_slider.setValue(config.pomodoro.sound_volume)
         self.sound_volume_slider.setEnabled(config.pomodoro.sound_enabled)
+        self.daily_goal_spin.setValue(config.pomodoro.daily_goal)
 
         # Web
         self.web_enabled_check.setChecked(config.web.enabled)
@@ -532,6 +545,7 @@ class SettingsDialog(QDialog):
         config.pomodoro.auto_start_break = self.auto_break_check.isChecked()
         config.pomodoro.sound_enabled = self.sound_enabled_check.isChecked()
         config.pomodoro.sound_volume = self.sound_volume_slider.value()
+        config.pomodoro.daily_goal = self.daily_goal_spin.value()
 
         # Web
         config.web.enabled = self.web_enabled_check.isChecked()

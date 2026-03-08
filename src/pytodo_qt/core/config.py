@@ -85,6 +85,7 @@ class PomodoroConfig:
     auto_start_break: bool = True
     sound_enabled: bool = False
     sound_volume: int = 50  # 0-100
+    daily_goal: int = 0  # Target sessions per day (0 = no goal)
 
 
 @dataclass
@@ -168,6 +169,7 @@ class AppConfig:
         lines.append(f"auto_start_break = {str(self.pomodoro.auto_start_break).lower()}")
         lines.append(f"sound_enabled = {str(self.pomodoro.sound_enabled).lower()}")
         lines.append(f"sound_volume = {self.pomodoro.sound_volume}")
+        lines.append(f"daily_goal = {self.pomodoro.daily_goal}")
         lines.append("")
 
         # Web section
@@ -238,6 +240,7 @@ class AppConfig:
                 auto_start_break=pom.get("auto_start_break", True),
                 sound_enabled=pom.get("sound_enabled", False),
                 sound_volume=pom.get("sound_volume", 50),
+                daily_goal=pom.get("daily_goal", 0),
             )
 
         if "web" in data:

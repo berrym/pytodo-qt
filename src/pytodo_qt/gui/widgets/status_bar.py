@@ -78,6 +78,9 @@ class StatusBarWidget(QStatusBar):
         self._pomodoro_icon_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.pomodoro_label = QLabel()
         self.pomodoro_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._daily_goal_label = QLabel()
+        self._daily_goal_label.setStyleSheet("color: gray;")
+        self._daily_goal_label.hide()
         # Install event filters after both labels exist to avoid AttributeError
         self._pomodoro_icon_label.installEventFilter(self)
         self.pomodoro_label.installEventFilter(self)
@@ -121,6 +124,10 @@ class StatusBarWidget(QStatusBar):
         layout.addWidget(self._pomodoro_separator)
         layout.addWidget(self._pomodoro_icon_label)
         layout.addWidget(self.pomodoro_label)
+        self._daily_goal_separator = self._create_separator()
+        layout.addWidget(self._daily_goal_separator)
+        layout.addWidget(self._daily_goal_label)
+        self._daily_goal_separator.hide()
         layout.addWidget(self._create_separator())
         layout.addWidget(self.list_count_label)
         layout.addWidget(self._create_separator())
@@ -306,6 +313,21 @@ class StatusBarWidget(QStatusBar):
         pixmap = self._pomodoro_pixmaps.get(state_name)
         if pixmap:
             self._pomodoro_icon_label.setPixmap(pixmap)
+
+    def update_daily_goal(self, completed: int, goal: int) -> None:
+        """Update the daily goal progress display.
+
+        Args:
+            completed: Number of completed work sessions today
+            goal: Daily goal target (0 = no goal)
+        """
+        if goal <= 0:
+            self._daily_goal_label.hide()
+            self._daily_goal_separator.hide()
+            return
+        self._daily_goal_label.setText(f"Today: {completed}/{goal}")
+        self._daily_goal_label.show()
+        self._daily_goal_separator.show()
 
     def set_pending_sync_count(self, count: int) -> None:
         """Set the pending sync count display.

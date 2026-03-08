@@ -4,6 +4,7 @@ from .add_list import AddListDialog
 from .add_todo import AddTodoDialog
 from .batch_due_date import BatchDueDateDialog
 from .device_manager import DeviceManagerDialog
+from .focus_stats import FocusStatsDialog
 from .list_sync_settings import ListSyncSettingsDialog
 from .peer_manager import PeerManagerDialog
 from .settings import SettingsDialog
@@ -15,6 +16,7 @@ __all__ = [
     "AddTodoDialog",
     "BatchDueDateDialog",
     "DeviceManagerDialog",
+    "FocusStatsDialog",
     "ListSyncSettingsDialog",
     "PeerManagerDialog",
     "SettingsDialog",

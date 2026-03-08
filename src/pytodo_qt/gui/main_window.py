@@ -386,6 +386,10 @@ class MainWindow(QMainWindow):
         self.stop_focus_action.setToolTip(self._tip("Stop focus timer", "Ctrl+."))
         self.stop_focus_action.triggered.connect(self._on_stop_focus)
 
+        # Tools actions
+        self.focus_stats_action = QAction("Focus &Stats...", self)
+        self.focus_stats_action.triggered.connect(self._on_focus_stats)
+
         # Help actions
         self.shortcuts_help_action = QAction("&Keyboard Shortcuts", self)
         self.shortcuts_help_action.setShortcut("F1")
@@ -495,6 +499,11 @@ class MainWindow(QMainWindow):
             sync_menu.addSeparator()
             sync_menu.addAction(self.device_manager_action)
             sync_menu.addAction(self.peer_manager_action)
+
+        # Tools menu
+        tools_menu = menu_bar.addMenu("&Tools")
+        if tools_menu:
+            tools_menu.addAction(self.focus_stats_action)
 
         # Help menu
         help_menu = menu_bar.addMenu("&Help")
@@ -1283,6 +1292,7 @@ class MainWindow(QMainWindow):
             total_items=total_items,
             total_completed=total_completed,
         )
+        self._update_daily_goal()
 
         # Server status
         config = get_config()
@@ -1855,6 +1865,8 @@ class MainWindow(QMainWindow):
         self._record_focus_session(
             item_id, active_list.id, start_iso, seconds, completed=True, session_type="work"
         )
+        self._update_daily_goal()
+        self._update_focus_item_progress()
 
         from .widgets.pomodoro import PomodoroWidget
 
@@ -1992,6 +2004,43 @@ class MainWindow(QMainWindow):
         ]
         self._focus_timer_dialog.update_sessions(sessions)
 
+    def _get_today_session_count(self) -> int:
+        """Count today's completed work sessions from in-memory focus_sessions."""
+        from datetime import date
+
+        today = date.today().isoformat()
+        return sum(
+            1
+            for s in self._database.focus_sessions
+            if s.date == today and s.session_type == "work" and s.completed
+        )
+
+    def _update_daily_goal(self) -> None:
+        """Update daily goal display in status bar and floating dialog."""
+        goal = self._config.pomodoro.daily_goal
+        completed = self._get_today_session_count() if goal > 0 else 0
+        self.status_bar_widget.update_daily_goal(completed, goal)
+        if self._focus_timer_dialog is not None:
+            self._focus_timer_dialog.update_daily_goal(completed, goal)
+
+    def _get_focused_item_stats(self) -> tuple[int, int]:
+        """Get the focused item's (pomodoro_count, estimated_pomodoros)."""
+        item_id = self._pomodoro.item_id
+        if item_id is None:
+            return 0, 0
+        for todo_list in self._database.lists.values():
+            item = todo_list.get_item(item_id)
+            if item is not None:
+                return item.pomodoro_count, item.estimated_pomodoros
+        return 0, 0
+
+    def _update_focus_item_progress(self) -> None:
+        """Push the focused item's pomodoro stats to the floating dialog."""
+        if self._focus_timer_dialog is None:
+            return
+        count, estimated = self._get_focused_item_stats()
+        self._focus_timer_dialog.update_item_progress(count, estimated)
+
     def _update_pomodoro_display(self) -> None:
         """Update status bar and floating dialog with current timer state."""
         from .widgets.pomodoro import PomodoroWidget
@@ -2001,6 +2050,7 @@ class MainWindow(QMainWindow):
         self.status_bar_widget.update_pomodoro_display(state, time_str)
 
         if self._focus_timer_dialog is not None and self._focus_timer_dialog.isVisible():
+            count, estimated = self._get_focused_item_stats()
             self._focus_timer_dialog.update_display(
                 state,
                 self._pomodoro.remaining_seconds,
@@ -2008,6 +2058,8 @@ class MainWindow(QMainWindow):
                 self._pomodoro.session_count,
                 self._pomodoro.sessions_before_long_break,
                 self._pomodoro_total_duration(),
+                item_pomodoro_count=count,
+                item_estimated=estimated,
             )
 
     def _pomodoro_total_duration(self) -> int:
@@ -2040,6 +2092,7 @@ class MainWindow(QMainWindow):
             self._focus_timer_dialog.stop_requested.connect(self._on_stop_focus)
             self._focus_timer_dialog.skip_break_requested.connect(self._on_skip_break)
 
+        count, estimated = self._get_focused_item_stats()
         self._focus_timer_dialog.update_display(
             self._pomodoro.state.value,
             self._pomodoro.remaining_seconds,
@@ -2047,11 +2100,16 @@ class MainWindow(QMainWindow):
             self._pomodoro.session_count,
             self._pomodoro.sessions_before_long_break,
             self._pomodoro_total_duration(),
+            item_pomodoro_count=count,
+            item_estimated=estimated,
         )
-        self._update_focus_timer_sessions()
         self._focus_timer_dialog.show()
         self._focus_timer_dialog.raise_()
         self._focus_timer_dialog.activateWindow()
+        # Must be called after show() — the visibility guard skips updates on hidden dialogs
+        self._update_focus_timer_sessions()
+        self._update_focus_item_progress()
+        self._update_daily_goal()
 
     def _on_skip_break(self) -> None:
         """Skip the current break and start the next work session."""
@@ -2515,12 +2573,20 @@ class MainWindow(QMainWindow):
             )
             self._pomodoro.update_config(self._config.pomodoro)
             self._sound_player.update_config(self._config.pomodoro)
+            self._update_daily_goal()
             # Restart web server if config changed
             if self._config.web.enabled and self._web_server is None:
                 self._start_web_server()
             elif not self._config.web.enabled and self._web_server is not None:
                 self._stop_web_server()
             self._refresh_ui()
+
+    def _on_focus_stats(self) -> None:
+        """Show the Focus Statistics dialog."""
+        from .dialogs.focus_stats import FocusStatsDialog
+
+        dialog = FocusStatsDialog(self._database, self._storage, self._config.pomodoro, self)
+        dialog.exec()
 
     def _on_import_ics(self) -> None:
         """Import items from an .ics file into the active list."""

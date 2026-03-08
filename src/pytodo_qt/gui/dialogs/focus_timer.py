@@ -5,13 +5,15 @@ Floating always-on-top focus timer window.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QPixmap
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -19,6 +21,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+_ICONS_DIR = Path(__file__).parent.parent / "icons"
 
 
 class FocusTimerDialog(QDialog):
@@ -43,6 +47,15 @@ class FocusTimerDialog(QDialog):
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
         self.setMinimumWidth(300)
         self._sessions_expanded = False
+        self._tomato_pixmap: QPixmap | None = None
+        path = _ICONS_DIR / "pomodoro-work.svg"
+        if path.exists():
+            self._tomato_pixmap = QPixmap(str(path)).scaled(
+                16,
+                16,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
         self._setup_ui()
         self.adjustSize()
 
@@ -72,11 +85,28 @@ class FocusTimerDialog(QDialog):
         self._item_label.setWordWrap(True)
         layout.addWidget(self._item_label)
 
-        # Session counter
+        # Session counter (cycle position, e.g. "Session 2 of 4")
         self._session_label = QLabel()
         self._session_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._session_label.setStyleSheet("color: gray;")
         layout.addWidget(self._session_label)
+
+        # Item pomodoro progress — row of tomato icons
+        self._item_progress_container = QWidget()
+        self._item_progress_layout = QHBoxLayout(self._item_progress_container)
+        self._item_progress_layout.setContentsMargins(0, 0, 0, 0)
+        self._item_progress_layout.setSpacing(4)
+        self._item_progress_layout.addStretch()
+        self._item_progress_layout.addStretch()
+        self._item_progress_container.hide()
+        layout.addWidget(self._item_progress_container)
+
+        # Daily goal progress
+        self._daily_goal_label = QLabel()
+        self._daily_goal_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._daily_goal_label.setStyleSheet("color: gray;")
+        self._daily_goal_label.hide()
+        layout.addWidget(self._daily_goal_label)
 
         # Buttons
         btn_layout = QHBoxLayout()
@@ -185,6 +215,8 @@ class FocusTimerDialog(QDialog):
         session_count: int,
         total_sessions: int,
         total_duration: int = 0,
+        item_pomodoro_count: int = 0,
+        item_estimated: int = 0,
     ) -> None:
         """Update all display elements.
 
@@ -195,6 +227,8 @@ class FocusTimerDialog(QDialog):
             session_count: Completed sessions in current cycle
             total_sessions: Sessions before long break
             total_duration: Total duration of current session in seconds
+            item_pomodoro_count: Completed pomodoros on the focused item
+            item_estimated: Estimated pomodoros for the item (0 = no estimate)
         """
         if state == "idle":
             self.hide()
@@ -223,9 +257,13 @@ class FocusTimerDialog(QDialog):
         # Item name
         self._item_label.setText(item_name)
 
-        # Session counter
-        current = session_count + (1 if state in ("working", "paused") else 0)
-        self._session_label.setText(f"Session {current} of {total_sessions}")
+        # Session counter — use item estimate when available, else cycle position
+        if item_estimated > 0:
+            current = item_pomodoro_count + (1 if state in ("working", "paused") else 0)
+            self._session_label.setText(f"Session {current}/{item_estimated}")
+        else:
+            current = session_count + (1 if state in ("working", "paused") else 0)
+            self._session_label.setText(f"Session {current} of {total_sessions}")
 
         # Pause button text
         if state == "paused":
@@ -241,6 +279,69 @@ class FocusTimerDialog(QDialog):
         if self._skip_btn.isVisible() != skip_visible:
             self._skip_btn.setVisible(skip_visible)
             self.adjustSize()
+
+    def update_item_progress(self, pomodoro_count: int, estimated: int) -> None:
+        """Update the focused item's pomodoro progress as tomato icons.
+
+        Shows filled tomatoes for completed sessions and dimmed tomatoes for
+        remaining slots (when an estimate is set). Hidden when count is 0.
+
+        Args:
+            pomodoro_count: Completed pomodoros for this item
+            estimated: Estimated pomodoros (0 = no estimate)
+        """
+        if pomodoro_count <= 0 and estimated <= 0:
+            self._item_progress_container.hide()
+            return
+
+        # Clear previous icons (skip the two stretch items at index 0 and end)
+        layout = self._item_progress_layout
+        while layout.count() > 2:
+            item = layout.takeAt(1)
+            if item is not None:
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+
+        total = max(pomodoro_count, estimated)
+        # Cap display to avoid overflow — show "N+" text beyond limit
+        max_icons = 12
+        show_icons = min(total, max_icons)
+        overflow = total > max_icons
+
+        for i in range(show_icons):
+            icon_label = QLabel()
+            icon_label.setFixedSize(16, 16)
+            if self._tomato_pixmap:
+                icon_label.setPixmap(self._tomato_pixmap)
+                icon_label.setScaledContents(True)
+            if i >= pomodoro_count:
+                # Dimmed for remaining/unfilled slots
+                effect = QGraphicsOpacityEffect(icon_label)
+                effect.setOpacity(0.3)
+                icon_label.setGraphicsEffect(effect)
+            # Insert before the trailing stretch
+            layout.insertWidget(layout.count() - 1, icon_label)
+
+        if overflow:
+            overflow_label = QLabel(f"+{total - max_icons}")
+            overflow_label.setStyleSheet("color: gray; font-size: 11px;")
+            layout.insertWidget(layout.count() - 1, overflow_label)
+
+        self._item_progress_container.show()
+
+    def update_daily_goal(self, completed: int, goal: int) -> None:
+        """Update the daily goal progress display.
+
+        Args:
+            completed: Number of completed work sessions today
+            goal: Daily goal target (0 = no goal)
+        """
+        if goal <= 0:
+            self._daily_goal_label.hide()
+            return
+        self._daily_goal_label.setText(f"Today: {completed}/{goal} sessions")
+        self._daily_goal_label.show()
 
     def closeEvent(self, a0) -> None:  # noqa: N802
         """Hide instead of closing so the dialog can be reopened."""
