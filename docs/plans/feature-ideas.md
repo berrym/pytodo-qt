@@ -1,91 +1,90 @@
-# Feature Ideas for 0.3.x
+# Feature Roadmap for 0.3.x
 
-Ideas borrowed from the broader productivity app landscape (Super Productivity, Todoist, TickTick, etc.) adapted to pytodo-qt's identity as a local-first, P2P-syncing, native Qt app.
-
-These are candidates for the remaining 0.3.x releases. Each is low-to-moderate effort and pairs well with what already exists.
+Status of features planned for the 0.3.x release series. Each feature has a dedicated design document where applicable.
 
 ---
 
-## Pomodoro / Focus Timer
+## Shipped
 
-A lightweight timer that pairs with the active todo item.
-
-- Start a focus session from the currently selected item
-- Configurable work/break intervals (default 25/5 min)
-- Visual countdown in the status bar or a small floating widget
-- Auto-log time spent on the item when session completes
-- Optional break reminders
-- Keyboard shortcut to start/stop
-
-**Fits because:** pytodo-qt already has a status bar with dynamic content and per-item state tracking. A timer is a natural extension of "working on this item."
-
----
-
-## Recurring / Repeating Tasks
-
-Tasks that regenerate on a schedule after completion.
-
-- Recurrence rules: daily, weekly, monthly, custom interval
-- On completion, a new instance is created with the next due date
-- Recurrence metadata stored per-item (syncs via existing P2P mechanism)
-- UI: recurrence picker in the item editor, icon indicator on recurring items
-
-**Fits because:** due dates already exist (added in 0.3.10). Recurrence is the natural next step and one of the most-requested features in any todo app.
+| Feature | Version | Notes |
+|---------|---------|-------|
+| Recurring tasks | v0.3.10 | Advance-in-place model, 5 recurrence fields, exhaustion guard |
+| Tags | v0.3.10 | Free-form tags, colored chips, autocomplete, filter/search |
+| Due dates & times | v0.3.10-11 | Date picker, optional time, overdue display, configurable format |
+| Multi-tier sort | v0.3.11 | 3 configurable sort dimensions with reverse toggles |
+| Pomodoro / Focus timer | v0.3.11 | State machine, floating window, status bar, toolbar, context menu, system notifications, configurable durations, `time_spent` tracking |
+| Keyboard shortcuts | v0.3.11 | Comprehensive keyboard layer, row selection, navigation |
+| P2P sync | v0.3.8+ | Zeroconf discovery, LWW merge, device trust, auto-sync scheduler |
+| CalDAV interop | Designed | [caldav-interop.md](caldav-interop.md) — export/import `.ics`, optional CalDAV server |
 
 ---
 
-## Tags
+## Committed (next to implement)
 
-Lightweight cross-list categorization.
+### Subtasks
 
-- Free-form text tags on items (e.g., `@errands`, `@work`, `@quick`)
-- Filter/search by tag across all lists
-- Tag completion/suggestions from previously used tags
-- Colored tag chips in the item view
-- Tags sync alongside item data
+One level of parent/child nesting. `parent_id: UUID | None` on TodoItem. Indented display with expand/collapse, progress badges, drag-and-drop reparenting. This is the most-requested missing feature and the foundation for task breakdown suggestions, kanban card detail, and pomodoro estimation workflows.
 
-**Fits because:** search/filter already exists (added in 0.3.10). Tags add a cross-cutting organizational dimension without the overhead of nested projects or folders.
+**Design document:** [subtasks-design.md](subtasks-design.md)
+**Schema:** v11 migration (combined with kanban fields)
 
----
+### Pomodoro Evolution (Phase A: Foundation Fixes)
 
-## Keyboard Shortcuts
+Complete the unfinished items from the original design: undo-able time tracking (`EditTimeSpentCommand`), time spent tooltips, graceful stop on item deletion, visible time display in table rows.
 
-Expand keyboard-driven workflow beyond undo/redo.
-
-- Quick-add item without mouse (global hotkey or shortcut)
-- Navigate between items with arrow keys
-- Toggle completion, edit, delete from keyboard
-- Switch lists via keyboard
-- Shortcut cheat sheet (help overlay or dialog)
-- Configurable bindings
-
-**Fits because:** the app already has several shortcuts (Ctrl+Z/Y, Ctrl+Shift+P, etc.). A comprehensive keyboard layer makes the native Qt app feel fast and intentional — something Electron apps struggle with.
+**Design document:** [pomodoro-evolution.md](pomodoro-evolution.md) — Phase A
 
 ---
 
-## CalDAV Import/Export
+## Planned (designed, implementation order TBD)
 
-Interop with calendar and todo ecosystems without cloud dependency.
+### Kanban Board View
 
-- Export lists as `.ics` (iCalendar VTODO format)
-- Import `.ics` files into a list
-- Optional CalDAV server mode for two-way sync with calendar apps
-- Enables integration with Thunderbird, Apple Reminders, GNOME Calendar, etc.
+Toggle between list and board views per list. `board_column` field on TodoItem, per-list column configuration, drag-and-drop between columns, WIP limits, keyboard navigation. Complements the list view for workflow-oriented tasks.
 
-**Fits because:** this preserves the no-cloud philosophy while enabling interop. Users can move data in and out without vendor lock-in — strengthening the local-first value proposition.
+**Design document:** [kanban-design.md](kanban-design.md)
+**Schema:** v11 migration (combined with subtasks)
+
+### Natural Language Task Input
+
+Smart text input that parses dates, times, priority, tags, recurrence, and pomodoro estimates from free-form English. Zero external dependencies — regex-based, fully offline. Replaces the multi-field dialog with a single smart input line.
+
+**Design document:** [natural-language-input.md](natural-language-input.md)
+
+### Pomodoro Evolution (Phases B-F)
+
+- **Phase B:** Per-task pomodoro count and estimation (`pomodoro_count`, `estimated_pomodoros`)
+- **Phase C:** Session logging with synced `focus_sessions` table (append-only merge)
+- **Phase D:** Productivity analytics — daily goals, stats dialog, streak tracking
+- **Phase E:** Gamification — progress indicators, milestone celebrations, focus score
+- **Phase F:** Sound notifications via `QSoundEffect`, optional focus mode
+
+**Design document:** [pomodoro-evolution.md](pomodoro-evolution.md)
 
 ---
 
-## Priorities
+## Under Consideration
 
-A rough ordering based on user value vs. implementation effort:
+| Idea | Notes |
+|------|-------|
+| Font bundling | Ship a licensed emoji font (e.g., Noto Color Emoji) for cross-platform consistency; font selector in settings |
+| Task grouping | Visual grouping of related items without parent/child hierarchy — may be addressed by tags + kanban columns |
+| CalDAV server mode | Full two-way sync with calendar apps — designed but lower priority than core features |
+| Web UI | Flask/htmx interface for mobile access — [web-ui-architecture.md](web-ui-architecture.md), [pwa-mobile-strategy.md](pwa-mobile-strategy.md) |
 
-| Feature | Effort | Impact | Notes |
-|---------|--------|--------|-------|
-| Recurring tasks | Low-moderate | High | Builds directly on existing due dates |
-| Keyboard shortcuts | Low | Moderate | Incremental, can ship piece by piece |
-| Pomodoro timer | Moderate | Moderate | Standalone feature, no schema changes |
-| Tags | Moderate | Moderate | Schema migration needed, but straightforward |
-| CalDAV import/export | Moderate-high | Moderate | Export is easy, full CalDAV server is bigger |
+---
 
-These can be mixed into upcoming releases alongside the web UI work planned for 0.3.11, or grouped into their own point releases.
+## Implementation Sequencing
+
+```
+Subtasks ─────────────────┐
+                          ├──> Kanban (needs subtask display)
+Pomodoro Phase A ─────────┤
+                          ├──> Pomodoro Phases B-F
+NLP Parser (independent) ─┘
+                          └──> NLP Dialog Integration
+```
+
+**Schema v11** combines: `parent_id` (subtasks) + `board_column` (kanban) + `board_columns` on lists + `pomodoro_count` / `estimated_pomodoros` (pomodoro Phase B).
+
+Subtasks and Pomodoro Phase A can proceed in parallel. NLP parser (core module, no Qt) is fully independent. Kanban should follow subtasks. Pomodoro Phases B-F interleave as bandwidth allows.
