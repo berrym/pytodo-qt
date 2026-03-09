@@ -7,7 +7,7 @@ and streak tracking.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
@@ -26,7 +26,22 @@ from PyQt6.QtWidgets import (
 if TYPE_CHECKING:
     from ...core.config import PomodoroConfig
     from ...core.database import DatabaseStorage
-    from ...core.models import Database
+    from ...core.models import Database, FocusSession
+
+_TIME_BLOCKS: list[tuple[int, str]] = [
+    (0, "12 – 2 AM"),
+    (2, "2 – 4 AM"),
+    (4, "4 – 6 AM"),
+    (6, "6 – 8 AM"),
+    (8, "8 – 10 AM"),
+    (10, "10 AM – 12 PM"),
+    (12, "12 – 2 PM"),
+    (14, "2 – 4 PM"),
+    (16, "4 – 6 PM"),
+    (18, "6 – 8 PM"),
+    (20, "8 – 10 PM"),
+    (22, "10 PM – 12 AM"),
+]
 
 
 class WeeklyChartWidget(QWidget):
@@ -194,6 +209,10 @@ class FocusStatsDialog(QDialog):
         streak_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(streak_label)
 
+        insights_group = self._build_insights_section()
+        if insights_group is not None:
+            layout.addWidget(insights_group)
+
         layout.addStretch()
         scroll.setWidget(content)
         outer.addWidget(scroll)
@@ -287,3 +306,259 @@ class FocusStatsDialog(QDialog):
     def _compute_streak(self) -> int:
         """Compute current streak of consecutive days with completed work sessions."""
         return self._storage.compute_current_streak(self._config.daily_goal)
+
+    # ------------------------------------------------------------------
+    # Interruption Insights
+    # ------------------------------------------------------------------
+
+    def _get_work_sessions(self) -> list[FocusSession]:
+        """Return all work sessions from storage."""
+        all_sessions = self._storage.get_all_focus_sessions()
+        return [s for s in all_sessions if s.session_type == "work"]
+
+    def _build_insights_section(self) -> QGroupBox | None:
+        """Build the Insights group box. Returns None if no work sessions exist."""
+        work = self._get_work_sessions()
+        if not work:
+            return None
+
+        group = QGroupBox("Insights")
+        group_layout = QVBoxLayout(group)
+
+        def _add(text: str) -> None:
+            lbl = QLabel(text)
+            lbl.setWordWrap(True)
+            group_layout.addWidget(lbl)
+
+        # --- Always-visible insights ---
+
+        # Completion rate (always show)
+        completed = sum(1 for s in work if s.completed)
+        total = len(work)
+        pct = round(completed / total * 100)
+        interrupted = total - completed
+        if interrupted > 0:
+            _add(f"Completion rate: {pct}% ({interrupted}/{total} sessions interrupted)")
+        else:
+            _add(f"Completion rate: {pct}% ({total} sessions, none interrupted)")
+
+        # Average session duration (always show)
+        avg_dur = sum(s.duration_seconds for s in work) / total
+        _add(f"Average session duration: {_format_duration(round(avg_dur))}")
+
+        # Most active time block (needs 2+ sessions in any block)
+        active = self._compute_most_active_time(work)
+        if active:
+            _add(active)
+
+        # --- Conditional insights (need enough data) ---
+
+        best = self._compute_best_focus_time(work)
+        if best:
+            _add(best)
+
+        worst = self._compute_worst_focus_time(work)
+        if worst:
+            _add(worst)
+
+        trend = self._compute_completion_rate_trend(work)
+        if trend:
+            _add(trend)
+
+        most_interrupted = self._compute_most_interrupted_tasks(work)
+        if most_interrupted:
+            _add("<b>Most interrupted tasks:</b>")
+            for i, (name, item_total, item_completed, _rate) in enumerate(most_interrupted, 1):
+                _add(f"  {i}. {name} \u2014 {item_completed}/{item_total} completed")
+
+        duration_cmp = self._compute_interruption_duration_comparison(work)
+        if duration_cmp:
+            _add(duration_cmp)
+
+        return group
+
+    def _compute_most_active_time(self, work_sessions: list[FocusSession]) -> str | None:
+        """Find the 2-hour block with the most sessions (min 2)."""
+        blocks: dict[int, int] = defaultdict(int)
+        for s in work_sessions:
+            try:
+                hour = datetime.fromisoformat(s.start_time).hour
+            except (ValueError, TypeError):
+                continue
+            blocks[(hour // 2) * 2] += 1
+
+        if not blocks:
+            return None
+
+        best_block = max(blocks, key=lambda k: blocks[k])
+        count = blocks[best_block]
+        if count < 2:
+            return None
+
+        label = dict(_TIME_BLOCKS).get(best_block, f"{best_block}:00")
+        return f"Most active time: {label} ({count} sessions)"
+
+    def _compute_interruption_rate(self, work_sessions: list[FocusSession]) -> str | None:
+        """Overall interruption rate across all work sessions."""
+        total = len(work_sessions)
+        if total == 0:
+            return None
+        interrupted = sum(1 for s in work_sessions if not s.completed)
+        if interrupted == 0:
+            return None
+        pct = round(interrupted / total * 100)
+        return f"Interruption rate: {pct}% ({interrupted}/{total} sessions interrupted)"
+
+    def _compute_best_focus_time(self, work_sessions: list[FocusSession]) -> str | None:
+        """Find the 2-hour block with the highest completion rate (min 3 sessions)."""
+        blocks: dict[int, list[bool]] = defaultdict(list)
+        for s in work_sessions:
+            try:
+                hour = datetime.fromisoformat(s.start_time).hour
+            except (ValueError, TypeError):
+                continue
+            block_key = (hour // 2) * 2
+            blocks[block_key].append(s.completed)
+
+        best_rate = -1.0
+        best_block: int | None = None
+        best_total = 0
+        for block_key, outcomes in blocks.items():
+            if len(outcomes) < 3:
+                continue
+            rate = sum(outcomes) / len(outcomes)
+            if rate > best_rate or (rate == best_rate and len(outcomes) > best_total):
+                best_rate = rate
+                best_block = block_key
+                best_total = len(outcomes)
+
+        if best_block is None:
+            return None
+
+        label = dict(_TIME_BLOCKS).get(best_block, f"{best_block}:00")
+        pct = round(best_rate * 100)
+        return f"Best focus time: {label} ({pct}% completion, {best_total} sessions)"
+
+    def _compute_worst_focus_time(self, work_sessions: list[FocusSession]) -> str | None:
+        """Find the 2-hour block with the lowest completion rate (min 3 sessions)."""
+        blocks: dict[int, list[bool]] = defaultdict(list)
+        for s in work_sessions:
+            try:
+                hour = datetime.fromisoformat(s.start_time).hour
+            except (ValueError, TypeError):
+                continue
+            block_key = (hour // 2) * 2
+            blocks[block_key].append(s.completed)
+
+        worst_rate = 2.0
+        worst_block: int | None = None
+        worst_total = 0
+        for block_key, outcomes in blocks.items():
+            if len(outcomes) < 3:
+                continue
+            rate = sum(outcomes) / len(outcomes)
+            if rate >= 1.0:
+                continue  # Skip blocks with no interruptions
+            if rate < worst_rate or (rate == worst_rate and len(outcomes) > worst_total):
+                worst_rate = rate
+                worst_block = block_key
+                worst_total = len(outcomes)
+
+        if worst_block is None:
+            return None
+
+        label = dict(_TIME_BLOCKS).get(worst_block, f"{worst_block}:00")
+        pct = round(worst_rate * 100)
+        return f"Worst focus time: {label} ({pct}% completion, {worst_total} sessions)"
+
+    def _compute_completion_rate_trend(self, work_sessions: list[FocusSession]) -> str | None:
+        """Compare this week's vs last week's completion rate (min 2 per week)."""
+        today = date.today()
+        week_start = today - timedelta(days=today.weekday())
+        last_week_start = week_start - timedelta(days=7)
+
+        this_week: list[bool] = []
+        last_week: list[bool] = []
+        for s in work_sessions:
+            try:
+                d = date.fromisoformat(s.date)
+            except (ValueError, TypeError):
+                continue
+            if week_start <= d <= today:
+                this_week.append(s.completed)
+            elif last_week_start <= d < week_start:
+                last_week.append(s.completed)
+
+        if len(this_week) < 2 or len(last_week) < 2:
+            return None
+
+        this_pct = round(sum(this_week) / len(this_week) * 100)
+        last_pct = round(sum(last_week) / len(last_week) * 100)
+        delta = this_pct - last_pct
+
+        if abs(delta) < 3:
+            avg = round((this_pct + last_pct) / 2)
+            return f"Completion rate: steady at {avg}%"
+        arrow = "\u2191" if delta > 0 else "\u2193"
+        return f"{arrow} Completion rate: {this_pct}% this week vs {last_pct}% last week"
+
+    def _compute_most_interrupted_tasks(
+        self,
+        work_sessions: list[FocusSession],
+    ) -> list[tuple[str, int, int, float]] | None:
+        """Find tasks with the lowest completion rate (min 2 sessions, <100%).
+
+        Returns list of (name, total, completed, rate), top 3 by lowest rate.
+        """
+        by_item: dict[str, list[bool]] = defaultdict(list)
+        for s in work_sessions:
+            by_item[str(s.item_id)].append(s.completed)
+
+        candidates: list[tuple[str, int, int, float]] = []
+        for item_id_str, outcomes in by_item.items():
+            if len(outcomes) < 2:
+                continue
+            completed = sum(outcomes)
+            rate = completed / len(outcomes)
+            if rate >= 1.0:
+                continue
+            name = self._resolve_item_name(item_id_str)
+            candidates.append((name, len(outcomes), completed, rate))
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda x: (x[3], -x[1]))
+        return candidates[:3]
+
+    def _compute_interruption_duration_comparison(
+        self,
+        work_sessions: list[FocusSession],
+    ) -> str | None:
+        """Compare avg duration of interrupted vs completed sessions."""
+        completed_durations: list[int] = []
+        interrupted_durations: list[int] = []
+        for s in work_sessions:
+            if s.completed:
+                completed_durations.append(s.duration_seconds)
+            else:
+                interrupted_durations.append(s.duration_seconds)
+
+        if len(completed_durations) < 2 or len(interrupted_durations) < 2:
+            return None
+
+        avg_completed = sum(completed_durations) / len(completed_durations)
+        avg_interrupted = sum(interrupted_durations) / len(interrupted_durations)
+
+        completed_min = round(avg_completed / 60)
+        interrupted_min = round(avg_interrupted / 60)
+
+        if avg_completed > 0 and avg_interrupted < avg_completed * 0.5:
+            timing = "early"
+        else:
+            timing = "near the end"
+
+        return (
+            f"Interrupted sessions avg {interrupted_min}m vs completed "
+            f"{completed_min}m \u2014 most interruptions happen {timing}"
+        )
