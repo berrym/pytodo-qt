@@ -47,6 +47,7 @@ class FocusTimerDialog(QDialog):
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
         self.setMinimumWidth(300)
         self._sessions_expanded = False
+        self._session_total_count = 0
         self._tomato_pixmap: QPixmap | None = None
         path = _ICONS_DIR / "pomodoro-work.svg"
         if path.exists():
@@ -79,7 +80,7 @@ class FocusTimerDialog(QDialog):
         self._progress_bar.setFixedHeight(8)
         layout.addWidget(self._progress_bar)
 
-        # Item name
+        # Item name — elided to 2 lines with tooltip for full text
         self._item_label = QLabel()
         self._item_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._item_label.setWordWrap(True)
@@ -144,7 +145,7 @@ class FocusTimerDialog(QDialog):
 
         layout.addLayout(btn_layout)
 
-        # Today's Sessions (collapsible)
+        # Today's Sessions — compact stats + collapsible recent list
         self._sessions_toggle = QPushButton("\u25b6 Today's Sessions")
         self._sessions_toggle.setFlat(True)
         self._sessions_toggle.setStyleSheet("text-align: left; color: gray;")
@@ -152,9 +153,23 @@ class FocusTimerDialog(QDialog):
         layout.addWidget(self._sessions_toggle)
 
         self._sessions_container = QWidget()
-        self._sessions_layout = QVBoxLayout(self._sessions_container)
-        self._sessions_layout.setContentsMargins(4, 0, 4, 0)
-        self._sessions_layout.setSpacing(2)
+        sessions_outer = QVBoxLayout(self._sessions_container)
+        sessions_outer.setContentsMargins(4, 0, 4, 0)
+        sessions_outer.setSpacing(4)
+
+        # Stats summary row
+        self._stats_label = QLabel()
+        self._stats_label.setStyleSheet("color: gray; font-size: 11px;")
+        self._stats_label.setWordWrap(True)
+        sessions_outer.addWidget(self._stats_label)
+
+        # Recent sessions (capped at 5 most recent)
+        self._recent_container = QWidget()
+        self._recent_layout = QVBoxLayout(self._recent_container)
+        self._recent_layout.setContentsMargins(0, 0, 0, 0)
+        self._recent_layout.setSpacing(2)
+        sessions_outer.addWidget(self._recent_container)
+
         self._sessions_container.setVisible(False)
         layout.addWidget(self._sessions_container)
 
@@ -163,8 +178,7 @@ class FocusTimerDialog(QDialog):
         self._sessions_expanded = not self._sessions_expanded
         self._sessions_container.setVisible(self._sessions_expanded)
         arrow = "\u25bc" if self._sessions_expanded else "\u25b6"
-        count = self._sessions_layout.count()
-        self._sessions_toggle.setText(f"{arrow} Today's Sessions ({count})")
+        self._sessions_toggle.setText(f"{arrow} Today's Sessions ({self._session_total_count})")
         self.adjustSize()
 
     def update_sessions(self, sessions: list[dict[str, Any]]) -> None:
@@ -174,17 +188,61 @@ class FocusTimerDialog(QDialog):
             sessions: List of dicts with keys: start_time, end_time,
                       duration_seconds, completed, session_type
         """
-        # Clear existing session labels
-        while self._sessions_layout.count():
-            item = self._sessions_layout.takeAt(0)
+        self._session_total_count = len(sessions)
+
+        # Compute stats
+        completed = [s for s in sessions if s.get("completed", False)]
+        incomplete = [s for s in sessions if not s.get("completed", False)]
+        durations = [
+            s.get("duration_seconds", 0) for s in sessions if s.get("duration_seconds", 0) > 0
+        ]
+
+        total_time = sum(durations)
+        total_m, total_s = divmod(total_time, 60)
+        total_h, total_m = divmod(total_m, 60)
+
+        stats_parts = [
+            f"Total: {len(sessions)}",
+            f"\u2713 {len(completed)}",
+            f"\u2717 {len(incomplete)}",
+        ]
+        if total_h > 0:
+            stats_parts.append(f"Time: {total_h}h {total_m:02d}m")
+        elif total_time > 0:
+            stats_parts.append(f"Time: {total_m}m {total_s:02d}s")
+
+        if durations:
+            longest = max(durations)
+            shortest = min(durations)
+            lm, ls = divmod(longest, 60)
+            sm, ss = divmod(shortest, 60)
+            if len(durations) > 1:
+                stats_parts.append(f"Longest: {lm:02d}:{ls:02d}")
+                stats_parts.append(f"Shortest: {sm:02d}:{ss:02d}")
+
+        self._stats_label.setText("  \u2022  ".join(stats_parts))
+
+        # Clear recent sessions
+        while self._recent_layout.count():
+            item = self._recent_layout.takeAt(0)
             if item is not None:
                 widget = item.widget()
                 if widget is not None:
                     widget.deleteLater()
 
-        for i, s in enumerate(sessions, 1):
+        # Show most recent 5 sessions
+        max_recent = 5
+        recent = sessions[-max_recent:]
+        start_index = max(1, len(sessions) - max_recent + 1)
+        for i, s in enumerate(recent, start_index):
             label = self._format_session_label(i, s)
-            self._sessions_layout.addWidget(label)
+            self._recent_layout.addWidget(label)
+
+        if len(sessions) > max_recent:
+            more = QLabel(f"... and {len(sessions) - max_recent} earlier")
+            more.setStyleSheet("color: gray; font-size: 10px; font-style: italic;")
+            # Insert at top
+            self._recent_layout.insertWidget(0, more)
 
         # Update toggle button text
         arrow = "\u25bc" if self._sessions_expanded else "\u25b6"
@@ -268,8 +326,10 @@ class FocusTimerDialog(QDialog):
         elif state == "paused":
             self._time_label.setStyleSheet("color: #F39C12;")
 
-        # Item name
-        self._item_label.setText(item_name)
+        # Item name — elide to ~2 lines, tooltip for full text
+        display_name = self._elide_item_name(item_name)
+        self._item_label.setText(display_name)
+        self._item_label.setToolTip(item_name if display_name != item_name else "")
 
         # Session counter — use item estimate when available, else cycle position
         if item_estimated > 0:
@@ -390,6 +450,42 @@ class FocusTimerDialog(QDialog):
             grade = "F"
         self._focus_score_label.setText(f"Score: {grade} ({score})")
         self._focus_score_label.show()
+
+    def _elide_item_name(self, name: str, max_lines: int = 2) -> str:
+        """Truncate name to fit within max_lines, adding ellipsis if needed."""
+        fm = self._item_label.fontMetrics()
+        available_width = max(self.minimumWidth() - 48, 200)  # margins
+        lines: list[str] = []
+        remaining = name
+
+        for line_num in range(max_lines):
+            if not remaining:
+                break
+            if line_num == max_lines - 1:
+                # Last allowed line — elide the rest
+                elided = fm.elidedText(remaining, Qt.TextElideMode.ElideRight, available_width)
+                lines.append(elided)
+            else:
+                # Find how much fits on this line
+                fit_len = len(remaining)
+                for i in range(1, len(remaining) + 1):
+                    if fm.horizontalAdvance(remaining[:i]) > available_width:
+                        fit_len = i - 1
+                        break
+                if fit_len >= len(remaining):
+                    lines.append(remaining)
+                    remaining = ""
+                else:
+                    # Break at last space for readability
+                    break_at = remaining.rfind(" ", 0, fit_len + 1)
+                    if break_at > 0:
+                        lines.append(remaining[:break_at])
+                        remaining = remaining[break_at + 1 :]
+                    else:
+                        lines.append(remaining[:fit_len])
+                        remaining = remaining[fit_len:]
+
+        return "\n".join(lines)
 
     def closeEvent(self, a0) -> None:  # noqa: N802
         """Hide instead of closing so the dialog can be reopened."""

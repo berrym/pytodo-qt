@@ -52,6 +52,7 @@ class TodoItem:
     updated_at: int = field(default_factory=_now_timestamp)
     deleted: bool = False  # Tombstone for sync
     parent_id: UUID | None = None  # None = top-level item
+    board_column: str = ""  # Kanban column assignment
 
     @property
     def is_subtask(self) -> bool:
@@ -101,6 +102,7 @@ class TodoItem:
             "updated_at": self.updated_at,
             "deleted": self.deleted,
             "parent_id": str(self.parent_id) if self.parent_id else None,
+            "board_column": self.board_column,
         }
 
     @classmethod
@@ -134,6 +136,7 @@ class TodoItem:
             updated_at=data.get("updated_at", _now_timestamp()),
             deleted=data.get("deleted", False),
             parent_id=parent_id,
+            board_column=data.get("board_column", ""),
         )
 
     @classmethod
@@ -163,6 +166,19 @@ class TodoList:
     updated_at: int = field(default_factory=_now_timestamp)
     deleted: bool = False  # Tombstone for sync
     private: bool = False  # Private lists excluded from sync
+    board_columns: list[str] = field(default_factory=lambda: ["To Do", "In Progress", "Done"])
+    wip_limits: dict[str, int] = field(default_factory=dict)
+
+    def get_wip_limit(self, column: str) -> int:
+        """Get WIP limit for a column (0 = no limit)."""
+        return self.wip_limits.get(column, 0)
+
+    def set_wip_limit(self, column: str, limit: int) -> None:
+        """Set WIP limit for a column (0 to remove)."""
+        if limit <= 0:
+            self.wip_limits.pop(column, None)
+        else:
+            self.wip_limits[column] = limit
 
     def mark_updated(self) -> None:
         """Mark list as updated with current timestamp."""
@@ -234,6 +250,8 @@ class TodoList:
             "updated_at": self.updated_at,
             "deleted": self.deleted,
             "private": self.private,
+            "board_columns": self.board_columns,
+            "wip_limits": self.wip_limits,
         }
 
     @classmethod
@@ -252,6 +270,8 @@ class TodoList:
             updated_at=data.get("updated_at", _now_timestamp()),
             deleted=data.get("deleted", False),
             private=data.get("private", False),
+            board_columns=data.get("board_columns", ["To Do", "In Progress", "Done"]),
+            wip_limits=data.get("wip_limits", {}),
         )
 
     @classmethod
@@ -619,6 +639,7 @@ def create_todo_item(
     recurrence_end_count: int | None = None,
     parent_id: UUID | None = None,
     estimated_pomodoros: int = 0,
+    board_column: str = "",
 ) -> TodoItem:
     """Create a new todo item."""
     return TodoItem(
@@ -633,6 +654,7 @@ def create_todo_item(
         recurrence_end_count=recurrence_end_count,
         parent_id=parent_id,
         estimated_pomodoros=estimated_pomodoros,
+        board_column=board_column,
     )
 
 

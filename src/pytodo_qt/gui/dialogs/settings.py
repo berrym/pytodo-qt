@@ -118,6 +118,16 @@ class SettingsDialog(QDialog):
             combo.currentIndexChanged.connect(lambda _idx, c=combo: self._on_sort_tier_changed(c))
 
         layout.addWidget(sort_group)
+
+        # View mode group
+        view_group = QGroupBox("View")
+        view_layout = QFormLayout(view_group)
+        self._view_mode_combo = QComboBox()
+        self._view_mode_combo.addItem("List", "list")
+        self._view_mode_combo.addItem("Board (Kanban)", "board")
+        view_layout.addRow("Default view:", self._view_mode_combo)
+        layout.addWidget(view_group)
+
         layout.addStretch()
 
         return widget
@@ -459,6 +469,13 @@ class SettingsDialog(QDialog):
         for check, rev in zip(self._sort_reverses, tier_reverses, strict=True):
             check.setChecked(rev)
 
+        # View mode
+        view_mode = config.database.view_mode
+        for i in range(self._view_mode_combo.count()):
+            if self._view_mode_combo.itemData(i) == view_mode:
+                self._view_mode_combo.setCurrentIndex(i)
+                break
+
         # Network
         self.server_enabled_check.setChecked(config.server.enabled)
         self.server_address_edit.setText(config.server.address)
@@ -518,6 +535,7 @@ class SettingsDialog(QDialog):
         config.database.sort_tier2_reverse = self._sort_reverses[1].isChecked()
         config.database.sort_tier3 = self._sort_combos[2].currentData()
         config.database.sort_tier3_reverse = self._sort_reverses[2].isChecked()
+        config.database.view_mode = self._view_mode_combo.currentData()
 
         # Network
         config.server.enabled = self.server_enabled_check.isChecked()

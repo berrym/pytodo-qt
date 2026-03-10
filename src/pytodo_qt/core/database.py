@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS lists (
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     deleted INTEGER NOT NULL DEFAULT 0,
-    private INTEGER NOT NULL DEFAULT 0
+    private INTEGER NOT NULL DEFAULT 0,
+    board_columns TEXT
 )
 """
 
@@ -73,6 +74,7 @@ CREATE TABLE IF NOT EXISTS items (
     updated_at INTEGER NOT NULL,
     deleted INTEGER NOT NULL DEFAULT 0,
     parent_id TEXT,
+    board_column TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (list_id) REFERENCES lists(id)
 )
 """
@@ -284,6 +286,7 @@ class DatabaseStorage:
         self._migrate_schema_10_to_11()
         self._migrate_schema_11_to_12()
         self._migrate_schema_12_to_13()
+        self._migrate_schema_13_to_14()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -495,6 +498,28 @@ class DatabaseStorage:
 
         self.set_schema_version(13)
 
+    def _migrate_schema_13_to_14(self) -> None:
+        """Migrate schema from version 13 to 14 (add kanban board columns)."""
+        current_version = self.get_schema_version()
+        if current_version >= 14:
+            return
+
+        # Add board_column to items table
+        columns = [row[1] for row in self.connection.execute("PRAGMA table_info(items)")]
+        if "board_column" not in columns:
+            self.connection.execute(
+                "ALTER TABLE items ADD COLUMN board_column TEXT NOT NULL DEFAULT ''"
+            )
+            logger.log.info("Migrated schema 13->14: added board_column to items")
+
+        # Add board_columns to lists table
+        columns = [row[1] for row in self.connection.execute("PRAGMA table_info(lists)")]
+        if "board_columns" not in columns:
+            self.connection.execute("ALTER TABLE lists ADD COLUMN board_columns TEXT")
+            logger.log.info("Migrated schema 13->14: added board_columns to lists")
+
+        self.set_schema_version(14)
+
     def get_schema_version(self) -> int:
         """Get current schema version."""
         cursor = self.connection.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
@@ -576,10 +601,21 @@ class DatabaseStorage:
         Args:
             lst: TodoList to save
         """
+        import json as _json
+
+        # Encode board_columns with optional wip_limits
+        if lst.wip_limits:
+            board_cols_data = _json.dumps(
+                {"columns": lst.board_columns, "wip_limits": lst.wip_limits}
+            )
+        else:
+            board_cols_data = _json.dumps(lst.board_columns)
+
         self.connection.execute(
             """
-            INSERT OR REPLACE INTO lists (id, name, created_at, updated_at, deleted, private)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO lists
+            (id, name, created_at, updated_at, deleted, private, board_columns)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(lst.id),
@@ -588,6 +624,7 @@ class DatabaseStorage:
                 lst.updated_at,
                 1 if lst.deleted else 0,
                 1 if lst.private else 0,
+                board_cols_data,
             ),
         )
 
@@ -608,11 +645,28 @@ class DatabaseStorage:
 
     def _row_to_list(self, row: sqlite3.Row) -> TodoList:
         """Convert a database row to a TodoList."""
+        import json as _json
+
         # Check if private column exists (for backward compatibility during migration)
         try:
             private = bool(row["private"])
         except (KeyError, IndexError):
             private = False
+
+        # Parse board_columns (v14+)
+        board_columns = ["To Do", "In Progress", "Done"]
+        wip_limits: dict[str, int] = {}
+        try:
+            board_cols_str = row["board_columns"]
+            if board_cols_str:
+                parsed = _json.loads(board_cols_str)
+                if isinstance(parsed, list):
+                    board_columns = parsed
+                elif isinstance(parsed, dict):
+                    board_columns = parsed.get("columns", board_columns)
+                    wip_limits = parsed.get("wip_limits", {})
+        except (KeyError, IndexError):
+            pass
 
         return TodoList(
             id=UUID(row["id"]),
@@ -621,6 +675,8 @@ class DatabaseStorage:
             updated_at=row["updated_at"],
             deleted=bool(row["deleted"]),
             private=private,
+            board_columns=board_columns,
+            wip_limits=wip_limits,
             items={},  # Items loaded separately
         )
 
@@ -677,8 +733,8 @@ class DatabaseStorage:
              recurrence_type, recurrence_interval, recurrence_end_date,
              recurrence_end_count, recurrence_count, time_spent,
              pomodoro_count, estimated_pomodoros,
-             created_at, updated_at, deleted, parent_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             created_at, updated_at, deleted, parent_id, board_column)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(item.id),
@@ -701,6 +757,7 @@ class DatabaseStorage:
                 item.updated_at,
                 1 if item.deleted else 0,
                 str(item.parent_id) if item.parent_id else None,
+                item.board_column,
             ),
         )
 
@@ -783,6 +840,12 @@ class DatabaseStorage:
         except (KeyError, IndexError):
             parent_id = None
 
+        # Handle board_column (v14+)
+        try:
+            board_column = row["board_column"] or ""
+        except (KeyError, IndexError):
+            board_column = ""
+
         return TodoItem(
             id=UUID(row["id"]),
             reminder=row["reminder"],
@@ -803,6 +866,7 @@ class DatabaseStorage:
             updated_at=row["updated_at"],
             deleted=bool(row["deleted"]),
             parent_id=parent_id,
+            board_column=board_column,
         )
 
     # Bulk operations (for sync and migration)

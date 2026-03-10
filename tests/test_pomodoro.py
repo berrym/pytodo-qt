@@ -379,7 +379,7 @@ class TestTimeSpentField:
 
 class TestSchemaV10:
     def test_current_version_is_13(self):
-        assert SCHEMA_VERSION == 13
+        assert SCHEMA_VERSION == 14
 
     def test_fresh_database_has_time_spent_column(self, tmp_path):
         db_path = tmp_path / "test.db"
@@ -575,6 +575,32 @@ class TestFocusTimerDialog:
         assert dialog._progress_bar.maximum() == 1500
         assert dialog._progress_bar.value() == 750
 
+    def test_short_name_not_elided(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+        dialog.show()
+        dialog.update_display("working", 1500, "Short task", 0, 4)
+        assert dialog._item_label.text() == "Short task"
+        assert dialog._item_label.toolTip() == ""
+
+    def test_long_name_elided_with_ellipsis(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+        dialog.show()
+        long_name = "This is a very long task reminder that should definitely be truncated because it exceeds what can reasonably fit in the floating timer window display area"
+        dialog.update_display("working", 1500, long_name, 0, 4)
+        displayed = dialog._item_label.text()
+        # Should be shorter than the original
+        assert len(displayed) < len(long_name)
+        # Should end with ellipsis
+        assert displayed.rstrip().endswith("\u2026")
+        # Full text in tooltip
+        assert dialog._item_label.toolTip() == long_name
+
 
 # ===========================================================================
 # Context menu and status bar signal tests
@@ -739,6 +765,7 @@ class TestDeletionStopsFocusTimer:
 
         window.todo_table = MagicMock()
         window.todo_table.get_selected_item_ids.return_value = [item.id]
+        window._active_view_widget.return_value = window.todo_table
 
         # Call the real method
         MainWindow._on_delete_todo(window)
@@ -768,6 +795,7 @@ class TestDeletionStopsFocusTimer:
 
         window.todo_table = MagicMock()
         window.todo_table.get_selected_item_ids.return_value = [item.id]
+        window._active_view_widget.return_value = window.todo_table
 
         MainWindow._on_delete_todo(window)
 
@@ -1322,7 +1350,7 @@ class TestSessionStartTime:
 
 
 class TestTodaysSessions:
-    def test_update_sessions_displays_rows(self, qtbot):
+    def test_update_sessions_shows_stats_and_recent(self, qtbot):
         from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
 
         dialog = FocusTimerDialog()
@@ -1346,8 +1374,14 @@ class TestTodaysSessions:
         ]
         dialog.update_sessions(sessions)
 
-        assert dialog._sessions_layout.count() == 2
         assert "(2)" in dialog._sessions_toggle.text()
+        # Stats label should show totals
+        stats = dialog._stats_label.text()
+        assert "Total: 2" in stats
+        assert "\u2713 1" in stats  # 1 completed
+        assert "\u2717 1" in stats  # 1 incomplete
+        # Recent sessions should have 2 entries
+        assert dialog._recent_layout.count() == 2
 
     def test_update_sessions_clears_previous(self, qtbot):
         from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
@@ -1366,10 +1400,60 @@ class TestTodaysSessions:
                 },
             ]
         )
-        assert dialog._sessions_layout.count() == 1
+        assert dialog._recent_layout.count() == 1
 
         dialog.update_sessions([])
-        assert dialog._sessions_layout.count() == 0
+        assert dialog._recent_layout.count() == 0
+
+    def test_many_sessions_capped_at_5_recent(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+
+        sessions = [
+            {
+                "start_time": f"2026-03-08T{10 + i}:00:00",
+                "end_time": f"2026-03-08T{10 + i}:25:00",
+                "duration_seconds": 1500,
+                "completed": True,
+                "session_type": "work",
+            }
+            for i in range(10)
+        ]
+        dialog.update_sessions(sessions)
+
+        assert "(10)" in dialog._sessions_toggle.text()
+        # 5 recent + 1 "... and N earlier" label = 6
+        assert dialog._recent_layout.count() == 6
+
+    def test_stats_show_longest_shortest(self, qtbot):
+        from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
+
+        dialog = FocusTimerDialog()
+        qtbot.addWidget(dialog)
+
+        sessions = [
+            {
+                "start_time": "2026-03-08T10:00:00",
+                "end_time": "2026-03-08T10:25:00",
+                "duration_seconds": 1500,
+                "completed": True,
+                "session_type": "work",
+            },
+            {
+                "start_time": "2026-03-08T11:00:00",
+                "end_time": "2026-03-08T11:10:00",
+                "duration_seconds": 600,
+                "completed": True,
+                "session_type": "work",
+            },
+        ]
+        dialog.update_sessions(sessions)
+
+        stats = dialog._stats_label.text()
+        assert "Longest: 25:00" in stats
+        assert "Shortest: 10:00" in stats
 
     def test_toggle_sessions_expands_and_collapses(self, qtbot):
         from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog

@@ -13,15 +13,28 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from PyQt6.QtCore import QTimer, pyqtSlot
-from PyQt6.QtGui import QAction, QIcon, QKeySequence, QPixmap, QShortcut, QTextDocument, QUndoStack
+from PyQt6.QtGui import (
+    QAction,
+    QActionGroup,
+    QIcon,
+    QKeySequence,
+    QPixmap,
+    QShortcut,
+    QTextDocument,
+    QUndoStack,
+)
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt6.QtWidgets import (
+    QButtonGroup,
     QFileDialog,
+    QHBoxLayout,
     QInputDialog,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QStackedWidget,
     QSystemTrayIcon,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -53,6 +66,7 @@ from .dialogs import (
 from .styles import apply_current_theme
 from .styles.themes import Theme, get_system_theme
 from .widgets import (
+    KanbanBoardWidget,
     ListSelectorWidget,
     PomodoroWidget,
     SearchFilterWidget,
@@ -387,6 +401,22 @@ class MainWindow(QMainWindow):
         self.stop_focus_action.setToolTip(self._tip("Stop focus timer", "Ctrl+."))
         self.stop_focus_action.triggered.connect(self._on_stop_focus)
 
+        # View toggle actions
+        self.list_view_action = QAction(self._get_icon("view-list.svg"), "&List View", self)
+        self.list_view_action.setCheckable(True)
+        self.list_view_action.setToolTip(self._tip("Switch to list view", "Ctrl+Shift+B"))
+        self.list_view_action.triggered.connect(lambda: self._set_view_mode(0))
+
+        self.board_view_action = QAction(self._get_icon("view-board.svg"), "&Board View", self)
+        self.board_view_action.setCheckable(True)
+        self.board_view_action.setToolTip(self._tip("Switch to board view", "Ctrl+Shift+B"))
+        self.board_view_action.triggered.connect(lambda: self._set_view_mode(1))
+
+        self._view_action_group = QActionGroup(self)
+        self._view_action_group.addAction(self.list_view_action)
+        self._view_action_group.addAction(self.board_view_action)
+        self._view_action_group.setExclusive(True)
+
         # Tools actions
         self.focus_stats_action = QAction("Focus &Stats...", self)
         self.focus_stats_action.triggered.connect(self._on_focus_stats)
@@ -442,6 +472,12 @@ class MainWindow(QMainWindow):
         if edit_menu:
             edit_menu.addAction(self.undo_action)
             edit_menu.addAction(self.redo_action)
+
+        # View menu
+        view_menu = menu_bar.addMenu("&View")
+        if view_menu:
+            view_menu.addAction(self.list_view_action)
+            view_menu.addAction(self.board_view_action)
 
         # Todo menu
         todo_menu = menu_bar.addMenu("&To-Do")
@@ -537,6 +573,9 @@ class MainWindow(QMainWindow):
             toolbar.addAction(self.pause_focus_action)
             toolbar.addAction(self.stop_focus_action)
             toolbar.addSeparator()
+            toolbar.addAction(self.list_view_action)
+            toolbar.addAction(self.board_view_action)
+            toolbar.addSeparator()
             toolbar.addAction(self.exit_action)
 
     def _setup_central_widget(self) -> None:
@@ -545,7 +584,8 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(central)
         layout.setContentsMargins(8, 8, 8, 8)
 
-        # List selector
+        # List selector + view toggle row
+        top_row = QHBoxLayout()
         self.list_selector = ListSelectorWidget()
         self.list_selector.list_changed.connect(self._on_list_changed)
         self.list_selector.add_list_requested.connect(self._on_add_list)
@@ -553,15 +593,76 @@ class MainWindow(QMainWindow):
         self.list_selector.rename_list_requested.connect(self._on_rename_list)
         self.list_selector.toggle_private_requested.connect(self._on_toggle_private)
         self.list_selector.sync_settings_requested.connect(self._on_list_sync_settings)
-        layout.addWidget(self.list_selector)
+        top_row.addWidget(self.list_selector, 1)
+
+        # View toggle buttons
+        from pathlib import Path as _Path
+
+        _icon_dir = _Path(__file__).parent / "icons"
+
+        self._list_view_btn = QToolButton()
+        self._list_view_btn.setText("List")
+        self._list_view_btn.setCheckable(True)
+        self._list_view_btn.setToolTip("List view")
+        _list_icon_path = _icon_dir / "view-list.svg"
+        if _list_icon_path.exists():
+            self._list_view_btn.setIcon(QIcon(str(_list_icon_path)))
+
+        self._board_view_btn = QToolButton()
+        self._board_view_btn.setText("Board")
+        self._board_view_btn.setCheckable(True)
+        self._board_view_btn.setToolTip("Board view (Ctrl+Shift+B)")
+        _board_icon_path = _icon_dir / "view-board.svg"
+        if _board_icon_path.exists():
+            self._board_view_btn.setIcon(QIcon(str(_board_icon_path)))
+
+        self._view_btn_group = QButtonGroup(self)
+        self._view_btn_group.addButton(self._list_view_btn, 0)
+        self._view_btn_group.addButton(self._board_view_btn, 1)
+        self._view_btn_group.idClicked.connect(self._on_view_toggle)
+
+        top_row.addWidget(self._list_view_btn)
+        top_row.addWidget(self._board_view_btn)
+        layout.addLayout(top_row)
 
         # Search/filter bar
         self.search_filter = SearchFilterWidget()
         self.search_filter.filter_changed.connect(self._on_filter_changed)
         layout.addWidget(self.search_filter)
 
-        # Todo table
+        # View stack: index 0 = list, index 1 = board
+        self._view_stack = QStackedWidget()
+
+        # Todo table (list view)
         self.todo_table = TodoTableWidget()
+        self._connect_table_signals()
+        self._view_stack.addWidget(self.todo_table)
+
+        # Kanban board
+        self.kanban_board = KanbanBoardWidget()
+        self._connect_kanban_signals()
+        self._view_stack.addWidget(self.kanban_board)
+
+        layout.addWidget(self._view_stack)
+
+        # Set initial view mode from config
+        if self._config.database.view_mode == "board":
+            self._view_stack.setCurrentIndex(1)
+            self._board_view_btn.setChecked(True)
+            self.board_view_action.setChecked(True)
+        else:
+            self._view_stack.setCurrentIndex(0)
+            self._list_view_btn.setChecked(True)
+            self.list_view_action.setChecked(True)
+
+        # Keyboard shortcut for view toggle
+        view_toggle_shortcut = QShortcut(QKeySequence("Ctrl+Shift+B"), self)
+        view_toggle_shortcut.activated.connect(self._toggle_view_mode)
+
+        self.setCentralWidget(central)
+
+    def _connect_table_signals(self) -> None:
+        """Connect TodoTableWidget signals to handlers."""
         self.todo_table.item_priority_changed.connect(self._on_item_priority_changed)
         self.todo_table.item_reminder_changed.connect(self._on_item_reminder_changed)
         self.todo_table.item_due_date_changed.connect(self._on_item_due_date_changed)
@@ -572,9 +673,187 @@ class MainWindow(QMainWindow):
         self.todo_table.edit_recurrence_requested.connect(self._on_edit_recurrence)
         self.todo_table.focus_requested.connect(self._on_context_menu_focus)
         self.todo_table.add_subtask_requested.connect(self._on_add_subtask)
-        layout.addWidget(self.todo_table)
 
-        self.setCentralWidget(central)
+    def _connect_kanban_signals(self) -> None:
+        """Connect KanbanBoardWidget signals to handlers (same as table)."""
+        self.kanban_board.item_priority_changed.connect(self._on_item_priority_changed)
+        self.kanban_board.item_reminder_changed.connect(self._on_item_reminder_changed)
+        self.kanban_board.item_due_date_changed.connect(self._on_item_due_date_changed)
+        self.kanban_board.item_due_time_changed.connect(self._on_item_due_time_changed)
+        self.kanban_board.edit_tags_requested.connect(self._on_edit_tags_for_item)
+        self.kanban_board.toggle_requested.connect(self._on_toggle_todo)
+        self.kanban_board.delete_requested.connect(self._on_delete_todo)
+        self.kanban_board.edit_recurrence_requested.connect(self._on_edit_recurrence)
+        self.kanban_board.focus_requested.connect(self._on_context_menu_focus)
+        self.kanban_board.add_subtask_requested.connect(self._on_add_subtask)
+        # Kanban-only signals
+        self.kanban_board.item_column_changed.connect(self._on_item_column_changed)
+        self.kanban_board.layout_preset_requested.connect(self._on_layout_preset)
+        self.kanban_board.remove_column_requested.connect(self._on_remove_column)
+        self.kanban_board.rename_column_requested.connect(self._on_rename_column)
+        self.kanban_board.add_item_in_column_requested.connect(self._on_add_item_in_column)
+        self.kanban_board.wip_limit_changed.connect(self._on_wip_limit_changed)
+
+    def _on_view_toggle(self, view_id: int) -> None:
+        """Handle view toggle button click."""
+        self._set_view_mode(view_id)
+
+    def _toggle_view_mode(self) -> None:
+        """Toggle between list and board view (Ctrl+Shift+B)."""
+        new_index = 1 if self._view_stack.currentIndex() == 0 else 0
+        self._set_view_mode(new_index)
+
+    def _set_view_mode(self, view_id: int) -> None:
+        """Set the view mode (0=list, 1=board), syncing all UI controls."""
+        self._view_stack.setCurrentIndex(view_id)
+        # Sync inline toggle buttons
+        if view_id == 0:
+            self._list_view_btn.setChecked(True)
+        else:
+            self._board_view_btn.setChecked(True)
+        # Sync toolbar actions
+        if view_id == 0:
+            self.list_view_action.setChecked(True)
+        else:
+            self.board_view_action.setChecked(True)
+        mode = "board" if view_id == 1 else "list"
+        self._config.database.view_mode = mode
+        self._config_manager.save()
+        self._refresh_ui()
+
+    def _on_item_column_changed(self, item_id: object, new_column: str) -> None:
+        """Handle item moved to a different kanban column."""
+        from uuid import UUID as _UUID
+
+        if not isinstance(item_id, _UUID):
+            return
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        item = active_list.get_item(item_id)
+        if not item:
+            return
+
+        old_column = item.board_column
+        if old_column == new_column:
+            return
+
+        from .commands import MoveToColumnCommand
+
+        # Determine auto-complete behavior
+        cols = active_list.board_columns
+        last_col = cols[-1] if cols else None
+        auto_complete: bool | None = None
+        if last_col:
+            if new_column == last_col and not item.complete:
+                auto_complete = True
+            elif old_column == last_col and item.complete:
+                auto_complete = False
+
+        cmd = MoveToColumnCommand(
+            self, active_list.id, item_id, old_column, new_column, auto_complete
+        )
+        self._undo_stack.push(cmd)
+
+    def _on_layout_preset(self, columns: object) -> None:
+        """Handle board layout preset selection."""
+        if not isinstance(columns, list):
+            return
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        if active_list.board_columns == columns:
+            return  # Already this layout
+
+        from .commands import ApplyLayoutPresetCommand
+
+        cmd = ApplyLayoutPresetCommand(self, active_list.id, columns)
+        self._undo_stack.push(cmd)
+
+    def _on_add_item_in_column(self, column_name: str) -> None:
+        """Handle '+ Add item' click in a kanban column."""
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+
+        name, ok = QInputDialog.getText(self, "Add Item", "Task:")
+        if not ok or not name.strip():
+            return
+
+        from ..core.models import create_todo_item
+        from .commands import AddItemCommand
+
+        item = create_todo_item(name.strip(), board_column=column_name)
+        cmd = AddItemCommand(self, active_list.id, item)
+        self._undo_stack.push(cmd)
+
+    def _on_remove_column(self, column_name: str) -> None:
+        """Handle remove column request from kanban board."""
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        if len(active_list.board_columns) <= 3:
+            QMessageBox.warning(
+                self,
+                "Cannot Remove",
+                "Board must have at least 3 columns. Use the Layout button to change board layout.",
+            )
+            return
+        # Protect the inbox column (first column)
+        if column_name == active_list.board_columns[0]:
+            QMessageBox.warning(
+                self,
+                "Cannot Remove",
+                "Cannot remove the inbox column. New items land here.",
+            )
+            return
+        # Protect the completion column (last column)
+        if column_name == active_list.board_columns[-1]:
+            QMessageBox.warning(
+                self,
+                "Cannot Remove",
+                "Cannot remove the completion column. Items moved to this column are automatically marked complete.",
+            )
+            return
+        try:
+            index = active_list.board_columns.index(column_name)
+        except ValueError:
+            return
+
+        from .commands import RemoveColumnCommand
+
+        cmd = RemoveColumnCommand(self, active_list.id, column_name, index)
+        self._undo_stack.push(cmd)
+
+    def _on_rename_column(self, old_name: str, new_name: str) -> None:
+        """Handle rename column request from kanban board."""
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        if not new_name.strip() or new_name == old_name:
+            return
+        if new_name in active_list.board_columns:
+            return  # Duplicate
+
+        from .commands import RenameColumnCommand
+
+        cmd = RenameColumnCommand(self, active_list.id, old_name, new_name)
+        self._undo_stack.push(cmd)
+
+    def _on_wip_limit_changed(self, column_name: str, limit: int) -> None:
+        """Handle WIP limit change from kanban board."""
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+
+        old_limit = active_list.get_wip_limit(column_name)
+        if old_limit == limit:
+            return
+
+        from .commands import SetWipLimitCommand
+
+        cmd = SetWipLimitCommand(self, active_list.id, column_name, old_limit, limit)
+        self._undo_stack.push(cmd)
 
     def _setup_status_bar(self) -> None:
         """Set up the status bar."""
@@ -1249,6 +1528,13 @@ class MainWindow(QMainWindow):
                 self._refresh_ui()
                 return
 
+    def _active_view_widget(self) -> TodoTableWidget | KanbanBoardWidget:
+        """Return the currently visible view widget."""
+        w = self._view_stack.currentWidget()
+        if isinstance(w, KanbanBoardWidget):
+            return w
+        return self.todo_table
+
     def _refresh_ui(self) -> None:
         """Refresh all UI components."""
         self._refreshing = True
@@ -1267,7 +1553,10 @@ class MainWindow(QMainWindow):
 
             self.list_selector.set_database(self._database)
             self.list_selector.set_unseen(self._unseen_changes)
-            self.todo_table.set_list(self._database.active_list)
+            if self._view_stack.currentIndex() == 0:
+                self.todo_table.set_list(self._database.active_list)
+            else:
+                self.kanban_board.set_list(self._database.active_list)
             self._update_tags()
             self._update_status()
         finally:
@@ -1348,7 +1637,7 @@ class MainWindow(QMainWindow):
 
         # If no parent_id given, use selected item
         if parent_id is None:
-            selected = self.todo_table.get_selected_item_ids()
+            selected = self._active_view_widget().get_selected_item_ids()
             if len(selected) != 1:
                 return
             parent_id = selected[0]
@@ -1368,7 +1657,7 @@ class MainWindow(QMainWindow):
 
     def _on_delete_todo(self) -> None:
         """Handle delete to-do action."""
-        item_ids = self.todo_table.get_selected_item_ids()
+        item_ids = self._active_view_widget().get_selected_item_ids()
         if not item_ids:
             QMessageBox.information(self, "Delete", "No items selected.")
             return
@@ -1388,7 +1677,7 @@ class MainWindow(QMainWindow):
 
     def _on_toggle_todo(self) -> None:
         """Handle toggle to-do action."""
-        item_ids = self.todo_table.get_selected_item_ids()
+        item_ids = self._active_view_widget().get_selected_item_ids()
         if not item_ids:
             return
 
@@ -1550,7 +1839,10 @@ class MainWindow(QMainWindow):
     @pyqtSlot(object)
     def _on_list_changed(self, todo_list: TodoList | None) -> None:
         """Handle list selection change."""
-        self.todo_table.set_list(todo_list)
+        if self._view_stack.currentIndex() == 0:
+            self.todo_table.set_list(todo_list)
+        else:
+            self.kanban_board.set_list(todo_list)
 
         # Clear unseen indicator for the list being viewed
         if todo_list:
@@ -1625,7 +1917,7 @@ class MainWindow(QMainWindow):
 
     def _on_edit_recurrence(self) -> None:
         """Handle edit recurrence action."""
-        item_ids = self.todo_table.get_selected_item_ids()
+        item_ids = self._active_view_widget().get_selected_item_ids()
         if len(item_ids) != 1:
             return
         active_list = self._database.active_list
@@ -1654,7 +1946,7 @@ class MainWindow(QMainWindow):
 
     def _on_edit_tags(self) -> None:
         """Handle edit tags action (from menu/shortcut)."""
-        item_ids = self.todo_table.get_selected_item_ids()
+        item_ids = self._active_view_widget().get_selected_item_ids()
         if len(item_ids) != 1:
             return
         self._on_edit_tags_for_item(item_ids[0])
@@ -1699,7 +1991,7 @@ class MainWindow(QMainWindow):
 
     def _on_edit_due_date(self) -> None:
         """Handle edit due date action — single or multi-select."""
-        item_ids = self.todo_table.get_selected_item_ids()
+        item_ids = self._active_view_widget().get_selected_item_ids()
         if not item_ids:
             return
         active_list = self._database.active_list
@@ -1765,6 +2057,7 @@ class MainWindow(QMainWindow):
     def _on_filter_changed(self, filter_state) -> None:
         """Handle filter state change."""
         self.todo_table.set_filter(filter_state)
+        self.kanban_board.set_filter(filter_state)
 
     def _on_search_focus(self) -> None:
         """Handle Ctrl+F shortcut."""
@@ -1785,7 +2078,7 @@ class MainWindow(QMainWindow):
 
     def _on_start_focus(self) -> None:
         """Start a focus timer on the selected item."""
-        item_ids = self.todo_table.get_selected_item_ids()
+        item_ids = self._active_view_widget().get_selected_item_ids()
         if not item_ids:
             self.status_bar_widget.show_message("Select an item to start focus timer")
             return
@@ -1827,6 +2120,7 @@ class MainWindow(QMainWindow):
 
         self._pomodoro.start(item.id, item.reminder)
         self._pomodoro_display_timer.start()
+        self.kanban_board.set_focus_session_item(item.id)
 
     def _on_pause_focus(self) -> None:
         """Toggle pause/resume on the focus timer."""
@@ -1843,6 +2137,7 @@ class MainWindow(QMainWindow):
         self._pomodoro.stop()
         self._pomodoro_display_timer.stop()
         self.status_bar_widget.update_pomodoro_display("idle")
+        self.kanban_board.set_focus_session_item(None)
         if self._focus_timer_dialog is not None:
             self._focus_timer_dialog.hide()
 

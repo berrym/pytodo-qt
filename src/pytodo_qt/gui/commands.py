@@ -672,3 +672,287 @@ class TogglePrivateCommand(QUndoCommand):
         )
         self._window._save_database()
         self._window._refresh_ui()
+
+
+class MoveToColumnCommand(QUndoCommand):
+    """Move a todo item to a different kanban column."""
+
+    def __init__(
+        self,
+        window: MainWindow,
+        list_id: UUID,
+        item_id: UUID,
+        old_column: str,
+        new_column: str,
+        auto_complete: bool | None = None,
+    ) -> None:
+        super().__init__(f'Move to "{new_column}"')
+        self._window = window
+        self._list_id = list_id
+        self._item_id = item_id
+        self._old_column = old_column
+        self._new_column = new_column
+        self._auto_complete = auto_complete
+        self._old_complete: bool | None = None
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if not item:
+            return
+        item.board_column = self._new_column
+        if self._auto_complete is True:
+            self._old_complete = item.complete
+            item.complete = True
+        elif self._auto_complete is False:
+            self._old_complete = item.complete
+            item.complete = False
+        item.mark_updated()
+        todo_list.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if not item:
+            return
+        item.board_column = self._old_column
+        if self._old_complete is not None:
+            item.complete = self._old_complete
+        item.mark_updated()
+        todo_list.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+
+class AddColumnCommand(QUndoCommand):
+    """Add a column to a list's kanban board."""
+
+    def __init__(self, window: MainWindow, list_id: UUID, column_name: str) -> None:
+        super().__init__(f'Add column "{column_name}"')
+        self._window = window
+        self._list_id = list_id
+        self._column_name = column_name
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        if self._column_name not in todo_list.board_columns:
+            # Insert before the last column (completion column stays last)
+            if len(todo_list.board_columns) >= 1:
+                todo_list.board_columns.insert(len(todo_list.board_columns) - 1, self._column_name)
+            else:
+                todo_list.board_columns.append(self._column_name)
+            todo_list.mark_updated()
+            self._window._save_database()
+            self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        if self._column_name in todo_list.board_columns:
+            todo_list.board_columns.remove(self._column_name)
+            todo_list.mark_updated()
+            self._window._save_database()
+            self._window._refresh_ui()
+
+
+class ApplyLayoutPresetCommand(QUndoCommand):
+    """Apply a board layout preset, remapping items to new columns."""
+
+    def __init__(self, window: MainWindow, list_id: UUID, new_columns: list[str]) -> None:
+        super().__init__("Apply board layout")
+        self._window = window
+        self._list_id = list_id
+        self._new_columns = new_columns
+        self._old_columns: list[str] = []
+        self._old_item_columns: dict[UUID, str] = {}
+        self._old_wip_limits: dict[str, int] = {}
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+
+        # Save old state for undo
+        self._old_columns = list(todo_list.board_columns)
+        self._old_wip_limits = {
+            col: todo_list.get_wip_limit(col)
+            for col in todo_list.board_columns
+            if todo_list.get_wip_limit(col) > 0
+        }
+        self._old_item_columns.clear()
+        for item in todo_list.active_items():
+            self._old_item_columns[item.id] = item.board_column
+
+        # Remap items: keep items in columns that still exist,
+        # move others to the first new column (inbox)
+        new_set = set(self._new_columns)
+        first_col = self._new_columns[0] if self._new_columns else ""
+        last_old = self._old_columns[-1] if self._old_columns else ""
+        last_new = self._new_columns[-1] if self._new_columns else ""
+        for item in todo_list.active_items():
+            if item.board_column in new_set:
+                pass  # Column still exists, keep it
+            elif item.board_column == last_old and last_new:
+                # Was in old completion column → move to new completion column
+                item.board_column = last_new
+                item.mark_updated()
+            else:
+                # Column no longer exists → move to inbox
+                item.board_column = first_col
+                item.mark_updated()
+
+        # Clear WIP limits for removed columns
+        for col in self._old_columns:
+            if col not in new_set:
+                todo_list.set_wip_limit(col, 0)
+
+        todo_list.board_columns = list(self._new_columns)
+        todo_list.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+
+        # Restore old columns
+        todo_list.board_columns = list(self._old_columns)
+
+        # Restore item column assignments
+        for item in todo_list.active_items():
+            if item.id in self._old_item_columns:
+                item.board_column = self._old_item_columns[item.id]
+                item.mark_updated()
+
+        # Restore WIP limits
+        for col, limit in self._old_wip_limits.items():
+            todo_list.set_wip_limit(col, limit)
+
+        todo_list.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+
+class RemoveColumnCommand(QUndoCommand):
+    """Remove a column from a list's kanban board."""
+
+    def __init__(self, window: MainWindow, list_id: UUID, column_name: str, index: int) -> None:
+        super().__init__(f'Remove column "{column_name}"')
+        self._window = window
+        self._list_id = list_id
+        self._column_name = column_name
+        self._index = index
+        self._displaced_items: list[UUID] = []
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        if self._column_name in todo_list.board_columns:
+            todo_list.board_columns.remove(self._column_name)
+            # Move items from removed column to first remaining column
+            first_col = todo_list.board_columns[0] if todo_list.board_columns else ""
+            self._displaced_items.clear()
+            for item in todo_list.active_items():
+                if item.board_column == self._column_name:
+                    item.board_column = first_col
+                    item.mark_updated()
+                    self._displaced_items.append(item.id)
+            todo_list.mark_updated()
+            self._window._save_database()
+            self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        todo_list.board_columns.insert(self._index, self._column_name)
+        # Restore items to the original column
+        for item_id in self._displaced_items:
+            item = todo_list.get_item(item_id)
+            if item:
+                item.board_column = self._column_name
+                item.mark_updated()
+        todo_list.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+
+class RenameColumnCommand(QUndoCommand):
+    """Rename a kanban column."""
+
+    def __init__(self, window: MainWindow, list_id: UUID, old_name: str, new_name: str) -> None:
+        super().__init__(f'Rename column "{old_name}" to "{new_name}"')
+        self._window = window
+        self._list_id = list_id
+        self._old_name = old_name
+        self._new_name = new_name
+
+    def redo(self) -> None:
+        self._rename(self._old_name, self._new_name)
+
+    def undo(self) -> None:
+        self._rename(self._new_name, self._old_name)
+
+    def _rename(self, from_name: str, to_name: str) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        try:
+            idx = todo_list.board_columns.index(from_name)
+        except ValueError:
+            return
+        todo_list.board_columns[idx] = to_name
+        # Update items referencing the old column name
+        for item in todo_list.active_items():
+            if item.board_column == from_name:
+                item.board_column = to_name
+                item.mark_updated()
+        # Update WIP limits key
+        if from_name in todo_list.wip_limits:
+            todo_list.wip_limits[to_name] = todo_list.wip_limits.pop(from_name)
+        todo_list.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+
+class SetWipLimitCommand(QUndoCommand):
+    """Set WIP limit for a kanban column."""
+
+    def __init__(
+        self, window: MainWindow, list_id: UUID, column_name: str, old_limit: int, new_limit: int
+    ) -> None:
+        super().__init__(f'Set WIP limit for "{column_name}" to {new_limit}')
+        self._window = window
+        self._list_id = list_id
+        self._column_name = column_name
+        self._old_limit = old_limit
+        self._new_limit = new_limit
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        todo_list.set_wip_limit(self._column_name, self._new_limit)
+        todo_list.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        todo_list.set_wip_limit(self._column_name, self._old_limit)
+        todo_list.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()

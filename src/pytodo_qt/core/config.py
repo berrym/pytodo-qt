@@ -29,6 +29,7 @@ class DatabaseConfig:
     sort_tier2_reverse: bool = False
     sort_tier3: str = "priority"
     sort_tier3_reverse: bool = False
+    view_mode: str = "list"  # "list" or "board"
 
     def sort_tiers(self) -> list[tuple[str, bool]]:
         """Return sort tiers as [(dimension, reverse), ...]."""
@@ -130,6 +131,7 @@ class AppConfig:
         lines.append(f"sort_tier2_reverse = {str(self.database.sort_tier2_reverse).lower()}")
         lines.append(f'sort_tier3 = "{self.database.sort_tier3}"')
         lines.append(f"sort_tier3_reverse = {str(self.database.sort_tier3_reverse).lower()}")
+        lines.append(f'view_mode = "{self.database.view_mode}"')
         lines.append("")
 
         # Server section
@@ -199,6 +201,7 @@ class AppConfig:
                 sort_tier2_reverse=db.get("sort_tier2_reverse", False),
                 sort_tier3=db.get("sort_tier3", "priority"),
                 sort_tier3_reverse=db.get("sort_tier3_reverse", False),
+                view_mode=db.get("view_mode", "list"),
             )
 
         if "server" in data:
