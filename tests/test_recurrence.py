@@ -565,7 +565,7 @@ class TestRecurrenceMigration:
             db_path = Path(tmpdir) / "test.db"
             storage = DatabaseStorage(db_path)
             storage.open()
-            assert storage.get_schema_version() == 14
+            assert storage.get_schema_version() == 15
             storage.close()
 
     def test_save_load_recurring_item(self):

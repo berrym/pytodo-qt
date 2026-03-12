@@ -761,6 +761,16 @@ class MainWindow(QMainWindow):
             active_list.mark_updated()
             self._save_database()
 
+    def _advance_overdue_recurring(self) -> None:
+        """Auto-advance overdue recurring items across all lists."""
+        from ..core.models import advance_all_overdue_recurring
+
+        count = advance_all_overdue_recurring(self._database)
+        if count > 0:
+            logger.log.info("Auto-advanced %d overdue recurring item(s)", count)
+            self._reconcile_board_columns()
+            self._save_database()
+
     def _on_item_column_changed(self, item_id: object, new_column: str) -> None:
         """Handle item moved to a different kanban column."""
         from uuid import UUID as _UUID
@@ -1166,6 +1176,9 @@ class MainWindow(QMainWindow):
 
             if pull_ok and push_ok:
                 self._track_device(device.fingerprint, f"{peer.address}:{peer.port}")
+                from ..core.models import advance_all_overdue_recurring
+
+                advance_all_overdue_recurring(self._database)
                 self._save_database()
                 self._refresh_ui()
                 self.status_bar_widget.set_sync_status("success", auto=True)
@@ -1417,6 +1430,9 @@ class MainWindow(QMainWindow):
             )
             self._record_unseen_changes(changed)
             if merged > 0:
+                from ..core.models import advance_all_overdue_recurring
+
+                advance_all_overdue_recurring(self._database)
                 self._save_database()
                 self._refresh_ui()
                 logger.log.info("Received and merged %d items from remote push", merged)
@@ -1542,7 +1558,8 @@ class MainWindow(QMainWindow):
             # Set first list as active if none set
             self._database.active_list_id = next(iter(self._database.lists.keys()))
 
-        # Reconcile board columns if starting in board view
+        # Auto-advance overdue recurring items, then reconcile board columns
+        self._advance_overdue_recurring()
         if self._config.database.view_mode == "board":
             self._reconcile_board_columns()
 
@@ -1560,17 +1577,31 @@ class MainWindow(QMainWindow):
             return False
 
     def _check_timed_overdue(self) -> None:
-        """Refresh UI if any today-items with times may have become overdue."""
+        """Auto-advance overdue recurring items and refresh UI for timed items."""
         from datetime import date
+
+        from ..core.models import advance_all_overdue_recurring
+
+        # Auto-advance overdue recurring items (handles midnight rollover)
+        count = advance_all_overdue_recurring(self._database)
+        if count > 0:
+            self._reconcile_board_columns()
+            self._save_database()
 
         active_list = self._database.active_list
         if active_list is None:
+            if count > 0:
+                self._refresh_ui()
             return
         today = date.today()
-        for item in active_list.active_items():
-            if item.due_date == today and item.due_time is not None and not item.complete:
-                self._refresh_ui()
-                return
+        needs_refresh = count > 0
+        if not needs_refresh:
+            for item in active_list.active_items():
+                if item.due_date == today and item.due_time is not None and not item.complete:
+                    needs_refresh = True
+                    break
+        if needs_refresh:
+            self._refresh_ui()
 
     def _active_view_widget(self) -> TodoTableWidget | KanbanBoardWidget:
         """Return the currently visible view widget."""
@@ -2949,6 +2980,9 @@ class MainWindow(QMainWindow):
             )
             self._record_unseen_changes(changed)
             self._reconcile_board_columns()
+            from ..core.models import advance_all_overdue_recurring
+
+            advance_all_overdue_recurring(self._database)
             self._save_database()
             self._refresh_ui()
             self.status_bar_widget.set_sync_status("success")

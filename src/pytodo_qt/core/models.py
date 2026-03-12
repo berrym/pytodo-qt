@@ -45,6 +45,7 @@ class TodoItem:
     recurrence_end_date: date | None = None  # Optional end date
     recurrence_end_count: int | None = None  # Optional max occurrences
     recurrence_count: int = 0  # Completed occurrences so far
+    missed_recurrences: int = 0  # Auto-advanced overdue occurrences
     time_spent: int = 0  # Total seconds of completed focus sessions
     pomodoro_count: int = 0  # Completed focus sessions
     estimated_pomodoros: int = 0  # User estimate (0 = no estimate)
@@ -95,6 +96,7 @@ class TodoItem:
             ),
             "recurrence_end_count": self.recurrence_end_count,
             "recurrence_count": self.recurrence_count,
+            "missed_recurrences": self.missed_recurrences,
             "time_spent": self.time_spent,
             "pomodoro_count": self.pomodoro_count,
             "estimated_pomodoros": self.estimated_pomodoros,
@@ -129,6 +131,7 @@ class TodoItem:
             recurrence_end_date=recurrence_end_date,
             recurrence_end_count=data.get("recurrence_end_count"),
             recurrence_count=data.get("recurrence_count", 0),
+            missed_recurrences=data.get("missed_recurrences", 0),
             time_spent=data.get("time_spent", 0),
             pomodoro_count=data.get("pomodoro_count", 0),
             estimated_pomodoros=data.get("estimated_pomodoros", 0),
@@ -910,6 +913,55 @@ def is_recurrence_ended(item: TodoItem, next_due: date | None = None) -> bool:
     )
 
 
+def advance_overdue_recurring(item: TodoItem) -> bool:
+    """Auto-advance an overdue recurring item to the next valid due date.
+
+    Returns True if the item was modified, False otherwise.
+    Does NOT increment recurrence_count (that tracks completions only).
+    Increments missed_recurrences for tracking purposes.
+    """
+    if not item.is_recurring or item.complete:
+        return False
+    if item.due_date is None or item.recurrence_type is None:
+        return False
+    if not is_overdue(item.due_date, item.due_time):
+        return False
+    # Don't advance if recurrence already exhausted by count
+    if item.recurrence_end_count is not None and item.recurrence_count >= item.recurrence_end_count:
+        return False
+
+    next_due = compute_next_due_date(item.due_date, item.recurrence_type, item.recurrence_interval)
+
+    if is_recurrence_ended(item, next_due):
+        # Recurrence expired while missed — mark as complete
+        item.complete = True
+        item.missed_recurrences += 1
+        item.mark_updated()
+        return True
+
+    item.due_date = next_due
+    item.missed_recurrences += 1
+    item.mark_updated()
+    return True
+
+
+def advance_all_overdue_recurring(database: Database) -> int:
+    """Scan all lists and auto-advance overdue recurring items.
+
+    Returns the number of items that were advanced.
+    """
+    advanced_count = 0
+    for todo_list in database.active_lists():
+        list_changed = False
+        for item in todo_list.active_items():
+            if advance_overdue_recurring(item):
+                advanced_count += 1
+                list_changed = True
+        if list_changed:
+            todo_list.mark_updated()
+    return advanced_count
+
+
 def format_recurrence(item: TodoItem) -> str:
     """Format recurrence rule for display (e.g., 'Every day', 'Every 2 weeks')."""
     if not item.is_recurring or item.recurrence_type is None:
@@ -937,4 +989,6 @@ def format_recurrence(item: TodoItem) -> str:
         text += f" ({item.recurrence_count}/{item.recurrence_end_count} completed)"
     elif item.recurrence_end_date is not None:
         text += f" (until {item.recurrence_end_date.strftime('%b %d, %Y')})"
+    if item.missed_recurrences > 0:
+        text += f" ({item.missed_recurrences} missed)"
     return text

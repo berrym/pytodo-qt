@@ -40,6 +40,7 @@ def _item_to_json(item: TodoItem) -> dict[str, Any]:
         "pomodoro_count": item.pomodoro_count,
         "estimated_pomodoros": item.estimated_pomodoros,
         "is_recurring": item.is_recurring,
+        "missed_recurrences": item.missed_recurrences,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }

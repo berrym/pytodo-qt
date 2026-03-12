@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS items (
     recurrence_end_date TEXT,
     recurrence_end_count INTEGER,
     recurrence_count INTEGER NOT NULL DEFAULT 0,
+    missed_recurrences INTEGER NOT NULL DEFAULT 0,
     time_spent INTEGER NOT NULL DEFAULT 0,
     pomodoro_count INTEGER NOT NULL DEFAULT 0,
     estimated_pomodoros INTEGER NOT NULL DEFAULT 0,
@@ -287,6 +288,7 @@ class DatabaseStorage:
         self._migrate_schema_11_to_12()
         self._migrate_schema_12_to_13()
         self._migrate_schema_13_to_14()
+        self._migrate_schema_14_to_15()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -520,6 +522,21 @@ class DatabaseStorage:
 
         self.set_schema_version(14)
 
+    def _migrate_schema_14_to_15(self) -> None:
+        """Migrate schema from version 14 to 15 (add missed_recurrences column)."""
+        current_version = self.get_schema_version()
+        if current_version >= 15:
+            return
+
+        columns = [row[1] for row in self.connection.execute("PRAGMA table_info(items)")]
+        if "missed_recurrences" not in columns:
+            self.connection.execute(
+                "ALTER TABLE items ADD COLUMN missed_recurrences INTEGER NOT NULL DEFAULT 0"
+            )
+            logger.log.info("Migrated schema 14->15: added missed_recurrences to items")
+
+        self.set_schema_version(15)
+
     def get_schema_version(self) -> int:
         """Get current schema version."""
         cursor = self.connection.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
@@ -731,10 +748,10 @@ class DatabaseStorage:
             INSERT OR REPLACE INTO items
             (id, list_id, reminder, priority, complete, due_date, due_time, tags,
              recurrence_type, recurrence_interval, recurrence_end_date,
-             recurrence_end_count, recurrence_count, time_spent,
-             pomodoro_count, estimated_pomodoros,
+             recurrence_end_count, recurrence_count, missed_recurrences,
+             time_spent, pomodoro_count, estimated_pomodoros,
              created_at, updated_at, deleted, parent_id, board_column)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(item.id),
@@ -750,6 +767,7 @@ class DatabaseStorage:
                 item.recurrence_end_date.isoformat() if item.recurrence_end_date else None,
                 item.recurrence_end_count,
                 item.recurrence_count,
+                item.missed_recurrences,
                 item.time_spent,
                 item.pomodoro_count,
                 item.estimated_pomodoros,
@@ -817,6 +835,12 @@ class DatabaseStorage:
             recurrence_end_count = None
             recurrence_count = 0
 
+        # Handle missed_recurrences column (v15+)
+        try:
+            missed_recurrences = row["missed_recurrences"] or 0
+        except (KeyError, IndexError):
+            missed_recurrences = 0
+
         # Handle time_spent column (v10+)
         try:
             time_spent = row["time_spent"] or 0
@@ -859,6 +883,7 @@ class DatabaseStorage:
             recurrence_end_date=recurrence_end_date,
             recurrence_end_count=recurrence_end_count,
             recurrence_count=recurrence_count,
+            missed_recurrences=missed_recurrences,
             time_spent=time_spent,
             pomodoro_count=pomodoro_count,
             estimated_pomodoros=estimated_pomodoros,

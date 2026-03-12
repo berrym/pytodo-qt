@@ -135,6 +135,8 @@ def _recurrence_tooltip(item: TodoItem) -> str:
         text += f"\nUntil {item.recurrence_end_date.strftime('%b %d, %Y')}"
     if item.recurrence_end_count is not None:
         text += f"\n{item.recurrence_count}/{item.recurrence_end_count} completed"
+    if item.missed_recurrences > 0:
+        text += f"\n{item.missed_recurrences} missed (auto-advanced)"
     return text
 
 
@@ -309,6 +311,17 @@ class KanbanCardWidget(QFrame):
                     f"color: {colors['completed_text']}; font-size: 13px; border: none;"
                 )
                 row2.addWidget(rec_label)
+
+                if item.missed_recurrences > 0:
+                    missed_label = QLabel(f"{item.missed_recurrences} missed")
+                    missed_label.setToolTip(
+                        f"{item.missed_recurrences} occurrence(s) auto-advanced"
+                    )
+                    missed_label.setStyleSheet(
+                        f"color: {colors['due_today']}; font-size: 10px;"
+                        " font-style: italic; border: none;"
+                    )
+                    row2.addWidget(missed_label)
 
             row2.addStretch()
 
