@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import sys
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PyQt6.QtGui import QColor, QFont, QPalette
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PyQt6.QtWidgets import QApplication
 
 from ...core.config import get_config
@@ -17,6 +18,18 @@ from ...core.logger import Logger
 
 if TYPE_CHECKING:
     pass
+
+_FONTS_DIR = Path(__file__).parent.parent / "fonts"
+
+_BUNDLED_TEXT_FONTS = (
+    "NotoSans-Regular.ttf",
+    "NotoSans-Bold.ttf",
+    "NotoSansMono-Regular.ttf",
+)
+_BUNDLED_EMOJI_FONT = "NotoColorEmoji.ttf"
+
+# Set to True after successful font registration
+_bundled_fonts_loaded = False
 
 
 logger = Logger(__name__)
@@ -89,14 +102,83 @@ else:
 DEFAULT_FONT_SIZE = 10
 
 
-def make_font(size: int = DEFAULT_FONT_SIZE, *, mono: bool = False) -> QFont:
-    """Create a QFont using the system default or a monospace fallback stack."""
-    if mono:
-        font = QFont(MONO_FONT_FAMILIES[0], size)
-        font.setFamilies(MONO_FONT_FAMILIES)
+def load_bundled_fonts() -> bool:
+    """Register bundled Noto fonts with Qt. Returns True if successful."""
+    global _bundled_fonts_loaded  # noqa: PLW0603
+
+    if not _FONTS_DIR.is_dir():
+        logger.log.warning("Bundled fonts directory not found: %s", _FONTS_DIR)
+        return False
+
+    text_ok = True
+
+    # Register text fonts
+    for name in _BUNDLED_TEXT_FONTS:
+        path = _FONTS_DIR / name
+        if not path.exists():
+            logger.log.warning("Bundled font not found: %s", path)
+            text_ok = False
+            continue
+        font_id = QFontDatabase.addApplicationFont(str(path))
+        if font_id < 0:
+            logger.log.warning("Failed to register font: %s", name)
+            text_ok = False
+        else:
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            logger.log.info("Registered font: %s -> %s", name, families)
+
+    # Register emoji font (best-effort — may fail in offscreen/headless)
+    emoji_path = _FONTS_DIR / _BUNDLED_EMOJI_FONT
+    if emoji_path.exists():
+        font_id = QFontDatabase.addApplicationFont(str(emoji_path))
+        if font_id >= 0:
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            logger.log.info("Registered emoji font: %s -> %s", _BUNDLED_EMOJI_FONT, families)
+            if families and hasattr(QFontDatabase, "addApplicationEmojiFontFamily"):
+                QFontDatabase.addApplicationEmojiFontFamily(families[0])
+                logger.log.info("Set application emoji font family: %s", families[0])
+        else:
+            logger.log.warning("Failed to register emoji font: %s", _BUNDLED_EMOJI_FONT)
     else:
-        font = QFont()
-        font.setPointSize(size)
+        logger.log.warning("Bundled emoji font not found: %s", emoji_path)
+
+    _bundled_fonts_loaded = text_ok
+    return text_ok
+
+
+def apply_bundled_font(app: QApplication) -> None:
+    """Set bundled Noto Sans as the application-wide font."""
+    font = QFont("Noto Sans", DEFAULT_FONT_SIZE)
+    font.setFamilies(["Noto Sans", "Noto Color Emoji"])
+    app.setFont(font)
+    logger.log.info("Applied bundled font: Noto Sans %dpt", DEFAULT_FONT_SIZE)
+
+
+def _get_mono_families() -> list[str]:
+    """Get monospace font families, prepending bundled font when loaded."""
+    if _bundled_fonts_loaded:
+        return ["Noto Sans Mono", *MONO_FONT_FAMILIES]
+    return MONO_FONT_FAMILIES
+
+
+def make_font(size: int = DEFAULT_FONT_SIZE, *, mono: bool = False) -> QFont:
+    """Create a QFont using the configured font or a monospace fallback stack."""
+    if mono:
+        families = _get_mono_families()
+        font = QFont(families[0], size)
+        font.setFamilies(families)
+    else:
+        config = get_config()
+        font_setting = config.appearance.font
+        if font_setting == "bundled" and _bundled_fonts_loaded:
+            font = QFont("Noto Sans", size)
+            font.setFamilies(["Noto Sans", "Noto Color Emoji"])
+        elif font_setting not in ("system", "bundled"):
+            # Custom font family
+            font = QFont(font_setting, size)
+        else:
+            font = QFont()
+            font.setPointSize(size)
     return font
 
 

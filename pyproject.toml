@@ -9,6 +9,7 @@ where = ["src"]
 pytodo_qt = ["*.png", "*.qss"]
 "pytodo_qt.gui.icons" = ["*.png", "*.svg", "*.ico", "*.icns"]
 "pytodo_qt.gui.sounds" = ["*.wav"]
+"pytodo_qt.gui.fonts" = ["*.ttf", "*.txt"]
 "pytodo_qt.gui.styles" = ["*.qss"]
 "pytodo_qt.web.static" = ["*.html", "*.css", "*.js", "*.json", "*.png"]
 

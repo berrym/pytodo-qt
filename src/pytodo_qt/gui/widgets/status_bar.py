@@ -6,11 +6,10 @@ Enhanced status bar widget.
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QEvent, QRectF, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -22,7 +21,7 @@ from PyQt6.QtWidgets import (
 
 from ...core.logger import Logger
 
-_ICONS_DIR = Path(__file__).parent.parent / "icons"
+_POMODORO_EMOJI = {"work": "\U0001f345", "break": "\u2615", "pause": "\u23f8\ufe0f"}
 
 if TYPE_CHECKING:
     pass
@@ -132,8 +131,6 @@ class StatusBarWidget(QStatusBar):
 
         self.list_count_label = QLabel()
         self._pomodoro_icon_label = QLabel()
-        self._pomodoro_icon_label.setFixedSize(16, 16)
-        self._pomodoro_icon_label.setScaledContents(True)
         self._pomodoro_icon_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.pomodoro_label = QLabel()
         self.pomodoro_label.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -142,13 +139,6 @@ class StatusBarWidget(QStatusBar):
         # Install event filters after both labels exist to avoid AttributeError
         self._pomodoro_icon_label.installEventFilter(self)
         self.pomodoro_label.installEventFilter(self)
-
-        # Pre-load pomodoro state icons
-        self._pomodoro_pixmaps: dict[str, QPixmap] = {}
-        for state_name in ("work", "break", "pause"):
-            path = _ICONS_DIR / f"pomodoro-{state_name}.svg"
-            if path.exists():
-                self._pomodoro_pixmaps[state_name] = QPixmap(str(path))
         self.item_count_label = QLabel()
         self.total_label = QLabel()
         self._message_label = QLabel()
@@ -367,10 +357,9 @@ class StatusBarWidget(QStatusBar):
             self._pomodoro_separator.setVisible(True)
 
     def _set_pomodoro_icon(self, state_name: str) -> None:
-        """Set the pomodoro icon pixmap for the given state."""
-        pixmap = self._pomodoro_pixmaps.get(state_name)
-        if pixmap:
-            self._pomodoro_icon_label.setPixmap(pixmap)
+        """Set the pomodoro icon emoji for the given state."""
+        emoji = _POMODORO_EMOJI.get(state_name, "")
+        self._pomodoro_icon_label.setText(emoji)
 
     def update_daily_goal(self, completed: int, goal: int) -> None:
         """Update the daily goal progress display.

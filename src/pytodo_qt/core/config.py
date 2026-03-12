@@ -105,6 +105,7 @@ class AppearanceConfig:
     theme: str = "system"  # light, dark, system
     time_format: str = "system"  # system, 12h, 24h
     close_to_tray: bool = True
+    font: str = "bundled"  # "bundled", "system", or custom family name
 
 
 @dataclass
@@ -162,6 +163,8 @@ class AppConfig:
         lines.append("[appearance]")
         lines.append(f'theme = "{self.appearance.theme}"')
         lines.append(f'time_format = "{self.appearance.time_format}"')
+        lines.append(f"close_to_tray = {str(self.appearance.close_to_tray).lower()}")
+        lines.append(f'font = "{self.appearance.font}"')
         lines.append("")
 
         # Pomodoro section
@@ -236,6 +239,8 @@ class AppConfig:
             config.appearance = AppearanceConfig(
                 theme=app.get("theme", "system"),
                 time_format=app.get("time_format", "system"),
+                close_to_tray=app.get("close_to_tray", True),
+                font=app.get("font", "bundled"),
             )
 
         if "pomodoro" in data:

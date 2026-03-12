@@ -5,11 +5,10 @@ Floating always-on-top focus timer window.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QPixmap
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
@@ -22,7 +21,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-_ICONS_DIR = Path(__file__).parent.parent / "icons"
+_TOMATO_EMOJI = "\U0001f345"
 
 
 class FocusTimerDialog(QDialog):
@@ -48,15 +47,6 @@ class FocusTimerDialog(QDialog):
         self.setMinimumWidth(300)
         self._sessions_expanded = False
         self._session_total_count = 0
-        self._tomato_pixmap: QPixmap | None = None
-        path = _ICONS_DIR / "pomodoro-work.svg"
-        if path.exists():
-            self._tomato_pixmap = QPixmap(str(path)).scaled(
-                16,
-                16,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
         self._setup_ui()
         self.adjustSize()
 
@@ -384,11 +374,7 @@ class FocusTimerDialog(QDialog):
         overflow = total > max_icons
 
         for i in range(show_icons):
-            icon_label = QLabel()
-            icon_label.setFixedSize(16, 16)
-            if self._tomato_pixmap:
-                icon_label.setPixmap(self._tomato_pixmap)
-                icon_label.setScaledContents(True)
+            icon_label = QLabel(_TOMATO_EMOJI)
             if i >= pomodoro_count:
                 # Dimmed for remaining/unfilled slots
                 effect = QGraphicsOpacityEffect(icon_label)

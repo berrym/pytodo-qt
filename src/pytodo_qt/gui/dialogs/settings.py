@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFontDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -328,6 +329,21 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(theme_group)
 
+        # Font group
+        font_group = QGroupBox("Font")
+        font_layout = QFormLayout(font_group)
+
+        self.font_combo = QComboBox()
+        self.font_combo.addItem("Noto Sans (Bundled)", "bundled")
+        self.font_combo.addItem("System Default", "system")
+        self.font_combo.addItem("Custom...", "custom")
+        self.font_combo.currentIndexChanged.connect(self._on_font_changed)
+        font_layout.addRow("Font:", self.font_combo)
+
+        self._custom_font_family = ""
+
+        layout.addWidget(font_group)
+
         # Time display group
         time_group = QGroupBox("Time Display")
         time_layout = QFormLayout(time_group)
@@ -515,6 +531,21 @@ class SettingsDialog(QDialog):
                 self.time_format_combo.setCurrentIndex(i)
                 break
 
+        # Font
+        font_setting = config.appearance.font
+        self.font_combo.blockSignals(True)
+        if font_setting == "bundled":
+            self.font_combo.setCurrentIndex(0)
+        elif font_setting == "system":
+            self.font_combo.setCurrentIndex(1)
+        else:
+            # Custom font family — update the "Custom..." item
+            self._custom_font_family = font_setting
+            self.font_combo.setItemText(2, f"Custom: {font_setting}")
+            self.font_combo.setItemData(2, font_setting)
+            self.font_combo.setCurrentIndex(2)
+        self.font_combo.blockSignals(False)
+
         # Behavior
         self.close_to_tray_check.setChecked(config.appearance.close_to_tray)
 
@@ -568,6 +599,7 @@ class SettingsDialog(QDialog):
         new_theme = self.theme_combo.currentData()
         config.appearance.theme = new_theme
         config.appearance.time_format = self.time_format_combo.currentData()
+        config.appearance.font = self.font_combo.currentData()
         config.appearance.close_to_tray = self.close_to_tray_check.isChecked()
 
         # Pomodoro
@@ -614,6 +646,28 @@ class SettingsDialog(QDialog):
     def _on_apply(self) -> None:
         """Handle Apply button."""
         self._save_settings()
+
+    def _on_font_changed(self, index: int) -> None:
+        """Handle font combo box change."""
+        value = self.font_combo.itemData(index)
+        if value == "custom":
+            font, ok = QFontDialog.getFont(self)
+            if ok:
+                family = font.family()
+                self._custom_font_family = family
+                # Replace the "Custom..." item text with the chosen family
+                self.font_combo.setItemText(index, f"Custom: {family}")
+                self.font_combo.setItemData(index, family)
+            else:
+                # User cancelled — revert to previous selection
+                self.font_combo.blockSignals(True)
+                # Find the current config value
+                current = self._config.appearance.font
+                for i in range(self.font_combo.count()):
+                    if self.font_combo.itemData(i) == current:
+                        self.font_combo.setCurrentIndex(i)
+                        break
+                self.font_combo.blockSignals(False)
 
     def _on_theme_changed(self, index: int) -> None:
         """Handle theme combo box change - apply immediately."""
