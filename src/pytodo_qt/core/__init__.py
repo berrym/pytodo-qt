@@ -25,6 +25,7 @@ from .database import (
     DatabaseError,
     DatabaseStorage,
 )
+from .instance_lock import InstanceLock
 from .migration import (
     MigrationError,
     get_migration_status,
@@ -71,6 +72,8 @@ __all__ = [
     "get_config_manager",
     # Database Storage
     "DatabaseStorage",
+    # Instance lock
+    "InstanceLock",
     "DatabaseError",
     "SCHEMA_VERSION",
     # Migration
