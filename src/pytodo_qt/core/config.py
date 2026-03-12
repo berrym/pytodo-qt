@@ -104,6 +104,7 @@ class AppearanceConfig:
 
     theme: str = "system"  # light, dark, system
     time_format: str = "system"  # system, 12h, 24h
+    close_to_tray: bool = True
 
 
 @dataclass

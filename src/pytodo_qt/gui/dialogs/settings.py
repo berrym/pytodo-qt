@@ -340,6 +340,13 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(time_group)
 
+        # Behavior group
+        behavior_group = QGroupBox("Behavior")
+        behavior_layout = QFormLayout(behavior_group)
+        self.close_to_tray_check = QCheckBox("Minimize to system tray when closed")
+        behavior_layout.addRow(self.close_to_tray_check)
+        layout.addWidget(behavior_group)
+
         # Preview note
         note = QLabel("Theme changes are applied immediately.")
         note.setStyleSheet("color: gray; font-style: italic;")
@@ -508,6 +515,9 @@ class SettingsDialog(QDialog):
                 self.time_format_combo.setCurrentIndex(i)
                 break
 
+        # Behavior
+        self.close_to_tray_check.setChecked(config.appearance.close_to_tray)
+
         # Pomodoro
         self.work_duration_spin.setValue(config.pomodoro.work_duration)
         self.break_duration_spin.setValue(config.pomodoro.break_duration)
@@ -558,6 +568,7 @@ class SettingsDialog(QDialog):
         new_theme = self.theme_combo.currentData()
         config.appearance.theme = new_theme
         config.appearance.time_format = self.time_format_combo.currentData()
+        config.appearance.close_to_tray = self.close_to_tray_check.isChecked()
 
         # Pomodoro
         config.pomodoro.work_duration = self.work_duration_spin.value()

@@ -99,6 +99,7 @@ class MainWindow(QMainWindow):
         self._server: AsyncServer | None = None
         self._auto_syncing_devices: set[UUID] = set()
         self._unseen_changes: set[UUID] = set()  # Lists with unviewed sync changes
+        self._force_quit = False
         self._event_loop = asyncio.get_event_loop()  # Store for thread-safe scheduling
 
         # Undo/redo
@@ -936,7 +937,7 @@ class MainWindow(QMainWindow):
         self._tray_menu.addAction("Show", self.show)
         self._tray_menu.addAction("Hide", self.hide)
         self._tray_menu.addSeparator()
-        self._tray_menu.addAction("Exit", self.close)
+        self._tray_menu.addAction("Quit", self._quit_application)
 
         # On macOS, don't auto-attach context menu (it shows on every click)
         # Instead, we manually show it on right-click in _on_tray_activated
@@ -3189,8 +3190,25 @@ class MainWindow(QMainWindow):
 
             self._tray_menu.popup(QCursor.pos())
 
+    def _quit_application(self) -> None:
+        """Fully quit the application (bypasses close-to-tray)."""
+        self._force_quit = True
+        self.close()
+
     def closeEvent(self, a0) -> None:  # noqa: N802
         """Handle window close."""
+        # Minimize to tray instead of quitting (if enabled and tray available)
+        if (
+            not self._force_quit
+            and self._config.appearance.close_to_tray
+            and self.tray_icon is not None
+            and self.tray_icon.isVisible()
+        ):
+            if a0:
+                a0.ignore()
+            self.hide()
+            return
+
         # Stop auto-sync scheduler
         self._auto_scheduler.stop()
 
