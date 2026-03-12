@@ -26,6 +26,7 @@ import ctypes
 import ctypes.util
 import sys
 
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 from qasync import QEventLoop
 
@@ -210,6 +211,17 @@ def main():
     app.setApplicationName(_APP_DISPLAY_NAME)
     app.setApplicationVersion(settings.__version__)
     app.setOrganizationName("pytodo-qt")
+    app.setDesktopFileName("pytodo-qt")
+
+    # Set application icon (overrides platform default when running as script)
+    from pathlib import Path
+
+    _icon_dir = Path(__file__).parent / "gui" / "icons"
+    _app_icon = QIcon()
+    _app_icon.addFile(str(_icon_dir / "pytodo-qt.svg"))
+    _app_icon.addFile(str(_icon_dir / "pytodo-qt-256.png"))
+    _app_icon.addFile(str(_icon_dir / "pytodo-qt-1024.png"))
+    app.setWindowIcon(_app_icon)
 
     # Set up async event loop with qasync
     loop = QEventLoop(app)
