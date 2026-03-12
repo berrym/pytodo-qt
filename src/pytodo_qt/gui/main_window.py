@@ -181,7 +181,7 @@ class MainWindow(QMainWindow):
         """Configure the main window."""
         self.setWindowTitle("PyTodo-Qt")
         self.setWindowIcon(self._get_icon("pytodo-qt.svg"))
-        self.resize(900, 600)
+        self.resize(1100, 700)
         self._center_window()
 
     def _get_icon(self, name: str) -> QIcon:
