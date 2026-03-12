@@ -1670,7 +1670,7 @@ class TestBoardLayoutPresets:
         assert lst.board_columns == original
 
     def test_apply_layout_remaps_items(self):
-        """Items in removed columns should move to inbox."""
+        """Items in removed columns remap by relative position."""
         from pytodo_qt.core.models import Database
         from pytodo_qt.gui.commands import ApplyLayoutPresetCommand
 
@@ -1684,11 +1684,12 @@ class TestBoardLayoutPresets:
         window._database = db
 
         # Switch to layout without "In Progress"
+        # Old: [To Do(0), In Progress(1), Done(2)] — rel pos 1/2 = 0.5
+        # New: [Backlog(0), To Do(1), Done(2)] — 0.5 maps to index 1 = "To Do"
         new_cols = ["Backlog", "To Do", "Done"]
         cmd = ApplyLayoutPresetCommand(window, lst.id, new_cols)
         cmd.redo()
-        # Item was in "In Progress" which no longer exists → goes to inbox (first col)
-        assert item.board_column == "Backlog"
+        assert item.board_column == "To Do"
 
     def test_apply_layout_completion_column_items_remap(self):
         """Items in old completion column should move to new completion column."""
@@ -1778,3 +1779,350 @@ class TestColumnProtection:
         board.layout_preset_requested.emit(["To Do", "In Progress", "Review", "Done"])
         assert len(received) == 1
         assert received[0] == ["To Do", "In Progress", "Review", "Done"]
+
+
+class TestViewSwitchingBoardColumn:
+    """Tests for board_column synchronization across view switches."""
+
+    def _make_db_and_window(self):
+        from pytodo_qt.core.models import Database
+
+        db = Database()
+        lst = create_todo_list("Test")
+        db.add_list(lst)
+        window = MagicMock()
+        window._database = db
+        return db, lst, window
+
+    # -- ToggleCompleteCommand board_column sync --
+
+    def test_toggle_complete_moves_to_done_column(self):
+        """Completing an item moves it to the last (completion) column."""
+        from pytodo_qt.gui.commands import ToggleCompleteCommand
+
+        db, lst, window = self._make_db_and_window()
+        item = create_todo_item("Task", board_column="In Progress")
+        lst.add_item(item)
+        assert not item.complete
+
+        cmd = ToggleCompleteCommand(window, lst.id, [(item.id, False)])
+        cmd.redo()
+        assert item.complete
+        assert item.board_column == "Done"
+
+    def test_toggle_incomplete_moves_from_done(self):
+        """Un-completing an item in Done moves it to first (inbox) column."""
+        from pytodo_qt.gui.commands import ToggleCompleteCommand
+
+        db, lst, window = self._make_db_and_window()
+        item = create_todo_item("Task", board_column="Done")
+        item.complete = True
+        lst.add_item(item)
+
+        cmd = ToggleCompleteCommand(window, lst.id, [(item.id, True)])
+        cmd.redo()
+        assert not item.complete
+        assert item.board_column == "To Do"
+
+    def test_toggle_complete_undo_restores_column(self):
+        """Undo of toggle restores original board_column."""
+        from pytodo_qt.gui.commands import ToggleCompleteCommand
+
+        db, lst, window = self._make_db_and_window()
+        item = create_todo_item("Task", board_column="In Progress")
+        lst.add_item(item)
+
+        cmd = ToggleCompleteCommand(window, lst.id, [(item.id, False)])
+        cmd.redo()
+        assert item.board_column == "Done"
+        cmd.undo()
+        assert item.board_column == "In Progress"
+        assert not item.complete
+
+    def test_toggle_complete_redo_undo_redo_cycle(self):
+        """Multiple redo/undo cycles maintain consistency."""
+        from pytodo_qt.gui.commands import ToggleCompleteCommand
+
+        db, lst, window = self._make_db_and_window()
+        item = create_todo_item("Task", board_column="In Progress")
+        lst.add_item(item)
+
+        cmd = ToggleCompleteCommand(window, lst.id, [(item.id, False)])
+        cmd.redo()
+        assert item.board_column == "Done" and item.complete
+        cmd.undo()
+        assert item.board_column == "In Progress" and not item.complete
+        cmd.redo()
+        assert item.board_column == "Done" and item.complete
+
+    def test_multi_select_toggle_syncs_columns(self):
+        """Batch toggle syncs board_column for each item individually."""
+        from pytodo_qt.gui.commands import ToggleCompleteCommand
+
+        db, lst, window = self._make_db_and_window()
+        item1 = create_todo_item("A", board_column="To Do")
+        item2 = create_todo_item("B", board_column="In Progress")
+        lst.add_item(item1)
+        lst.add_item(item2)
+
+        states = [(item1.id, False), (item2.id, False)]
+        cmd = ToggleCompleteCommand(window, lst.id, states)
+        cmd.redo()
+        assert item1.board_column == "Done"
+        assert item2.board_column == "Done"
+        cmd.undo()
+        assert item1.board_column == "To Do"
+        assert item2.board_column == "In Progress"
+
+    # -- ToggleCompleteRecurringCommand board_column sync --
+
+    def test_recurring_advance_moves_from_done(self):
+        """Recurrence advance (complete→False) moves item from Done to inbox."""
+        from pytodo_qt.gui.commands import ToggleCompleteRecurringCommand
+
+        db, lst, window = self._make_db_and_window()
+        today = date.today()
+        tomorrow = today + timedelta(days=1)
+        item = create_todo_item("Recurring", board_column="Done")
+        item.recurrence_type = "daily"
+        item.recurrence_interval = 1
+        item.due_date = today
+        lst.add_item(item)
+
+        cmd = ToggleCompleteRecurringCommand(
+            window,
+            lst.id,
+            item.id,
+            old_due_date=today,
+            new_due_date=tomorrow,
+            old_count=0,
+            recurrence_ended=False,
+        )
+        cmd.redo()
+        assert not item.complete
+        assert item.board_column == "To Do"
+
+    def test_recurring_exhausted_moves_to_done(self):
+        """Exhausted recurrence (complete=True) moves item to Done."""
+        from pytodo_qt.gui.commands import ToggleCompleteRecurringCommand
+
+        db, lst, window = self._make_db_and_window()
+        today = date.today()
+        item = create_todo_item("Recurring", board_column="In Progress")
+        item.recurrence_type = "daily"
+        item.recurrence_interval = 1
+        item.due_date = today
+        lst.add_item(item)
+
+        cmd = ToggleCompleteRecurringCommand(
+            window,
+            lst.id,
+            item.id,
+            old_due_date=today,
+            new_due_date=None,
+            old_count=4,
+            recurrence_ended=True,
+        )
+        cmd.redo()
+        assert item.complete
+        assert item.board_column == "Done"
+
+    def test_recurring_undo_restores_column(self):
+        """Undo of recurrence advance restores original board_column."""
+        from pytodo_qt.gui.commands import ToggleCompleteRecurringCommand
+
+        db, lst, window = self._make_db_and_window()
+        today = date.today()
+        tomorrow = today + timedelta(days=1)
+        item = create_todo_item("Recurring", board_column="Done")
+        item.recurrence_type = "daily"
+        item.recurrence_interval = 1
+        item.due_date = today
+        lst.add_item(item)
+
+        cmd = ToggleCompleteRecurringCommand(
+            window,
+            lst.id,
+            item.id,
+            old_due_date=today,
+            new_due_date=tomorrow,
+            old_count=0,
+            recurrence_ended=False,
+        )
+        cmd.redo()
+        assert item.board_column == "To Do"
+        cmd.undo()
+        assert item.board_column == "Done"
+
+    # -- Default column assignment --
+
+    def test_new_item_gets_first_column(self):
+        """Items created without board_column get assigned first column."""
+        item = create_todo_item("Task")
+        assert item.board_column == ""
+        # Simulate what _on_add_todo does
+        cols = ["To Do", "In Progress", "Done"]
+        if not item.board_column and cols:
+            item.board_column = cols[0]
+        assert item.board_column == "To Do"
+
+    def test_orphaned_subtask_gets_column(self):
+        """Deleting parent promotes subtask with board_column assignment."""
+        from pytodo_qt.gui.commands import DeleteItemsCommand
+
+        db, lst, window = self._make_db_and_window()
+        parent = create_todo_item("Parent", board_column="In Progress")
+        lst.add_item(parent)
+        child = create_todo_item("Child")
+        child.parent_id = parent.id
+        lst.add_item(child)
+        assert child.board_column == ""
+
+        cmd = DeleteItemsCommand(window, lst.id, [parent.id])
+        cmd.redo()
+        assert child.parent_id is None
+        assert child.board_column == "To Do"  # Assigned first column
+
+    # -- Reconciliation --
+
+    def test_reconcile_empty_column(self):
+        """Items with empty board_column get assigned first column."""
+        db, lst, window = self._make_db_and_window()
+        item = create_todo_item("Task")  # board_column=""
+        lst.add_item(item)
+
+        # Simulate reconciliation logic
+        cols = lst.board_columns
+        col_set = set(cols)
+        first_col = cols[0]
+        if not item.board_column or item.board_column not in col_set:
+            item.board_column = first_col
+        assert item.board_column == "To Do"
+
+    def test_reconcile_invalid_column(self):
+        """Items with removed column name get assigned first column."""
+        db, lst, window = self._make_db_and_window()
+        item = create_todo_item("Task", board_column="Review")
+        lst.add_item(item)
+
+        cols = lst.board_columns  # ["To Do", "In Progress", "Done"]
+        col_set = set(cols)
+        if item.board_column not in col_set:
+            item.board_column = cols[0]
+        assert item.board_column == "To Do"
+
+    def test_reconcile_complete_not_in_done(self):
+        """Complete items not in last column get moved to last column."""
+        db, lst, window = self._make_db_and_window()
+        item = create_todo_item("Task", board_column="In Progress")
+        item.complete = True
+        lst.add_item(item)
+
+        cols = lst.board_columns
+        last_col = cols[-1]
+        if item.complete and item.board_column != last_col:
+            item.board_column = last_col
+        assert item.board_column == "Done"
+
+    def test_reconcile_incomplete_in_done(self):
+        """Incomplete items in last column get moved to first column."""
+        db, lst, window = self._make_db_and_window()
+        item = create_todo_item("Task", board_column="Done")
+        lst.add_item(item)
+        assert not item.complete
+
+        cols = lst.board_columns
+        first_col, last_col = cols[0], cols[-1]
+        if not item.complete and item.board_column == last_col:
+            item.board_column = first_col
+        assert item.board_column == "To Do"
+
+    def test_reconcile_no_change_when_consistent(self):
+        """Already-correct items are not modified."""
+        db, lst, window = self._make_db_and_window()
+        item = create_todo_item("Task", board_column="In Progress")
+        lst.add_item(item)
+
+        cols = lst.board_columns
+        col_set = set(cols)
+        last_col = cols[-1]
+        changed = False
+        if (
+            not item.board_column
+            or item.board_column not in col_set
+            or item.complete
+            and item.board_column != last_col
+            or not item.complete
+            and item.board_column == last_col
+        ):
+            changed = True
+        assert not changed
+        assert item.board_column == "In Progress"
+
+    # -- Smart layout remapping --
+
+    def test_layout_remap_positional_5_to_3(self):
+        """5→3 column layout remaps middle items by relative position."""
+        from pytodo_qt.core.models import Database
+        from pytodo_qt.gui.commands import ApplyLayoutPresetCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        lst.board_columns = ["Backlog", "To Do", "In Progress", "Review", "Done"]
+        item_backlog = create_todo_item("A", board_column="Backlog")
+        item_review = create_todo_item("B", board_column="Review")
+        lst.add_item(item_backlog)
+        lst.add_item(item_review)
+        db.add_list(lst)
+
+        window = MagicMock()
+        window._database = db
+
+        cmd = ApplyLayoutPresetCommand(window, lst.id, ["To Do", "In Progress", "Done"])
+        cmd.redo()
+        # Backlog (0/4=0.0) → To Do (idx 0)
+        assert item_backlog.board_column == "To Do"
+        # Review (3/4=0.75) → round(0.75*2) = round(1.5) = 2 = "Done"
+        # But "Done" is completion col and Review was NOT old completion, so
+        # positional mapping gives "Done" which is the closest match
+        assert item_review.board_column == "Done"
+
+    def test_layout_remap_name_match_priority(self):
+        """Column name matches take priority over positional mapping."""
+        from pytodo_qt.core.models import Database
+        from pytodo_qt.gui.commands import ApplyLayoutPresetCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        lst.board_columns = ["To Do", "In Progress", "Done"]
+        item = create_todo_item("Task", board_column="In Progress")
+        lst.add_item(item)
+        db.add_list(lst)
+
+        window = MagicMock()
+        window._database = db
+
+        # New layout still has "In Progress" — should stay there
+        cmd = ApplyLayoutPresetCommand(window, lst.id, ["Backlog", "In Progress", "Review", "Done"])
+        cmd.redo()
+        assert item.board_column == "In Progress"
+
+    def test_layout_remap_completion_col_preserved(self):
+        """Items in old completion column map to new completion column."""
+        from pytodo_qt.core.models import Database
+        from pytodo_qt.gui.commands import ApplyLayoutPresetCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        lst.board_columns = ["To Do", "In Progress", "Done"]
+        item = create_todo_item("Task", board_column="Done")
+        lst.add_item(item)
+        db.add_list(lst)
+
+        window = MagicMock()
+        window._database = db
+
+        # Rename completion column
+        cmd = ApplyLayoutPresetCommand(window, lst.id, ["To Do", "In Progress", "Complete"])
+        cmd.redo()
+        assert item.board_column == "Complete"

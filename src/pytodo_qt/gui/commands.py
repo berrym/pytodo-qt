@@ -57,19 +57,24 @@ class DeleteItemsCommand(QUndoCommand):
         self._window = window
         self._list_id = list_id
         self._item_ids = item_ids
-        self._orphaned_children: list[tuple[UUID, UUID | None]] = []  # (child_id, old_parent_id)
+        # (child_id, old_parent_id, old_board_column)
+        self._orphaned_children: list[tuple[UUID, UUID | None, str]] = []
 
     def redo(self) -> None:
         todo_list = self._window._database.lists.get(self._list_id)
         if not todo_list:
             return
         deleted_ids = set(self._item_ids)
+        first_col = todo_list.board_columns[0] if todo_list.board_columns else ""
         # Find children that will be orphaned and promote them to top-level
         self._orphaned_children.clear()
         for item in todo_list.items.values():
             if not item.deleted and item.parent_id in deleted_ids and item.id not in deleted_ids:
-                self._orphaned_children.append((item.id, item.parent_id))
+                self._orphaned_children.append((item.id, item.parent_id, item.board_column))
                 item.parent_id = None
+                # Assign board column for newly top-level items
+                if not item.board_column and first_col:
+                    item.board_column = first_col
                 item.mark_updated()
         for item_id in self._item_ids:
             todo_list.remove_item(item_id)
@@ -80,11 +85,12 @@ class DeleteItemsCommand(QUndoCommand):
         todo_list = self._window._database.lists.get(self._list_id)
         if not todo_list:
             return
-        # Restore orphaned children's parent_id
-        for child_id, old_parent_id in self._orphaned_children:
+        # Restore orphaned children's parent_id and board_column
+        for child_id, old_parent_id, old_board_column in self._orphaned_children:
             child = todo_list.items.get(child_id)
             if child:
                 child.parent_id = old_parent_id
+                child.board_column = old_board_column
                 child.mark_updated()
         for item_id in self._item_ids:
             item = todo_list.items.get(item_id)
@@ -109,15 +115,25 @@ class ToggleCompleteCommand(QUndoCommand):
         self._window = window
         self._list_id = list_id
         self._item_states = item_states
+        self._old_board_columns: dict[UUID, str] = {}
 
     def redo(self) -> None:
         todo_list = self._window._database.lists.get(self._list_id)
         if not todo_list:
             return
+        cols = todo_list.board_columns
+        first_col = cols[0] if cols else ""
+        last_col = cols[-1] if cols else ""
         for item_id, _old_complete in self._item_states:
             item = todo_list.get_item(item_id)
             if item:
+                self._old_board_columns[item_id] = item.board_column
                 item.toggle_complete()
+                # Sync board_column with new completion state
+                if item.complete and last_col and item.board_column != last_col:
+                    item.board_column = last_col
+                elif not item.complete and first_col and item.board_column == last_col:
+                    item.board_column = first_col
         self._window._save_database()
         self._window._refresh_ui()
 
@@ -129,6 +145,8 @@ class ToggleCompleteCommand(QUndoCommand):
             item = todo_list.get_item(item_id)
             if item:
                 item.complete = old_complete
+                if item_id in self._old_board_columns:
+                    item.board_column = self._old_board_columns[item_id]
                 item.mark_updated()
         self._window._save_database()
         self._window._refresh_ui()
@@ -366,6 +384,7 @@ class ToggleCompleteRecurringCommand(QUndoCommand):
         self._new_due_date = new_due_date
         self._old_count = old_count
         self._ended = recurrence_ended
+        self._old_board_column: str = ""
 
     def redo(self) -> None:
         todo_list = self._window._database.lists.get(self._list_id)
@@ -374,12 +393,22 @@ class ToggleCompleteRecurringCommand(QUndoCommand):
         item = todo_list.get_item(self._item_id)
         if not item:
             return
+        self._old_board_column = item.board_column
         item.recurrence_count = self._old_count + 1
+        cols = todo_list.board_columns
+        first_col = cols[0] if cols else ""
+        last_col = cols[-1] if cols else ""
         if self._ended:
             item.complete = True
+            # Exhausted recurrence → move to completion column
+            if last_col and item.board_column != last_col:
+                item.board_column = last_col
         else:
             item.complete = False
             item.due_date = self._new_due_date
+            # Recurrence advance → move from completion to inbox
+            if first_col and item.board_column == last_col:
+                item.board_column = first_col
         item.mark_updated()
         self._window._save_database()
         self._window._refresh_ui()
@@ -394,6 +423,7 @@ class ToggleCompleteRecurringCommand(QUndoCommand):
         item.complete = False
         item.due_date = self._old_due_date
         item.recurrence_count = self._old_count
+        item.board_column = self._old_board_column
         item.mark_updated()
         self._window._save_database()
         self._window._refresh_ui()
@@ -792,12 +822,15 @@ class ApplyLayoutPresetCommand(QUndoCommand):
         for item in todo_list.active_items():
             self._old_item_columns[item.id] = item.board_column
 
-        # Remap items: keep items in columns that still exist,
-        # move others to the first new column (inbox)
+        # Remap items: (1) exact name match, (2) completion→completion,
+        # (3) positional mapping by relative column position
         new_set = set(self._new_columns)
-        first_col = self._new_columns[0] if self._new_columns else ""
         last_old = self._old_columns[-1] if self._old_columns else ""
         last_new = self._new_columns[-1] if self._new_columns else ""
+        first_new = self._new_columns[0] if self._new_columns else ""
+        old_index = {col: i for i, col in enumerate(self._old_columns)}
+        old_len = max(len(self._old_columns) - 1, 1)
+        new_len = max(len(self._new_columns) - 1, 1)
         for item in todo_list.active_items():
             if item.board_column in new_set:
                 pass  # Column still exists, keep it
@@ -805,9 +838,16 @@ class ApplyLayoutPresetCommand(QUndoCommand):
                 # Was in old completion column → move to new completion column
                 item.board_column = last_new
                 item.mark_updated()
+            elif item.board_column in old_index and self._new_columns:
+                # Positional remapping: map by relative position
+                rel_pos = old_index[item.board_column] / old_len
+                new_idx = round(rel_pos * new_len)
+                new_idx = max(0, min(new_idx, len(self._new_columns) - 1))
+                item.board_column = self._new_columns[new_idx]
+                item.mark_updated()
             else:
-                # Column no longer exists → move to inbox
-                item.board_column = first_col
+                # Fallback: unknown column → inbox
+                item.board_column = first_new
                 item.mark_updated()
 
         # Clear WIP limits for removed columns

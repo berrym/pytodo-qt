@@ -13,7 +13,7 @@ from uuid import UUID
 from aiohttp import web
 
 from ..core import settings
-from ..core.models import TodoItem, create_todo_item, create_todo_list
+from ..core.models import TodoItem, TodoList, create_todo_item, create_todo_list
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -198,6 +198,9 @@ async def handle_create_item(request: web.Request) -> web.Response:
             item.priority = p
     if "tags" in body and isinstance(body["tags"], list):
         item.tags = [str(t) for t in body["tags"]]
+    # Assign default board column for kanban view consistency
+    if lst.board_columns:
+        item.board_column = lst.board_columns[0]
 
     lst.add_item(item)
 
@@ -265,11 +268,19 @@ async def handle_toggle_item(request: web.Request) -> web.Response:
     except ValueError:
         return _error(400, "Invalid item ID")
 
-    item = _find_item(db, item_id)
+    item, lst = _find_item_and_list(db, item_id)
     if item is None:
         return _error(404, "Item not found")
 
     item.toggle_complete()
+    # Sync board_column with completion state
+    if lst and lst.board_columns:
+        first_col = lst.board_columns[0]
+        last_col = lst.board_columns[-1]
+        if item.complete and item.board_column != last_col:
+            item.board_column = last_col
+        elif not item.complete and item.board_column == last_col:
+            item.board_column = first_col
 
     _schedule_save_and_refresh(request)
     return web.json_response(_item_to_json(item))
@@ -297,6 +308,17 @@ def _find_item(db: Database, item_id: UUID) -> TodoItem | None:
         if item and not item.deleted:
             return item
     return None
+
+
+def _find_item_and_list(db: Database, item_id: UUID) -> tuple[TodoItem | None, TodoList | None]:
+    """Find an item and its containing list by ID across all non-private lists."""
+    for lst in db.lists.values():
+        if lst.deleted or lst.private:
+            continue
+        item = lst.items.get(item_id)
+        if item and not item.deleted:
+            return item, lst
+    return None, None
 
 
 def _schedule_save_and_refresh(request: web.Request) -> None:

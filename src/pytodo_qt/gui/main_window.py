@@ -716,10 +716,47 @@ class MainWindow(QMainWindow):
             self.list_view_action.setChecked(True)
         else:
             self.board_view_action.setChecked(True)
+        if view_id == 1:
+            self._reconcile_board_columns()
         mode = "board" if view_id == 1 else "list"
         self._config.database.view_mode = mode
         self._config_manager.save()
         self._refresh_ui()
+
+    def _reconcile_board_columns(self) -> None:
+        """Normalize board_column values for all top-level items in the active list.
+
+        Catches edge cases from sync, migration, web API, or any missed code path.
+        """
+        active_list = self._database.active_list
+        if not active_list:
+            return
+        cols = active_list.board_columns
+        if not cols:
+            return
+        col_set = set(cols)
+        first_col = cols[0]
+        last_col = cols[-1]
+        changed = False
+        for item in active_list.active_items():
+            if item.parent_id is not None:
+                continue  # Subtasks don't appear on the board
+            old = item.board_column
+            if not old or old not in col_set:
+                item.board_column = first_col
+                item.mark_updated()
+                changed = True
+            elif item.complete and old != last_col:
+                item.board_column = last_col
+                item.mark_updated()
+                changed = True
+            elif not item.complete and old == last_col:
+                item.board_column = first_col
+                item.mark_updated()
+                changed = True
+        if changed:
+            active_list.mark_updated()
+            self._save_database()
 
     def _on_item_column_changed(self, item_id: object, new_column: str) -> None:
         """Handle item moved to a different kanban column."""
@@ -1502,6 +1539,10 @@ class MainWindow(QMainWindow):
             # Set first list as active if none set
             self._database.active_list_id = next(iter(self._database.lists.keys()))
 
+        # Reconcile board columns if starting in board view
+        if self._config.database.view_mode == "board":
+            self._reconcile_board_columns()
+
         self._refresh_ui()
 
     def _save_database(self) -> bool:
@@ -1624,6 +1665,11 @@ class MainWindow(QMainWindow):
 
         item = AddTodoDialog.create_item(self)
         if item is not None and self._database.active_list is not None:
+            # Assign default board column for kanban view consistency
+            if not item.board_column:
+                cols = self._database.active_list.board_columns
+                if cols:
+                    item.board_column = cols[0]
             from .commands import AddItemCommand
 
             cmd = AddItemCommand(self, self._database.active_list.id, item)
@@ -1650,6 +1696,11 @@ class MainWindow(QMainWindow):
         item = AddTodoDialog.create_item(self, title="Add Subtask")
         if item is not None:
             item.parent_id = parent_id
+            # Assign default board column (may get promoted to top-level later)
+            if not item.board_column:
+                cols = active_list.board_columns
+                if cols:
+                    item.board_column = cols[0]
             from .commands import AddItemCommand
 
             cmd = AddItemCommand(self, active_list.id, item)
@@ -2894,6 +2945,7 @@ class MainWindow(QMainWindow):
                 data, peer_name
             )
             self._record_unseen_changes(changed)
+            self._reconcile_board_columns()
             self._save_database()
             self._refresh_ui()
             self.status_bar_widget.set_sync_status("success")
