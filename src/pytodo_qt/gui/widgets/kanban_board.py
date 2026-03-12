@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 CARD_WIDTH = 260
-COLUMN_WIDTH = 280
+COLUMN_WIDTH = 310
 KANBAN_MIME_TYPE = "application/x-pytodo-kanban-item"
 
 # Board layout presets — last column is always the completion column
@@ -600,7 +600,7 @@ class KanbanColumnWidget(QFrame):
         self._card_container = QWidget()
         self._card_container.setStyleSheet("background: transparent;")
         self._card_layout = QVBoxLayout(self._card_container)
-        self._card_layout.setContentsMargins(0, 0, 0, 0)
+        self._card_layout.setContentsMargins(4, 2, 4, 2)
         self._card_layout.setSpacing(6)
         self._card_layout.addStretch()
         scroll.setWidget(self._card_container)
