@@ -727,7 +727,11 @@ class MainWindow(QMainWindow):
         """Normalize board_column values for all top-level items in the active list.
 
         Catches edge cases from sync, migration, web API, or any missed code path.
+        Items with work indicators (pomodoro time or completed subtasks) are
+        placed in the second column (In Progress) rather than inbox.
         """
+        from .commands import _best_incomplete_column
+
         active_list = self._database.active_list
         if not active_list:
             return
@@ -735,7 +739,6 @@ class MainWindow(QMainWindow):
         if not cols:
             return
         col_set = set(cols)
-        first_col = cols[0]
         last_col = cols[-1]
         changed = False
         for item in active_list.active_items():
@@ -743,7 +746,7 @@ class MainWindow(QMainWindow):
                 continue  # Subtasks don't appear on the board
             old = item.board_column
             if not old or old not in col_set:
-                item.board_column = first_col
+                item.board_column = _best_incomplete_column(item, active_list)
                 item.mark_updated()
                 changed = True
             elif item.complete and old != last_col:
@@ -751,7 +754,7 @@ class MainWindow(QMainWindow):
                 item.mark_updated()
                 changed = True
             elif not item.complete and old == last_col:
-                item.board_column = first_col
+                item.board_column = _best_incomplete_column(item, active_list)
                 item.mark_updated()
                 changed = True
         if changed:

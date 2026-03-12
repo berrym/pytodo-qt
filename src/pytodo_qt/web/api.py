@@ -275,12 +275,13 @@ async def handle_toggle_item(request: web.Request) -> web.Response:
     item.toggle_complete()
     # Sync board_column with completion state
     if lst and lst.board_columns:
-        first_col = lst.board_columns[0]
         last_col = lst.board_columns[-1]
         if item.complete and item.board_column != last_col:
             item.board_column = last_col
         elif not item.complete and item.board_column == last_col:
-            item.board_column = first_col
+            from ..gui.commands import _best_incomplete_column
+
+            item.board_column = _best_incomplete_column(item, lst)
 
     _schedule_save_and_refresh(request)
     return web.json_response(_item_to_json(item))

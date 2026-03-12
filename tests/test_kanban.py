@@ -2126,3 +2126,208 @@ class TestViewSwitchingBoardColumn:
         cmd = ApplyLayoutPresetCommand(window, lst.id, ["To Do", "In Progress", "Complete"])
         cmd.redo()
         assert item.board_column == "Complete"
+
+
+class TestBestIncompleteColumn:
+    """Tests for _best_incomplete_column work-indicator heuristic."""
+
+    def test_no_work_goes_to_inbox(self):
+        """Items with no pomodoro time or completed subtasks go to first column."""
+        from pytodo_qt.gui.commands import _best_incomplete_column
+
+        lst = create_todo_list("Test")
+        lst.board_columns = ["To Do", "In Progress", "Done"]
+        item = create_todo_item("Task")
+        lst.add_item(item)
+
+        assert _best_incomplete_column(item, lst) == "To Do"
+
+    def test_time_spent_goes_to_progress(self):
+        """Items with pomodoro time go to second column (In Progress)."""
+        from pytodo_qt.gui.commands import _best_incomplete_column
+
+        lst = create_todo_list("Test")
+        lst.board_columns = ["To Do", "In Progress", "Done"]
+        item = create_todo_item("Task")
+        item.time_spent = 1500  # 25 minutes
+        lst.add_item(item)
+
+        assert _best_incomplete_column(item, lst) == "In Progress"
+
+    def test_completed_subtask_goes_to_progress(self):
+        """Items with completed subtasks go to second column."""
+        from pytodo_qt.gui.commands import _best_incomplete_column
+
+        lst = create_todo_list("Test")
+        lst.board_columns = ["To Do", "In Progress", "Done"]
+        parent = create_todo_item("Parent")
+        lst.add_item(parent)
+
+        child = create_todo_item("Child")
+        child.parent_id = parent.id
+        child.complete = True
+        lst.add_item(child)
+
+        assert _best_incomplete_column(parent, lst) == "In Progress"
+
+    def test_incomplete_subtask_stays_inbox(self):
+        """Items with only incomplete subtasks stay in first column."""
+        from pytodo_qt.gui.commands import _best_incomplete_column
+
+        lst = create_todo_list("Test")
+        lst.board_columns = ["To Do", "In Progress", "Done"]
+        parent = create_todo_item("Parent")
+        lst.add_item(parent)
+
+        child = create_todo_item("Child")
+        child.parent_id = parent.id
+        lst.add_item(child)
+
+        assert _best_incomplete_column(parent, lst) == "To Do"
+
+    def test_deleted_subtask_ignored(self):
+        """Deleted completed subtasks don't count as work indicators."""
+        from pytodo_qt.gui.commands import _best_incomplete_column
+
+        lst = create_todo_list("Test")
+        lst.board_columns = ["To Do", "In Progress", "Done"]
+        parent = create_todo_item("Parent")
+        lst.add_item(parent)
+
+        child = create_todo_item("Child")
+        child.parent_id = parent.id
+        child.complete = True
+        child.mark_deleted()
+        lst.add_item(child)
+
+        assert _best_incomplete_column(parent, lst) == "To Do"
+
+    def test_backlog_preset_finds_in_progress(self):
+        """Backlog preset (In Progress is col 3) still finds it by name."""
+        from pytodo_qt.gui.commands import _best_incomplete_column
+
+        lst = create_todo_list("Test")
+        lst.board_columns = ["Backlog", "To Do", "In Progress", "Done"]
+        item = create_todo_item("Task")
+        item.time_spent = 1500
+        lst.add_item(item)
+
+        assert _best_incomplete_column(item, lst) == "In Progress"
+
+    def test_custom_columns_falls_back_to_second(self):
+        """Custom columns without 'In Progress' fall back to second column."""
+        from pytodo_qt.gui.commands import _best_incomplete_column
+
+        lst = create_todo_list("Test")
+        lst.board_columns = ["Inbox", "Active", "Done"]
+        item = create_todo_item("Task")
+        item.time_spent = 1500
+        lst.add_item(item)
+
+        assert _best_incomplete_column(item, lst) == "Active"
+
+    def test_two_column_board_falls_back_to_first(self):
+        """With only 2 columns, no meaningful progress column — use first."""
+        from pytodo_qt.gui.commands import _best_incomplete_column
+
+        lst = create_todo_list("Test")
+        lst.board_columns = ["To Do", "Done"]
+        item = create_todo_item("Task")
+        item.time_spent = 1500
+        lst.add_item(item)
+
+        assert _best_incomplete_column(item, lst) == "To Do"
+
+    def test_empty_columns_returns_empty(self):
+        """With no board columns, returns empty string."""
+        from pytodo_qt.gui.commands import _best_incomplete_column
+
+        lst = create_todo_list("Test")
+        lst.board_columns = []
+        item = create_todo_item("Task")
+        item.time_spent = 1500
+        lst.add_item(item)
+
+        assert _best_incomplete_column(item, lst) == ""
+
+    def test_toggle_uncomplete_with_time_goes_to_progress(self):
+        """Un-completing an item with pomodoro time places it in In Progress."""
+        from pytodo_qt.core.models import Database
+        from pytodo_qt.gui.commands import ToggleCompleteCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        lst.board_columns = ["To Do", "In Progress", "Done"]
+        item = create_todo_item("Task", board_column="Done")
+        item.complete = True
+        item.time_spent = 1500
+        lst.add_item(item)
+        db.add_list(lst)
+
+        window = MagicMock()
+        window._database = db
+
+        cmd = ToggleCompleteCommand(window, lst.id, [(item.id, True)])
+        cmd.redo()
+        assert not item.complete
+        assert item.board_column == "In Progress"
+
+    def test_toggle_uncomplete_with_subtasks_goes_to_progress(self):
+        """Un-completing an item with completed subtasks places it in In Progress."""
+        from pytodo_qt.core.models import Database
+        from pytodo_qt.gui.commands import ToggleCompleteCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        lst.board_columns = ["To Do", "In Progress", "Done"]
+        parent = create_todo_item("Parent", board_column="Done")
+        parent.complete = True
+        lst.add_item(parent)
+
+        child = create_todo_item("Child")
+        child.parent_id = parent.id
+        child.complete = True
+        lst.add_item(child)
+        db.add_list(lst)
+
+        window = MagicMock()
+        window._database = db
+
+        cmd = ToggleCompleteCommand(window, lst.id, [(parent.id, True)])
+        cmd.redo()
+        assert not parent.complete
+        assert parent.board_column == "In Progress"
+
+    def test_recurring_advance_with_time_goes_to_progress(self):
+        """Recurring advance with pomodoro time goes to In Progress."""
+        from pytodo_qt.core.models import Database
+        from pytodo_qt.gui.commands import ToggleCompleteRecurringCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        lst.board_columns = ["To Do", "In Progress", "Done"]
+        today = date.today()
+        tomorrow = today + timedelta(days=1)
+        item = create_todo_item("Recurring", board_column="Done")
+        item.recurrence_type = "daily"
+        item.recurrence_interval = 1
+        item.due_date = today
+        item.time_spent = 1500
+        lst.add_item(item)
+        db.add_list(lst)
+
+        window = MagicMock()
+        window._database = db
+
+        cmd = ToggleCompleteRecurringCommand(
+            window,
+            lst.id,
+            item.id,
+            old_due_date=today,
+            new_due_date=tomorrow,
+            old_count=0,
+            recurrence_ended=False,
+        )
+        cmd.redo()
+        assert not item.complete
+        assert item.board_column == "In Progress"

@@ -20,6 +20,36 @@ if TYPE_CHECKING:
     from .main_window import MainWindow
 
 
+def _best_incomplete_column(item: TodoItem, todo_list: TodoList) -> str:
+    """Return the best column for an incomplete item based on work indicators.
+
+    Items with pomodoro time or completed subtasks go to the "In Progress"
+    column since they clearly have work done. Searches by name first (handles
+    Backlog preset where In Progress is col 3), falls back to second column
+    for custom layouts. Items without work indicators go to inbox (first col).
+    """
+    cols = todo_list.board_columns
+    if not cols:
+        return ""
+    first_col = cols[0]
+    if len(cols) < 3:
+        # With only 2 columns (inbox + done), no meaningful progress column
+        return first_col
+    # Prefer "In Progress" by name (works across all presets), else second col
+    progress_col = next((c for c in cols[1:-1] if c == "In Progress"), cols[1])
+
+    # Check for pomodoro work
+    if item.time_spent > 0:
+        return progress_col
+
+    # Check for completed subtasks
+    for child in todo_list.items.values():
+        if child.parent_id == item.id and not child.deleted and child.complete:
+            return progress_col
+
+    return first_col
+
+
 class AddItemCommand(QUndoCommand):
     """Add a todo item to a list."""
 
@@ -122,7 +152,6 @@ class ToggleCompleteCommand(QUndoCommand):
         if not todo_list:
             return
         cols = todo_list.board_columns
-        first_col = cols[0] if cols else ""
         last_col = cols[-1] if cols else ""
         for item_id, _old_complete in self._item_states:
             item = todo_list.get_item(item_id)
@@ -132,8 +161,8 @@ class ToggleCompleteCommand(QUndoCommand):
                 # Sync board_column with new completion state
                 if item.complete and last_col and item.board_column != last_col:
                     item.board_column = last_col
-                elif not item.complete and first_col and item.board_column == last_col:
-                    item.board_column = first_col
+                elif not item.complete and item.board_column == last_col:
+                    item.board_column = _best_incomplete_column(item, todo_list)
         self._window._save_database()
         self._window._refresh_ui()
 
@@ -396,7 +425,6 @@ class ToggleCompleteRecurringCommand(QUndoCommand):
         self._old_board_column = item.board_column
         item.recurrence_count = self._old_count + 1
         cols = todo_list.board_columns
-        first_col = cols[0] if cols else ""
         last_col = cols[-1] if cols else ""
         if self._ended:
             item.complete = True
@@ -406,9 +434,9 @@ class ToggleCompleteRecurringCommand(QUndoCommand):
         else:
             item.complete = False
             item.due_date = self._new_due_date
-            # Recurrence advance → move from completion to inbox
-            if first_col and item.board_column == last_col:
-                item.board_column = first_col
+            # Recurrence advance → place based on work indicators
+            if item.board_column == last_col:
+                item.board_column = _best_incomplete_column(item, todo_list)
         item.mark_updated()
         self._window._save_database()
         self._window._refresh_ui()

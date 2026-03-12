@@ -50,3 +50,14 @@ uv.lock
 
 # macOS icon build artifact
 pytodo-qt.iconset/
+
+# macOS metadata
+.DS_Store
+._*
+
+# Media files (safeguard against accidental placement)
+*.mkv
+*.avi
+*.mp4
+*.nfo
+*.lftp-pget-status
