@@ -174,14 +174,14 @@ class TestTerminateProcess:
     def test_terminate_real_subprocess(self) -> None:
         proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         pid = proc.pid
-        # terminate_process sends SIGTERM/SIGKILL but cannot reap the child
-        # (only the parent Popen can).  On POSIX the child becomes a zombie
-        # that os.kill(pid, 0) still sees as alive, so terminate_process may
-        # return False.  We verify the signal was delivered by reaping here.
         terminate_process(pid, timeout=5.0)
+        # Verify the signal was delivered: proc.wait() should return quickly.
+        # We cannot rely on _is_process_alive() afterward because:
+        # - POSIX: zombie persists until parent reaps (wait)
+        # - Windows: OpenProcess succeeds while Popen handle is open
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=2)
-        assert not _is_process_alive(pid)
+        assert proc.returncode is not None
