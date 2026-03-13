@@ -3,7 +3,7 @@
 Covers add_todo.py, add_list.py, and edit_recurrence.py.
 """
 
-from datetime import date
+from datetime import date, time
 
 import pytest
 from PyQt6.QtCore import QDate
@@ -24,16 +24,191 @@ def app():
     return _app
 
 
-class TestAddTodoDialog:
-    """Tests for AddTodoDialog."""
+def _make_advanced_dialog(**kwargs) -> AddTodoDialog:
+    """Create an AddTodoDialog with advanced mode visible."""
+    dialog = AddTodoDialog(**kwargs)
+    dialog._on_toggle_advanced()  # Show advanced container
+    return dialog
+
+
+# ---------------------------------------------------------------------------
+# TestAddTodoDialog — Smart mode (default)
+# ---------------------------------------------------------------------------
+
+
+class TestAddTodoDialogSmartMode:
+    """Tests for AddTodoDialog in smart input mode."""
 
     def test_construction(self, app):
         dialog = AddTodoDialog()
         assert dialog.windowTitle() == "Add To-Do"
         assert dialog.get_item() is None
 
-    def test_default_state(self, app):
+    def test_smart_input_visible_by_default(self, app):
         dialog = AddTodoDialog()
+        assert not dialog._advanced_container.isVisible()
+
+    def test_accept_empty_shows_warning(self, app, monkeypatch):
+        dialog = AddTodoDialog()
+        monkeypatch.setattr(
+            "pytodo_qt.gui.dialogs.add_todo.QMessageBox.warning",
+            lambda *args, **kwargs: None,
+        )
+        dialog._on_accept()
+        assert dialog.get_item() is None
+
+    def test_accept_simple_reminder(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Buy groceries")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.reminder == "Buy groceries"
+        assert item.priority == 2  # Default Normal
+        assert item.due_date is None
+
+    def test_accept_with_date(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Call dentist tomorrow")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert "dentist" in item.reminder
+        assert item.due_date is not None
+
+    def test_accept_with_time(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Meeting tomorrow at 3pm")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_time == time(15, 0)
+
+    def test_accept_with_priority(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Fix crash p1")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.priority == 1
+
+    def test_accept_with_tags(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Fix bug @work #urgent")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert "@work" in item.tags
+        assert "@urgent" in item.tags
+
+    def test_accept_with_recurrence(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Take pills daily")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.recurrence_type == "daily"
+        assert item.due_date is not None  # Recurrence implies today
+
+    def test_accept_with_recurrence_end_count(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Take pills daily for 10 days")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.recurrence_type == "daily"
+        assert item.recurrence_end_count == 10
+
+    def test_accept_with_pomodoro(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Write report ~3p")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.estimated_pomodoros == 3
+
+    def test_accept_full_example(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Buy groceries tomorrow at 3pm @errands p1 ~2p")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert "groceries" in item.reminder
+        assert item.due_date is not None
+        assert item.due_time == time(15, 0)
+        assert item.priority == 1
+        assert "@errands" in item.tags
+        assert item.estimated_pomodoros == 2
+
+    def test_known_tags_passed_to_smart_input(self, app):
+        dialog = AddTodoDialog(known_tags=["@work", "@home"])
+        assert dialog._smart_input._tag_popup._all_tags == ["@home", "@work"]
+
+    def test_enter_key_accepts(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Buy groceries tomorrow")
+        # Simulate Enter via the accepted signal (same as keypress)
+        dialog._smart_input.accepted.emit()
+        item = dialog.get_item()
+        assert item is not None
+        assert "groceries" in item.reminder
+
+    def test_smart_sync_to_advanced_fields(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Buy groceries tomorrow p1 @errands")
+        # Force parse
+        dialog._smart_input.get_parse_result()
+        # Advanced fields should be synced
+        assert "groceries" in dialog.reminder_edit.text()
+        assert dialog.priority_combo.currentData() == 1
+        assert dialog.due_date_checkbox.isChecked()
+        assert "@errands" in dialog.tags_edit.text()
+
+
+# ---------------------------------------------------------------------------
+# TestAddTodoDialog — Advanced mode toggle
+# ---------------------------------------------------------------------------
+
+
+class TestAddTodoDialogToggle:
+    """Tests for advanced mode toggle behavior."""
+
+    def test_toggle_shows_advanced(self, app):
+        dialog = AddTodoDialog()
+        assert not dialog._advanced_shown
+        dialog._on_toggle_advanced()
+        assert dialog._advanced_shown
+        assert "\u25bc" in dialog._advanced_toggle.text()
+
+    def test_toggle_round_trip(self, app):
+        dialog = AddTodoDialog()
+        dialog._on_toggle_advanced()  # Show
+        assert dialog._advanced_shown
+        assert "\u25bc" in dialog._advanced_toggle.text()
+        dialog._on_toggle_advanced()  # Hide
+        assert not dialog._advanced_shown
+        assert "\u25b6" in dialog._advanced_toggle.text()
+
+    def test_advanced_mode_accept_path(self, app):
+        """Verify toggle makes _on_accept use discrete fields."""
+        dialog = _make_advanced_dialog()
+        dialog.reminder_edit.setText("From advanced")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.reminder == "From advanced"
+
+
+# ---------------------------------------------------------------------------
+# TestAddTodoDialog — Advanced mode (discrete fields)
+# ---------------------------------------------------------------------------
+
+
+class TestAddTodoDialogAdvancedMode:
+    """Tests for AddTodoDialog in advanced (discrete field) mode."""
+
+    def test_default_state(self, app):
+        dialog = _make_advanced_dialog()
         assert dialog.reminder_edit.text() == ""
         assert dialog.priority_combo.currentIndex() == 1  # Normal
         assert not dialog.due_date_checkbox.isChecked()
@@ -43,13 +218,13 @@ class TestAddTodoDialog:
         assert not dialog.type_combo.isEnabled()
 
     def test_due_date_toggle_enables_fields(self, app):
-        dialog = AddTodoDialog()
+        dialog = _make_advanced_dialog()
         dialog.due_date_checkbox.setChecked(True)
         assert dialog.due_date_edit.isEnabled()
         assert dialog.recurrence_checkbox.isEnabled()
 
     def test_due_date_toggle_off_disables_recurrence(self, app):
-        dialog = AddTodoDialog()
+        dialog = _make_advanced_dialog()
         dialog.due_date_checkbox.setChecked(True)
         dialog.recurrence_checkbox.setChecked(True)
         assert dialog.interval_spin.isEnabled()
@@ -59,7 +234,7 @@ class TestAddTodoDialog:
         assert not dialog.interval_spin.isEnabled()
 
     def test_recurrence_toggle_enables_fields(self, app):
-        dialog = AddTodoDialog()
+        dialog = _make_advanced_dialog()
         dialog.due_date_checkbox.setChecked(True)
         dialog.recurrence_checkbox.setChecked(True)
         assert dialog.interval_spin.isEnabled()
@@ -67,7 +242,7 @@ class TestAddTodoDialog:
         assert dialog.end_widget.isEnabled()
 
     def test_recurrence_toggle_off_resets_end_condition(self, app):
-        dialog = AddTodoDialog()
+        dialog = _make_advanced_dialog()
         dialog.due_date_checkbox.setChecked(True)
         dialog.recurrence_checkbox.setChecked(True)
         dialog.end_count_radio.setChecked(True)
@@ -79,7 +254,7 @@ class TestAddTodoDialog:
         assert not dialog.end_count_spin.isEnabled()
 
     def test_end_condition_date_enables_date_edit(self, app):
-        dialog = AddTodoDialog()
+        dialog = _make_advanced_dialog()
         dialog.due_date_checkbox.setChecked(True)
         dialog.recurrence_checkbox.setChecked(True)
         dialog.end_date_radio.setChecked(True)
@@ -88,7 +263,7 @@ class TestAddTodoDialog:
         assert not dialog.end_count_spin.isEnabled()
 
     def test_end_condition_count_enables_count_spin(self, app):
-        dialog = AddTodoDialog()
+        dialog = _make_advanced_dialog()
         dialog.due_date_checkbox.setChecked(True)
         dialog.recurrence_checkbox.setChecked(True)
         dialog.end_count_radio.setChecked(True)
@@ -97,8 +272,7 @@ class TestAddTodoDialog:
         assert dialog.end_count_spin.isEnabled()
 
     def test_accept_with_empty_reminder_does_not_create(self, app, monkeypatch):
-        dialog = AddTodoDialog()
-        # Patch QMessageBox.warning to not show
+        dialog = _make_advanced_dialog()
         monkeypatch.setattr(
             "pytodo_qt.gui.dialogs.add_todo.QMessageBox.warning",
             lambda *args, **kwargs: None,
@@ -107,7 +281,7 @@ class TestAddTodoDialog:
         assert dialog.get_item() is None
 
     def test_accept_with_valid_reminder(self, app):
-        dialog = AddTodoDialog()
+        dialog = _make_advanced_dialog()
         dialog.reminder_edit.setText("Buy groceries")
         dialog._on_accept()
         item = dialog.get_item()
@@ -118,7 +292,7 @@ class TestAddTodoDialog:
         assert item.recurrence_type is None
 
     def test_accept_with_due_date(self, app):
-        dialog = AddTodoDialog()
+        dialog = _make_advanced_dialog()
         dialog.reminder_edit.setText("Task with date")
         dialog.due_date_checkbox.setChecked(True)
         dialog.due_date_edit.setDate(QDate(2026, 6, 15))
@@ -128,7 +302,7 @@ class TestAddTodoDialog:
         assert item.due_date == date(2026, 6, 15)
 
     def test_accept_with_high_priority(self, app):
-        dialog = AddTodoDialog()
+        dialog = _make_advanced_dialog()
         dialog.reminder_edit.setText("Urgent task")
         dialog.priority_combo.setCurrentIndex(0)  # High
         dialog._on_accept()
@@ -137,7 +311,7 @@ class TestAddTodoDialog:
         assert item.priority == 1
 
     def test_accept_with_recurrence_daily(self, app):
-        dialog = AddTodoDialog()
+        dialog = _make_advanced_dialog()
         dialog.reminder_edit.setText("Daily standup")
         dialog.due_date_checkbox.setChecked(True)
         dialog.recurrence_checkbox.setChecked(True)
@@ -150,7 +324,7 @@ class TestAddTodoDialog:
         assert item.recurrence_interval == 1
 
     def test_accept_with_recurrence_end_date(self, app):
-        dialog = AddTodoDialog()
+        dialog = _make_advanced_dialog()
         dialog.reminder_edit.setText("Weekly report")
         dialog.due_date_checkbox.setChecked(True)
         dialog.recurrence_checkbox.setChecked(True)
@@ -166,7 +340,7 @@ class TestAddTodoDialog:
         assert item.recurrence_end_date == date(2026, 12, 31)
 
     def test_accept_with_recurrence_end_count(self, app):
-        dialog = AddTodoDialog()
+        dialog = _make_advanced_dialog()
         dialog.reminder_edit.setText("Monthly review")
         dialog.due_date_checkbox.setChecked(True)
         dialog.recurrence_checkbox.setChecked(True)
@@ -181,6 +355,54 @@ class TestAddTodoDialog:
         assert item.recurrence_type == "monthly"
         assert item.recurrence_interval == 3
         assert item.recurrence_end_count == 5
+
+    def test_accept_with_tags(self, app):
+        dialog = _make_advanced_dialog()
+        dialog.reminder_edit.setText("Tagged task")
+        dialog.tags_edit.setText("@work, errands")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert "@work" in item.tags
+        assert "@errands" in item.tags
+
+    def test_accept_with_estimated_pomodoros(self, app):
+        dialog = _make_advanced_dialog()
+        dialog.reminder_edit.setText("Big task")
+        dialog.estimated_pomodoros_spin.setValue(4)
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.estimated_pomodoros == 4
+
+    def test_accept_with_due_time(self, app):
+        dialog = _make_advanced_dialog()
+        dialog.reminder_edit.setText("Timed task")
+        dialog.due_date_checkbox.setChecked(True)
+        dialog.due_time_checkbox.setChecked(True)
+        dialog.due_time_edit.set_time(time(14, 30))
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_time == time(14, 30)
+
+
+# ---------------------------------------------------------------------------
+# TestAddTodoDialog — create_item class method
+# ---------------------------------------------------------------------------
+
+
+class TestAddTodoDialogClassMethod:
+    """Tests for the create_item convenience method."""
+
+    def test_create_item_sets_title(self, app):
+        dialog = AddTodoDialog()
+        dialog.setWindowTitle("Add Subtask")
+        assert dialog.windowTitle() == "Add Subtask"
+
+    def test_create_item_passes_known_tags(self, app):
+        dialog = AddTodoDialog(known_tags=["@work", "@personal"])
+        assert "@personal" in dialog._smart_input._tag_popup._all_tags
 
 
 class TestAddListDialog:

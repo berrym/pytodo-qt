@@ -827,14 +827,20 @@ class MainWindow(QMainWindow):
         if active_list is None:
             return
 
-        name, ok = QInputDialog.getText(self, "Add Item", "Task:")
-        if not ok or not name.strip():
+        known_tags = self._collect_known_tags()
+        item = AddTodoDialog.create_item(
+            self, title=f"Add Item \u2014 {column_name}", known_tags=known_tags
+        )
+        if item is None:
             return
 
-        from ..core.models import create_todo_item
+        item.board_column = column_name
+        # Assign default column if not already set by parser
+        if not item.board_column:
+            item.board_column = column_name
+
         from .commands import AddItemCommand
 
-        item = create_todo_item(name.strip(), board_column=column_name)
         cmd = AddItemCommand(self, active_list.id, item)
         self._undo_stack.push(cmd)
 
@@ -1679,6 +1685,14 @@ class MainWindow(QMainWindow):
 
     # Action handlers
 
+    def _collect_known_tags(self) -> list[str]:
+        """Collect all unique tags from the active list for auto-completion."""
+        tags: set[str] = set()
+        if self._database.active_list:
+            for item in self._database.active_list.active_items():
+                tags.update(item.tags)
+        return sorted(tags)
+
     def _on_add_todo(self) -> None:
         """Handle add to-do action."""
         if self._database.active_list is None:
@@ -1698,7 +1712,8 @@ class MainWindow(QMainWindow):
                     return
                 self._database.set_active_list_by_name(list_name)
 
-        item = AddTodoDialog.create_item(self)
+        known_tags = self._collect_known_tags()
+        item = AddTodoDialog.create_item(self, known_tags=known_tags)
         if item is not None and self._database.active_list is not None:
             # Assign default board column for kanban view consistency
             if not item.board_column:
@@ -1728,7 +1743,8 @@ class MainWindow(QMainWindow):
         if not parent or parent.parent_id is not None:
             return
 
-        item = AddTodoDialog.create_item(self, title="Add Subtask")
+        known_tags = self._collect_known_tags()
+        item = AddTodoDialog.create_item(self, title="Add Subtask", known_tags=known_tags)
         if item is not None:
             item.parent_id = parent_id
             # Assign default board column (may get promoted to top-level later)

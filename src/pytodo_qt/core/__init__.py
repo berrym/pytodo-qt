@@ -39,6 +39,7 @@ from .models import (
     create_todo_item,
     create_todo_list,
 )
+from .nlp_parser import EntityKind, EntitySpan, ParseResult, parse
 from .paths import (
     get_config_dir,
     get_config_file,
@@ -74,6 +75,11 @@ __all__ = [
     "DatabaseStorage",
     # Instance lock
     "InstanceLock",
+    # NLP Parser
+    "EntityKind",
+    "EntitySpan",
+    "ParseResult",
+    "parse",
     "DatabaseError",
     "SCHEMA_VERSION",
     # Migration
