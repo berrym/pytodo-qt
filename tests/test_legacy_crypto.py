@@ -90,17 +90,21 @@ class TestLegacyAESCipher:
         assert decrypted == plaintext
 
     def test_decrypt_wrong_passphrase(self):
-        """Test decryption with wrong passphrase returns None."""
+        """Test decryption with wrong passphrase does not recover plaintext.
+
+        AES-CBC lacks authentication, so wrong-key decryption produces
+        garbage.  Usually PKCS7 unpadding rejects it (None), but
+        occasionally garbage has valid padding and returns bytes != plaintext.
+        """
         correct_passphrase = "correct_password"
         wrong_passphrase = "wrong_password"
         plaintext = b"Secret message"
 
         encrypted = _encrypt_legacy(plaintext, correct_passphrase)
         cipher = LegacyAESCipher(wrong_passphrase)
-        # Wrong passphrase should fail decryption (padding error)
         result = cipher.decrypt(encrypted)
 
-        assert result is None
+        assert result is None or result != plaintext
 
     def test_decrypt_invalid_base64(self):
         """Test decryption of invalid base64 data returns None."""
@@ -180,13 +184,20 @@ class TestDecryptLegacyDataFunction:
         assert decrypted == plaintext
 
     def test_decrypt_legacy_data_wrong_key(self):
-        """Test decryption failure with wrong key."""
+        """Test decryption failure with wrong key.
+
+        AES-CBC has no authentication tag, so decrypting with the wrong
+        key produces garbage.  PKCS7 unpadding *usually* rejects the
+        garbage (returning None), but ~6% of the time the last byte is
+        accidentally valid padding and we get garbage bytes back.  Either
+        outcome means the original plaintext is not recovered.
+        """
         plaintext = b"Test message"
 
         encrypted = _encrypt_legacy(plaintext, "correct_key")
         decrypted = decrypt_legacy_data(encrypted, "wrong_key")
 
-        assert decrypted is None
+        assert decrypted is None or decrypted != plaintext
 
     def test_decrypt_legacy_data_invalid_input(self):
         """Test decryption with invalid input."""

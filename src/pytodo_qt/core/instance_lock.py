@@ -61,7 +61,23 @@ class InstanceLock:
         return True
 
     def read_pid(self) -> int | None:
-        """Read the PID from the lock file without acquiring the lock."""
+        """Read the PID from the lock file without acquiring the lock.
+
+        If *we* hold the lock, read directly via our file descriptor
+        (Windows byte-range locks block other opens).  Otherwise fall
+        back to a normal file read.
+        """
+        if self._fd is not None:
+            try:
+                os.lseek(self._fd, 0, os.SEEK_SET)
+                data = os.read(self._fd, 64)
+                text = data.decode().strip()
+                if text:
+                    return int(text)
+            except (OSError, ValueError):
+                pass
+            return None
+
         try:
             text = self._lock_path.read_text().strip()
             if text:
@@ -174,7 +190,12 @@ def terminate_process(pid: int, timeout: float = 3.0) -> bool:
     except Exception:
         pass
 
-    _time_mod.sleep(0.2)
+    # Give the OS time to reclaim the process handle (Windows needs more)
+    deadline2 = _time_mod.monotonic() + 2.0
+    while _time_mod.monotonic() < deadline2:
+        if not _is_process_alive(pid):
+            return True
+        _time_mod.sleep(0.1)
     return not _is_process_alive(pid)
 
 

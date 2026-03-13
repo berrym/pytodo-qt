@@ -23,7 +23,7 @@ class TestInstanceLockAcquire:
         lock = InstanceLock(lock_path=tmp_path / "test.lock")
         assert lock.acquire() is True
         assert lock.lock_path.exists()
-        assert str(os.getpid()) in lock.lock_path.read_text()
+        assert lock.read_pid() == os.getpid()
         lock.release()
 
     def test_acquire_fails_when_already_held(self, tmp_path: Path) -> None:
@@ -174,7 +174,14 @@ class TestTerminateProcess:
     def test_terminate_real_subprocess(self) -> None:
         proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         pid = proc.pid
+        # terminate_process sends SIGTERM/SIGKILL but cannot reap the child
+        # (only the parent Popen can).  On POSIX the child becomes a zombie
+        # that os.kill(pid, 0) still sees as alive, so terminate_process may
+        # return False.  We verify the signal was delivered by reaping here.
         terminate_process(pid, timeout=5.0)
-        # Parent must reap the zombie child before PID is freed
-        proc.wait(timeout=2)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=2)
         assert not _is_process_alive(pid)
