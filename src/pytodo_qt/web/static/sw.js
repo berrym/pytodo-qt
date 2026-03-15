@@ -1,5 +1,5 @@
 /* PyTodo-Qt Service Worker — Offline caching and edit queue */
-var CACHE_VERSION = "v11";
+var CACHE_VERSION = "v12";
 var CACHE_NAME = "pytodo-" + CACHE_VERSION;
 var STATIC_ASSETS = [
   "/",

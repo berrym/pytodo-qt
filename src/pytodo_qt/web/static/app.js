@@ -79,6 +79,12 @@
       e.preventDefault();
       return;
     }
+    // Cancel move mode
+    if (moveMode) {
+      exitMoveMode();
+      e.preventDefault();
+      return;
+    }
     var sheets = [detailSheet, addSheet, listSheet, sortSheet];
     for (var i = 0; i < sheets.length; i++) {
       if (sheets[i] && !sheets[i].classList.contains("hidden")) {
@@ -1090,6 +1096,315 @@
   }
 
   // ====================================================================
+  // Pick-up-and-place move mode (board cards)
+  // ====================================================================
+
+  var moveMode = null; // { itemId, itemReminder, sourceColumn }
+
+  function enterMoveMode(itemId, itemReminder, sourceColumn) {
+    if (moveMode) exitMoveMode();
+    moveMode = { itemId: itemId, itemReminder: itemReminder, sourceColumn: sourceColumn };
+    haptic(15);
+    renderMoveUI();
+  }
+
+  function exitMoveMode() {
+    moveMode = null;
+    // Remove banner
+    var banner = document.querySelector(".move-banner");
+    if (banner) banner.remove();
+    // Remove drop zones and held state
+    document.querySelectorAll(".board-drop-zone").forEach(function (z) { z.remove(); });
+    document.querySelectorAll(".board-card.held").forEach(function (c) { c.classList.remove("held"); });
+    // Remove sort indicators
+    document.querySelectorAll(".board-sort-indicator").forEach(function (s) { s.remove(); });
+  }
+
+  function renderMoveUI() {
+    if (!moveMode || !boardContainer) return;
+
+    // Mark held card
+    var heldCard = boardContainer.querySelector('[data-id="' + moveMode.itemId + '"]');
+    if (heldCard) heldCard.classList.add("held");
+
+    // Add move banner above board
+    var existing = document.querySelector(".move-banner");
+    if (existing) existing.remove();
+    var banner = document.createElement("div");
+    banner.className = "move-banner";
+    banner.setAttribute("aria-live", "polite");
+    var bannerText = document.createElement("span");
+    bannerText.className = "move-banner-text";
+    var truncated = moveMode.itemReminder.length > 30
+      ? moveMode.itemReminder.substring(0, 30) + "\u2026"
+      : moveMode.itemReminder;
+    bannerText.textContent = "Moving: " + truncated;
+    banner.appendChild(bannerText);
+    var cancelBtn = document.createElement("button");
+    cancelBtn.className = "move-banner-cancel";
+    cancelBtn.textContent = "\u2715 Cancel";
+    cancelBtn.addEventListener("click", function () { exitMoveMode(); });
+    banner.appendChild(cancelBtn);
+    boardContainer.parentElement.insertBefore(banner, boardContainer);
+
+    // Add drop zones to each column
+    var columns = boardContainer.querySelectorAll(".board-column");
+    var boardColumns = cachedBoardData ? cachedBoardData.board_columns : [];
+    columns.forEach(function (col, idx) {
+      var colName = boardColumns[idx];
+      if (!colName) return;
+      var isLast = idx === boardColumns.length - 1;
+      var itemsDiv = col.querySelector(".board-column-items");
+      if (!itemsDiv) return;
+
+      var zone = document.createElement("div");
+      zone.className = "board-drop-zone";
+      if (isLast) zone.classList.add("completion-zone");
+      zone.setAttribute("role", "button");
+      zone.setAttribute("aria-label", "Drop in " + colName);
+      zone.textContent = isLast ? "Drop to complete \u2713" : "Drop here";
+
+      zone.addEventListener("click", function () {
+        haptic(10);
+        executeDrop(colName);
+      });
+
+      // Insert sort position indicator
+      var colItems = (cachedBoardData && cachedBoardData.columns) ? cachedBoardData.columns[colName] || [] : [];
+      var sortPos = computeSortPosition(moveMode.itemId, colItems);
+      var cards = itemsDiv.querySelectorAll(".board-card");
+
+      if (sortPos >= cards.length) {
+        itemsDiv.appendChild(createSortIndicator());
+        itemsDiv.appendChild(zone);
+      } else {
+        itemsDiv.insertBefore(zone, cards[sortPos]);
+        itemsDiv.insertBefore(createSortIndicator(), zone);
+      }
+    });
+  }
+
+  function createSortIndicator() {
+    var indicator = document.createElement("div");
+    indicator.className = "board-sort-indicator";
+    return indicator;
+  }
+
+  function computeSortPosition(movingItemId, colItems) {
+    // Find where the moving item would land in this column's sorted order
+    // by comparing sort keys
+    var movingItem = null;
+    cachedItems.forEach(function (item) {
+      if (item.id === movingItemId) movingItem = item;
+    });
+    if (!movingItem) return colItems.length;
+
+    var tiers = currentSortTiers;
+    var movingKey = sortKey(movingItem, tiers);
+    var movingReminder = movingItem.reminder.toLowerCase();
+
+    for (var i = 0; i < colItems.length; i++) {
+      if (colItems[i].id === movingItemId) continue;
+      var otherKey = sortKey(colItems[i], tiers);
+      var cmp = 0;
+      for (var k = 0; k < movingKey.length; k++) {
+        if (movingKey[k] !== otherKey[k]) { cmp = movingKey[k] < otherKey[k] ? -1 : 1; break; }
+      }
+      if (cmp === 0) {
+        cmp = movingReminder.localeCompare(colItems[i].reminder.toLowerCase());
+      }
+      if (cmp < 0) return i;
+    }
+    return colItems.length;
+  }
+
+  async function executeDrop(targetColumn) {
+    if (!moveMode) return;
+    var itemId = moveMode.itemId;
+    var sourceColumn = moveMode.sourceColumn;
+    var boardColumns = cachedBoardData ? cachedBoardData.board_columns : [];
+    var isCompletionCol = boardColumns.length > 0 && targetColumn === boardColumns[boardColumns.length - 1];
+    var wasInCompletionCol = boardColumns.length > 0 && sourceColumn === boardColumns[boardColumns.length - 1];
+    exitMoveMode();
+
+    try {
+      await api("/items/" + itemId + "/move", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ column: targetColumn })
+      });
+      await refreshCurrentList();
+      var msg = "Moved to \"" + targetColumn + "\"";
+      if (isCompletionCol && !wasInCompletionCol) {
+        msg += " (completed)";
+      } else if (!isCompletionCol && wasInCompletionCol) {
+        msg += " (marked incomplete)";
+      }
+      showToast(msg);
+    } catch (e) {
+      showToast("Move failed: " + e.message);
+    }
+  }
+
+  // ====================================================================
+  // Direct drag-and-drop (tablet/desktop)
+  // ====================================================================
+
+  function attachCardDrag(gripEl, card, item) {
+    var dragging = false;
+    var ghostEl = null;
+    var startX = 0, startY = 0;
+    var scrollInterval = null;
+
+    gripEl.addEventListener("pointerdown", function (e) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      startX = e.clientX;
+      startY = e.clientY;
+      dragging = false;
+
+      function onPointerMove(ev) {
+        var dx = Math.abs(ev.clientX - startX);
+        var dy = Math.abs(ev.clientY - startY);
+        if (!dragging && (dx > 5 || dy > 5)) {
+          dragging = true;
+          startDirectDrag(card, item, ev);
+        }
+        if (dragging) {
+          updateDragPosition(ev);
+        }
+      }
+
+      function onPointerUp(ev) {
+        document.removeEventListener("pointermove", onPointerMove);
+        document.removeEventListener("pointerup", onPointerUp);
+        if (dragging) {
+          endDirectDrag(ev);
+          dragging = false;
+        } else {
+          // Was a tap, not a drag — enter pick-up-and-place mode
+          enterMoveMode(item.id, item.reminder, item.board_column);
+        }
+      }
+
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", onPointerUp);
+    });
+
+    function startDirectDrag(cardEl, dragItem, ev) {
+      cardEl.classList.add("dragging");
+      haptic(10);
+
+      // Create ghost
+      ghostEl = cardEl.cloneNode(true);
+      ghostEl.classList.remove("dragging");
+      ghostEl.style.position = "fixed";
+      ghostEl.style.width = cardEl.offsetWidth + "px";
+      ghostEl.style.pointerEvents = "none";
+      ghostEl.style.zIndex = "500";
+      ghostEl.style.opacity = "0.9";
+      ghostEl.style.transform = "rotate(2deg) scale(1.05)";
+      ghostEl.style.boxShadow = "0 8px 24px rgba(0,0,0,0.2)";
+      ghostEl.style.transition = "none";
+      document.body.appendChild(ghostEl);
+      updateGhostPosition(ev);
+
+      // Show drop zones (reuse move mode rendering partially)
+      if (!moveMode) {
+        moveMode = { itemId: dragItem.id, itemReminder: dragItem.reminder, sourceColumn: dragItem.board_column };
+      }
+      // Add drop zones to columns
+      var columns = boardContainer.querySelectorAll(".board-column");
+      var boardColumns = cachedBoardData ? cachedBoardData.board_columns : [];
+      columns.forEach(function (col, idx) {
+        var colName = boardColumns[idx];
+        if (!colName) return;
+        var isLast = idx === boardColumns.length - 1;
+        var itemsDiv = col.querySelector(".board-column-items");
+        if (!itemsDiv) return;
+
+        var zone = document.createElement("div");
+        zone.className = "board-drop-zone";
+        zone.dataset.column = colName;
+        if (isLast) zone.classList.add("completion-zone");
+        zone.setAttribute("role", "button");
+        zone.setAttribute("aria-label", "Drop in " + colName);
+        zone.textContent = isLast ? "Drop to complete \u2713" : "Drop here";
+        itemsDiv.appendChild(zone);
+      });
+
+      // Start edge auto-scroll
+      scrollInterval = setInterval(function () {
+        autoScrollBoard(ev);
+      }, 16);
+    }
+
+    function updateGhostPosition(ev) {
+      if (!ghostEl) return;
+      ghostEl.style.left = (ev.clientX - 40) + "px";
+      ghostEl.style.top = (ev.clientY - 20) + "px";
+    }
+
+    function updateDragPosition(ev) {
+      updateGhostPosition(ev);
+      // Highlight drop zone under cursor
+      var zones = document.querySelectorAll(".board-drop-zone");
+      zones.forEach(function (z) {
+        var rect = z.getBoundingClientRect();
+        var over = ev.clientX >= rect.left && ev.clientX <= rect.right &&
+                   ev.clientY >= rect.top && ev.clientY <= rect.bottom;
+        z.classList.toggle("drag-over", over);
+      });
+      // Update auto-scroll reference
+      if (scrollInterval) {
+        autoScrollBoard._lastEv = ev;
+      }
+    }
+
+    function endDirectDrag(ev) {
+      if (scrollInterval) { clearInterval(scrollInterval); scrollInterval = null; }
+      // Find drop zone under cursor
+      var targetCol = null;
+      var zones = document.querySelectorAll(".board-drop-zone");
+      zones.forEach(function (z) {
+        var rect = z.getBoundingClientRect();
+        if (ev.clientX >= rect.left && ev.clientX <= rect.right &&
+            ev.clientY >= rect.top && ev.clientY <= rect.bottom) {
+          targetCol = z.dataset.column;
+        }
+      });
+
+      // Clean up
+      if (ghostEl) { ghostEl.remove(); ghostEl = null; }
+      card.classList.remove("dragging");
+
+      if (targetCol && moveMode) {
+        executeDrop(targetCol);
+      } else {
+        exitMoveMode();
+      }
+    }
+  }
+
+  function autoScrollBoard(ev) {
+    if (!boardContainer) return;
+    var refEv = autoScrollBoard._lastEv || ev;
+    var rect = boardContainer.getBoundingClientRect();
+    var edgeSize = 100;
+    var speed = 8;
+
+    if (refEv.clientX < rect.left + edgeSize) {
+      boardContainer.scrollLeft -= speed;
+    } else if (refEv.clientX > rect.right - edgeSize) {
+      boardContainer.scrollLeft += speed;
+    }
+  }
+  autoScrollBoard._lastEv = null;
+
+  // Escape key also cancels move mode (handled in existing Escape handler)
+
+  // ====================================================================
   // Swipe gestures on item cards
   // ====================================================================
 
@@ -1570,12 +1885,32 @@
 
     if (meta.childNodes.length > 0) card.appendChild(meta);
 
+    // Grip icon for pick-up-and-place / drag
+    var grip = document.createElement("span");
+    grip.className = "board-card-grip";
+    grip.textContent = "\u2807";
+    grip.setAttribute("role", "button");
+    grip.setAttribute("aria-label", "Move card");
+    grip.addEventListener("click", function (e) {
+      e.stopPropagation();
+    });
+    attachCardDrag(grip, card, item);
+    card.appendChild(grip);
+
     card.addEventListener("click", function () {
+      if (moveMode) {
+        // Tap held card to cancel
+        if (moveMode.itemId === item.id) {
+          exitMoveMode();
+          return;
+        }
+      }
       location.hash = "#/item/" + item.id;
     });
 
     // Long-press for context menu
     attachLongPress(card, function () {
+      if (moveMode) return; // Don't open context menu while moving
       openItemContextMenu(item);
     });
 

@@ -1795,6 +1795,141 @@ body {
   animation: backdrop-out 0.15s ease-in forwards;
 }
 
+/* ============================================================
+   Pick-up-and-place / drag-and-drop
+   ============================================================ */
+
+/* Grip icon on board cards */
+.board-card {
+  position: relative;
+}
+
+.board-card-grip {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 16px;
+  cursor: grab;
+  border-radius: var(--radius-sm);
+  opacity: 0.5;
+  transition: opacity 0.15s, background 0.15s;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.board-card-grip:hover {
+  opacity: 1;
+  background: var(--hover);
+}
+
+.board-card.held {
+  transform: scale(1.03);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  opacity: 0.8;
+  z-index: 10;
+  transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+}
+
+/* Move banner */
+.move-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  animation: sheet-up 0.15s ease-out;
+}
+
+.move-banner-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.move-banner-cancel {
+  background: rgba(255,255,255,0.2);
+  border: none;
+  color: #fff;
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.move-banner-cancel:active {
+  background: rgba(255,255,255,0.35);
+}
+
+/* Drop zones */
+.board-drop-zone {
+  min-height: 48px;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-sm);
+  margin: 4px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  background: var(--accent-subtle);
+}
+
+.board-drop-zone:hover,
+.board-drop-zone.drag-over {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border-color: var(--accent-hover);
+}
+
+.board-drop-zone.completion-zone {
+  border-color: var(--success);
+  color: var(--success);
+  background: var(--success-bg);
+}
+
+.board-drop-zone.completion-zone:hover,
+.board-drop-zone.completion-zone.drag-over {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+}
+
+/* Sort position indicator line */
+.board-sort-indicator {
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  margin: 2px 0;
+  animation: sort-indicator-pulse 1s ease-in-out infinite;
+}
+
+@keyframes sort-indicator-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+/* Drag ghost (tablet/desktop direct drag) */
+.board-card.dragging {
+  opacity: 0.4;
+}
+
 /* Long-press visual feedback on items, board cards, and column headers */
 .item.long-press-active,
 .board-card.long-press-active,
