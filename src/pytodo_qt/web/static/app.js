@@ -143,6 +143,78 @@
   }
 
   // ====================================================================
+  // IndexedDB cache (offline data persistence)
+  // ====================================================================
+
+  var IDB_NAME = "pytodo_cache";
+  var IDB_VERSION = 1;
+  var idb = null;
+
+  function openIDB() {
+    return new Promise(function (resolve) {
+      if (idb) { resolve(idb); return; }
+      var req = indexedDB.open(IDB_NAME, IDB_VERSION);
+      req.onupgradeneeded = function (e) {
+        var db = e.target.result;
+        if (!db.objectStoreNames.contains("lists")) {
+          db.createObjectStore("lists", { keyPath: "id" });
+        }
+        if (!db.objectStoreNames.contains("listItems")) {
+          db.createObjectStore("listItems", { keyPath: "listId" });
+        }
+      };
+      req.onsuccess = function (e) { idb = e.target.result; resolve(idb); };
+      req.onerror = function () { resolve(null); }; // Graceful degradation
+    });
+  }
+
+  async function cacheListsData(lists) {
+    var db = await openIDB();
+    if (!db) return;
+    try {
+      var tx = db.transaction("lists", "readwrite");
+      var store = tx.objectStore("lists");
+      store.clear();
+      lists.forEach(function (lst) { store.put(lst); });
+    } catch (e) { /* best-effort */ }
+  }
+
+  async function getCachedLists() {
+    var db = await openIDB();
+    if (!db) return null;
+    return new Promise(function (resolve) {
+      try {
+        var tx = db.transaction("lists", "readonly");
+        var req = tx.objectStore("lists").getAll();
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { resolve(null); };
+      } catch (e) { resolve(null); }
+    });
+  }
+
+  async function cacheListItems(listId, items) {
+    var db = await openIDB();
+    if (!db) return;
+    try {
+      var tx = db.transaction("listItems", "readwrite");
+      tx.objectStore("listItems").put({ listId: listId, items: items });
+    } catch (e) { /* best-effort */ }
+  }
+
+  async function getCachedListItems(listId) {
+    var db = await openIDB();
+    if (!db) return null;
+    return new Promise(function (resolve) {
+      try {
+        var tx = db.transaction("listItems", "readonly");
+        var req = tx.objectStore("listItems").get(listId);
+        req.onsuccess = function () { resolve(req.result ? req.result.items : null); };
+        req.onerror = function () { resolve(null); };
+      } catch (e) { resolve(null); }
+    });
+  }
+
+  // ====================================================================
   // Offline queue
   // ====================================================================
 
@@ -153,6 +225,7 @@
 
   function saveOfflineQueue(queue) {
     localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+    updatePendingBadge();
   }
 
   function enqueueOfflineEdit(path, opts) {
@@ -161,16 +234,38 @@
     saveOfflineQueue(queue);
   }
 
+  function removeFromOfflineQueue(index) {
+    var queue = getOfflineQueue();
+    queue.splice(index, 1);
+    saveOfflineQueue(queue);
+  }
+
   async function replayOfflineQueue() {
     var queue = getOfflineQueue();
     if (queue.length === 0) return;
+    showToast("Syncing " + queue.length + " offline change" + (queue.length > 1 ? "s" : "") + "...");
     var remaining = [];
     for (var i = 0; i < queue.length; i++) {
       try { await fetch(API + queue[i].path, queue[i].opts); }
       catch (e) { remaining.push(queue[i]); }
     }
     saveOfflineQueue(remaining);
-    if (remaining.length === 0) await refreshCurrentList();
+    if (remaining.length === 0) {
+      showToast("All changes synced");
+      await refreshCurrentList();
+    } else {
+      showToast(remaining.length + " change" + (remaining.length > 1 ? "s" : "") + " still pending");
+    }
+  }
+
+  // Pending changes badge on nav
+  function updatePendingBadge() {
+    var badge = document.getElementById("nav-pending-badge");
+    var queue = getOfflineQueue();
+    if (badge) {
+      badge.textContent = String(queue.length);
+      badge.classList.toggle("hidden", queue.length === 0);
+    }
   }
 
   function updateOnlineStatus(online) {
@@ -183,6 +278,7 @@
       connectionDot.classList.toggle("offline", !online);
       connectionDot.title = online ? "Connected" : "Offline";
     }
+    updatePendingBadge();
   }
 
   window.addEventListener("online", function () {
@@ -1423,9 +1519,12 @@
     // Offline queue
     var offlineRow = document.getElementById("settings-offline-row");
     var offlineCount = document.getElementById("settings-offline-count");
+    var queueSection = document.getElementById("settings-queue-section");
     var queue = getOfflineQueue();
     if (offlineRow) offlineRow.style.display = queue.length > 0 ? "flex" : "none";
     if (offlineCount) offlineCount.textContent = String(queue.length);
+    if (queueSection) queueSection.style.display = queue.length > 0 ? "block" : "none";
+    renderQueueList(queue);
 
     // Display info
     var themeEl = document.getElementById("settings-theme");
@@ -1516,6 +1615,65 @@
     if (hrs < 24) return hrs + "h ago";
     var days = Math.floor(hrs / 24);
     return days + "d ago";
+  }
+
+  // ====================================================================
+  // Offline queue viewer (settings)
+  // ====================================================================
+
+  function describeQueueAction(entry) {
+    var path = entry.path || "";
+    var method = (entry.opts && entry.opts.method) || "GET";
+    if (method === "PATCH" && path.includes("/toggle")) return "Toggle item";
+    if (method === "PATCH" && path.includes("/restore")) return "Restore item";
+    if (method === "PATCH" && path.includes("/move")) return "Move item";
+    if (method === "DELETE") return "Delete item";
+    if (method === "POST" && path.includes("/items")) return "Add item";
+    if (method === "PUT") return "Update item";
+    return method + " " + path.split("/").pop();
+  }
+
+  function renderQueueList(queue) {
+    var queueList = document.getElementById("settings-queue-list");
+    if (!queueList) return;
+    queueList.innerHTML = "";
+    queue.forEach(function (entry, idx) {
+      var row = document.createElement("div");
+      row.className = "queue-item";
+
+      var info = document.createElement("span");
+      info.className = "queue-item-info";
+      info.textContent = describeQueueAction(entry);
+      row.appendChild(info);
+
+      var time = document.createElement("span");
+      time.className = "queue-item-time";
+      time.textContent = formatDeletedAgo(Date.now() - entry.timestamp);
+      row.appendChild(time);
+
+      var removeBtn = document.createElement("button");
+      removeBtn.className = "queue-item-remove";
+      removeBtn.title = "Remove";
+      removeBtn.innerHTML = "&times;";
+      removeBtn.addEventListener("click", function () {
+        removeFromOfflineQueue(idx);
+        refreshSettings();
+      });
+      row.appendChild(removeBtn);
+
+      queueList.appendChild(row);
+    });
+  }
+
+  // Clear all queued changes button
+  var clearQueueBtn = document.getElementById("settings-clear-queue");
+  if (clearQueueBtn) {
+    clearQueueBtn.addEventListener("click", function () {
+      if (!confirm("Discard all pending offline changes?")) return;
+      saveOfflineQueue([]);
+      showToast("Offline queue cleared");
+      refreshSettings();
+    });
   }
 
   // ====================================================================
@@ -1809,8 +1967,14 @@
     try {
       var data = await api("/lists");
       renderLists(data.lists);
+      cacheListsData(data.lists);
     } catch (e) {
       console.error("Failed to load lists:", e);
+      // Fall back to IndexedDB cache
+      var cached = await getCachedLists();
+      if (cached && cached.length > 0) {
+        renderLists(cached);
+      }
     }
   }
 
@@ -1829,6 +1993,9 @@
         columns: null,
       };
 
+      // Cache for offline use
+      cacheListItems(currentListId, cachedItems);
+
       if (viewMode === "board") {
         await refreshBoard();
       } else {
@@ -1839,8 +2006,15 @@
       await refreshLists();
     } catch (e) {
       console.error("Failed to load list:", e);
-      cachedItems = [];
-      renderItems([]);
+      // Fall back to IndexedDB cache
+      var cached = await getCachedListItems(currentListId);
+      if (cached) {
+        cachedItems = cached;
+        renderItems(cachedItems);
+      } else {
+        cachedItems = [];
+        renderItems([]);
+      }
     }
   }
 
@@ -1926,6 +2100,8 @@
 
   async function init() {
     updateOnlineStatus(navigator.onLine);
+    await openIDB();
+    updatePendingBadge();
     await refreshLists();
     await refreshCurrentList();
     onRouteChange();
