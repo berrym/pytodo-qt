@@ -805,6 +805,61 @@ body {
 .settings-conn-online { color: var(--success); }
 .settings-conn-offline { color: var(--warning); }
 
+/* -- Recently Deleted / Trash -- */
+
+.trash-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.trash-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--danger);
+}
+
+.trash-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.trash-item-name {
+  font-size: 14px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-item-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.trash-restore-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  min-height: 36px;
+}
+
+.trash-restore-btn:hover {
+  background: var(--accent-subtle);
+}
+
 .text-secondary {
   color: var(--text-secondary);
   font-size: 14px;

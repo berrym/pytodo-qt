@@ -1744,3 +1744,122 @@ class TestOverdueCount:
             assert target["overdue_count"] == 0
         finally:
             await client.close()
+
+
+# ===========================================================================
+# Trash & restore tests
+# ===========================================================================
+
+
+class TestTrash:
+    @pytest.mark.asyncio
+    async def test_trash_empty_initially(self):
+        client = await _make_client()
+        await client.start_server()
+        try:
+            resp = await client.get("/api/trash")
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["items"] == []
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_deleted_item_appears_in_trash(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item_id = str(item.id)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.delete(f"/api/items/{item_id}")
+            assert resp.status == 200
+            resp = await client.get("/api/trash")
+            data = await resp.json()
+            ids = [i["id"] for i in data["items"]]
+            assert item_id in ids
+            # Verify list info is included
+            trash_item = next(i for i in data["items"] if i["id"] == item_id)
+            assert "list_name" in trash_item
+            assert "deleted_ago_ms" in trash_item
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_trash_excludes_private_lists(self):
+        db = _make_db_with_private()
+        private_lst = next(lst for lst in db.lists.values() if lst.private)
+        private_item = next(iter(private_lst.items.values()))
+        private_item.mark_deleted()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/trash")
+            data = await resp.json()
+            ids = [i["id"] for i in data["items"]]
+            assert str(private_item.id) not in ids
+        finally:
+            await client.close()
+
+
+class TestRestore:
+    @pytest.mark.asyncio
+    async def test_restore_deleted_item(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item_id = str(item.id)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            # Delete
+            resp = await client.delete(f"/api/items/{item_id}")
+            assert resp.status == 200
+            # Verify gone from list
+            resp = await client.get(f"/api/lists/{lst.id}")
+            data = await resp.json()
+            ids = [i["id"] for i in data["items"]]
+            assert item_id not in ids
+            # Restore
+            resp = await client.patch(f"/api/items/{item_id}/restore")
+            assert resp.status == 200
+            restored = await resp.json()
+            assert restored["id"] == item_id
+            assert restored["reminder"] == item.reminder
+            # Verify back in list
+            resp = await client.get(f"/api/lists/{lst.id}")
+            data = await resp.json()
+            ids = [i["id"] for i in data["items"]]
+            assert item_id in ids
+            # Verify gone from trash
+            resp = await client.get("/api/trash")
+            data = await resp.json()
+            ids = [i["id"] for i in data["items"]]
+            assert item_id not in ids
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_restore_nonexistent_item(self):
+        client = await _make_client()
+        await client.start_server()
+        try:
+            resp = await client.patch("/api/items/00000000-0000-0000-0000-000000000099/restore")
+            assert resp.status == 404
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_restore_non_deleted_item_404(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            # Item exists but is not deleted — restore should 404
+            resp = await client.patch(f"/api/items/{item.id}/restore")
+            assert resp.status == 404
+        finally:
+            await client.close()

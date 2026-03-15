@@ -78,6 +78,9 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_patch("/api/items/{item_id}/toggle", handle_toggle_item)
     app.router.add_patch("/api/items/{item_id}/move", handle_move_item)
     app.router.add_patch("/api/items/{item_id}/parent", handle_set_parent)
+    app.router.add_patch("/api/items/{item_id}/restore", handle_restore_item)
+    # Trash endpoint (recently deleted)
+    app.router.add_get("/api/trash", handle_get_trash)
     # Utility endpoints
     app.router.add_post("/api/parse", handle_parse)
     app.router.add_get("/api/tags", handle_get_tags)
@@ -587,6 +590,64 @@ async def handle_set_parent(request: web.Request) -> web.Response:
 
     _schedule_save_and_refresh(request)
     return web.json_response(_item_to_json(item))
+
+
+async def handle_restore_item(request: web.Request) -> web.Response:
+    """PATCH /api/items/{item_id}/restore — Un-delete a soft-deleted item."""
+    db: Database = request.app[database_key]
+    try:
+        item_id = UUID(request.match_info["item_id"])
+    except ValueError:
+        return _error(400, "Invalid item ID")
+
+    # Search across all lists for the deleted item
+    for lst in db.lists.values():
+        if lst.deleted or lst.private:
+            continue
+        item = lst.items.get(item_id)
+        if item and item.deleted:
+            item.deleted = False
+            item.mark_updated()
+            lst.mark_updated()
+            _schedule_save_and_refresh(request)
+            return web.json_response(_item_to_json(item))
+
+    return _error(404, "Deleted item not found")
+
+
+# ---------------------------------------------------------------------------
+# Trash handlers
+# ---------------------------------------------------------------------------
+
+
+async def handle_get_trash(request: web.Request) -> web.Response:
+    """GET /api/trash — Return recently deleted items across all lists.
+
+    Items remain as tombstones for 7 days before the sync engine
+    garbage-collects them.  This endpoint lets the web UI offer a
+    recovery path during that window.
+    """
+    db: Database = request.app[database_key]
+    import time as _time
+
+    now = int(_time.time() * 1000)
+    ttl_ms = 7 * 24 * 60 * 60 * 1000  # 7 days
+
+    result: list[dict[str, Any]] = []
+    for lst in db.lists.values():
+        if lst.deleted or lst.private:
+            continue
+        for item in lst.items.values():
+            if item.deleted and (now - item.updated_at) < ttl_ms:
+                entry = _item_to_json(item)
+                entry["list_id"] = str(lst.id)
+                entry["list_name"] = lst.name
+                entry["deleted_ago_ms"] = now - item.updated_at
+                result.append(entry)
+
+    # Sort by most recently deleted first
+    result.sort(key=lambda x: x["deleted_ago_ms"])
+    return web.json_response({"items": result})
 
 
 # ---------------------------------------------------------------------------

@@ -379,7 +379,7 @@
   function attachSwipe(el, itemId, itemReminder) {
     var startX = 0, startY = 0, currentX = 0;
     var swiping = false, locked = false;
-    var threshold = 80;
+    var threshold = 120; // Require deliberate swipe (was 80)
 
     // Create swipe action indicators
     var leftAction = document.createElement("div");
@@ -1448,6 +1448,74 @@
     } catch (e) {
       if (settingsStatus) settingsStatus.textContent = "Unable to load status";
     }
+
+    // Recently deleted
+    refreshTrash();
+  }
+
+  async function refreshTrash() {
+    var trashList = document.getElementById("trash-list");
+    var trashEmpty = document.getElementById("trash-empty");
+    if (!trashList) return;
+
+    try {
+      var data = await api("/trash");
+      var items = data.items || [];
+      trashList.innerHTML = "";
+
+      if (items.length === 0) {
+        if (trashEmpty) trashEmpty.style.display = "";
+        return;
+      }
+      if (trashEmpty) trashEmpty.style.display = "none";
+
+      items.forEach(function (item) {
+        var row = document.createElement("div");
+        row.className = "trash-item";
+
+        var info = document.createElement("div");
+        info.className = "trash-item-info";
+        var name = document.createElement("div");
+        name.className = "trash-item-name";
+        name.textContent = item.reminder;
+        info.appendChild(name);
+        var meta = document.createElement("div");
+        meta.className = "trash-item-meta";
+        meta.textContent = item.list_name + " \u00B7 " + formatDeletedAgo(item.deleted_ago_ms);
+        info.appendChild(meta);
+        row.appendChild(info);
+
+        var restoreBtn = document.createElement("button");
+        restoreBtn.className = "trash-restore-btn";
+        restoreBtn.textContent = "Restore";
+        restoreBtn.addEventListener("click", async function () {
+          try {
+            await api("/items/" + item.id + "/restore", { method: "PATCH" });
+            haptic(10);
+            showToast("Item restored");
+            refreshTrash();
+            refreshCurrentList();
+          } catch (e) {
+            showToast("Failed to restore item");
+          }
+        });
+        row.appendChild(restoreBtn);
+
+        trashList.appendChild(row);
+      });
+    } catch (e) {
+      if (trashEmpty) trashEmpty.textContent = "Unable to load deleted items";
+    }
+  }
+
+  function formatDeletedAgo(ms) {
+    var mins = Math.floor(ms / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return mins + "m ago";
+    var hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs + "h ago";
+    var days = Math.floor(hrs / 24);
+    return days + "d ago";
   }
 
   // ====================================================================
@@ -1496,11 +1564,11 @@
     }
     haptic(10);
 
-    // Set up a delayed delete (3 seconds)
+    // Set up a delayed delete (5 seconds — generous window to undo)
     var timer = setTimeout(function () {
       delete pendingDeletes[itemId];
       onDelete(itemId, null); // silent delete, no toast
-    }, 3000);
+    }, 5000);
 
     pendingDeletes[itemId] = timer;
 
@@ -1537,7 +1605,7 @@
     toastContainer.appendChild(toast);
     setTimeout(function () {
       toast.remove();
-    }, undoCallback ? 3500 : 3000);
+    }, undoCallback ? 5500 : 3000);
   }
 
   // ====================================================================
