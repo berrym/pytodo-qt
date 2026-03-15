@@ -699,6 +699,7 @@
     cb.className = "item-checkbox";
     cb.checked = item.complete;
     cb.setAttribute("aria-label", "Toggle " + item.reminder);
+    cb.addEventListener("click", function (e) { e.stopPropagation(); });
     cb.addEventListener("change", function (e) {
       e.stopPropagation();
       haptic(10);
