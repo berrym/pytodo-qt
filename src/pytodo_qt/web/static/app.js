@@ -27,7 +27,13 @@
   var offlineBanner = document.getElementById("offline-banner");
   var connectionDot = document.getElementById("connection-dot");
   var headerTitle = document.getElementById("header-title");
-  var listSelect = document.getElementById("list-select");
+  var listPickerBtn = document.getElementById("list-picker-btn");
+  var listPickerName = document.getElementById("list-picker-name");
+  var listSheet = document.getElementById("list-sheet");
+  var listSheetBody = document.getElementById("list-sheet-body");
+  var listSheetClose = document.getElementById("list-sheet-close");
+  var listCreateInput = document.getElementById("list-create-input");
+  var listCreateBtn = document.getElementById("list-create-btn");
   var viewToggle = document.getElementById("view-toggle");
   var viewBtns = viewToggle ? viewToggle.querySelectorAll(".view-btn") : [];
   var sortBtn = document.getElementById("sort-btn");
@@ -54,6 +60,74 @@
   var versionText = document.getElementById("version-text");
   var toastContainer = document.getElementById("toast-container");
   var bottomNav = document.getElementById("bottom-nav");
+
+  // ====================================================================
+  // Accessibility: keyboard & focus management
+  // ====================================================================
+
+  // Escape key closes any open sheet
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    var sheets = [detailSheet, addSheet, listSheet];
+    for (var i = 0; i < sheets.length; i++) {
+      if (sheets[i] && !sheets[i].classList.contains("hidden")) {
+        if (sheets[i] === detailSheet) closeDetailSheet();
+        else if (sheets[i] === addSheet) closeAddSheet();
+        else if (sheets[i] === listSheet) closeListSheet();
+        e.preventDefault();
+        return;
+      }
+    }
+  });
+
+  // Focus trap: keep Tab cycling within open sheet
+  function trapFocus(sheet) {
+    if (!sheet) return;
+    var focusable = sheet.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length === 0) return;
+    var first = focusable[0];
+    var last = focusable[focusable.length - 1];
+
+    sheet._focusTrapHandler = function (e) {
+      if (e.key !== "Tab") return;
+      if (e.shiftKey) {
+        if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+      } else {
+        if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    };
+    sheet.addEventListener("keydown", sheet._focusTrapHandler);
+    first.focus();
+  }
+
+  function releaseFocusTrap(sheet) {
+    if (!sheet || !sheet._focusTrapHandler) return;
+    sheet.removeEventListener("keydown", sheet._focusTrapHandler);
+    sheet._focusTrapHandler = null;
+  }
+
+  // ====================================================================
+  // Sheet close animation helper
+  // ====================================================================
+
+  function animateSheetClose(sheet, afterClose) {
+    if (!sheet) return;
+    releaseFocusTrap(sheet);
+    var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reducedMotion) {
+      sheet.classList.add("hidden");
+      if (afterClose) afterClose();
+      return;
+    }
+    sheet.classList.add("closing");
+    setTimeout(function () {
+      sheet.classList.remove("closing");
+      sheet.classList.add("hidden");
+      if (afterClose) afterClose();
+    }, 200);
+  }
 
   // ====================================================================
   // API helpers
@@ -141,11 +215,14 @@
     else location.hash = "#/" + view;
   }
 
+  var prevView = "home";
+  var viewOrder = ["home", "search", "settings"];
+
   function onRouteChange() {
     var route = getRoute();
     // Update views
     document.querySelectorAll("#main > .view").forEach(function (el) {
-      el.classList.remove("active");
+      el.classList.remove("active", "slide-in-left", "slide-in-right");
     });
     var activeView;
     if (route.view === "item") {
@@ -155,7 +232,16 @@
       activeView = route.view;
     }
     var viewEl = document.getElementById("view-" + activeView);
-    if (viewEl) viewEl.classList.add("active");
+    if (viewEl) {
+      viewEl.classList.add("active");
+      // Slide direction based on nav order
+      if (activeView !== prevView) {
+        var fromIdx = viewOrder.indexOf(prevView);
+        var toIdx = viewOrder.indexOf(activeView);
+        viewEl.classList.add(toIdx > fromIdx ? "slide-in-right" : "slide-in-left");
+      }
+      prevView = activeView;
+    }
 
     // Update nav buttons
     bottomNav.querySelectorAll(".nav-btn[data-view]").forEach(function (btn) {
@@ -277,6 +363,136 @@
   }
 
   // ====================================================================
+  // Haptic feedback
+  // ====================================================================
+
+  function haptic(duration) {
+    if (navigator.vibrate) {
+      try { navigator.vibrate(duration || 10); } catch (e) { /* best-effort */ }
+    }
+  }
+
+  // ====================================================================
+  // Swipe gestures on item cards
+  // ====================================================================
+
+  function attachSwipe(el, itemId, itemReminder) {
+    var startX = 0, startY = 0, currentX = 0;
+    var swiping = false, locked = false;
+    var threshold = 80;
+
+    // Create swipe action indicators
+    var leftAction = document.createElement("div");
+    leftAction.className = "swipe-action swipe-action-left";
+    leftAction.textContent = "\u2713";
+    var rightAction = document.createElement("div");
+    rightAction.className = "swipe-action swipe-action-right";
+    rightAction.textContent = "\u00D7";
+    el.appendChild(leftAction);
+    el.appendChild(rightAction);
+
+    el.addEventListener("pointerdown", function (e) {
+      if (e.target.closest(".item-checkbox, .item-actions, button")) return;
+      startX = e.clientX;
+      startY = e.clientY;
+      currentX = 0;
+      swiping = false;
+      locked = false;
+      el.style.transition = "none";
+    });
+
+    el.addEventListener("pointermove", function (e) {
+      if (locked) return;
+      var dx = e.clientX - startX;
+      var dy = e.clientY - startY;
+
+      // Lock direction after 10px movement
+      if (!swiping && Math.abs(dx) > 10) {
+        if (Math.abs(dy) > Math.abs(dx)) { locked = true; return; }
+        swiping = true;
+        el.setPointerCapture(e.pointerId);
+      }
+      if (!swiping) return;
+
+      e.preventDefault();
+      currentX = dx;
+      // Dampen the movement
+      var dampened = currentX * 0.6;
+      el.style.transform = "translateX(" + dampened + "px)";
+      leftAction.classList.toggle("visible", dampened > threshold * 0.4);
+      rightAction.classList.toggle("visible", dampened < -threshold * 0.4);
+    });
+
+    el.addEventListener("pointerup", function () {
+      if (!swiping) return;
+      swiping = false;
+      el.style.transition = "transform 0.2s ease-out";
+      el.style.transform = "";
+      leftAction.classList.remove("visible");
+      rightAction.classList.remove("visible");
+
+      if (currentX * 0.6 > threshold) {
+        haptic(15);
+        onToggle(itemId);
+      } else if (currentX * 0.6 < -threshold) {
+        haptic(15);
+        onDeleteWithUndo(itemId, itemReminder, el);
+      }
+    });
+
+    el.addEventListener("pointercancel", function () {
+      swiping = false;
+      el.style.transition = "transform 0.2s ease-out";
+      el.style.transform = "";
+      leftAction.classList.remove("visible");
+      rightAction.classList.remove("visible");
+    });
+  }
+
+  // ====================================================================
+  // Pull to refresh
+  // ====================================================================
+
+  var ptrIndicator = document.getElementById("ptr-indicator");
+
+  (function initPullToRefresh() {
+    var viewHome = document.getElementById("view-home");
+    if (!viewHome) return;
+    var startY = 0, pulling = false, refreshing = false;
+
+    viewHome.addEventListener("touchstart", function (e) {
+      if (refreshing) return;
+      // Only trigger when scrolled to top
+      var scrollTop = document.getElementById("main").scrollTop || window.scrollY;
+      if (scrollTop > 5) return;
+      startY = e.touches[0].clientY;
+      pulling = true;
+    }, { passive: true });
+
+    viewHome.addEventListener("touchmove", function (e) {
+      if (!pulling || refreshing) return;
+      var dy = e.touches[0].clientY - startY;
+      if (dy > 60 && ptrIndicator) {
+        ptrIndicator.classList.add("active");
+      }
+    }, { passive: true });
+
+    viewHome.addEventListener("touchend", function () {
+      if (!pulling) return;
+      pulling = false;
+      if (ptrIndicator && ptrIndicator.classList.contains("active")) {
+        refreshing = true;
+        haptic(10);
+        refreshCurrentList().then(function () {
+          ptrIndicator.classList.remove("active");
+          refreshing = false;
+          showToast("Refreshed");
+        });
+      }
+    });
+  })();
+
+  // ====================================================================
   // Date formatting helpers
   // ====================================================================
 
@@ -371,6 +587,9 @@
     cb.setAttribute("aria-label", "Toggle " + item.reminder);
     cb.addEventListener("change", function (e) {
       e.stopPropagation();
+      haptic(10);
+      cb.classList.add("bounce");
+      setTimeout(function () { cb.classList.remove("bounce"); }, 150);
       onToggle(item.id);
     });
     div.appendChild(cb);
@@ -458,7 +677,7 @@
     delBtn.setAttribute("aria-label", "Delete " + item.reminder);
     delBtn.addEventListener("click", function (e) {
       e.stopPropagation();
-      onDelete(item.id, item.reminder);
+      onDeleteWithUndo(item.id, item.reminder, div);
     });
     actions.appendChild(delBtn);
     div.appendChild(actions);
@@ -467,6 +686,12 @@
     div.addEventListener("click", function () {
       location.hash = "#/item/" + item.id;
     });
+
+    // Swipe gestures
+    attachSwipe(div, item.id, item.reminder);
+
+    // Enter animation
+    div.classList.add("item-enter");
 
     return div;
   }
@@ -626,11 +851,12 @@
       });
     }
     addSheet.classList.remove("hidden");
+    trapFocus(addSheet);
     addInput.focus();
   }
 
   function closeAddSheet() {
-    if (addSheet) addSheet.classList.add("hidden");
+    animateSheetClose(addSheet);
   }
 
   if (addSheetClose) addSheetClose.addEventListener("click", closeAddSheet);
@@ -992,6 +1218,7 @@
     detailBody.appendChild(delBtn);
 
     detailSheet.classList.remove("hidden");
+    trapFocus(detailSheet);
   }
 
   function makeField(label, type, value, onChange) {
@@ -1039,9 +1266,10 @@
   }
 
   function closeDetailSheet() {
-    if (detailSheet) detailSheet.classList.add("hidden");
-    currentDetailItemId = null;
-    if (location.hash.startsWith("#/item/")) location.hash = "#/";
+    animateSheetClose(detailSheet, function () {
+      currentDetailItemId = null;
+      if (location.hash.startsWith("#/item/")) location.hash = "#/";
+    });
   }
 
   if (detailClose) detailClose.addEventListener("click", closeDetailSheet);
@@ -1183,6 +1411,32 @@
   // ====================================================================
 
   async function refreshSettings() {
+    // Connection info
+    var connStatus = document.getElementById("settings-conn-status");
+    if (connStatus) {
+      connStatus.textContent = isOnline ? "Connected" : "Offline";
+      connStatus.className = "settings-value " + (isOnline ? "settings-conn-online" : "settings-conn-offline");
+    }
+    var serverUrl = document.getElementById("settings-server-url");
+    if (serverUrl) serverUrl.textContent = location.host;
+
+    // Offline queue
+    var offlineRow = document.getElementById("settings-offline-row");
+    var offlineCount = document.getElementById("settings-offline-count");
+    var queue = getOfflineQueue();
+    if (offlineRow) offlineRow.style.display = queue.length > 0 ? "flex" : "none";
+    if (offlineCount) offlineCount.textContent = String(queue.length);
+
+    // Display info
+    var themeEl = document.getElementById("settings-theme");
+    if (themeEl) {
+      var isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      themeEl.textContent = isDark ? "Dark (system)" : "Light (system)";
+    }
+    var viewModeEl = document.getElementById("settings-view-mode");
+    if (viewModeEl) viewModeEl.textContent = viewMode === "board" ? "Board" : "List";
+
+    // Server data
     try {
       var data = await api("/status");
       if (settingsStatus) {
@@ -1232,50 +1486,250 @@
     }
   }
 
+  // Delete with undo (delayed delete)
+  var pendingDeletes = {};
+
+  function onDeleteWithUndo(itemId, reminderText, cardEl) {
+    // Animate card removal
+    if (cardEl) {
+      cardEl.classList.add("item-exit");
+    }
+    haptic(10);
+
+    // Set up a delayed delete (3 seconds)
+    var timer = setTimeout(function () {
+      delete pendingDeletes[itemId];
+      onDelete(itemId, null); // silent delete, no toast
+    }, 3000);
+
+    pendingDeletes[itemId] = timer;
+
+    showToast(reminderText ? '"' + reminderText + '" deleted' : "Item deleted", function () {
+      // Undo callback
+      clearTimeout(pendingDeletes[itemId]);
+      delete pendingDeletes[itemId];
+      haptic(10);
+      refreshCurrentList();
+    });
+  }
+
   // ====================================================================
   // Toast notifications
   // ====================================================================
 
-  function showToast(message) {
+  function showToast(message, undoCallback) {
     if (!toastContainer) return;
     var toast = document.createElement("div");
     toast.className = "toast";
     toast.textContent = message;
+
+    if (undoCallback) {
+      var undoBtn = document.createElement("button");
+      undoBtn.className = "toast-undo";
+      undoBtn.textContent = "Undo";
+      undoBtn.addEventListener("click", function () {
+        undoCallback();
+        toast.remove();
+      });
+      toast.appendChild(undoBtn);
+    }
+
     toastContainer.appendChild(toast);
     setTimeout(function () {
       toast.remove();
-    }, 3000);
+    }, undoCallback ? 3500 : 3000);
   }
 
   // ====================================================================
-  // List selector
+  // List picker sheet
   // ====================================================================
 
   function renderLists(lists) {
     cachedLists = lists;
-    if (!listSelect) return;
-    listSelect.innerHTML = "";
-    lists.forEach(function (lst) {
-      var opt = document.createElement("option");
-      opt.value = lst.id;
-      var countText = lst.completed_count + "/" + lst.item_count;
-      if (lst.overdue_count > 0) countText += " \u00B7 " + lst.overdue_count + " overdue";
-      opt.textContent = lst.name + " (" + countText + ")";
-      listSelect.appendChild(opt);
-    });
 
-    if (currentListId && lists.some(function (l) { return l.id === currentListId; })) {
-      listSelect.value = currentListId;
+    // Update header button text
+    if (currentListId && lists.length > 0) {
+      var current = lists.find(function (l) { return l.id === currentListId; });
+      if (current && listPickerName) listPickerName.textContent = current.name;
     } else if (lists.length > 0) {
       currentListId = lists[0].id;
-      listSelect.value = currentListId;
+      if (listPickerName) listPickerName.textContent = lists[0].name;
+    }
+
+    // Update sheet body if open
+    if (listSheet && !listSheet.classList.contains("hidden")) {
+      renderListSheetBody(lists);
     }
   }
 
-  if (listSelect) {
-    listSelect.addEventListener("change", function () {
-      currentListId = listSelect.value;
-      refreshCurrentList();
+  function renderListSheetBody(lists) {
+    if (!listSheetBody) return;
+    listSheetBody.innerHTML = "";
+    lists.forEach(function (lst) {
+      var row = document.createElement("div");
+      row.className = "list-row" + (lst.id === currentListId ? " active" : "");
+
+      var info = document.createElement("div");
+      info.className = "list-row-info";
+      info.addEventListener("click", function () {
+        currentListId = lst.id;
+        if (listPickerName) listPickerName.textContent = lst.name;
+        closeListSheet();
+        refreshCurrentList();
+      });
+
+      var name = document.createElement("div");
+      name.className = "list-row-name";
+      name.textContent = lst.name;
+      info.appendChild(name);
+
+      var stats = document.createElement("div");
+      stats.className = "list-row-stats";
+      var pct = lst.item_count > 0 ? Math.round(lst.completed_count / lst.item_count * 100) : 0;
+      stats.textContent = lst.completed_count + "/" + lst.item_count + " done (" + pct + "%)";
+      if (lst.overdue_count > 0) {
+        stats.textContent += " \u00B7 " + lst.overdue_count + " overdue";
+      }
+      info.appendChild(stats);
+      row.appendChild(info);
+
+      // Action buttons
+      var actions = document.createElement("div");
+      actions.className = "list-row-actions";
+
+      var renameBtn = document.createElement("button");
+      renameBtn.className = "list-action-btn";
+      renameBtn.title = "Rename";
+      renameBtn.innerHTML = "&#9998;";
+      renameBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        startRenameList(lst.id, lst.name, name);
+      });
+      actions.appendChild(renameBtn);
+
+      var deleteBtn = document.createElement("button");
+      deleteBtn.className = "list-action-btn danger";
+      deleteBtn.title = "Delete";
+      deleteBtn.innerHTML = "&times;";
+      deleteBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        confirmDeleteList(lst.id, lst.name, lst.item_count);
+      });
+      actions.appendChild(deleteBtn);
+
+      row.appendChild(actions);
+      listSheetBody.appendChild(row);
+    });
+  }
+
+  function openListSheet() {
+    if (!listSheet) return;
+    renderListSheetBody(cachedLists);
+    listSheet.classList.remove("hidden");
+    trapFocus(listSheet);
+  }
+
+  function closeListSheet() {
+    animateSheetClose(listSheet);
+  }
+
+  function startRenameList(listId, currentName, nameEl) {
+    var input = document.createElement("input");
+    input.type = "text";
+    input.className = "list-rename-input";
+    input.value = currentName;
+    nameEl.textContent = "";
+    nameEl.appendChild(input);
+    input.focus();
+    input.select();
+
+    async function commitRename() {
+      var newName = input.value.trim();
+      if (newName && newName !== currentName) {
+        try {
+          await api("/lists/" + listId, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: newName }),
+          });
+          showToast("List renamed");
+          await refreshLists();
+          renderListSheetBody(cachedLists);
+        } catch (e) {
+          showToast("Failed to rename list");
+          nameEl.textContent = currentName;
+        }
+      } else {
+        nameEl.textContent = currentName;
+      }
+    }
+
+    input.addEventListener("blur", commitRename);
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); input.blur(); }
+      if (e.key === "Escape") { nameEl.textContent = currentName; }
+    });
+  }
+
+  function confirmDeleteList(listId, name, itemCount) {
+    var msg = 'Delete "' + name + '"';
+    if (itemCount > 0) msg += " and its " + itemCount + " item" + (itemCount > 1 ? "s" : "") + "?";
+    else msg += "?";
+
+    if (!confirm(msg)) return;
+
+    (async function () {
+      try {
+        await api("/lists/" + listId, { method: "DELETE" });
+        showToast("List deleted");
+        if (currentListId === listId) {
+          currentListId = null;
+        }
+        await refreshLists();
+        renderListSheetBody(cachedLists);
+        if (!currentListId && cachedLists.length > 0) {
+          currentListId = cachedLists[0].id;
+          if (listPickerName) listPickerName.textContent = cachedLists[0].name;
+        }
+        refreshCurrentList();
+      } catch (e) {
+        showToast("Failed to delete list");
+      }
+    })();
+  }
+
+  // Wiring
+  if (listPickerBtn) listPickerBtn.addEventListener("click", openListSheet);
+  if (listSheetClose) listSheetClose.addEventListener("click", closeListSheet);
+  if (listSheet) {
+    listSheet.querySelector(".sheet-backdrop").addEventListener("click", closeListSheet);
+  }
+
+  if (listCreateBtn) {
+    listCreateBtn.addEventListener("click", async function () {
+      var name = listCreateInput.value.trim();
+      if (!name) return;
+      try {
+        var result = await api("/lists", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name }),
+        });
+        listCreateInput.value = "";
+        showToast("List created");
+        currentListId = result.id;
+        await refreshLists();
+        if (listPickerName) listPickerName.textContent = name;
+        renderListSheetBody(cachedLists);
+        refreshCurrentList();
+      } catch (e) {
+        showToast(e.message || "Failed to create list");
+      }
+    });
+  }
+  if (listCreateInput) {
+    listCreateInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); listCreateBtn.click(); }
     });
   }
 

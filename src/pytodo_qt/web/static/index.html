@@ -25,7 +25,10 @@
       <div id="connection-dot" class="dot online" title="Connected"></div>
     </div>
     <div class="header-controls">
-      <select id="list-select" aria-label="Select list"></select>
+      <button id="list-picker-btn" class="list-picker-btn" aria-label="Select list">
+        <span id="list-picker-name">Loading...</span>
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,4.5 6,7.5 9,4.5"/></svg>
+      </button>
       <div id="view-toggle" class="view-toggle hidden">
         <button class="view-btn active" data-view="list" aria-label="List view">
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2">
@@ -45,6 +48,10 @@
   <main id="main">
     <!-- Home view: list + board modes -->
     <div id="view-home" class="view active">
+      <!-- Pull to refresh indicator -->
+      <div id="ptr-indicator" class="ptr-indicator">
+        <span class="ptr-spinner"></span> Refreshing...
+      </div>
       <!-- List mode -->
       <div id="list-view" class="view-mode active">
         <div id="sort-bar" class="sort-bar">
@@ -111,19 +118,64 @@
     <!-- Settings view -->
     <div id="view-settings" class="view">
       <div class="settings-section">
-        <h2>Status</h2>
+        <h2>Connection</h2>
+        <div id="settings-connection" class="settings-info">
+          <div class="settings-row">
+            <span>Status</span>
+            <span id="settings-conn-status" class="settings-value"></span>
+          </div>
+          <div class="settings-row">
+            <span>Server</span>
+            <span class="settings-value text-secondary" id="settings-server-url"></span>
+          </div>
+        </div>
+      </div>
+      <div class="settings-section">
+        <h2>Data</h2>
         <div id="settings-status" class="settings-info"></div>
+        <div class="settings-row" id="settings-offline-row" style="display:none">
+          <span>Pending offline changes</span>
+          <span class="settings-value" id="settings-offline-count">0</span>
+        </div>
+      </div>
+      <div class="settings-section">
+        <h2>Display</h2>
+        <div class="settings-row">
+          <span>Theme</span>
+          <span class="settings-value text-secondary" id="settings-theme"></span>
+        </div>
+        <div class="settings-row">
+          <span>View mode</span>
+          <span class="settings-value text-secondary" id="settings-view-mode"></span>
+        </div>
       </div>
       <div class="settings-section">
         <h2>About</h2>
-        <p class="text-secondary">PyTodo-Qt — Privacy-first todo manager</p>
+        <p class="text-secondary">PyTodo-Qt — Privacy-first, self-hosted todo manager</p>
         <p class="text-secondary" id="version-text"></p>
+        <p class="text-secondary">LAN-first with P2P sync. No cloud required.</p>
       </div>
     </div>
   </main>
 
+  <!-- List picker sheet -->
+  <div id="list-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-label="List picker">
+    <div class="sheet-backdrop"></div>
+    <div class="sheet-content">
+      <div class="sheet-header">
+        <h2>Lists</h2>
+        <button id="list-sheet-close" class="sheet-close" aria-label="Close">&times;</button>
+      </div>
+      <div id="list-sheet-body"></div>
+      <div class="list-create-row">
+        <input type="text" id="list-create-input" placeholder="New list name..." autocomplete="off">
+        <button type="button" id="list-create-btn" class="btn-small">+</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Smart add sheet -->
-  <div id="add-sheet" class="sheet hidden">
+  <div id="add-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-label="Add task">
     <div class="sheet-backdrop"></div>
     <div class="sheet-content">
       <div class="sheet-header">
@@ -142,7 +194,7 @@
   </div>
 
   <!-- Item detail sheet -->
-  <div id="detail-sheet" class="sheet hidden">
+  <div id="detail-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-label="Item details">
     <div class="sheet-backdrop"></div>
     <div class="sheet-content">
       <div class="sheet-header">
@@ -153,8 +205,8 @@
     </div>
   </div>
 
-  <!-- Toast container -->
-  <div id="toast-container"></div>
+  <!-- Toast container (ARIA live for screen readers) -->
+  <div id="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <!-- Bottom navigation -->
   <nav id="bottom-nav">
@@ -174,6 +226,12 @@
         <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/>
       </svg>
       <span>Search</span>
+    </button>
+    <button class="nav-btn" data-view="settings" aria-label="Settings">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+      </svg>
+      <span>More</span>
     </button>
   </nav>
 
