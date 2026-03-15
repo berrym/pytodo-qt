@@ -19,6 +19,9 @@
   var saveDebounceTimer = null;
   var currentDetailItemId = null;
   var viewMode = localStorage.getItem(VIEW_MODE_KEY) || "list";
+  var lastItemsFingerprint = "";
+  var lastListsFingerprint = "";
+  var lastBoardFingerprint = "";
 
   // ====================================================================
   // DOM refs
@@ -378,9 +381,10 @@
     });
 
     if (mode === "board") {
+      lastBoardFingerprint = ""; // Force re-render on view switch
       refreshBoard();
     } else {
-      renderItems(cachedItems);
+      renderItems(cachedItems, true);
     }
   }
 
@@ -416,7 +420,7 @@
       currentSort = sortSelect.value;
       localStorage.setItem(SORT_KEY, currentSort);
       sortSelect.classList.add("hidden");
-      renderItems(cachedItems);
+      renderItems(cachedItems, true);
     });
   }
 
@@ -456,6 +460,14 @@
         });
     }
     return arr;
+  }
+
+  // ====================================================================
+  // Data fingerprinting (skip re-render when unchanged)
+  // ====================================================================
+
+  function fingerprint(data) {
+    return JSON.stringify(data);
   }
 
   // ====================================================================
@@ -631,8 +643,14 @@
   // Render: list view items
   // ====================================================================
 
-  function renderItems(items) {
+  function renderItems(items, force) {
     if (!itemsContainer) return;
+
+    // Skip re-render if data hasn't changed (eliminates poll flicker)
+    var fp = fingerprint(items);
+    if (!force && fp === lastItemsFingerprint) return;
+    lastItemsFingerprint = fp;
+
     itemsContainer.innerHTML = "";
     if (!items || items.length === 0) {
       if (emptyMsg) emptyMsg.classList.remove("hidden");
@@ -808,6 +826,12 @@
 
   function renderBoard(data) {
     if (!boardContainer) return;
+
+    // Skip re-render if data hasn't changed
+    var fp = fingerprint(data);
+    if (fp === lastBoardFingerprint) return;
+    lastBoardFingerprint = fp;
+
     boardContainer.innerHTML = "";
 
     if (!data || !data.board_columns || data.board_columns.length === 0) {
@@ -1771,6 +1795,13 @@
   // ====================================================================
 
   function renderLists(lists) {
+    // Skip re-render if data hasn't changed
+    var fp = fingerprint(lists);
+    if (fp === lastListsFingerprint) {
+      cachedLists = lists;
+      return;
+    }
+    lastListsFingerprint = fp;
     cachedLists = lists;
 
     // Update header button text
