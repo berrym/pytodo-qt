@@ -19,11 +19,13 @@ from ..core.models import TodoItem, TodoList, create_todo_item, create_todo_list
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from ..core.config import ConfigManager
     from ..core.models import Database
 
 # Typed app keys (shared with server.py, defined here to avoid circular imports)
 database_key: web.AppKey[Database] = web.AppKey("database")
 save_callback_key: web.AppKey[Callable[[], None]] = web.AppKey("save_callback")
+config_manager_key: web.AppKey[ConfigManager] = web.AppKey("config_manager")
 
 
 def _item_to_json(item: TodoItem) -> dict[str, Any]:
@@ -85,6 +87,9 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_post("/api/parse", handle_parse)
     app.router.add_get("/api/tags", handle_get_tags)
     app.router.add_get("/api/status", handle_status)
+    # Sort configuration
+    app.router.add_get("/api/sort", handle_get_sort)
+    app.router.add_put("/api/sort", handle_update_sort)
 
 
 # ---------------------------------------------------------------------------
@@ -712,12 +717,95 @@ async def handle_get_tags(request: web.Request) -> web.Response:
 async def handle_status(request: web.Request) -> web.Response:
     """GET /api/status — Return app status info."""
     db: Database = request.app[database_key]
+    result: dict[str, Any] = {
+        "version": settings.__version__,
+        "list_count": sum(1 for lst in db.lists.values() if not lst.deleted),
+        "total_items": db.total_items(),
+        "total_completed": db.total_completed(),
+    }
+    # Include sort tiers if config manager is available
+    cm = request.app.get(config_manager_key)
+    if cm is not None:
+        result["sort_tiers"] = [
+            {"dimension": dim, "reverse": rev} for dim, rev in cm.config.database.sort_tiers()
+        ]
+    return web.json_response(result)
+
+
+# ---------------------------------------------------------------------------
+# Sort configuration handlers
+# ---------------------------------------------------------------------------
+
+_VALID_SORT_DIMENSIONS = {"completion", "due_date", "priority"}
+
+
+async def handle_get_sort(request: web.Request) -> web.Response:
+    """GET /api/sort — Return current three-tier sort configuration."""
+    cm = request.app.get(config_manager_key)
+    if cm is None:
+        return _error(503, "Sort configuration not available")
+    tiers = cm.config.database.sort_tiers()
     return web.json_response(
         {
-            "version": settings.__version__,
-            "list_count": sum(1 for lst in db.lists.values() if not lst.deleted),
-            "total_items": db.total_items(),
-            "total_completed": db.total_completed(),
+            "sort_tiers": [{"dimension": dim, "reverse": rev} for dim, rev in tiers],
+        }
+    )
+
+
+async def handle_update_sort(request: web.Request) -> web.Response:
+    """PUT /api/sort — Update three-tier sort configuration.
+
+    Body: {"tiers": [{"dimension": "completion", "reverse": false}, ...]}
+
+    Validates:
+      - Exactly 3 tiers
+      - Each dimension is one of: completion, due_date, priority
+      - All 3 dimensions are unique (no duplicates)
+    """
+    cm = request.app.get(config_manager_key)
+    if cm is None:
+        return _error(503, "Sort configuration not available")
+
+    try:
+        body = await request.json()
+    except Exception:
+        return _error(400, "Invalid JSON body")
+
+    tiers = body.get("tiers")
+    if not isinstance(tiers, list) or len(tiers) != 3:
+        return _error(400, "Exactly 3 sort tiers are required")
+
+    dimensions: list[str] = []
+    reverses: list[bool] = []
+    for tier in tiers:
+        if not isinstance(tier, dict):
+            return _error(400, "Each tier must be an object with dimension and reverse")
+        dim = tier.get("dimension", "")
+        if dim not in _VALID_SORT_DIMENSIONS:
+            return _error(400, f"Invalid sort dimension: {dim!r}")
+        dimensions.append(dim)
+        reverses.append(bool(tier.get("reverse", False)))
+
+    if len(set(dimensions)) != 3:
+        return _error(400, "All 3 sort dimensions must be unique")
+
+    # Apply to config
+    db_config = cm.config.database
+    db_config.sort_tier1 = dimensions[0]
+    db_config.sort_tier1_reverse = reverses[0]
+    db_config.sort_tier2 = dimensions[1]
+    db_config.sort_tier2_reverse = reverses[1]
+    db_config.sort_tier3 = dimensions[2]
+    db_config.sort_tier3_reverse = reverses[2]
+    cm.save()
+
+    _schedule_save_and_refresh(request)
+    return web.json_response(
+        {
+            "sort_tiers": [
+                {"dimension": dim, "reverse": rev}
+                for dim, rev in zip(dimensions, reverses, strict=True)
+            ],
         }
     )
 

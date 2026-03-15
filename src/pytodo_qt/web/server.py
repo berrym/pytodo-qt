@@ -17,7 +17,7 @@ from ..core.logger import Logger
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from ..core.config import WebConfig
+    from ..core.config import ConfigManager, WebConfig
     from ..core.models import Database
 
 logger = Logger(__name__)
@@ -33,22 +33,26 @@ class WebServer:
         database: Database,
         save_callback: Callable[[], None] | None = None,
         config: WebConfig | None = None,
+        config_manager: ConfigManager | None = None,
     ) -> None:
         self._database = database
         self._save_callback = save_callback
         self._config = config
+        self._config_manager = config_manager
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._app: web.Application | None = None
 
     def create_app(self) -> web.Application:
         """Create and configure the aiohttp application."""
-        from .api import database_key, save_callback_key, setup_routes
+        from .api import config_manager_key, database_key, save_callback_key, setup_routes
 
         app = web.Application()
         app[database_key] = self._database
         if self._save_callback:
             app[save_callback_key] = self._save_callback
+        if self._config_manager:
+            app[config_manager_key] = self._config_manager
 
         # API routes
         setup_routes(app)

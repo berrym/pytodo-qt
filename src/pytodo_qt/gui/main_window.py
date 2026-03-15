@@ -1393,6 +1393,7 @@ class MainWindow(QMainWindow):
                 database=self._database,
                 save_callback=self._web_save_and_refresh,
                 config=self._config.web,
+                config_manager=self._config_manager,
             )
             asyncio.ensure_future(
                 self._web_server.start(host="0.0.0.0", port=self._config.web.port)

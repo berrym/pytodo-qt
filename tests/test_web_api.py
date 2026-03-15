@@ -18,7 +18,7 @@ from datetime import date, timedelta
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from pytodo_qt.core.config import AppConfig, WebConfig
+from pytodo_qt.core.config import AppConfig, ConfigManager, WebConfig
 from pytodo_qt.core.models import (
     Database,
     create_todo_item,
@@ -97,12 +97,15 @@ def _make_db_with_private() -> Database:
     return db
 
 
-async def _make_client(db: Database | None = None) -> TestClient:
+async def _make_client(
+    db: Database | None = None,
+    config_manager: ConfigManager | None = None,
+) -> TestClient:
     """Create an aiohttp test client with the given database."""
     if db is None:
         db = _make_db_with_data()
 
-    ws = WebServer(database=db)
+    ws = WebServer(database=db, config_manager=config_manager)
     app = ws.create_app()
     return TestClient(TestServer(app))
 
@@ -1861,5 +1864,250 @@ class TestRestore:
             # Item exists but is not deleted — restore should 404
             resp = await client.patch(f"/api/items/{item.id}/restore")
             assert resp.status == 404
+        finally:
+            await client.close()
+
+
+# ===========================================================================
+# Sort configuration API
+# ===========================================================================
+
+
+def _make_config_manager(tmp_path):
+    """Create a ConfigManager with a temporary directory."""
+    cm = ConfigManager(config_dir=tmp_path, data_dir=tmp_path)
+    cm.ensure_directories()
+    cm._config = AppConfig()
+    return cm
+
+
+class TestGetSort:
+    @pytest.mark.asyncio
+    async def test_get_sort_defaults(self, tmp_path):
+        cm = _make_config_manager(tmp_path)
+        client = await _make_client(config_manager=cm)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/sort")
+            assert resp.status == 200
+            data = await resp.json()
+            tiers = data["sort_tiers"]
+            assert len(tiers) == 3
+            assert tiers[0] == {"dimension": "completion", "reverse": False}
+            assert tiers[1] == {"dimension": "due_date", "reverse": False}
+            assert tiers[2] == {"dimension": "priority", "reverse": False}
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_get_sort_no_config_manager(self):
+        """GET /api/sort returns 503 when no config manager is available."""
+        client = await _make_client()
+        await client.start_server()
+        try:
+            resp = await client.get("/api/sort")
+            assert resp.status == 503
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_status_includes_sort_tiers(self, tmp_path):
+        cm = _make_config_manager(tmp_path)
+        client = await _make_client(config_manager=cm)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/status")
+            assert resp.status == 200
+            data = await resp.json()
+            assert "sort_tiers" in data
+            assert len(data["sort_tiers"]) == 3
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_status_no_sort_tiers_without_config_manager(self):
+        """GET /api/status omits sort_tiers when no config manager."""
+        client = await _make_client()
+        await client.start_server()
+        try:
+            resp = await client.get("/api/status")
+            data = await resp.json()
+            assert "sort_tiers" not in data
+        finally:
+            await client.close()
+
+
+class TestUpdateSort:
+    @pytest.mark.asyncio
+    async def test_update_sort_tiers(self, tmp_path):
+        cm = _make_config_manager(tmp_path)
+        client = await _make_client(config_manager=cm)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "priority", "reverse": True},
+                        {"dimension": "completion", "reverse": False},
+                        {"dimension": "due_date", "reverse": True},
+                    ]
+                },
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["sort_tiers"][0] == {"dimension": "priority", "reverse": True}
+            assert data["sort_tiers"][1] == {"dimension": "completion", "reverse": False}
+            assert data["sort_tiers"][2] == {"dimension": "due_date", "reverse": True}
+
+            # Verify config was persisted
+            assert cm.config.database.sort_tier1 == "priority"
+            assert cm.config.database.sort_tier1_reverse is True
+            assert cm.config.database.sort_tier2 == "completion"
+            assert cm.config.database.sort_tier3 == "due_date"
+            assert cm.config.database.sort_tier3_reverse is True
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_sort_persists_to_file(self, tmp_path):
+        cm = _make_config_manager(tmp_path)
+        client = await _make_client(config_manager=cm)
+        await client.start_server()
+        try:
+            await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "due_date", "reverse": False},
+                        {"dimension": "priority", "reverse": True},
+                        {"dimension": "completion", "reverse": False},
+                    ]
+                },
+            )
+            # Reload from disk
+            cm2 = ConfigManager(config_dir=tmp_path, data_dir=tmp_path)
+            loaded = cm2.load()
+            assert loaded.database.sort_tier1 == "due_date"
+            assert loaded.database.sort_tier2 == "priority"
+            assert loaded.database.sort_tier2_reverse is True
+            assert loaded.database.sort_tier3 == "completion"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_sort_wrong_count(self, tmp_path):
+        cm = _make_config_manager(tmp_path)
+        client = await _make_client(config_manager=cm)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                "/api/sort",
+                json={"tiers": [{"dimension": "priority", "reverse": False}]},
+            )
+            assert resp.status == 400
+            data = await resp.json()
+            assert "3 sort tiers" in data["error"]
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_sort_invalid_dimension(self, tmp_path):
+        cm = _make_config_manager(tmp_path)
+        client = await _make_client(config_manager=cm)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "completion", "reverse": False},
+                        {"dimension": "bogus", "reverse": False},
+                        {"dimension": "priority", "reverse": False},
+                    ]
+                },
+            )
+            assert resp.status == 400
+            data = await resp.json()
+            assert "bogus" in data["error"]
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_sort_duplicate_dimensions(self, tmp_path):
+        cm = _make_config_manager(tmp_path)
+        client = await _make_client(config_manager=cm)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "completion", "reverse": False},
+                        {"dimension": "completion", "reverse": True},
+                        {"dimension": "priority", "reverse": False},
+                    ]
+                },
+            )
+            assert resp.status == 400
+            data = await resp.json()
+            assert "unique" in data["error"]
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_sort_invalid_json(self, tmp_path):
+        cm = _make_config_manager(tmp_path)
+        client = await _make_client(config_manager=cm)
+        await client.start_server()
+        try:
+            resp = await client.put("/api/sort", data=b"not json")
+            assert resp.status == 400
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_sort_no_config_manager(self):
+        client = await _make_client()
+        await client.start_server()
+        try:
+            resp = await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "completion", "reverse": False},
+                        {"dimension": "due_date", "reverse": False},
+                        {"dimension": "priority", "reverse": False},
+                    ]
+                },
+            )
+            assert resp.status == 503
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_get_sort_reflects_update(self, tmp_path):
+        """GET /api/sort returns updated values after PUT."""
+        cm = _make_config_manager(tmp_path)
+        client = await _make_client(config_manager=cm)
+        await client.start_server()
+        try:
+            await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "due_date", "reverse": True},
+                        {"dimension": "completion", "reverse": False},
+                        {"dimension": "priority", "reverse": True},
+                    ]
+                },
+            )
+            resp = await client.get("/api/sort")
+            data = await resp.json()
+            assert data["sort_tiers"][0]["dimension"] == "due_date"
+            assert data["sort_tiers"][0]["reverse"] is True
+            assert data["sort_tiers"][1]["dimension"] == "completion"
+            assert data["sort_tiers"][2]["dimension"] == "priority"
+            assert data["sort_tiers"][2]["reverse"] is True
         finally:
             await client.close()
