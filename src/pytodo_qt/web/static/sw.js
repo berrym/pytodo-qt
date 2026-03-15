@@ -1,5 +1,5 @@
 /* PyTodo-Qt Service Worker — Offline caching and edit queue */
-var CACHE_VERSION = "v9";
+var CACHE_VERSION = "v10";
 var CACHE_NAME = "pytodo-" + CACHE_VERSION;
 var STATIC_ASSETS = [
   "/",
@@ -52,38 +52,30 @@ self.addEventListener("fetch", function (event) {
   event.respondWith(cacheFirst(event.request));
 });
 
-function cacheFirst(request) {
-  return caches.match(request).then(function (cached) {
-    if (cached) return cached;
-    return fetch(request).then(function (response) {
-      if (response.ok) {
-        var clone = response.clone();
-        caches.open(CACHE_NAME).then(function (cache) {
-          cache.put(request, clone);
-        });
-      }
-      return response;
-    });
-  });
+async function cacheFirst(request) {
+  var cached = await caches.match(request);
+  if (cached) return cached;
+  var response = await fetch(request);
+  if (response.ok) {
+    var cache = await caches.open(CACHE_NAME);
+    cache.put(request, response.clone());
+  }
+  return response;
 }
 
-function networkFirst(request) {
-  return fetch(request)
-    .then(function (response) {
-      if (response.ok) {
-        var clone = response.clone();
-        caches.open(CACHE_NAME).then(function (cache) {
-          cache.put(request, clone);
-        });
-      }
-      return response;
-    })
-    .catch(function () {
-      return caches.match(request).then(function (cached) {
-        return cached || new Response(
-          JSON.stringify({ error: "Offline", status: 503 }),
-          { status: 503, headers: { "Content-Type": "application/json" } }
-        );
-      });
-    });
+async function networkFirst(request) {
+  try {
+    var response = await fetch(request);
+    if (response.ok) {
+      var cache = await caches.open(CACHE_NAME);
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (_) {
+    var cached = await caches.match(request);
+    return cached || new Response(
+      JSON.stringify({ error: "Offline", status: 503 }),
+      { status: 503, headers: { "Content-Type": "application/json" } }
+    );
+  }
 }

@@ -16,7 +16,6 @@
   var isOnline = navigator.onLine;
   var parseDebounceTimer = null;
   var saveDebounceTimer = null;
-  var currentDetailItemId = null;
   var viewMode = localStorage.getItem(VIEW_MODE_KEY) || "list";
   var lastItemsFingerprint = "";
   var lastListsFingerprint = "";
@@ -70,9 +69,15 @@
   // Accessibility: keyboard & focus management
   // ====================================================================
 
-  // Escape key closes any open sheet
+  // Escape key closes any open sheet or context menu
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
+    // Context menu takes priority (highest z-index)
+    if (activeContextMenu) {
+      closeContextMenu();
+      e.preventDefault();
+      return;
+    }
     var sheets = [detailSheet, addSheet, listSheet, sortSheet];
     for (var i = 0; i < sheets.length; i++) {
       if (sheets[i] && !sheets[i].classList.contains("hidden")) {
@@ -601,6 +606,316 @@
   }
 
   // ====================================================================
+  // Context menu (reusable bottom action sheet)
+  // ====================================================================
+
+  var activeContextMenu = null;
+
+  /**
+   * Show a context menu bottom sheet.
+   * @param {string} title - Title shown at the top
+   * @param {Array} actions - Array of action objects:
+   *   { icon, label, onTap }                — simple action
+   *   { icon, label, submenu: [...] }       — opens sub-menu
+   *   { divider: true }                     — separator line
+   *   { icon, label, checked: true/false }  — radio/check item
+   *   { icon, label, danger: true, onTap }  — destructive action
+   */
+  function showContextMenu(title, actions) {
+    closeContextMenu();
+    haptic(10);
+
+    var overlay = document.createElement("div");
+    overlay.className = "context-menu";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-label", title);
+
+    var backdrop = document.createElement("div");
+    backdrop.className = "context-menu-backdrop";
+    backdrop.addEventListener("click", function () { closeContextMenu(); });
+    overlay.appendChild(backdrop);
+
+    var content = document.createElement("div");
+    content.className = "context-menu-content";
+
+    var titleEl = document.createElement("div");
+    titleEl.className = "context-menu-title";
+    titleEl.textContent = title;
+    content.appendChild(titleEl);
+
+    renderContextActions(content, actions);
+
+    var cancelBtn = document.createElement("button");
+    cancelBtn.className = "context-menu-cancel";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", function () { closeContextMenu(); });
+    content.appendChild(cancelBtn);
+
+    overlay.appendChild(content);
+    document.body.appendChild(overlay);
+    activeContextMenu = overlay;
+
+    // Focus trap
+    trapFocus(overlay);
+  }
+
+  function renderContextActions(container, actions) {
+    actions.forEach(function (action) {
+      if (action.divider) {
+        var div = document.createElement("div");
+        div.className = "context-menu-divider";
+        container.appendChild(div);
+        return;
+      }
+
+      var btn = document.createElement("button");
+      btn.className = "context-menu-action";
+      if (action.danger) btn.classList.add("danger");
+
+      if (action.icon) {
+        var icon = document.createElement("span");
+        icon.className = "ctx-icon";
+        icon.textContent = action.icon;
+        btn.appendChild(icon);
+      }
+
+      var label = document.createElement("span");
+      label.className = "ctx-label";
+      label.textContent = action.label;
+      btn.appendChild(label);
+
+      if (action.checked !== undefined) {
+        var check = document.createElement("span");
+        check.className = "ctx-check";
+        check.textContent = action.checked ? "\u2713" : "";
+        btn.appendChild(check);
+      }
+
+      if (action.submenu) {
+        var arrow = document.createElement("span");
+        arrow.className = "ctx-arrow";
+        arrow.textContent = "\u203A";
+        btn.appendChild(arrow);
+        btn.addEventListener("click", function () {
+          haptic(5);
+          showContextMenu(action.label, action.submenu);
+        });
+      } else if (action.onTap) {
+        btn.addEventListener("click", function () {
+          haptic(10);
+          closeContextMenu();
+          action.onTap();
+        });
+      }
+
+      container.appendChild(btn);
+    });
+  }
+
+  function closeContextMenu() {
+    if (!activeContextMenu) return;
+    var menu = activeContextMenu;
+    activeContextMenu = null;
+    releaseFocusTrap(menu);
+
+    var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reducedMotion) {
+      menu.remove();
+      return;
+    }
+    menu.classList.add("closing");
+    setTimeout(function () { menu.remove(); }, 150);
+  }
+
+  // ====================================================================
+  // Long-press detection
+  // ====================================================================
+
+  /**
+   * Attach long-press detection to an element.
+   * @param {Element} el - Target element
+   * @param {Function} onLongPress - Called with the original event when long-press fires
+   */
+  function attachLongPress(el, onLongPress) {
+    var timer = null;
+    var startX = 0, startY = 0;
+    var HOLD_MS = 500;
+    var MOVE_THRESHOLD = 10;
+    var fired = false;
+
+    function onDown(e) {
+      if (e.button && e.button !== 0) return; // Only primary button
+      fired = false;
+      var point = e.touches ? e.touches[0] : e;
+      startX = point.clientX;
+      startY = point.clientY;
+      el.classList.add("long-press-active");
+      timer = setTimeout(function () {
+        fired = true;
+        el.classList.remove("long-press-active");
+        onLongPress(e);
+      }, HOLD_MS);
+    }
+
+    function onMove(e) {
+      if (!timer) return;
+      var point = e.touches ? e.touches[0] : e;
+      var dx = Math.abs(point.clientX - startX);
+      var dy = Math.abs(point.clientY - startY);
+      if (dx > MOVE_THRESHOLD || dy > MOVE_THRESHOLD) {
+        cancel();
+      }
+    }
+
+    function cancel() {
+      if (timer) { clearTimeout(timer); timer = null; }
+      el.classList.remove("long-press-active");
+    }
+
+    function onUp(e) {
+      cancel();
+      // Prevent tap from firing after long-press
+      if (fired) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }
+
+    el.addEventListener("pointerdown", onDown);
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", cancel);
+    // Cancel on scroll (parent scroll can move without pointermove firing)
+    el.addEventListener("touchmove", onMove, { passive: true });
+  }
+
+  // ====================================================================
+  // Context menu actions for items
+  // ====================================================================
+
+  function buildItemContextActions(item) {
+    var actions = [];
+
+    // Edit (open detail)
+    actions.push({
+      icon: "\u270F\uFE0F",
+      label: "Edit",
+      onTap: function () { location.hash = "#/item/" + item.id; }
+    });
+
+    // Toggle complete
+    actions.push({
+      icon: item.complete ? "\u25CB" : "\u2713",
+      label: item.complete ? "Mark Incomplete" : "Mark Complete",
+      onTap: function () { onToggle(item.id); }
+    });
+
+    actions.push({ divider: true });
+
+    // Set priority sub-menu
+    var priorities = [
+      { label: "High", value: 1, icon: "\u{1F534}" },
+      { label: "Normal", value: 2, icon: "\u{1F535}" },
+      { label: "Low", value: 3, icon: "\u26AA" }
+    ];
+    actions.push({
+      icon: "\u{1F3F7}\uFE0F",
+      label: "Priority",
+      submenu: priorities.map(function (p) {
+        return {
+          icon: p.icon,
+          label: p.label,
+          checked: item.priority === p.value,
+          onTap: function () {
+            setPriority(item.id, p.value);
+          }
+        };
+      })
+    });
+
+    // Move to column sub-menu (if board data is available)
+    if (cachedBoardData && cachedBoardData.board_columns && cachedBoardData.board_columns.length > 0) {
+      var columns = cachedBoardData.board_columns;
+      actions.push({
+        icon: "\u{1F4CB}",
+        label: "Move to Column",
+        submenu: columns.map(function (col) {
+          return {
+            icon: col === columns[0] ? "\u{1F4E5}" : col === columns[columns.length - 1] ? "\u2705" : "\u25AB",
+            label: col,
+            checked: item.board_column === col,
+            onTap: function () {
+              moveToColumn(item.id, col);
+            }
+          };
+        })
+      });
+    }
+
+    actions.push({ divider: true });
+
+    // Delete
+    actions.push({
+      icon: "\u{1F5D1}\uFE0F",
+      label: "Delete",
+      danger: true,
+      onTap: function () {
+        var cardEl = document.querySelector('[data-id="' + item.id + '"]');
+        onDeleteWithUndo(item.id, item.reminder, cardEl);
+      }
+    });
+
+    return actions;
+  }
+
+  async function setPriority(itemId, priority) {
+    var path = "/items/" + itemId;
+    var opts = {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ priority: priority })
+    };
+    if (!isOnline) {
+      enqueueOfflineEdit(path, opts);
+      return;
+    }
+    try {
+      await api(path, opts);
+      await refreshCurrentList();
+    } catch (e) {
+      enqueueOfflineEdit(path, opts);
+    }
+  }
+
+  async function moveToColumn(itemId, column) {
+    var path = "/items/" + itemId + "/move";
+    var opts = {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ column: column })
+    };
+    if (!isOnline) {
+      enqueueOfflineEdit(path, opts);
+      return;
+    }
+    try {
+      await api(path, opts);
+      await refreshCurrentList();
+      showToast("Moved to " + column);
+    } catch (e) {
+      enqueueOfflineEdit(path, opts);
+    }
+  }
+
+  function openItemContextMenu(item) {
+    var title = item.reminder.length > 40
+      ? item.reminder.substring(0, 40) + "\u2026"
+      : item.reminder;
+    showContextMenu(title, buildItemContextActions(item));
+  }
+
+  // ====================================================================
   // Swipe gestures on item cards
   // ====================================================================
 
@@ -922,6 +1237,11 @@
       location.hash = "#/item/" + item.id;
     });
 
+    // Long-press for context menu
+    attachLongPress(div, function () {
+      openItemContextMenu(item);
+    });
+
     // Swipe gestures
     attachSwipe(div, item.id, item.reminder);
 
@@ -1069,6 +1389,11 @@
       location.hash = "#/item/" + item.id;
     });
 
+    // Long-press for context menu
+    attachLongPress(card, function () {
+      openItemContextMenu(item);
+    });
+
     return card;
   }
 
@@ -1191,8 +1516,6 @@
 
   function openDetailSheet(itemId) {
     if (!detailSheet || !detailBody) return;
-    currentDetailItemId = itemId;
-
     // Find item in cache
     var item = null;
     for (var i = 0; i < cachedItems.length; i++) {
@@ -1508,7 +1831,6 @@
 
   function closeDetailSheet() {
     animateSheetClose(detailSheet, function () {
-      currentDetailItemId = null;
       if (location.hash.startsWith("#/item/")) location.hash = "#/";
     });
   }

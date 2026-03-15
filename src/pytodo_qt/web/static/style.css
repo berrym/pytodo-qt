@@ -1672,6 +1672,147 @@ body {
 }
 
 /* ============================================================
+   Context menu (bottom action sheet)
+   ============================================================ */
+
+.context-menu {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  display: flex;
+  align-items: flex-end;
+}
+
+.context-menu-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+}
+
+.context-menu-content {
+  position: relative;
+  width: 100%;
+  background: var(--bg);
+  border-radius: var(--radius) var(--radius) 0 0;
+  animation: sheet-up 0.2s ease-out;
+  padding-bottom: var(--safe-bottom);
+  max-height: 80dvh;
+  overflow-y: auto;
+}
+
+.context-menu-title {
+  padding: 14px 16px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+
+.context-menu-action {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.context-menu-action:hover {
+  background: var(--hover);
+}
+
+.context-menu-action:active {
+  background: var(--accent-subtle);
+}
+
+.context-menu-action.danger {
+  color: var(--danger);
+}
+
+.context-menu-action .ctx-icon {
+  width: 24px;
+  text-align: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.context-menu-action .ctx-label {
+  flex: 1;
+}
+
+.context-menu-action .ctx-arrow {
+  color: var(--text-secondary);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.context-menu-action .ctx-check {
+  color: var(--accent);
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.context-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+.context-menu-cancel {
+  display: block;
+  width: 100%;
+  padding: 14px 16px;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
+
+.context-menu-cancel:active {
+  background: var(--accent-subtle);
+}
+
+.context-menu.closing .context-menu-content {
+  animation: sheet-down 0.15s ease-in forwards;
+}
+
+.context-menu.closing .context-menu-backdrop {
+  animation: backdrop-out 0.15s ease-in forwards;
+}
+
+/* Long-press visual feedback on items and board cards */
+.item.long-press-active,
+.board-card.long-press-active {
+  transform: scale(0.97);
+  opacity: 0.85;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+@media (min-width: 600px) {
+  .context-menu-content {
+    max-width: 400px;
+    margin: 0 auto;
+    border-radius: var(--radius);
+    margin-bottom: 10dvh;
+  }
+}
+
+/* ============================================================
    Reduced motion
    ============================================================ */
 
