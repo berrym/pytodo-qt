@@ -1795,9 +1795,10 @@ body {
   animation: backdrop-out 0.15s ease-in forwards;
 }
 
-/* Long-press visual feedback on items and board cards */
+/* Long-press visual feedback on items, board cards, and column headers */
 .item.long-press-active,
-.board-card.long-press-active {
+.board-card.long-press-active,
+.board-column-header.long-press-active {
   transform: scale(0.97);
   opacity: 0.85;
   transition: transform 0.15s ease, opacity 0.15s ease;

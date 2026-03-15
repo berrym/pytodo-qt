@@ -1209,9 +1209,60 @@ class TestColumnManagement:
     async def test_remove_column(self):
         db = _make_db_with_data()
         lst = next(iter(db.lists.values()))
-        # Put an item in "In Progress" so we can verify fallback
+        lst.board_columns = ["To Do", "In Progress", "Review", "Done"]
         item = next(iter(lst.active_items()))
-        item.board_column = "In Progress"
+        item.board_column = "Review"
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.patch(
+                f"/api/lists/{lst.id}/columns",
+                json={"action": "remove", "name": "Review"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert "Review" not in data["board_columns"]
+            # Item should have been moved to first column (inbox)
+            assert item.board_column == "To Do"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_remove_first_column_fails(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        lst.board_columns = ["To Do", "In Progress", "Review", "Done"]
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.patch(
+                f"/api/lists/{lst.id}/columns",
+                json={"action": "remove", "name": "To Do"},
+            )
+            assert resp.status == 400
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_remove_last_column_fails(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.patch(
+                f"/api/lists/{lst.id}/columns",
+                json={"action": "remove", "name": "Done"},
+            )
+            assert resp.status == 400
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_remove_below_min_3_fails(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        # Default is 3 columns — can't remove any middle column
         client = await _make_client(db)
         await client.start_server()
         try:
@@ -1219,26 +1270,35 @@ class TestColumnManagement:
                 f"/api/lists/{lst.id}/columns",
                 json={"action": "remove", "name": "In Progress"},
             )
-            assert resp.status == 200
-            data = await resp.json()
-            assert "In Progress" not in data["board_columns"]
-            # Item should have been moved to fallback column
-            assert item.board_column in data["board_columns"]
+            assert resp.status == 400
         finally:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_remove_last_column_fails(self):
-        db = Database()
-        lst = create_todo_list("Single")
-        lst.board_columns = ["Only"]
-        db.add_list(lst)
+    async def test_wip_limit_first_column_fails(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
         client = await _make_client(db)
         await client.start_server()
         try:
             resp = await client.patch(
                 f"/api/lists/{lst.id}/columns",
-                json={"action": "remove", "name": "Only"},
+                json={"action": "set_wip_limit", "name": "To Do", "limit": 3},
+            )
+            assert resp.status == 400
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_wip_limit_last_column_fails(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.patch(
+                f"/api/lists/{lst.id}/columns",
+                json={"action": "set_wip_limit", "name": "Done", "limit": 3},
             )
             assert resp.status == 400
         finally:
@@ -2109,5 +2169,125 @@ class TestUpdateSort:
             assert data["sort_tiers"][1]["dimension"] == "completion"
             assert data["sort_tiers"][2]["dimension"] == "priority"
             assert data["sort_tiers"][2]["reverse"] is True
+        finally:
+            await client.close()
+
+
+# ===========================================================================
+# Board layout presets
+# ===========================================================================
+
+
+class TestPresets:
+    @pytest.mark.asyncio
+    async def test_get_presets(self):
+        client = await _make_client()
+        await client.start_server()
+        try:
+            resp = await client.get("/api/presets")
+            assert resp.status == 200
+            data = await resp.json()
+            presets = data["presets"]
+            assert len(presets) == 4
+            names = [p["name"] for p in presets]
+            assert "Simple" in names
+            assert "With Review" in names
+            assert "With Testing" in names
+            assert "Backlog" in names
+            # Each preset has columns
+            for p in presets:
+                assert len(p["columns"]) >= 3
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_apply_preset(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.board_column = "In Progress"
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{lst.id}/apply-preset",
+                json={"columns": ["To Do", "In Progress", "Review", "Done"]},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["board_columns"] == ["To Do", "In Progress", "Review", "Done"]
+            # Item stays in "In Progress" (exact name match)
+            assert item.board_column == "In Progress"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_apply_preset_remaps_items(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.board_column = "In Progress"
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            # Apply a preset that doesn't have "In Progress"
+            resp = await client.post(
+                f"/api/lists/{lst.id}/apply-preset",
+                json={"columns": ["Backlog", "To Do", "In Progress", "Done"]},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["board_columns"] == ["Backlog", "To Do", "In Progress", "Done"]
+            assert data["remapped"] >= 0
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_apply_preset_completion_remap(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.board_column = "Done"  # In completion column
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            # Apply preset with different last column name
+            resp = await client.post(
+                f"/api/lists/{lst.id}/apply-preset",
+                json={"columns": ["Inbox", "Working", "Finished"]},
+            )
+            assert resp.status == 200
+            # Item was in "Done" (old last col) → "Finished" (new last col)
+            assert item.board_column == "Finished"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_apply_preset_invalid_columns(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{lst.id}/apply-preset",
+                json={"columns": ["Only"]},
+            )
+            assert resp.status == 400
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_apply_preset_duplicate_columns(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{lst.id}/apply-preset",
+                json={"columns": ["To Do", "To Do", "Done"]},
+            )
+            assert resp.status == 400
         finally:
             await client.close()

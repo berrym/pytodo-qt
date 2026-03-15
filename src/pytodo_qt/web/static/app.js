@@ -46,6 +46,7 @@
   var emptyMsg = document.getElementById("empty-msg");
   var boardContainer = document.getElementById("board-container");
   var boardEmptyMsg = document.getElementById("board-empty-msg");
+  var boardLayoutBtn = document.getElementById("board-layout-btn");
   var addSheet = document.getElementById("add-sheet");
   var addForm = document.getElementById("add-form");
   var addInput = document.getElementById("add-input");
@@ -587,6 +588,13 @@
     })(di));
   }
 
+  // Board layout preset button
+  if (boardLayoutBtn) {
+    boardLayoutBtn.addEventListener("click", function () {
+      openPresetPicker();
+    });
+  }
+
   // ====================================================================
   // Data fingerprinting (skip re-render when unchanged)
   // ====================================================================
@@ -913,6 +921,172 @@
       ? item.reminder.substring(0, 40) + "\u2026"
       : item.reminder;
     showContextMenu(title, buildItemContextActions(item));
+  }
+
+  // ====================================================================
+  // Column management (context menu + actions)
+  // ====================================================================
+
+  function openColumnContextMenu(colName, colIdx, totalColumns, itemCount) {
+    var isFirst = colIdx === 0;
+    var isLast = colIdx === totalColumns - 1;
+    var actions = [];
+
+    // Rename (all columns)
+    actions.push({
+      icon: "\u270F\uFE0F",
+      label: "Rename",
+      onTap: function () { promptRenameColumn(colName); }
+    });
+
+    // WIP limit (middle columns only)
+    if (!isFirst && !isLast) {
+      actions.push({
+        icon: "\u{1F522}",
+        label: "Set WIP Limit",
+        onTap: function () { promptWipLimit(colName); }
+      });
+    }
+
+    // Delete (middle columns only, min 3 total)
+    if (!isFirst && !isLast && totalColumns > 3) {
+      actions.push({ divider: true });
+      var firstCol = cachedBoardData ? cachedBoardData.board_columns[0] : "first column";
+      actions.push({
+        icon: "\u{1F5D1}\uFE0F",
+        label: "Delete",
+        danger: true,
+        onTap: function () {
+          var msg = itemCount > 0
+            ? itemCount + " item" + (itemCount > 1 ? "s" : "") + ' will be moved to "' + firstCol + '"'
+            : "This column is empty";
+          showContextMenu("Delete \"" + colName + "\"?", [
+            { label: msg },
+            { divider: true },
+            {
+              icon: "\u{1F5D1}\uFE0F",
+              label: "Delete Column",
+              danger: true,
+              onTap: function () { deleteColumn(colName); }
+            }
+          ]);
+        }
+      });
+    }
+
+    var icon = isFirst ? "\u{1F4E5}" : isLast ? "\u2705" : "\u{1F4CB}";
+    showContextMenu(icon + " " + colName, actions);
+  }
+
+  function promptRenameColumn(oldName) {
+    var newName = prompt("Rename column:", oldName);
+    if (!newName || newName.trim() === "" || newName.trim() === oldName) return;
+    newName = newName.trim().substring(0, 50);
+    renameColumn(oldName, newName);
+  }
+
+  function promptWipLimit(colName) {
+    var currentLimit = (cachedBoardData && cachedBoardData.wip_limits)
+      ? cachedBoardData.wip_limits[colName] || 0 : 0;
+    var input = prompt("WIP limit for \"" + colName + "\" (0 = no limit):", String(currentLimit));
+    if (input === null) return;
+    var limit = parseInt(input, 10);
+    if (isNaN(limit) || limit < 0 || limit > 99) {
+      showToast("WIP limit must be 0\u201399");
+      return;
+    }
+    setWipLimit(colName, limit);
+  }
+
+  async function renameColumn(oldName, newName) {
+    try {
+      await api("/lists/" + currentListId + "/columns", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "rename", old_name: oldName, new_name: newName })
+      });
+      await refreshCurrentList();
+      showToast("Renamed to \"" + newName + "\"");
+    } catch (e) {
+      showToast("Rename failed: " + e.message);
+    }
+  }
+
+  async function setWipLimit(colName, limit) {
+    try {
+      await api("/lists/" + currentListId + "/columns", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "set_wip_limit", name: colName, limit: limit })
+      });
+      await refreshCurrentList();
+      showToast(limit > 0 ? "WIP limit set to " + limit : "WIP limit removed");
+    } catch (e) {
+      showToast("Failed: " + e.message);
+    }
+  }
+
+  async function deleteColumn(colName) {
+    try {
+      await api("/lists/" + currentListId + "/columns", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "remove", name: colName })
+      });
+      await refreshCurrentList();
+      showToast("Column \"" + colName + "\" deleted");
+    } catch (e) {
+      showToast("Delete failed: " + e.message);
+    }
+  }
+
+  // ====================================================================
+  // Layout preset picker
+  // ====================================================================
+
+  var cachedPresets = null;
+
+  async function openPresetPicker() {
+    if (!cachedPresets) {
+      try {
+        var data = await api("/presets");
+        cachedPresets = data.presets;
+      } catch (e) {
+        showToast("Failed to load presets");
+        return;
+      }
+    }
+
+    var currentCols = cachedBoardData ? cachedBoardData.board_columns : [];
+    var actions = cachedPresets.map(function (preset) {
+      var isActive = JSON.stringify(currentCols) === JSON.stringify(preset.columns);
+      return {
+        icon: isActive ? "\u2713" : "\u25AB",
+        label: preset.name,
+        checked: isActive,
+        onTap: function () { applyPreset(preset.columns, preset.name); }
+      };
+    });
+
+    showContextMenu("Board Layout", actions);
+  }
+
+  async function applyPreset(columns, presetName) {
+    try {
+      var result = await api("/lists/" + currentListId + "/apply-preset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ columns: columns })
+      });
+      await refreshCurrentList();
+      var msg = "Applied \"" + presetName + "\"";
+      if (result.remapped > 0) {
+        msg += " (" + result.remapped + " item" + (result.remapped > 1 ? "s" : "") + " remapped)";
+      }
+      showToast(msg);
+    } catch (e) {
+      showToast("Failed: " + e.message);
+    }
   }
 
   // ====================================================================
@@ -1281,9 +1455,13 @@
     }
     if (boardEmptyMsg) boardEmptyMsg.classList.add("hidden");
 
-    data.board_columns.forEach(function (colName) {
+    var totalColumns = data.board_columns.length;
+
+    data.board_columns.forEach(function (colName, colIdx) {
       var colItems = data.columns[colName] || [];
       var wipLimit = (data.wip_limits || {})[colName] || 0;
+      var isFirst = colIdx === 0;
+      var isLast = colIdx === totalColumns - 1;
 
       var col = document.createElement("div");
       col.className = "board-column";
@@ -1292,7 +1470,8 @@
       var header = document.createElement("div");
       header.className = "board-column-header";
       var nameSpan = document.createElement("span");
-      nameSpan.textContent = colName;
+      var colIcon = isFirst ? "\u{1F4E5} " : isLast ? "\u2705 " : "";
+      nameSpan.textContent = colIcon + colName;
       header.appendChild(nameSpan);
 
       var countSpan = document.createElement("span");
@@ -1304,6 +1483,12 @@
       }
       countSpan.textContent = countText;
       header.appendChild(countSpan);
+
+      // Long-press on header for column management
+      attachLongPress(header, function () {
+        openColumnContextMenu(colName, colIdx, totalColumns, colItems.length);
+      });
+
       col.appendChild(header);
 
       // Items

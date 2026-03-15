@@ -90,6 +90,9 @@ def setup_routes(app: web.Application) -> None:
     # Sort configuration
     app.router.add_get("/api/sort", handle_get_sort)
     app.router.add_put("/api/sort", handle_update_sort)
+    # Board layout presets
+    app.router.add_get("/api/presets", handle_get_presets)
+    app.router.add_post("/api/lists/{list_id}/apply-preset", handle_apply_preset)
 
 
 # ---------------------------------------------------------------------------
@@ -294,9 +297,13 @@ async def handle_update_columns(request: web.Request) -> web.Response:
         name = body.get("name", "").strip()
         if name not in lst.board_columns:
             return _error(404, "Column not found")
-        if len(lst.board_columns) <= 1:
-            return _error(400, "Cannot remove the last column")
-        fallback = lst.board_columns[0] if lst.board_columns[0] != name else lst.board_columns[1]
+        if len(lst.board_columns) <= 3:
+            return _error(400, "Cannot have fewer than 3 columns")
+        if name == lst.board_columns[0]:
+            return _error(400, "Cannot delete the first column (inbox)")
+        if name == lst.board_columns[-1]:
+            return _error(400, "Cannot delete the last column (completion)")
+        fallback = lst.board_columns[0]
         for item in lst.active_items():
             if item.board_column == name:
                 item.board_column = fallback
@@ -333,6 +340,8 @@ async def handle_update_columns(request: web.Request) -> web.Response:
         limit = int(body.get("limit", 0))
         if name not in lst.board_columns:
             return _error(404, "Column not found")
+        if name == lst.board_columns[0] or name == lst.board_columns[-1]:
+            return _error(400, "Cannot set WIP limit on first or last column")
         lst.set_wip_limit(name, limit)
 
     else:
@@ -806,6 +815,107 @@ async def handle_update_sort(request: web.Request) -> web.Response:
                 {"dimension": dim, "reverse": rev}
                 for dim, rev in zip(dimensions, reverses, strict=True)
             ],
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Board layout presets
+# ---------------------------------------------------------------------------
+
+_BOARD_PRESETS: dict[str, list[str]] = {
+    "Simple": ["To Do", "In Progress", "Done"],
+    "With Review": ["To Do", "In Progress", "Review", "Done"],
+    "With Testing": ["To Do", "In Progress", "Review", "Testing", "Done"],
+    "Backlog": ["Backlog", "To Do", "In Progress", "Done"],
+}
+
+
+async def handle_get_presets(request: web.Request) -> web.Response:
+    """GET /api/presets — Return available board layout presets."""
+    _ = request  # unused but required by aiohttp handler signature
+    return web.json_response(
+        {"presets": [{"name": name, "columns": cols} for name, cols in _BOARD_PRESETS.items()]}
+    )
+
+
+async def handle_apply_preset(request: web.Request) -> web.Response:
+    """POST /api/lists/{list_id}/apply-preset — Apply a board layout preset.
+
+    Body: {"columns": ["To Do", "In Progress", "Done"]}
+
+    Smart item remapping:
+      1. Exact column name match -> keep
+      2. Last column -> new last column (completion mapping)
+      3. Positional remapping for remaining items
+      4. Unknown -> first column (inbox)
+    """
+    db: Database = request.app[database_key]
+    try:
+        list_id = UUID(request.match_info["list_id"])
+    except ValueError:
+        return _error(400, "Invalid list ID")
+
+    lst = db.get_list(list_id)
+    if lst is None or lst.deleted or lst.private:
+        return _error(404, "List not found")
+
+    try:
+        body = await request.json()
+    except Exception:
+        return _error(400, "Invalid JSON body")
+
+    new_columns = body.get("columns")
+    if not isinstance(new_columns, list) or len(new_columns) < 2:
+        return _error(400, "At least 2 columns are required")
+    if len(new_columns) != len(set(new_columns)):
+        return _error(400, "Column names must be unique")
+
+    old_columns = list(lst.board_columns)
+    new_set = set(new_columns)
+    last_old = old_columns[-1] if old_columns else ""
+    last_new = new_columns[-1]
+    first_new = new_columns[0]
+    old_index = {col: i for i, col in enumerate(old_columns)}
+    old_len = max(len(old_columns) - 1, 1)
+    new_len = max(len(new_columns) - 1, 1)
+
+    remapped = 0
+    for item in lst.active_items():
+        if item.parent_id is not None:
+            continue
+        if item.board_column in new_set:
+            continue  # Column still exists
+        if item.board_column == last_old and last_new:
+            item.board_column = last_new
+            item.mark_updated()
+            remapped += 1
+        elif item.board_column in old_index:
+            rel_pos = old_index[item.board_column] / old_len
+            new_idx = round(rel_pos * new_len)
+            new_idx = max(0, min(new_idx, len(new_columns) - 1))
+            item.board_column = new_columns[new_idx]
+            item.mark_updated()
+            remapped += 1
+        else:
+            item.board_column = first_new
+            item.mark_updated()
+            remapped += 1
+
+    # Clear WIP limits for removed columns
+    for col in old_columns:
+        if col not in new_set:
+            lst.set_wip_limit(col, 0)
+
+    lst.board_columns = list(new_columns)
+    lst.mark_updated()
+
+    _schedule_save_and_refresh(request)
+    return web.json_response(
+        {
+            "board_columns": lst.board_columns,
+            "wip_limits": lst.wip_limits,
+            "remapped": remapped,
         }
     )
 
