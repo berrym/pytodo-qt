@@ -356,15 +356,6 @@ body {
   cursor: pointer;
 }
 
-.sort-select {
-  font-size: 13px;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--text);
-}
-
 /* ============================================================
    Item cards (list view)
    ============================================================ */

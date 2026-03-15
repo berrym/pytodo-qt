@@ -5,7 +5,6 @@
   var API = "/api";
   var OFFLINE_QUEUE_KEY = "pytodo_offline_queue";
   var VIEW_MODE_KEY = "pytodo_view_mode";
-  var SORT_KEY = "pytodo_sort";
   var INSTALL_DISMISSED_KEY = "pytodo_install_dismissed";
 
   var currentListId = null;
@@ -40,7 +39,6 @@
   var viewToggle = document.getElementById("view-toggle");
   var viewBtns = viewToggle ? viewToggle.querySelectorAll(".view-btn") : [];
   var sortBtn = document.getElementById("sort-btn");
-  var sortSelect = document.getElementById("sort-select");
   var itemsContainer = document.getElementById("items-container");
   var emptyMsg = document.getElementById("empty-msg");
   var boardContainer = document.getElementById("board-container");
@@ -403,64 +401,97 @@
   });
 
   // ====================================================================
-  // Sorting
+  // Three-tier sorting (matches desktop _sort_fragment)
   // ====================================================================
 
-  var currentSort = localStorage.getItem(SORT_KEY) || "default";
+  var currentSortTiers = [
+    { dimension: "completion", reverse: false },
+    { dimension: "due_date", reverse: false },
+    { dimension: "priority", reverse: false },
+  ];
 
-  if (sortBtn) {
-    sortBtn.addEventListener("click", function () {
-      sortSelect.classList.toggle("hidden");
-    });
+  // Fetch sort tiers from API (non-blocking, falls back to defaults)
+  function fetchSortTiers() {
+    fetch(API + "/sort")
+      .then(function (r) {
+        return r.ok ? r.json() : null;
+      })
+      .then(function (data) {
+        if (data && data.sort_tiers && data.sort_tiers.length === 3) {
+          currentSortTiers = data.sort_tiers;
+          updateSortButtonLabel();
+        }
+      })
+      .catch(function () {
+        /* keep defaults */
+      });
   }
 
-  if (sortSelect) {
-    sortSelect.value = currentSort;
-    sortSelect.addEventListener("change", function () {
-      currentSort = sortSelect.value;
-      localStorage.setItem(SORT_KEY, currentSort);
-      sortSelect.classList.add("hidden");
-      renderItems(cachedItems, true);
-    });
+  function updateSortButtonLabel() {
+    if (!sortBtn) return;
+    var dim = currentSortTiers[0].dimension;
+    var labels = { completion: "Completion", due_date: "Due Date", priority: "Priority" };
+    var arrow = currentSortTiers[0].reverse ? "\u2193" : "\u2191";
+    sortBtn.textContent = "Sort: " + (labels[dim] || dim) + " " + arrow;
+  }
+
+  /**
+   * Compute a comparable sort-key array for an item, matching the desktop
+   * _sort_fragment() function exactly.
+   *
+   * Each tier appends one or more values to the key array. The resulting
+   * arrays are compared element-by-element in sortItems().
+   */
+  function sortKey(item, tiers) {
+    var key = [];
+    for (var i = 0; i < tiers.length; i++) {
+      var dim = tiers[i].dimension;
+      var rev = tiers[i].reverse;
+      if (dim === "completion") {
+        var val = item.complete ? 1 : 0;
+        key.push(rev ? -val : val);
+      } else if (dim === "due_date") {
+        if (!item.due_date) {
+          // No date — always sorts last (regardless of reverse)
+          key.push(1, 0, 0);
+        } else {
+          // Date ordinal from ISO string (days since epoch for comparison)
+          var d = new Date(item.due_date + "T00:00:00");
+          var dateOrd = Math.floor(d.getTime() / 86400000);
+          var timeSecs = -1;
+          if (item.due_time) {
+            var parts = item.due_time.split(":");
+            timeSecs =
+              parseInt(parts[0], 10) * 3600 +
+              parseInt(parts[1], 10) * 60 +
+              (parts[2] ? parseInt(parts[2], 10) : 0);
+          }
+          key.push(0, rev ? -dateOrd : dateOrd, rev ? -timeSecs : timeSecs);
+        }
+      } else if (dim === "priority") {
+        var p = item.priority || 2;
+        key.push(rev ? -p : p);
+      }
+    }
+    return key;
   }
 
   function sortItems(items) {
+    var tiers = currentSortTiers;
     var arr = items.slice();
-    switch (currentSort) {
-      case "priority":
-        arr.sort(function (a, b) {
-          if (a.complete !== b.complete) return a.complete ? 1 : -1;
-          return a.priority - b.priority;
-        });
-        break;
-      case "due_date":
-        arr.sort(function (a, b) {
-          if (a.complete !== b.complete) return a.complete ? 1 : -1;
-          if (!a.due_date && !b.due_date) return 0;
-          if (!a.due_date) return 1;
-          if (!b.due_date) return -1;
-          return a.due_date.localeCompare(b.due_date);
-        });
-        break;
-      case "alpha":
-        arr.sort(function (a, b) {
-          return a.reminder.localeCompare(b.reminder);
-        });
-        break;
-      case "created":
-        arr.sort(function (a, b) {
-          return a.created_at - b.created_at;
-        });
-        break;
-      default: // default: completion, then priority, then alpha
-        arr.sort(function (a, b) {
-          if (a.complete !== b.complete) return a.complete ? 1 : -1;
-          if (a.priority !== b.priority) return a.priority - b.priority;
-          return a.reminder.localeCompare(b.reminder);
-        });
-    }
+    arr.sort(function (a, b) {
+      var ka = sortKey(a, tiers);
+      var kb = sortKey(b, tiers);
+      for (var i = 0; i < ka.length; i++) {
+        if (ka[i] !== kb[i]) return ka[i] < kb[i] ? -1 : 1;
+      }
+      // Tie-breaker: reminder text (case-insensitive)
+      return a.reminder.toLowerCase().localeCompare(b.reminder.toLowerCase());
+    });
     return arr;
   }
+
+  fetchSortTiers();
 
   // ====================================================================
   // Data fingerprinting (skip re-render when unchanged)
