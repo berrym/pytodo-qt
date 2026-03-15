@@ -207,6 +207,46 @@
     </div>
   </div>
 
+  <!-- Sort configuration sheet -->
+  <div id="sort-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-label="Sort settings">
+    <div class="sheet-backdrop"></div>
+    <div class="sheet-content">
+      <div class="sheet-header">
+        <h2>Sort Order</h2>
+        <button id="sort-sheet-close" class="sheet-close" aria-label="Close">&times;</button>
+      </div>
+      <div id="sort-sheet-body" class="sort-sheet-body">
+        <div class="sort-tier-row">
+          <label>Primary</label>
+          <select class="sort-tier-select" data-tier="0" aria-label="Primary sort dimension">
+            <option value="completion">Completion</option>
+            <option value="due_date">Due Date</option>
+            <option value="priority">Priority</option>
+          </select>
+          <button class="sort-dir-btn" data-tier="0" aria-label="Toggle primary sort direction" title="Toggle direction">&#8593;</button>
+        </div>
+        <div class="sort-tier-row">
+          <label>Secondary</label>
+          <select class="sort-tier-select" data-tier="1" aria-label="Secondary sort dimension">
+            <option value="completion">Completion</option>
+            <option value="due_date">Due Date</option>
+            <option value="priority">Priority</option>
+          </select>
+          <button class="sort-dir-btn" data-tier="1" aria-label="Toggle secondary sort direction" title="Toggle direction">&#8593;</button>
+        </div>
+        <div class="sort-tier-row">
+          <label>Tertiary</label>
+          <select class="sort-tier-select" data-tier="2" aria-label="Tertiary sort dimension">
+            <option value="completion">Completion</option>
+            <option value="due_date">Due Date</option>
+            <option value="priority">Priority</option>
+          </select>
+          <button class="sort-dir-btn" data-tier="2" aria-label="Toggle tertiary sort direction" title="Toggle direction">&#8593;</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast container (ARIA live for screen readers) -->
   <div id="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>
 

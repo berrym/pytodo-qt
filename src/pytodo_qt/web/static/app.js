@@ -39,6 +39,10 @@
   var viewToggle = document.getElementById("view-toggle");
   var viewBtns = viewToggle ? viewToggle.querySelectorAll(".view-btn") : [];
   var sortBtn = document.getElementById("sort-btn");
+  var sortSheet = document.getElementById("sort-sheet");
+  var sortSheetClose = document.getElementById("sort-sheet-close");
+  var sortTierSelects = document.querySelectorAll(".sort-tier-select");
+  var sortDirBtns = document.querySelectorAll(".sort-dir-btn");
   var itemsContainer = document.getElementById("items-container");
   var emptyMsg = document.getElementById("empty-msg");
   var boardContainer = document.getElementById("board-container");
@@ -69,12 +73,13 @@
   // Escape key closes any open sheet
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
-    var sheets = [detailSheet, addSheet, listSheet];
+    var sheets = [detailSheet, addSheet, listSheet, sortSheet];
     for (var i = 0; i < sheets.length; i++) {
       if (sheets[i] && !sheets[i].classList.contains("hidden")) {
         if (sheets[i] === detailSheet) closeDetailSheet();
         else if (sheets[i] === addSheet) closeAddSheet();
         else if (sheets[i] === listSheet) closeListSheet();
+        else if (sheets[i] === sortSheet) closeSortSheet();
         e.preventDefault();
         return;
       }
@@ -379,8 +384,7 @@
     });
 
     if (mode === "board") {
-      lastBoardFingerprint = ""; // Force re-render on view switch
-      refreshBoard();
+      refreshBoard(true);
     } else {
       renderItems(cachedItems, true);
     }
@@ -492,6 +496,91 @@
   }
 
   fetchSortTiers();
+
+  // ====================================================================
+  // Sort configuration sheet
+  // ====================================================================
+
+  function syncSortSheetUI() {
+    for (var i = 0; i < sortTierSelects.length; i++) {
+      sortTierSelects[i].value = currentSortTiers[i].dimension;
+    }
+    for (var j = 0; j < sortDirBtns.length; j++) {
+      sortDirBtns[j].textContent = currentSortTiers[j].reverse ? "\u2193" : "\u2191";
+    }
+  }
+
+  function openSortSheet() {
+    if (!sortSheet) return;
+    syncSortSheetUI();
+    sortSheet.classList.remove("hidden");
+    trapFocus(sortSheet);
+  }
+
+  function closeSortSheet() {
+    animateSheetClose(sortSheet);
+  }
+
+  function saveSortTiers() {
+    var payload = { tiers: currentSortTiers };
+    fetch(API + "/sort", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).catch(function () {
+      /* best-effort save */
+    });
+    updateSortButtonLabel();
+    // Re-render current view with new sort order
+    if (viewMode === "list") {
+      renderItems(cachedItems, true);
+    } else if (cachedBoardData) {
+      renderBoard(cachedBoardData, true);
+    }
+  }
+
+  if (sortBtn) {
+    sortBtn.addEventListener("click", function () {
+      openSortSheet();
+    });
+  }
+
+  if (sortSheetClose) sortSheetClose.addEventListener("click", closeSortSheet);
+  if (sortSheet) {
+    var sortBackdrop = sortSheet.querySelector(".sheet-backdrop");
+    if (sortBackdrop) sortBackdrop.addEventListener("click", closeSortSheet);
+  }
+
+  // Tier dimension change with auto-swap (no duplicates)
+  for (var si = 0; si < sortTierSelects.length; si++) {
+    sortTierSelects[si].addEventListener("change", (function (changedIdx) {
+      return function () {
+        var newDim = sortTierSelects[changedIdx].value;
+        // Find if another tier already has this dimension
+        for (var k = 0; k < currentSortTiers.length; k++) {
+          if (k !== changedIdx && currentSortTiers[k].dimension === newDim) {
+            // Swap: give the other tier the dimension we're leaving
+            currentSortTiers[k].dimension = currentSortTiers[changedIdx].dimension;
+            break;
+          }
+        }
+        currentSortTiers[changedIdx].dimension = newDim;
+        syncSortSheetUI();
+        saveSortTiers();
+      };
+    })(si));
+  }
+
+  // Direction toggle buttons
+  for (var di = 0; di < sortDirBtns.length; di++) {
+    sortDirBtns[di].addEventListener("click", (function (tierIdx) {
+      return function () {
+        currentSortTiers[tierIdx].reverse = !currentSortTiers[tierIdx].reverse;
+        syncSortSheetUI();
+        saveSortTiers();
+      };
+    })(di));
+  }
 
   // ====================================================================
   // Data fingerprinting (skip re-render when unchanged)
@@ -846,22 +935,22 @@
   // Render: kanban board view
   // ====================================================================
 
-  async function refreshBoard() {
+  async function refreshBoard(force) {
     if (!currentListId) return;
     try {
       cachedBoardData = await api("/lists/" + currentListId + "/board");
-      renderBoard(cachedBoardData);
+      renderBoard(cachedBoardData, force);
     } catch (e) {
       console.error("Board load failed:", e);
     }
   }
 
-  function renderBoard(data) {
+  function renderBoard(data, force) {
     if (!boardContainer) return;
 
-    // Skip re-render if data hasn't changed
+    // Skip re-render if data hasn't changed (eliminates poll flicker)
     var fp = fingerprint(data);
-    if (fp === lastBoardFingerprint) return;
+    if (!force && fp === lastBoardFingerprint) return;
     lastBoardFingerprint = fp;
 
     boardContainer.innerHTML = "";

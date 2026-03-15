@@ -356,6 +356,57 @@ body {
   cursor: pointer;
 }
 
+/* Sort configuration sheet */
+.sort-sheet-body {
+  padding: 8px 0;
+}
+
+.sort-tier-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+}
+
+.sort-tier-row label {
+  width: 80px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.sort-tier-select {
+  flex: 1;
+  font-size: 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  min-width: 0;
+}
+
+.sort-dir-btn {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.sort-dir-btn:active {
+  background: var(--highlight);
+  color: var(--highlight-text);
+}
+
 /* ============================================================
    Item cards (list view)
    ============================================================ */
