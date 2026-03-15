@@ -1140,9 +1140,7 @@ class TestBoardEndpoint:
         client = await _make_client(db)
         await client.start_server()
         try:
-            resp = await client.get(
-                "/api/lists/00000000-0000-0000-0000-000000000000/board"
-            )
+            resp = await client.get("/api/lists/00000000-0000-0000-0000-000000000000/board")
             assert resp.status == 404
         finally:
             await client.close()

@@ -739,6 +739,26 @@
 
     detailBody.innerHTML = "";
 
+    // Completion toggle
+    var statusDiv = document.createElement("div");
+    statusDiv.className = "detail-field";
+    var statusLabel = document.createElement("label");
+    statusLabel.textContent = "Status";
+    statusDiv.appendChild(statusLabel);
+    var statusBtn = document.createElement("button");
+    statusBtn.type = "button";
+    statusBtn.className = "btn-toggle " + (item.complete ? "done" : "active");
+    statusBtn.textContent = item.complete ? "\u2713 Completed" : "Mark Complete";
+    statusBtn.addEventListener("click", async function () {
+      await onToggle(itemId);
+      // Re-open with updated data
+      for (var j = 0; j < cachedItems.length; j++) {
+        if (cachedItems[j].id === itemId) { openDetailSheet(itemId); break; }
+      }
+    });
+    statusDiv.appendChild(statusBtn);
+    detailBody.appendChild(statusDiv);
+
     // Reminder
     var reminderField = makeField("Task", "textarea", item.reminder, function (val) {
       saveItemField(itemId, { reminder: val });
@@ -789,7 +809,7 @@
     }));
 
     // Board column
-    if (cachedBoardData && cachedBoardData.board_columns) {
+    if (cachedBoardData && cachedBoardData.board_columns && cachedBoardData.board_columns.length > 0) {
       var colField = document.createElement("div");
       colField.className = "detail-field";
       var colLabel = document.createElement("label");
@@ -810,6 +830,64 @@
       detailBody.appendChild(colField);
     }
 
+    // Recurrence
+    var recDiv = document.createElement("div");
+    recDiv.className = "detail-field";
+    var recLabel = document.createElement("label");
+    recLabel.textContent = "Recurrence";
+    recDiv.appendChild(recLabel);
+    var recRow = document.createElement("div");
+    recRow.className = "detail-recurrence-row";
+    var recTypeSelect = document.createElement("select");
+    [{ label: "None", value: "" }, { label: "Daily", value: "daily" },
+     { label: "Weekly", value: "weekly" }, { label: "Monthly", value: "monthly" },
+     { label: "Yearly", value: "yearly" }].forEach(function (opt) {
+      var o = document.createElement("option");
+      o.value = opt.value;
+      o.textContent = opt.label;
+      if ((item.recurrence_type || "") === opt.value) o.selected = true;
+      recTypeSelect.appendChild(o);
+    });
+    recRow.appendChild(recTypeSelect);
+    var recIntervalInput = document.createElement("input");
+    recIntervalInput.type = "number";
+    recIntervalInput.min = "1";
+    recIntervalInput.value = item.recurrence_interval || 1;
+    recIntervalInput.placeholder = "Interval";
+    recIntervalInput.style.width = "70px";
+    recIntervalInput.classList.toggle("hidden", !item.recurrence_type);
+    recRow.appendChild(recIntervalInput);
+    recDiv.appendChild(recRow);
+
+    recTypeSelect.addEventListener("change", function () {
+      var val = recTypeSelect.value || null;
+      recIntervalInput.classList.toggle("hidden", !val);
+      saveItemField(itemId, { recurrence_type: val, recurrence_interval: parseInt(recIntervalInput.value) || 1 });
+    });
+    recIntervalInput.addEventListener("change", function () {
+      saveItemField(itemId, { recurrence_interval: parseInt(recIntervalInput.value) || 1 });
+    });
+
+    // Recurrence end conditions (only show if recurring)
+    if (item.recurrence_type) {
+      var endDiv = document.createElement("div");
+      endDiv.className = "detail-recurrence-end";
+      endDiv.appendChild(makeField("End After (count)", "number", item.recurrence_end_count || "", function (val) {
+        saveItemField(itemId, { recurrence_end_count: parseInt(val) || null });
+      }));
+      endDiv.appendChild(makeField("End Date", "date", item.recurrence_end_date || "", function (val) {
+        saveItemField(itemId, { recurrence_end_date: val || null });
+      }));
+      if (item.recurrence_count > 0) {
+        var countInfo = document.createElement("div");
+        countInfo.className = "detail-meta";
+        countInfo.textContent = item.recurrence_count + " completed occurrences";
+        endDiv.appendChild(countInfo);
+      }
+      recDiv.appendChild(endDiv);
+    }
+    detailBody.appendChild(recDiv);
+
     // Estimated pomodoros
     detailBody.appendChild(makeField("Pomodoro Estimate", "number", item.estimated_pomodoros || "", function (val) {
       saveItemField(itemId, { estimated_pomodoros: parseInt(val) || 0 });
@@ -822,6 +900,72 @@
       var total = item.pomodoro_count * 25;
       pomInfo.textContent = item.pomodoro_count + " sessions completed (" + total + " min focused)";
       detailBody.appendChild(pomInfo);
+    }
+
+    // Subtasks
+    var subtaskDiv = document.createElement("div");
+    subtaskDiv.className = "detail-field";
+    var subtaskLabel = document.createElement("label");
+    subtaskLabel.textContent = "Subtasks";
+    subtaskDiv.appendChild(subtaskLabel);
+
+    var children = cachedItems.filter(function (i) { return i.parent_id === itemId; });
+    if (children.length > 0) {
+      var subtaskList = document.createElement("div");
+      subtaskList.className = "detail-subtask-list";
+      children.forEach(function (child) {
+        var row = document.createElement("div");
+        row.className = "detail-subtask-row" + (child.complete ? " completed" : "");
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = child.complete;
+        cb.addEventListener("change", function () { onToggle(child.id); });
+        row.appendChild(cb);
+        var text = document.createElement("span");
+        text.textContent = child.reminder;
+        text.addEventListener("click", function () { openDetailSheet(child.id); });
+        row.appendChild(text);
+        subtaskList.appendChild(row);
+      });
+      subtaskDiv.appendChild(subtaskList);
+    }
+
+    // Inline add subtask
+    var addSubRow = document.createElement("div");
+    addSubRow.className = "detail-add-subtask";
+    var addSubInput = document.createElement("input");
+    addSubInput.type = "text";
+    addSubInput.placeholder = "Add subtask...";
+    var addSubBtn = document.createElement("button");
+    addSubBtn.type = "button";
+    addSubBtn.textContent = "+";
+    addSubBtn.className = "btn-small";
+    addSubBtn.addEventListener("click", async function () {
+      var text = addSubInput.value.trim();
+      if (!text || !currentListId) return;
+      try {
+        await api("/lists/" + currentListId + "/items", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reminder: text, parent_id: itemId }),
+        });
+        addSubInput.value = "";
+        await refreshCurrentList();
+        openDetailSheet(itemId);
+      } catch (e) {
+        showToast("Failed to add subtask");
+      }
+    });
+    addSubInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); addSubBtn.click(); }
+    });
+    addSubRow.appendChild(addSubInput);
+    addSubRow.appendChild(addSubBtn);
+    subtaskDiv.appendChild(addSubRow);
+
+    // Only show subtask section for top-level items
+    if (!item.parent_id) {
+      detailBody.appendChild(subtaskDiv);
     }
 
     // Metadata

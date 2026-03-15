@@ -97,9 +97,7 @@ async def handle_get_lists(request: web.Request) -> web.Response:
         if lst.deleted or lst.private:
             continue
         overdue_count = sum(
-            1
-            for i in lst.active_items()
-            if not i.complete and is_overdue(i.due_date, i.due_time)
+            1 for i in lst.active_items() if not i.complete and is_overdue(i.due_date, i.due_time)
         )
         result.append(
             {

@@ -889,6 +889,130 @@ body {
 .detail-priority-btns button.active-normal { border-color: var(--normal); background: var(--accent-subtle); color: var(--normal); }
 .detail-priority-btns button.active-low { border-color: var(--low); background: var(--bg-secondary); color: var(--low); }
 
+/* -- Completion toggle button -- */
+
+.btn-toggle {
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  min-height: 44px;
+  width: 100%;
+  border: 1px solid var(--border);
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn-toggle.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.btn-toggle.done {
+  background: var(--success-bg, #e8f5e9);
+  color: var(--success-text, #2e7d32);
+  border-color: var(--success-text, #2e7d32);
+}
+
+/* -- Recurrence editing -- */
+
+.detail-recurrence-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.detail-recurrence-row select,
+.detail-recurrence-row input {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.detail-recurrence-row select {
+  flex: 1;
+}
+
+.detail-recurrence-end {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+/* -- Subtasks -- */
+
+.detail-subtask-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-subtask-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 14px;
+}
+
+.detail-subtask-row.completed span {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.detail-subtask-row span {
+  cursor: pointer;
+  flex: 1;
+}
+
+.detail-subtask-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.detail-add-subtask {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.detail-add-subtask input {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.detail-add-subtask input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.btn-small {
+  padding: 8px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  min-width: 40px;
+  min-height: 40px;
+}
+
+.hidden {
+  display: none !important;
+}
+
 .detail-meta {
   font-size: 12px;
   color: var(--text-secondary);
