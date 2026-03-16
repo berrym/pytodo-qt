@@ -89,6 +89,25 @@ class WebServer:
             self._site = None
             logger.log.info("Web server stopped")
 
+    def notify_clients(self) -> None:
+        """Broadcast a refresh event to all connected WebSocket clients.
+
+        Safe to call from sync Qt code — schedules the async broadcast
+        on the running event loop.
+        """
+        if not self._app:
+            return
+        from .api import _broadcast_refresh, ws_clients_key
+
+        clients = self._app.get(ws_clients_key)
+        if not clients:
+            return
+        import asyncio
+        import contextlib
+
+        with contextlib.suppress(RuntimeError):
+            asyncio.ensure_future(_broadcast_refresh(clients))
+
     @property
     def app(self) -> web.Application | None:
         """Return the aiohttp application (for testing)."""

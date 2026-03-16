@@ -1209,11 +1209,13 @@ class MainWindow(QMainWindow):
             self._auto_syncing_devices.discard(device.id)
 
     def _on_undo_index_changed(self) -> None:
-        """Notify auto-sync scheduler of changes, skipping private lists."""
+        """Notify auto-sync scheduler and web clients of changes."""
         active_list = self._database.active_list
         if active_list and active_list.private:
             return
         self._auto_scheduler.notify_change()
+        if self._web_server is not None:
+            self._web_server.notify_clients()
 
     def _on_auto_push(self) -> None:
         """Handle debounced auto-push: push local data to online trusted peers."""
@@ -1443,6 +1445,8 @@ class MainWindow(QMainWindow):
                 advance_all_overdue_recurring(self._database)
                 self._save_database()
                 self._refresh_ui()
+                if self._web_server is not None:
+                    self._web_server.notify_clients()
                 logger.log.info("Received and merged %d items from remote push", merged)
             else:
                 logger.log.info(
@@ -1595,6 +1599,8 @@ class MainWindow(QMainWindow):
         if count > 0:
             self._reconcile_board_columns()
             self._save_database()
+            if self._web_server is not None:
+                self._web_server.notify_clients()
 
         active_list = self._database.active_list
         if active_list is None:

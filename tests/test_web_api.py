@@ -2933,3 +2933,20 @@ class TestWebSocket:
                 await ws2.close()
         finally:
             await client.close()
+
+    @pytest.mark.asyncio
+    async def test_ws_notify_clients_from_server(self):
+        """WebServer.notify_clients() broadcasts to connected WS clients."""
+        db = _make_db_with_data()
+        ws = WebServer(database=db)
+        app = ws.create_app()
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            async with client.ws_connect("/ws") as ws_conn:
+                ws.notify_clients()
+                msg = await ws_conn.receive_json(timeout=2.0)
+                assert msg["event"] == "refresh"
+                await ws_conn.close()
+        finally:
+            await client.close()
