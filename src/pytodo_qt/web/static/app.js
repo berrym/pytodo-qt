@@ -20,6 +20,7 @@
   var lastItemsFingerprint = "";
   var lastListsFingerprint = "";
   var lastBoardFingerprint = "";
+  var lastSyncTime = 0;
 
   // ====================================================================
   // DOM refs
@@ -27,6 +28,7 @@
 
   var offlineBanner = document.getElementById("offline-banner");
   var connectionDot = document.getElementById("connection-dot");
+  var lastSyncedEl = document.getElementById("last-synced");
   var headerTitle = document.getElementById("header-title");
   var listPickerBtn = document.getElementById("list-picker-btn");
   var listPickerName = document.getElementById("list-picker-name");
@@ -280,6 +282,7 @@
   function saveOfflineQueue(queue) {
     localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
     updatePendingBadge();
+    updateConnectionIndicator();
   }
 
   function extractEntityId(path) {
@@ -378,12 +381,52 @@
     if (offlineBanner) {
       offlineBanner.classList.toggle("hidden", online);
     }
-    if (connectionDot) {
-      connectionDot.classList.toggle("online", online);
-      connectionDot.classList.toggle("offline", !online);
-      connectionDot.title = online ? "Connected" : "Offline";
-    }
+    updateConnectionIndicator();
     updatePendingBadge();
+  }
+
+  function updateConnectionIndicator() {
+    if (!connectionDot) return;
+    var queue = getOfflineQueue();
+    var hasPending = queue.length > 0;
+    connectionDot.classList.remove("online", "pending", "offline");
+    if (!isOnline) {
+      connectionDot.classList.add("offline");
+      connectionDot.title = "Offline";
+    } else if (hasPending) {
+      connectionDot.classList.add("pending");
+      connectionDot.title = queue.length + " change" + (queue.length > 1 ? "s" : "") + " pending";
+    } else {
+      connectionDot.classList.add("online");
+      connectionDot.title = "Connected";
+    }
+    updateLastSyncedText();
+  }
+
+  function markSynced() {
+    lastSyncTime = Date.now();
+    updateConnectionIndicator();
+  }
+
+  function updateLastSyncedText() {
+    if (!lastSyncedEl) return;
+    if (!isOnline) {
+      lastSyncedEl.textContent = "Offline";
+      return;
+    }
+    if (lastSyncTime === 0) {
+      lastSyncedEl.textContent = "";
+      return;
+    }
+    var ago = Math.round((Date.now() - lastSyncTime) / 1000);
+    if (ago < 5) {
+      lastSyncedEl.textContent = "Just now";
+    } else if (ago < 60) {
+      lastSyncedEl.textContent = ago + "s ago";
+    } else {
+      var mins = Math.round(ago / 60);
+      lastSyncedEl.textContent = mins + "m ago";
+    }
   }
 
   window.addEventListener("online", function () {
@@ -2680,8 +2723,11 @@
     // Connection info
     var connStatus = document.getElementById("settings-conn-status");
     if (connStatus) {
-      connStatus.textContent = isOnline ? "Connected" : "Offline";
-      connStatus.className = "settings-value " + (isOnline ? "settings-conn-online" : "settings-conn-offline");
+      var wsConnected = ws && ws.readyState === WebSocket.OPEN;
+      var statusText = !isOnline ? "Offline" : wsConnected ? "Connected (live)" : "Connected (polling)";
+      var statusClass = isOnline ? "settings-conn-online" : "settings-conn-offline";
+      connStatus.textContent = statusText;
+      connStatus.className = "settings-value " + statusClass;
     }
     var serverUrl = document.getElementById("settings-server-url");
     if (serverUrl) serverUrl.textContent = location.host;
@@ -3224,6 +3270,7 @@
 
       // Refresh list selector counts
       await refreshLists();
+      markSynced();
     } catch (e) {
       console.error("Failed to load list:", e);
       // Fall back to IndexedDB cache
@@ -3390,6 +3437,8 @@
     setViewMode(viewMode);
     connectWebSocket();
     startPolling(); // Fallback until WS connects
+    // Keep "last synced" text fresh
+    setInterval(updateLastSyncedText, 15000);
   }
 
   init();

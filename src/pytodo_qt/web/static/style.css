@@ -282,6 +282,19 @@ body {
 }
 
 /* Connection indicator */
+#connection-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+#last-synced {
+  font-size: 11px;
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
 .dot {
   width: 8px;
   height: 8px;
@@ -289,7 +302,8 @@ body {
   flex-shrink: 0;
 }
 .dot.online { background: #69f0ae; }
-.dot.offline { background: var(--warning); }
+.dot.pending { background: #ffd740; }
+.dot.offline { background: #ef5350; }
 
 /* View toggle (list/board segmented control) */
 .view-toggle {
