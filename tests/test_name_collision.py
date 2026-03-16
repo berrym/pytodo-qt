@@ -166,6 +166,9 @@ class TestMergeNameCollision:
         db = Database()
         db.add_list(local_list)
 
+        # Ensure local list metadata is newer so only the new item counts
+        local_list.updated_at = local_list.updated_at + 2000
+
         # Remote has same list UUID with a new item
         remote_list = create_todo_list("Shopping")
         remote_list.id = local_list.id  # Same UUID
