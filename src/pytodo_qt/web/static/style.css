@@ -1341,6 +1341,30 @@ body {
   min-height: 18px;
 }
 
+.detail-conflict {
+  color: var(--danger, #c0392b);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.conflict-btn {
+  background: var(--surface, #f8f9fa);
+  border: 1px solid var(--border, #ddd);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--text, #333);
+}
+
+.conflict-force {
+  color: var(--danger, #c0392b);
+  border-color: var(--danger, #c0392b);
+}
+
 /* ============================================================
    Toast notifications
    ============================================================ */

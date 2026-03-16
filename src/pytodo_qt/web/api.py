@@ -57,9 +57,28 @@ def _item_to_json(item: TodoItem) -> dict[str, Any]:
     }
 
 
+def _list_to_json(lst: TodoList) -> dict[str, Any]:
+    """Serialize a TodoList for the JSON API."""
+    return {
+        "id": str(lst.id),
+        "name": lst.name,
+        "board_columns": lst.board_columns,
+        "wip_limits": lst.wip_limits,
+        "updated_at": lst.updated_at,
+    }
+
+
 def _error(status: int, message: str) -> web.Response:
     """Return a JSON error response."""
     return web.json_response({"error": message, "status": status}, status=status)
+
+
+def _conflict_response(current_data: dict[str, Any]) -> web.Response:
+    """Return a 409 Conflict response with the entity's current state."""
+    return web.json_response(
+        {"error": "Conflict: item was modified", "status": 409, "current": current_data},
+        status=409,
+    )
 
 
 def setup_routes(app: web.Application) -> None:
@@ -119,6 +138,7 @@ async def handle_get_lists(request: web.Request) -> web.Response:
                 "overdue_count": overdue_count,
                 "board_columns": lst.board_columns,
                 "is_private": False,
+                "updated_at": lst.updated_at,
             }
         )
     return web.json_response({"lists": result})
@@ -153,6 +173,7 @@ async def handle_get_list(request: web.Request) -> web.Response:
             "name": lst.name,
             "board_columns": lst.board_columns,
             "wip_limits": lst.wip_limits,
+            "updated_at": lst.updated_at,
             "items": [_item_to_json(i) for i in items],
         }
     )
@@ -198,11 +219,19 @@ async def handle_rename_list(request: web.Request) -> web.Response:
     if not name:
         return _error(400, "List name is required")
 
+    client_updated_at = body.get("updated_at")
+    if (
+        client_updated_at is not None
+        and not body.get("force")
+        and client_updated_at < lst.updated_at
+    ):
+        return _conflict_response(_list_to_json(lst))
+
     lst.name = name
     lst.mark_updated()
 
     _schedule_save_and_refresh(request)
-    return web.json_response({"id": str(lst.id), "name": lst.name})
+    return web.json_response({"id": str(lst.id), "name": lst.name, "updated_at": lst.updated_at})
 
 
 async def handle_delete_list(request: web.Request) -> web.Response:
@@ -216,6 +245,18 @@ async def handle_delete_list(request: web.Request) -> web.Response:
     lst = db.get_list(list_id)
     if lst is None or lst.deleted or lst.private:
         return _error(404, "List not found")
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    client_updated_at = body.get("updated_at")
+    if (
+        client_updated_at is not None
+        and not body.get("force")
+        and client_updated_at < lst.updated_at
+    ):
+        return _conflict_response(_list_to_json(lst))
 
     lst.mark_deleted()
 
@@ -253,6 +294,7 @@ async def handle_get_board(request: web.Request) -> web.Response:
             "name": lst.name,
             "board_columns": lst.board_columns,
             "wip_limits": lst.wip_limits,
+            "updated_at": lst.updated_at,
             "columns": columns,
         }
     )
@@ -282,6 +324,14 @@ async def handle_update_columns(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return _error(400, "Invalid JSON body")
+
+    client_updated_at = body.get("updated_at")
+    if (
+        client_updated_at is not None
+        and not body.get("force")
+        and client_updated_at < lst.updated_at
+    ):
+        return _conflict_response(_list_to_json(lst))
 
     action = body.get("action", "")
 
@@ -353,6 +403,7 @@ async def handle_update_columns(request: web.Request) -> web.Response:
         {
             "board_columns": lst.board_columns,
             "wip_limits": lst.wip_limits,
+            "updated_at": lst.updated_at,
         }
     )
 
@@ -486,6 +537,14 @@ async def handle_update_item(request: web.Request) -> web.Response:
     except Exception:
         return _error(400, "Invalid JSON body")
 
+    client_updated_at = body.get("updated_at")
+    if (
+        client_updated_at is not None
+        and not body.get("force")
+        and client_updated_at < item.updated_at
+    ):
+        return _conflict_response(_item_to_json(item))
+
     _apply_item_fields(item, body, lst)
     item.mark_updated()
 
@@ -505,6 +564,18 @@ async def handle_delete_item(request: web.Request) -> web.Response:
     if item is None:
         return _error(404, "Item not found")
 
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    client_updated_at = body.get("updated_at")
+    if (
+        client_updated_at is not None
+        and not body.get("force")
+        and client_updated_at < item.updated_at
+    ):
+        return _conflict_response(_item_to_json(item))
+
     item.mark_deleted()
 
     _schedule_save_and_refresh(request)
@@ -522,6 +593,18 @@ async def handle_toggle_item(request: web.Request) -> web.Response:
     item, lst = _find_item_and_list(db, item_id)
     if item is None:
         return _error(404, "Item not found")
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    client_updated_at = body.get("updated_at")
+    if (
+        client_updated_at is not None
+        and not body.get("force")
+        and client_updated_at < item.updated_at
+    ):
+        return _conflict_response(_item_to_json(item))
 
     item.toggle_complete()
     # Sync board_column with completion state
@@ -555,6 +638,14 @@ async def handle_move_item(request: web.Request) -> web.Response:
     except Exception:
         return _error(400, "Invalid JSON body")
 
+    client_updated_at = body.get("updated_at")
+    if (
+        client_updated_at is not None
+        and not body.get("force")
+        and client_updated_at < item.updated_at
+    ):
+        return _conflict_response(_item_to_json(item))
+
     column = body.get("column", "").strip()
     if not lst or column not in lst.board_columns:
         return _error(400, "Invalid column name")
@@ -582,6 +673,14 @@ async def handle_set_parent(request: web.Request) -> web.Response:
         body = await request.json()
     except Exception:
         return _error(400, "Invalid JSON body")
+
+    client_updated_at = body.get("updated_at")
+    if (
+        client_updated_at is not None
+        and not body.get("force")
+        and client_updated_at < item.updated_at
+    ):
+        return _conflict_response(_item_to_json(item))
 
     parent_id_str = body.get("parent_id")
     if parent_id_str:
@@ -614,12 +713,24 @@ async def handle_restore_item(request: web.Request) -> web.Response:
     except ValueError:
         return _error(400, "Invalid item ID")
 
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
     # Search across all lists for the deleted item
     for lst in db.lists.values():
         if lst.deleted or lst.private:
             continue
         item = lst.items.get(item_id)
         if item and item.deleted:
+            client_updated_at = body.get("updated_at")
+            if (
+                client_updated_at is not None
+                and not body.get("force")
+                and client_updated_at < item.updated_at
+            ):
+                return _conflict_response(_item_to_json(item))
             item.deleted = False
             item.mark_updated()
             lst.mark_updated()
@@ -865,6 +976,14 @@ async def handle_apply_preset(request: web.Request) -> web.Response:
     except Exception:
         return _error(400, "Invalid JSON body")
 
+    client_updated_at = body.get("updated_at")
+    if (
+        client_updated_at is not None
+        and not body.get("force")
+        and client_updated_at < lst.updated_at
+    ):
+        return _conflict_response(_list_to_json(lst))
+
     new_columns = body.get("columns")
     if not isinstance(new_columns, list) or len(new_columns) < 2:
         return _error(400, "At least 2 columns are required")
@@ -915,6 +1034,7 @@ async def handle_apply_preset(request: web.Request) -> web.Response:
         {
             "board_columns": lst.board_columns,
             "wip_limits": lst.wip_limits,
+            "updated_at": lst.updated_at,
             "remapped": remapped,
         }
     )

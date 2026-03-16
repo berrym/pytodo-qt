@@ -154,10 +154,46 @@
   async function api(path, opts) {
     var resp = await fetch(API + path, opts);
     if (!resp.ok) {
-      var err = await resp.json().catch(function () { return {}; });
-      throw new Error(err.error || resp.statusText);
+      var body = await resp.json().catch(function () { return {}; });
+      var err = new Error(body.error || resp.statusText);
+      err.status = resp.status;
+      err.body = body;
+      throw err;
     }
     return resp.json();
+  }
+
+  function getItemUpdatedAt(itemId) {
+    for (var i = 0; i < cachedItems.length; i++) {
+      if (cachedItems[i].id === itemId) return cachedItems[i].updated_at;
+    }
+    if (cachedBoardData && cachedBoardData.columns) {
+      var cols = Object.keys(cachedBoardData.columns);
+      for (var c = 0; c < cols.length; c++) {
+        var items = cachedBoardData.columns[cols[c]];
+        for (var j = 0; j < items.length; j++) {
+          if (items[j].id === itemId) return items[j].updated_at;
+        }
+      }
+    }
+    return undefined;
+  }
+
+  function getListUpdatedAt(listId) {
+    for (var i = 0; i < cachedLists.length; i++) {
+      if (cachedLists[i].id === listId) return cachedLists[i].updated_at;
+    }
+    if (cachedBoardData && cachedBoardData.id === listId) return cachedBoardData.updated_at;
+    return undefined;
+  }
+
+  function updateCachedItemTimestamp(itemId, newUpdatedAt) {
+    for (var i = 0; i < cachedItems.length; i++) {
+      if (cachedItems[i].id === itemId) {
+        cachedItems[i].updated_at = newUpdatedAt;
+        return;
+      }
+    }
   }
 
   // ====================================================================
@@ -263,17 +299,29 @@
     if (queue.length === 0) return;
     showToast("Syncing " + queue.length + " offline change" + (queue.length > 1 ? "s" : "") + "...");
     var remaining = [];
+    var conflicts = 0;
     for (var i = 0; i < queue.length; i++) {
-      try { await fetch(API + queue[i].path, queue[i].opts); }
-      catch (e) { remaining.push(queue[i]); }
+      try {
+        var resp = await fetch(API + queue[i].path, queue[i].opts);
+        if (resp.status === 409) {
+          conflicts++;
+        } else if (!resp.ok) {
+          remaining.push(queue[i]);
+        }
+      } catch (e) {
+        remaining.push(queue[i]);
+      }
     }
     saveOfflineQueue(remaining);
-    if (remaining.length === 0) {
+    if (conflicts > 0) {
+      showToast(conflicts + " change" + (conflicts > 1 ? "s" : "") + " conflicted (data updated elsewhere)");
+    } else if (remaining.length === 0) {
       showToast("All changes synced");
-      await refreshCurrentList();
-    } else {
+    }
+    if (remaining.length > 0) {
       showToast(remaining.length + " change" + (remaining.length > 1 ? "s" : "") + " still pending");
     }
+    await refreshCurrentList();
   }
 
   // Pending changes badge on nav
@@ -885,10 +933,13 @@
 
   async function setPriority(itemId, priority) {
     var path = "/items/" + itemId;
+    var fields = { priority: priority };
+    var ua = getItemUpdatedAt(itemId);
+    if (ua !== undefined) fields.updated_at = ua;
     var opts = {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ priority: priority })
+      body: JSON.stringify(fields)
     };
     if (!isOnline) {
       enqueueOfflineEdit(path, opts);
@@ -898,16 +949,24 @@
       await api(path, opts);
       await refreshCurrentList();
     } catch (e) {
-      enqueueOfflineEdit(path, opts);
+      if (e.status === 409) {
+        showToast("Updated elsewhere \u2014 refreshing");
+        await refreshCurrentList();
+      } else {
+        enqueueOfflineEdit(path, opts);
+      }
     }
   }
 
   async function moveToColumn(itemId, column) {
     var path = "/items/" + itemId + "/move";
+    var fields = { column: column };
+    var ua = getItemUpdatedAt(itemId);
+    if (ua !== undefined) fields.updated_at = ua;
     var opts = {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ column: column })
+      body: JSON.stringify(fields)
     };
     if (!isOnline) {
       enqueueOfflineEdit(path, opts);
@@ -918,7 +977,12 @@
       await refreshCurrentList();
       showToast("Moved to " + column);
     } catch (e) {
-      enqueueOfflineEdit(path, opts);
+      if (e.status === 409) {
+        showToast("Updated elsewhere \u2014 refreshing");
+        await refreshCurrentList();
+      } else {
+        enqueueOfflineEdit(path, opts);
+      }
     }
   }
 
@@ -1005,44 +1069,56 @@
   }
 
   async function renameColumn(oldName, newName) {
+    var colFields = { action: "rename", old_name: oldName, new_name: newName };
+    var colUa = getListUpdatedAt(currentListId);
+    if (colUa !== undefined) colFields.updated_at = colUa;
     try {
       await api("/lists/" + currentListId + "/columns", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "rename", old_name: oldName, new_name: newName })
+        body: JSON.stringify(colFields)
       });
       await refreshCurrentList();
       showToast("Renamed to \"" + newName + "\"");
     } catch (e) {
-      showToast("Rename failed: " + e.message);
+      if (e.status === 409) { showToast("Board was modified \u2014 refreshing"); await refreshCurrentList(); }
+      else { showToast("Rename failed: " + e.message); }
     }
   }
 
   async function setWipLimit(colName, limit) {
+    var wipFields = { action: "set_wip_limit", name: colName, limit: limit };
+    var wipUa = getListUpdatedAt(currentListId);
+    if (wipUa !== undefined) wipFields.updated_at = wipUa;
     try {
       await api("/lists/" + currentListId + "/columns", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "set_wip_limit", name: colName, limit: limit })
+        body: JSON.stringify(wipFields)
       });
       await refreshCurrentList();
       showToast(limit > 0 ? "WIP limit set to " + limit : "WIP limit removed");
     } catch (e) {
-      showToast("Failed: " + e.message);
+      if (e.status === 409) { showToast("Board was modified \u2014 refreshing"); await refreshCurrentList(); }
+      else { showToast("Failed: " + e.message); }
     }
   }
 
   async function deleteColumn(colName) {
+    var delColFields = { action: "remove", name: colName };
+    var delColUa = getListUpdatedAt(currentListId);
+    if (delColUa !== undefined) delColFields.updated_at = delColUa;
     try {
       await api("/lists/" + currentListId + "/columns", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "remove", name: colName })
+        body: JSON.stringify(delColFields)
       });
       await refreshCurrentList();
       showToast("Column \"" + colName + "\" deleted");
     } catch (e) {
-      showToast("Delete failed: " + e.message);
+      if (e.status === 409) { showToast("Board was modified \u2014 refreshing"); await refreshCurrentList(); }
+      else { showToast("Delete failed: " + e.message); }
     }
   }
 
@@ -1078,11 +1154,14 @@
   }
 
   async function applyPreset(columns, presetName) {
+    var presetFields = { columns: columns };
+    var presetUa = getListUpdatedAt(currentListId);
+    if (presetUa !== undefined) presetFields.updated_at = presetUa;
     try {
       var result = await api("/lists/" + currentListId + "/apply-preset", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ columns: columns })
+        body: JSON.stringify(presetFields)
       });
       await refreshCurrentList();
       var msg = "Applied \"" + presetName + "\"";
@@ -1091,7 +1170,8 @@
       }
       showToast(msg);
     } catch (e) {
-      showToast("Failed: " + e.message);
+      if (e.status === 409) { showToast("Board was modified \u2014 refreshing"); await refreshCurrentList(); }
+      else { showToast("Failed: " + e.message); }
     }
   }
 
@@ -1227,11 +1307,14 @@
     var wasInCompletionCol = boardColumns.length > 0 && sourceColumn === boardColumns[boardColumns.length - 1];
     exitMoveMode();
 
+    var dropFields = { column: targetColumn };
+    var dropUa = getItemUpdatedAt(itemId);
+    if (dropUa !== undefined) dropFields.updated_at = dropUa;
     try {
       await api("/items/" + itemId + "/move", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ column: targetColumn })
+        body: JSON.stringify(dropFields)
       });
       await refreshCurrentList();
       var msg = "Moved to \"" + targetColumn + "\"";
@@ -2329,24 +2412,83 @@
     return div;
   }
 
+  var lastSavedFields = null;
+
   function saveItemField(itemId, fields) {
     clearTimeout(saveDebounceTimer);
     saveDebounceTimer = setTimeout(async function () {
       var indicator = document.getElementById("detail-save-indicator");
-      if (indicator) indicator.textContent = "Saving...";
+      if (indicator) { indicator.textContent = "Saving..."; indicator.className = "detail-save-indicator"; }
+      var ua = getItemUpdatedAt(itemId);
+      if (ua !== undefined) fields.updated_at = ua;
+      lastSavedFields = Object.assign({}, fields);
       try {
-        await api("/items/" + itemId, {
+        var result = await api("/items/" + itemId, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(fields),
         });
+        updateCachedItemTimestamp(itemId, result.updated_at);
         if (indicator) indicator.textContent = "Saved \u2713";
         setTimeout(function () { if (indicator) indicator.textContent = ""; }, 2000);
         await refreshCurrentList();
       } catch (e) {
-        if (indicator) indicator.textContent = "Save failed";
+        if (e.status === 409) {
+          showDetailConflict(itemId, e.body.current);
+        } else {
+          if (indicator) indicator.textContent = "Save failed";
+        }
       }
     }, 500);
+  }
+
+  function showDetailConflict(itemId, currentData) {
+    var indicator = document.getElementById("detail-save-indicator");
+    if (!indicator) return;
+    indicator.textContent = "";
+    indicator.className = "detail-save-indicator detail-conflict";
+
+    var msg = document.createElement("span");
+    msg.textContent = "Modified on another device";
+    indicator.appendChild(msg);
+
+    var refreshBtn = document.createElement("button");
+    refreshBtn.className = "conflict-btn";
+    refreshBtn.textContent = "Refresh";
+    refreshBtn.addEventListener("click", async function () {
+      await refreshCurrentList();
+      openDetailSheet(itemId);
+    });
+    indicator.appendChild(refreshBtn);
+
+    var forceBtn = document.createElement("button");
+    forceBtn.className = "conflict-btn conflict-force";
+    forceBtn.textContent = "Force Save";
+    forceBtn.addEventListener("click", function () {
+      var pending = lastSavedFields || {};
+      pending.force = true;
+      pending.updated_at = currentData.updated_at;
+      saveItemFieldForce(itemId, pending);
+    });
+    indicator.appendChild(forceBtn);
+  }
+
+  async function saveItemFieldForce(itemId, fields) {
+    var indicator = document.getElementById("detail-save-indicator");
+    if (indicator) { indicator.textContent = "Saving..."; indicator.className = "detail-save-indicator"; }
+    try {
+      var result = await api("/items/" + itemId, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      });
+      updateCachedItemTimestamp(itemId, result.updated_at);
+      if (indicator) indicator.textContent = "Saved \u2713";
+      setTimeout(function () { if (indicator) indicator.textContent = ""; }, 2000);
+      await refreshCurrentList();
+    } catch (e) {
+      if (indicator) indicator.textContent = "Save failed";
+    }
   }
 
   function closeDetailSheet() {
@@ -2669,7 +2811,12 @@
 
   async function onToggle(itemId) {
     var path = "/items/" + itemId + "/toggle";
+    var ua = getItemUpdatedAt(itemId);
     var opts = { method: "PATCH" };
+    if (ua !== undefined) {
+      opts.headers = { "Content-Type": "application/json" };
+      opts.body = JSON.stringify({ updated_at: ua });
+    }
     if (!isOnline) {
       enqueueOfflineEdit(path, opts);
       return;
@@ -2678,13 +2825,23 @@
       await api(path, opts);
       await refreshCurrentList();
     } catch (e) {
-      enqueueOfflineEdit(path, opts);
+      if (e.status === 409) {
+        showToast("Updated elsewhere \u2014 refreshing");
+        await refreshCurrentList();
+      } else {
+        enqueueOfflineEdit(path, opts);
+      }
     }
   }
 
   async function onDelete(itemId, reminderText) {
     var path = "/items/" + itemId;
+    var ua = getItemUpdatedAt(itemId);
     var opts = { method: "DELETE" };
+    if (ua !== undefined) {
+      opts.headers = { "Content-Type": "application/json" };
+      opts.body = JSON.stringify({ updated_at: ua });
+    }
     if (!isOnline) {
       enqueueOfflineEdit(path, opts);
       showToast("Deleted (offline)");
@@ -2695,7 +2852,12 @@
       await refreshCurrentList();
       showToast(reminderText ? '"' + reminderText + '" deleted' : "Item deleted");
     } catch (e) {
-      enqueueOfflineEdit(path, opts);
+      if (e.status === 409) {
+        showToast("Updated elsewhere \u2014 refreshing");
+        await refreshCurrentList();
+      } else {
+        enqueueOfflineEdit(path, opts);
+      }
     }
   }
 
@@ -2866,18 +3028,28 @@
     async function commitRename() {
       var newName = input.value.trim();
       if (newName && newName !== currentName) {
+        var renameFields = { name: newName };
+        var renameUa = getListUpdatedAt(listId);
+        if (renameUa !== undefined) renameFields.updated_at = renameUa;
         try {
           await api("/lists/" + listId, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: newName }),
+            body: JSON.stringify(renameFields),
           });
           showToast("List renamed");
           await refreshLists();
           renderListSheetBody(cachedLists);
         } catch (e) {
-          showToast("Failed to rename list");
-          nameEl.textContent = currentName;
+          if (e.status === 409) {
+            showToast("List was modified \u2014 refreshing");
+            await refreshLists();
+            renderListSheetBody(cachedLists);
+            nameEl.textContent = e.body.current ? e.body.current.name : currentName;
+          } else {
+            showToast("Failed to rename list");
+            nameEl.textContent = currentName;
+          }
         }
       } else {
         nameEl.textContent = currentName;
@@ -2899,8 +3071,15 @@
     if (!confirm(msg)) return;
 
     (async function () {
+      var delListFields = {};
+      var delListUa = getListUpdatedAt(listId);
+      if (delListUa !== undefined) delListFields.updated_at = delListUa;
       try {
-        await api("/lists/" + listId, { method: "DELETE" });
+        await api("/lists/" + listId, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(delListFields),
+        });
         showToast("List deleted");
         if (currentListId === listId) {
           currentListId = null;
@@ -2913,7 +3092,13 @@
         }
         refreshCurrentList();
       } catch (e) {
-        showToast("Failed to delete list");
+        if (e.status === 409) {
+          showToast("List was modified \u2014 refreshing");
+          await refreshLists();
+          renderListSheetBody(cachedLists);
+        } else {
+          showToast("Failed to delete list");
+        }
       }
     })();
   }

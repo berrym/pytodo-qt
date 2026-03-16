@@ -2291,3 +2291,517 @@ class TestPresets:
             assert resp.status == 400
         finally:
             await client.close()
+
+
+# ===========================================================================
+# Conflict guard tests
+# ===========================================================================
+
+
+def _make_db_with_stale_item():
+    """Create a DB and simulate a server-side update so client timestamp is stale."""
+    db = Database()
+    lst = create_todo_list("Tasks")
+    item = create_todo_item("Original reminder")
+    lst.add_item(item)
+    db.add_list(lst)
+    stale_ts = item.updated_at
+    # Simulate server-side modification with guaranteed timestamp advance
+    item.reminder = "Server-updated reminder"
+    item.updated_at = stale_ts + 1000
+    return db, lst, item, stale_ts
+
+
+class TestConflictGuardsItems:
+    """Test conflict detection on item write endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_update_item_conflict(self):
+        db, lst, item, stale_ts = _make_db_with_stale_item()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/items/{item.id}",
+                json={"reminder": "Client change", "updated_at": stale_ts},
+            )
+            assert resp.status == 409
+            data = await resp.json()
+            assert data["current"]["reminder"] == "Server-updated reminder"
+            assert data["current"]["updated_at"] == item.updated_at
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_item_no_conflict_without_updated_at(self):
+        db, lst, item, stale_ts = _make_db_with_stale_item()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/items/{item.id}",
+                json={"reminder": "Client change"},
+            )
+            assert resp.status == 200
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_item_no_conflict_with_current_timestamp(self):
+        db, lst, item, stale_ts = _make_db_with_stale_item()
+        current_ts = item.updated_at
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/items/{item.id}",
+                json={"reminder": "Client change", "updated_at": current_ts},
+            )
+            assert resp.status == 200
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_item_force_overrides_conflict(self):
+        db, lst, item, stale_ts = _make_db_with_stale_item()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/items/{item.id}",
+                json={"reminder": "Forced change", "updated_at": stale_ts, "force": True},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["reminder"] == "Forced change"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_delete_item_conflict(self):
+        db, lst, item, stale_ts = _make_db_with_stale_item()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.delete(
+                f"/api/items/{item.id}",
+                json={"updated_at": stale_ts},
+            )
+            assert resp.status == 409
+            data = await resp.json()
+            assert data["current"]["id"] == str(item.id)
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_delete_item_no_body_skips_check(self):
+        db, lst, item, stale_ts = _make_db_with_stale_item()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.delete(f"/api/items/{item.id}")
+            assert resp.status == 200
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_toggle_item_conflict(self):
+        db, lst, item, stale_ts = _make_db_with_stale_item()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.patch(
+                f"/api/items/{item.id}/toggle",
+                json={"updated_at": stale_ts},
+            )
+            assert resp.status == 409
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_toggle_item_no_body_skips_check(self):
+        db, lst, item, stale_ts = _make_db_with_stale_item()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.patch(f"/api/items/{item.id}/toggle")
+            assert resp.status == 200
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_move_item_conflict(self):
+        db, lst, item, stale_ts = _make_db_with_stale_item()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.patch(
+                f"/api/items/{item.id}/move",
+                json={"column": "In Progress", "updated_at": stale_ts},
+            )
+            assert resp.status == 409
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_set_parent_conflict(self):
+        db, lst, item, stale_ts = _make_db_with_stale_item()
+        child = create_todo_item("Subtask")
+        lst.add_item(child)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.patch(
+                f"/api/items/{child.id}/parent",
+                json={"parent_id": str(item.id), "updated_at": stale_ts},
+            )
+            # stale_ts is for the parent item; child is the one being modified
+            # The conflict check is on the child, not the parent
+            # So we need the child's stale timestamp instead
+            assert resp.status == 200  # child was not modified server-side
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_set_parent_conflict_on_child(self):
+        db, lst, item, stale_ts = _make_db_with_stale_item()
+        # item was modified server-side (stale_ts < item.updated_at)
+        # Use item as the target of set_parent with its stale timestamp
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.patch(
+                f"/api/items/{item.id}/parent",
+                json={"parent_id": None, "updated_at": stale_ts},
+            )
+            assert resp.status == 409
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_restore_item_conflict(self):
+        db = Database()
+        lst = create_todo_list("Tasks")
+        item = create_todo_item("Deleted item")
+        lst.add_item(item)
+        db.add_list(lst)
+        stale_ts = item.updated_at
+        item.deleted = True
+        item.updated_at = stale_ts + 1000  # Simulate later deletion
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.patch(
+                f"/api/items/{item.id}/restore",
+                json={"updated_at": stale_ts},
+            )
+            assert resp.status == 409
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_restore_item_no_body_skips_check(self):
+        db = Database()
+        lst = create_todo_list("Tasks")
+        item = create_todo_item("Deleted item")
+        lst.add_item(item)
+        db.add_list(lst)
+        item.mark_deleted()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.patch(f"/api/items/{item.id}/restore")
+            assert resp.status == 200
+        finally:
+            await client.close()
+
+
+class TestConflictGuardsLists:
+    """Test conflict detection on list write endpoints."""
+
+    @pytest.mark.asyncio
+    async def test_rename_list_conflict(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        stale_ts = lst.updated_at
+        lst.name = "Server-renamed"
+        lst.updated_at = stale_ts + 1000
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/lists/{lst.id}",
+                json={"name": "Client rename", "updated_at": stale_ts},
+            )
+            assert resp.status == 409
+            data = await resp.json()
+            assert data["current"]["name"] == "Server-renamed"
+            assert data["current"]["updated_at"] == lst.updated_at
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_rename_list_no_conflict_without_updated_at(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        lst.updated_at = lst.updated_at + 1000
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/lists/{lst.id}",
+                json={"name": "New name"},
+            )
+            assert resp.status == 200
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_rename_list_force_overrides(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        stale_ts = lst.updated_at
+        lst.updated_at = stale_ts + 1000
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/lists/{lst.id}",
+                json={"name": "Forced", "updated_at": stale_ts, "force": True},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["name"] == "Forced"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_delete_list_conflict(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        stale_ts = lst.updated_at
+        lst.updated_at = stale_ts + 1000
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.delete(
+                f"/api/lists/{lst.id}",
+                json={"updated_at": stale_ts},
+            )
+            assert resp.status == 409
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_columns_conflict(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        stale_ts = lst.updated_at
+        lst.updated_at = stale_ts + 1000
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.patch(
+                f"/api/lists/{lst.id}/columns",
+                json={"action": "add", "name": "Review", "updated_at": stale_ts},
+            )
+            assert resp.status == 409
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_apply_preset_conflict(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        stale_ts = lst.updated_at
+        lst.updated_at = stale_ts + 1000
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{lst.id}/apply-preset",
+                json={
+                    "columns": ["To Do", "In Progress", "Done"],
+                    "updated_at": stale_ts,
+                },
+            )
+            assert resp.status == 409
+        finally:
+            await client.close()
+
+
+class TestConflictGuardsResponses:
+    """Test 409 response payloads and updated_at in list responses."""
+
+    @pytest.mark.asyncio
+    async def test_conflict_response_includes_current_item(self):
+        db, lst, item, stale_ts = _make_db_with_stale_item()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/items/{item.id}",
+                json={"reminder": "Stale", "updated_at": stale_ts},
+            )
+            assert resp.status == 409
+            data = await resp.json()
+            current = data["current"]
+            assert current["id"] == str(item.id)
+            assert current["reminder"] == item.reminder
+            assert current["updated_at"] == item.updated_at
+            assert current["priority"] == item.priority
+            assert "complete" in current
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_conflict_response_includes_current_list(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        stale_ts = lst.updated_at
+        lst.name = "Server name"
+        lst.updated_at = stale_ts + 1000
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/lists/{lst.id}",
+                json={"name": "Client name", "updated_at": stale_ts},
+            )
+            assert resp.status == 409
+            data = await resp.json()
+            current = data["current"]
+            assert current["id"] == str(lst.id)
+            assert current["name"] == "Server name"
+            assert current["updated_at"] == lst.updated_at
+            assert "board_columns" in current
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_get_lists_includes_updated_at(self):
+        db = _make_db_with_data()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/lists")
+            data = await resp.json()
+            for lst in data["lists"]:
+                assert "updated_at" in lst
+                assert isinstance(lst["updated_at"], int)
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_get_list_includes_updated_at(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}")
+            data = await resp.json()
+            assert "updated_at" in data
+            assert data["updated_at"] == lst.updated_at
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_get_board_includes_updated_at(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}/board")
+            data = await resp.json()
+            assert "updated_at" in data
+            assert data["updated_at"] == lst.updated_at
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_rename_list_response_includes_updated_at(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/lists/{lst.id}",
+                json={"name": "Renamed"},
+            )
+            data = await resp.json()
+            assert "updated_at" in data
+            assert isinstance(data["updated_at"], int)
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_columns_response_includes_updated_at(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.patch(
+                f"/api/lists/{lst.id}/columns",
+                json={"action": "add", "name": "Review"},
+            )
+            data = await resp.json()
+            assert "updated_at" in data
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_apply_preset_response_includes_updated_at(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{lst.id}/apply-preset",
+                json={"columns": ["To Do", "In Progress", "Done"]},
+            )
+            data = await resp.json()
+            assert "updated_at" in data
+        finally:
+            await client.close()
+
+
+class TestConflictGuardsEdgeCases:
+    """Test edge cases for conflict detection."""
+
+    @pytest.mark.asyncio
+    async def test_same_timestamp_proceeds(self):
+        """Client sends the exact current timestamp — write should succeed."""
+        db, lst, item, _stale_ts = _make_db_with_stale_item()
+        current_ts = item.updated_at
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/items/{item.id}",
+                json={"reminder": "Same-ts update", "updated_at": current_ts},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["reminder"] == "Same-ts update"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_zero_timestamp_conflicts(self):
+        """Client sends 0 as updated_at — should conflict with any real timestamp."""
+        db, lst, item, _stale_ts = _make_db_with_stale_item()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/items/{item.id}",
+                json={"reminder": "Zero-ts", "updated_at": 0},
+            )
+            assert resp.status == 409
+        finally:
+            await client.close()
