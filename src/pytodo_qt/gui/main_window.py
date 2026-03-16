@@ -3101,6 +3101,7 @@ class MainWindow(QMainWindow):
             port=self._config.web.port,
             auth_token=self._web_server.auth_token,
             pairing_pin=self._web_server.pairing_pin,
+            tls_enabled=self._config.web.tls_enabled,
             parent=self,
         )
         dialog.exec()

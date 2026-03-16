@@ -1966,8 +1966,8 @@ class TestWebConnectDialog:
         )
         from pytodo_qt.gui.dialogs.web_connect import WebConnectDialog
 
-        dialog = WebConnectDialog(8080)
-        assert dialog._url == "http://192.168.1.42:8080"
+        dialog = WebConnectDialog(8080, tls_enabled=True)
+        assert dialog._url == "https://192.168.1.42:8080"
         assert dialog._port == 8080
 
     def test_dialog_creation_no_network(self, monkeypatch):

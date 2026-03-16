@@ -88,6 +88,7 @@ class WebConnectDialog(QDialog):
         port: int,
         auth_token: str = "",
         pairing_pin: str = "",
+        tls_enabled: bool = True,
         parent: object = None,
     ):
         super().__init__(parent)
@@ -97,15 +98,13 @@ class WebConnectDialog(QDialog):
         self._port = port
         self._auth_token = auth_token
         self._pairing_pin = pairing_pin
+        self._tls = tls_enabled
         self._lan_ip = _get_lan_ip()
 
-        # Build the URL — if we have a token, use the auto-login URL
+        # QR encodes the server address — PIN handles authentication
         if self._lan_ip:
-            base = f"http://{self._lan_ip}:{port}"
-            if auth_token:
-                self._url = f"{base}/auth/{auth_token}"
-            else:
-                self._url = base
+            scheme = "https" if tls_enabled else "http"
+            self._url = f"{scheme}://{self._lan_ip}:{port}"
         else:
             self._url = None
 
@@ -129,21 +128,31 @@ class WebConnectDialog(QDialog):
             layout.addWidget(hint)
         else:
             # Instructions
-            scan_label = QLabel("Scan to connect instantly")
+            scan_label = QLabel("Scan with your phone camera")
             scan_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             scan_label.setStyleSheet("color: gray; font-size: 13px;")
             layout.addWidget(scan_label)
 
-            # QR code (encodes auto-login URL)
+            # QR code (encodes server address — PIN handles auth)
             qr_label = QLabel()
             qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             pixmap = _render_qr_pixmap(self._url, size=250)
             qr_label.setPixmap(pixmap)
             layout.addWidget(qr_label)
 
+            # TLS first-time hint
+            if self._tls:
+                tls_hint = QLabel(
+                    'First time: tap "Advanced" then "Proceed"\nto accept the encrypted connection'
+                )
+                tls_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                tls_hint.setWordWrap(True)
+                tls_hint.setStyleSheet("color: gray; font-size: 11px;")
+                layout.addWidget(tls_hint)
+
             # PIN section (below QR code)
             if self._pairing_pin:
-                divider = QLabel("or enter this PIN on your phone")
+                divider = QLabel("Then enter this PIN")
                 divider.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 divider.setStyleSheet("color: gray; font-size: 12px; margin-top: 4px;")
                 layout.addWidget(divider)
@@ -164,8 +173,7 @@ class WebConnectDialog(QDialog):
                 layout.addWidget(pin_hint)
 
             # URL display (small, for reference)
-            base_url = f"http://{self._lan_ip}:{self._port}"
-            url_label = QLabel(base_url)
+            url_label = QLabel(self._url)
             url_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             url_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             url_label.setStyleSheet("color: gray; font-size: 12px; margin-top: 8px;")
