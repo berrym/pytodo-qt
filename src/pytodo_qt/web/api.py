@@ -66,7 +66,7 @@ async def auth_middleware(request: web.Request, handler: Callable[..., Any]) -> 
     # Public paths: static assets, login page, pairing endpoint, auto-login URL
     path = request.path
     if (
-        path in ("/", "/sw.js", "/api/auth")
+        path in ("/", "/sw.js", "/api/auth", "/ca.pem")
         or path.startswith("/static/")
         or path.startswith("/auth/")
     ):
@@ -173,6 +173,7 @@ def setup_routes(app: web.Application) -> None:
     # Authentication
     app.router.add_post("/api/auth", handle_pair)
     app.router.add_get("/auth/{token}", handle_auto_login)
+    app.router.add_get("/ca.pem", handle_ca_cert_download)
 
 
 # ---------------------------------------------------------------------------
@@ -1251,6 +1252,23 @@ async def handle_auto_login(request: web.Request) -> web.Response:
         content_type="text/html",
         headers={
             "Content-Security-Policy": f"default-src 'none'; script-src 'nonce-{nonce}'",
+        },
+    )
+
+
+async def handle_ca_cert_download(request: web.Request) -> web.Response:
+    """GET /ca.pem — Download the local CA certificate for device installation."""
+    server = request.app.get(web_server_key)
+    if server is None:
+        return _error(404, "CA certificate not available")
+    ca_path = server.ca_cert_path
+    if ca_path is None or not ca_path.exists():
+        return _error(404, "CA certificate not available")
+    return web.Response(
+        body=ca_path.read_bytes(),
+        content_type="application/x-pem-file",
+        headers={
+            "Content-Disposition": 'attachment; filename="PyTodo-Qt-CA.pem"',
         },
     )
 

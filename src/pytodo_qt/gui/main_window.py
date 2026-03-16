@@ -3102,6 +3102,7 @@ class MainWindow(QMainWindow):
             auth_token=self._web_server.auth_token,
             pairing_pin=self._web_server.pairing_pin,
             tls_enabled=self._config.web.tls_enabled,
+            ca_cert_available=self._web_server.ca_cert_path is not None,
             parent=self,
         )
         dialog.exec()

@@ -89,16 +89,18 @@ class WebConnectDialog(QDialog):
         auth_token: str = "",
         pairing_pin: str = "",
         tls_enabled: bool = True,
+        ca_cert_available: bool = False,
         parent: object = None,
     ):
         super().__init__(parent)
         self.setWindowTitle("Connect Mobile Device")
-        self.setMinimumWidth(360)
+        self.setMinimumWidth(380)
 
         self._port = port
         self._auth_token = auth_token
         self._pairing_pin = pairing_pin
         self._tls = tls_enabled
+        self._ca_cert = ca_cert_available
         self._lan_ip = _get_lan_ip()
 
         # QR encodes the server address — PIN handles authentication
@@ -140,15 +142,61 @@ class WebConnectDialog(QDialog):
             qr_label.setPixmap(pixmap)
             layout.addWidget(qr_label)
 
-            # TLS first-time hint
+            # TLS first-time guidance
             if self._tls:
-                tls_hint = QLabel(
-                    'First time: tap "Advanced" then "Proceed"\nto accept the encrypted connection'
-                )
-                tls_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                tls_hint.setWordWrap(True)
-                tls_hint.setStyleSheet("color: gray; font-size: 11px;")
-                layout.addWidget(tls_hint)
+                if self._ca_cert:
+                    tls_hint = QLabel(
+                        "First time setup: install the security certificate\n"
+                        "on your phone to skip browser warnings permanently."
+                    )
+                    tls_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    tls_hint.setWordWrap(True)
+                    tls_hint.setStyleSheet("color: gray; font-size: 11px;")
+                    layout.addWidget(tls_hint)
+
+                    ca_scheme = "https" if self._tls else "http"
+                    ca_url = f"{ca_scheme}://{self._lan_ip}:{self._port}/ca.pem"
+                    ca_qr_label = QLabel()
+                    ca_qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    ca_qr_label.setPixmap(_render_qr_pixmap(ca_url, size=120))
+                    ca_qr_label.setToolTip("Scan to download CA certificate")
+
+                    install_label = QLabel(
+                        "Optional: install the CA certificate\n"
+                        "to permanently remove browser warnings.\n"
+                        "iOS: Settings \u2192 General \u2192 VPN & Device Mgmt\n"
+                        "Android: Settings \u2192 Security \u2192 Install cert"
+                    )
+                    install_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    install_label.setWordWrap(True)
+                    install_label.setStyleSheet("color: gray; font-size: 10px;")
+
+                    cert_row = QHBoxLayout()
+                    cert_row.addStretch()
+                    cert_row.addWidget(ca_qr_label)
+                    cert_col = QVBoxLayout()
+                    cert_col.addWidget(install_label)
+                    cert_row.addLayout(cert_col)
+                    cert_row.addStretch()
+                    layout.addLayout(cert_row)
+
+                    skip_label = QLabel(
+                        'Or skip this and tap "Advanced" \u2192 "Proceed"\n'
+                        "on the browser warning (works but repeats each time)"
+                    )
+                    skip_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    skip_label.setWordWrap(True)
+                    skip_label.setStyleSheet("color: gray; font-size: 10px;")
+                    layout.addWidget(skip_label)
+                else:
+                    tls_hint = QLabel(
+                        'First time: tap "Advanced" then "Proceed"\n'
+                        "to accept the encrypted connection"
+                    )
+                    tls_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    tls_hint.setWordWrap(True)
+                    tls_hint.setStyleSheet("color: gray; font-size: 11px;")
+                    layout.addWidget(tls_hint)
 
             # PIN section (below QR code)
             if self._pairing_pin:

@@ -6,6 +6,7 @@ so it can safely read the in-memory Database without locking.
 
 from __future__ import annotations
 
+import contextlib
 import ssl
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -161,36 +162,105 @@ class WebServer:
         return token
 
     def _create_ssl_context(self) -> ssl.SSLContext | None:
-        """Create TLS context with auto-generated self-signed certificate."""
+        """Create TLS context using a local CA and server certificate.
+
+        On first run, generates a root CA key/cert (stored permanently) and a
+        server cert signed by the CA with all detected local IPs in the SAN.
+        If the local IP changes, the server cert is regenerated automatically.
+        """
         if not self._config or not self._config.tls_enabled:
             return None
         if not self._config_manager:
             return None
 
         cert_dir = self._config_manager.config_dir
-        cert_path = cert_dir / "web_cert.pem"
-        key_path = cert_dir / "web_key.pem"
+        ca_cert_path = cert_dir / "ca_cert.pem"
+        ca_key_path = cert_dir / "ca_key.pem"
+        srv_cert_path = cert_dir / "web_cert.pem"
+        srv_key_path = cert_dir / "web_key.pem"
 
-        if not cert_path.exists() or not key_path.exists():
-            self._generate_self_signed_cert(cert_path, key_path)
+        # Ensure CA exists
+        if not ca_cert_path.exists() or not ca_key_path.exists():
+            self._generate_ca(ca_cert_path, ca_key_path)
+
+        # Ensure server cert exists and covers current IPs
+        local_ips = self._get_all_local_ips()
+        if not srv_cert_path.exists() or not srv_key_path.exists():
+            self._generate_server_cert(
+                ca_cert_path, ca_key_path, srv_cert_path, srv_key_path, local_ips
+            )
+        elif not self._cert_covers_ips(srv_cert_path, local_ips):
+            logger.log.info("Local IP changed — regenerating server certificate")
+            self._generate_server_cert(
+                ca_cert_path, ca_key_path, srv_cert_path, srv_key_path, local_ips
+            )
 
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(str(cert_path), str(key_path))
+        ctx.load_cert_chain(str(srv_cert_path), str(srv_key_path))
         return ctx
 
+    @property
+    def ca_cert_path(self) -> Path | None:
+        """Return the path to the CA certificate for device installation."""
+        if not self._config_manager:
+            return None
+        p = self._config_manager.config_dir / "ca_cert.pem"
+        return p if p.exists() else None
+
     @staticmethod
-    def _generate_self_signed_cert(cert_path: Path, key_path: Path) -> None:
-        """Generate a self-signed TLS certificate and key."""
+    def _get_all_local_ips() -> list[str]:
+        """Detect all local IP addresses for the server certificate SAN."""
+        import socket
+
+        ips: set[str] = {"127.0.0.1"}
+        try:
+            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+                addr = info[4][0]
+                if addr and addr != "0.0.0.0":
+                    ips.add(addr)
+        except OSError:
+            pass
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("10.255.255.255", 1))
+                addr = s.getsockname()[0]
+                if addr and addr != "0.0.0.0":
+                    ips.add(addr)
+        except OSError:
+            pass
+        return sorted(ips)
+
+    @staticmethod
+    def _cert_covers_ips(cert_path: Path, required_ips: list[str]) -> bool:
+        """Check if an existing certificate's SAN covers all required IPs."""
+
+        from cryptography import x509
+
+        try:
+            cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
+            san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+            cert_ips = {str(ip) for ip in san.value.get_values_for_type(x509.IPAddress)}
+            return all(ip in cert_ips for ip in required_ips)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _generate_ca(ca_cert_path: Path, ca_key_path: Path) -> None:
+        """Generate a root Certificate Authority key and certificate."""
         import datetime
-        import ipaddress
 
         from cryptography import x509
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
         from cryptography.x509.oid import NameOID
 
-        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "PyTodo-Qt")])
+        key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
+        subject = issuer = x509.Name(
+            [
+                x509.NameAttribute(NameOID.COMMON_NAME, "PyTodo-Qt Local CA"),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, "PyTodo-Qt"),
+            ]
+        )
         cert = (
             x509.CertificateBuilder()
             .subject_name(subject)
@@ -198,27 +268,83 @@ class WebServer:
             .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
             .not_valid_before(datetime.datetime.now(datetime.UTC))
-            .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365))
+            .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=3650))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
             .add_extension(
-                x509.SubjectAlternativeName(
-                    [
-                        x509.DNSName("localhost"),
-                        x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
-                    ]
+                x509.KeyUsage(
+                    digital_signature=True,
+                    key_cert_sign=True,
+                    crl_sign=True,
+                    content_commitment=False,
+                    key_encipherment=False,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    encipher_only=False,
+                    decipher_only=False,
                 ),
-                critical=False,
+                critical=True,
             )
             .sign(key, hashes.SHA256())
         )
-        key_path.write_bytes(
+        ca_key_path.write_bytes(
             key.private_bytes(
                 serialization.Encoding.PEM,
                 serialization.PrivateFormat.TraditionalOpenSSL,
                 serialization.NoEncryption(),
             )
         )
-        cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-        logger.log.info("Generated self-signed TLS certificate")
+        ca_cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        logger.log.info("Generated local CA certificate (10-year validity)")
+
+    @staticmethod
+    def _generate_server_cert(
+        ca_cert_path: Path,
+        ca_key_path: Path,
+        srv_cert_path: Path,
+        srv_key_path: Path,
+        local_ips: list[str],
+    ) -> None:
+        """Generate a server certificate signed by the local CA."""
+        import datetime
+        import ipaddress as _ipa
+
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+
+        ca_key = serialization.load_pem_private_key(ca_key_path.read_bytes(), password=None)
+        ca_cert = x509.load_pem_x509_certificate(ca_cert_path.read_bytes())
+
+        srv_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+        san_entries: list[x509.GeneralName] = [x509.DNSName("localhost")]
+        for ip_str in local_ips:
+            with contextlib.suppress(ValueError):
+                san_entries.append(x509.IPAddress(_ipa.IPv4Address(ip_str)))
+
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "PyTodo-Qt")]))
+            .issuer_name(ca_cert.subject)
+            .public_key(srv_key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.datetime.now(datetime.UTC))
+            .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365))
+            .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .sign(ca_key, hashes.SHA256())
+        )
+        srv_key_path.write_bytes(
+            srv_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            )
+        )
+        srv_cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        ip_list = ", ".join(local_ips)
+        logger.log.info("Generated server certificate (SAN: localhost, %s)", ip_list)
 
     def create_app(self) -> web.Application:
         """Create and configure the aiohttp application."""
@@ -305,7 +431,6 @@ class WebServer:
         if not clients:
             return
         import asyncio
-        import contextlib
 
         with contextlib.suppress(RuntimeError):
             asyncio.ensure_future(_broadcast_refresh(clients))
