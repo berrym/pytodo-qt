@@ -2805,3 +2805,131 @@ class TestConflictGuardsEdgeCases:
             assert resp.status == 409
         finally:
             await client.close()
+
+
+# ===========================================================================
+# WebSocket tests
+# ===========================================================================
+
+
+class TestWebSocket:
+    @pytest.mark.asyncio
+    async def test_ws_connect(self):
+        """WebSocket endpoint accepts connections."""
+        db = _make_db_with_data()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            async with client.ws_connect("/ws") as ws_conn:
+                assert not ws_conn.closed
+                await ws_conn.close()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_ws_broadcast_on_item_create(self):
+        """Creating an item broadcasts a refresh event to WS clients."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            async with client.ws_connect("/ws") as ws_conn:
+                # Trigger a write
+                await client.post(
+                    f"/api/lists/{lst.id}/items",
+                    json={"reminder": "New task"},
+                )
+                # Should receive refresh event
+                msg = await ws_conn.receive_json(timeout=2.0)
+                assert msg["event"] == "refresh"
+                await ws_conn.close()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_ws_broadcast_on_item_update(self):
+        """Updating an item broadcasts a refresh event to WS clients."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            async with client.ws_connect("/ws") as ws_conn:
+                await client.put(
+                    f"/api/items/{item.id}",
+                    json={"reminder": "Updated"},
+                )
+                msg = await ws_conn.receive_json(timeout=2.0)
+                assert msg["event"] == "refresh"
+                await ws_conn.close()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_ws_broadcast_on_toggle(self):
+        """Toggling an item broadcasts a refresh event to WS clients."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            async with client.ws_connect("/ws") as ws_conn:
+                await client.patch(f"/api/items/{item.id}/toggle")
+                msg = await ws_conn.receive_json(timeout=2.0)
+                assert msg["event"] == "refresh"
+                await ws_conn.close()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_ws_multiple_clients(self):
+        """Multiple WS clients all receive the broadcast."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            async with client.ws_connect("/ws") as ws1, client.ws_connect("/ws") as ws2:
+                await client.post(
+                    f"/api/lists/{lst.id}/items",
+                    json={"reminder": "Broadcast test"},
+                )
+                msg1 = await ws1.receive_json(timeout=2.0)
+                msg2 = await ws2.receive_json(timeout=2.0)
+                assert msg1["event"] == "refresh"
+                assert msg2["event"] == "refresh"
+                await ws1.close()
+                await ws2.close()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_ws_disconnect_cleanup(self):
+        """Disconnected WS clients are cleaned up and don't block broadcasts."""
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            # Connect and disconnect first client
+            ws1 = await client.ws_connect("/ws")
+            await ws1.close()
+            # Give the server a moment to process the disconnect
+            import asyncio
+
+            await asyncio.sleep(0.05)
+            # Second client should still work
+            async with client.ws_connect("/ws") as ws2:
+                await client.post(
+                    f"/api/lists/{lst.id}/items",
+                    json={"reminder": "After disconnect"},
+                )
+                msg = await ws2.receive_json(timeout=2.0)
+                assert msg["event"] == "refresh"
+                await ws2.close()
+        finally:
+            await client.close()

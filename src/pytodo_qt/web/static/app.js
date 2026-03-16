@@ -388,6 +388,7 @@
 
   window.addEventListener("online", function () {
     updateOnlineStatus(true);
+    connectWebSocket();
     replayOfflineQueue();
     refreshCurrentList();
     startPolling();
@@ -396,6 +397,7 @@
   window.addEventListener("offline", function () {
     updateOnlineStatus(false);
     stopPolling();
+    disconnectWebSocket();
   });
 
   // ====================================================================
@@ -3237,7 +3239,7 @@
   }
 
   // ====================================================================
-  // Polling
+  // Polling (fallback when WebSocket unavailable)
   // ====================================================================
 
   function startPolling() {
@@ -3251,12 +3253,74 @@
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   }
 
+  // ====================================================================
+  // WebSocket (real-time push, replaces polling when connected)
+  // ====================================================================
+
+  var ws = null;
+  var wsReconnectTimer = null;
+  var wsReconnectDelay = 1000;
+  var WS_MAX_DELAY = 30000;
+
+  function connectWebSocket() {
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+    var protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    var url = protocol + "//" + location.host + "/ws";
+    try {
+      ws = new WebSocket(url);
+    } catch (e) {
+      startPolling();
+      return;
+    }
+    ws.onopen = function () {
+      wsReconnectDelay = 1000;
+      updateOnlineStatus(true);
+      stopPolling();
+      replayOfflineQueue();
+    };
+    ws.onmessage = function (e) {
+      try {
+        var msg = JSON.parse(e.data);
+        if (msg.event === "refresh") {
+          refreshCurrentList();
+        }
+      } catch (err) { /* ignore malformed messages */ }
+    };
+    ws.onclose = function () {
+      ws = null;
+      if (navigator.onLine) {
+        startPolling();
+        scheduleReconnect();
+      } else {
+        updateOnlineStatus(false);
+      }
+    };
+    ws.onerror = function () { /* onclose fires after onerror */ };
+  }
+
+  function scheduleReconnect() {
+    if (wsReconnectTimer) return;
+    wsReconnectTimer = setTimeout(function () {
+      wsReconnectTimer = null;
+      connectWebSocket();
+    }, wsReconnectDelay);
+    wsReconnectDelay = Math.min(wsReconnectDelay * 2, WS_MAX_DELAY);
+  }
+
+  function disconnectWebSocket() {
+    if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+    if (ws) { ws.close(); ws = null; }
+  }
+
   document.addEventListener("visibilitychange", function () {
     if (document.hidden) {
       stopPolling();
     } else {
       refreshCurrentList();
-      startPolling();
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        connectWebSocket();
+        startPolling();
+      }
     }
   });
 
@@ -3324,7 +3388,8 @@
     await refreshCurrentList();
     onRouteChange();
     setViewMode(viewMode);
-    startPolling();
+    connectWebSocket();
+    startPolling(); // Fallback until WS connects
   }
 
   init();

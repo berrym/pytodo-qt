@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 database_key: web.AppKey[Database] = web.AppKey("database")
 save_callback_key: web.AppKey[Callable[[], None]] = web.AppKey("save_callback")
 config_manager_key: web.AppKey[ConfigManager] = web.AppKey("config_manager")
+ws_clients_key: web.AppKey[set[web.WebSocketResponse]] = web.AppKey("ws_clients")
 
 
 def _item_to_json(item: TodoItem) -> dict[str, Any]:
@@ -112,6 +113,8 @@ def setup_routes(app: web.Application) -> None:
     # Board layout presets
     app.router.add_get("/api/presets", handle_get_presets)
     app.router.add_post("/api/lists/{list_id}/apply-preset", handle_apply_preset)
+    # WebSocket
+    app.router.add_get("/ws", handle_websocket)
 
 
 # ---------------------------------------------------------------------------
@@ -1114,6 +1117,39 @@ def _find_item_and_list(db: Database, item_id: UUID) -> tuple[TodoItem | None, T
     return None, None
 
 
+async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
+    """GET /ws — WebSocket endpoint for real-time push updates."""
+    ws = web.WebSocketResponse(heartbeat=30.0)
+    await ws.prepare(request)
+
+    clients = request.app.get(ws_clients_key)
+    if clients is not None:
+        clients.add(ws)
+
+    try:
+        async for msg in ws:
+            if msg.type == web.WSMsgType.ERROR:
+                break
+    finally:
+        if clients is not None:
+            clients.discard(ws)
+
+    return ws
+
+
+async def _broadcast_refresh(clients: set[web.WebSocketResponse]) -> None:
+    """Send a refresh event to all connected WebSocket clients."""
+    msg = '{"event":"refresh"}'
+    closed = []
+    for ws in clients:
+        try:
+            await ws.send_str(msg)
+        except Exception:
+            closed.append(ws)
+    for ws in closed:
+        clients.discard(ws)
+
+
 def _schedule_save_and_refresh(request: web.Request) -> None:
     """Schedule database save and UI refresh on the Qt event loop."""
     save_callback = request.app.get(save_callback_key)
@@ -1121,3 +1157,10 @@ def _schedule_save_and_refresh(request: web.Request) -> None:
         from PyQt6.QtCore import QTimer
 
         QTimer.singleShot(0, save_callback)
+
+    # Broadcast refresh to WebSocket clients
+    clients = request.app.get(ws_clients_key)
+    if clients:
+        import asyncio
+
+        asyncio.ensure_future(_broadcast_refresh(clients))

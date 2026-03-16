@@ -44,10 +44,17 @@ class WebServer:
 
     def create_app(self) -> web.Application:
         """Create and configure the aiohttp application."""
-        from .api import config_manager_key, database_key, save_callback_key, setup_routes
+        from .api import (
+            config_manager_key,
+            database_key,
+            save_callback_key,
+            setup_routes,
+            ws_clients_key,
+        )
 
         app = web.Application()
         app[database_key] = self._database
+        app[ws_clients_key] = set()
         if self._save_callback:
             app[save_callback_key] = self._save_callback
         if self._config_manager:
