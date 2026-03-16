@@ -6,6 +6,7 @@ so it can safely read the in-memory Database without locking.
 
 from __future__ import annotations
 
+import ssl
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -42,9 +43,90 @@ class WebServer:
         self._site: web.TCPSite | None = None
         self._app: web.Application | None = None
 
+    def _ensure_auth_token(self) -> str:
+        """Generate an auth token if one doesn't exist, persist to config.
+
+        Returns empty string if no config is available (e.g., tests),
+        which disables auth via the middleware's empty-token check.
+        """
+        if not self._config:
+            return ""  # No config = no auth (test mode)
+        if self._config.auth_token:
+            return self._config.auth_token
+        import secrets
+
+        token = secrets.token_urlsafe(32)
+        self._config.auth_token = token
+        if self._config_manager:
+            self._config_manager.save()
+        logger.log.info("Generated new web access token")
+        return token
+
+    def _create_ssl_context(self) -> ssl.SSLContext | None:
+        """Create TLS context with auto-generated self-signed certificate."""
+        if not self._config or not self._config.tls_enabled:
+            return None
+        if not self._config_manager:
+            return None
+
+        cert_dir = self._config_manager.config_dir
+        cert_path = cert_dir / "web_cert.pem"
+        key_path = cert_dir / "web_key.pem"
+
+        if not cert_path.exists() or not key_path.exists():
+            self._generate_self_signed_cert(cert_path, key_path)
+
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(str(cert_path), str(key_path))
+        return ctx
+
+    @staticmethod
+    def _generate_self_signed_cert(cert_path: Path, key_path: Path) -> None:
+        """Generate a self-signed TLS certificate and key."""
+        import datetime
+        import ipaddress
+
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "PyTodo-Qt")])
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.datetime.now(datetime.UTC))
+            .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365))
+            .add_extension(
+                x509.SubjectAlternativeName(
+                    [
+                        x509.DNSName("localhost"),
+                        x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
+                    ]
+                ),
+                critical=False,
+            )
+            .sign(key, hashes.SHA256())
+        )
+        key_path.write_bytes(
+            key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            )
+        )
+        cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        logger.log.info("Generated self-signed TLS certificate")
+
     def create_app(self) -> web.Application:
         """Create and configure the aiohttp application."""
         from .api import (
+            auth_middleware,
+            auth_token_key,
             config_manager_key,
             database_key,
             save_callback_key,
@@ -52,13 +134,17 @@ class WebServer:
             ws_clients_key,
         )
 
-        app = web.Application()
+        app = web.Application(middlewares=[auth_middleware])
         app[database_key] = self._database
         app[ws_clients_key] = set()
         if self._save_callback:
             app[save_callback_key] = self._save_callback
         if self._config_manager:
             app[config_manager_key] = self._config_manager
+
+        # Auth token
+        token = self._ensure_auth_token()
+        app[auth_token_key] = token
 
         # API routes
         setup_routes(app)
@@ -72,14 +158,25 @@ class WebServer:
         self._app = app
         return app
 
+    @property
+    def auth_token(self) -> str:
+        """Return the current auth token."""
+        if self._app:
+            from .api import auth_token_key
+
+            return self._app.get(auth_token_key, "")
+        return ""
+
     async def start(self, host: str = "0.0.0.0", port: int = 8080) -> None:
         """Start the web server."""
         app = self.create_app()
         self._runner = web.AppRunner(app)
         await self._runner.setup()
-        self._site = web.TCPSite(self._runner, host, port)
+        ssl_ctx = self._create_ssl_context()
+        self._site = web.TCPSite(self._runner, host, port, ssl_context=ssl_ctx)
         await self._site.start()
-        logger.log.info("Web server started on http://%s:%d", host, port)
+        scheme = "https" if ssl_ctx else "http"
+        logger.log.info("Web server started on %s://%s:%d", scheme, host, port)
 
     async def stop(self) -> None:
         """Stop the web server."""

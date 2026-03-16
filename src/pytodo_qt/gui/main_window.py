@@ -1398,7 +1398,10 @@ class MainWindow(QMainWindow):
                 config_manager=self._config_manager,
             )
             asyncio.ensure_future(
-                self._web_server.start(host="0.0.0.0", port=self._config.web.port)
+                self._web_server.start(
+                    host=self._config.web.bind_address,
+                    port=self._config.web.port,
+                )
             )
             self.status_bar_widget.set_web_status(True, port=self._config.web.port)
             logger.log.info("Web server started on port %d", self._config.web.port)

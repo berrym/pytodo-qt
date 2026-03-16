@@ -2950,3 +2950,141 @@ class TestWebSocket:
                 await ws_conn.close()
         finally:
             await client.close()
+
+
+# ===========================================================================
+# Authentication tests
+# ===========================================================================
+
+
+def _make_authed_client(db: Database | None = None, token: str = "test-secret-token"):
+    """Create a WebServer with auth enabled via WebConfig."""
+    if db is None:
+        db = _make_db_with_data()
+    config = WebConfig(enabled=True, auth_token=token)
+    ws = WebServer(database=db, config=config)
+    return ws, token
+
+
+class TestAuth:
+    @pytest.mark.asyncio
+    async def test_api_returns_401_without_token(self):
+        ws, token = _make_authed_client()
+        client = TestClient(TestServer(ws.create_app()))
+        await client.start_server()
+        try:
+            resp = await client.get("/api/lists")
+            assert resp.status == 401
+            data = await resp.json()
+            assert data["error"] == "Authentication required"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_api_returns_200_with_correct_token(self):
+        ws, token = _make_authed_client()
+        client = TestClient(TestServer(ws.create_app()))
+        await client.start_server()
+        try:
+            resp = await client.get(
+                "/api/lists",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert resp.status == 200
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_api_returns_401_with_wrong_token(self):
+        ws, token = _make_authed_client()
+        client = TestClient(TestServer(ws.create_app()))
+        await client.start_server()
+        try:
+            resp = await client.get(
+                "/api/lists",
+                headers={"Authorization": "Bearer wrong-token"},
+            )
+            assert resp.status == 401
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_static_files_accessible_without_token(self):
+        ws, token = _make_authed_client()
+        client = TestClient(TestServer(ws.create_app()))
+        await client.start_server()
+        try:
+            resp = await client.get("/")
+            assert resp.status == 200
+            resp_sw = await client.get("/sw.js")
+            # sw.js returns 200 if file exists, 404 if not (but not 401)
+            assert resp_sw.status != 401
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_ws_accepts_token_in_query_param(self):
+        ws, token = _make_authed_client()
+        client = TestClient(TestServer(ws.create_app()))
+        await client.start_server()
+        try:
+            async with client.ws_connect(f"/ws?token={token}") as ws_conn:
+                assert not ws_conn.closed
+                await ws_conn.close()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_ws_rejects_without_token(self):
+        ws, token = _make_authed_client()
+        client = TestClient(TestServer(ws.create_app()))
+        await client.start_server()
+        try:
+            resp = await client.get("/ws")
+            assert resp.status == 401
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_write_endpoint_requires_auth(self):
+        db = _make_db_with_data()
+        ws, token = _make_authed_client(db)
+        lst = next(iter(db.lists.values()))
+        client = TestClient(TestServer(ws.create_app()))
+        await client.start_server()
+        try:
+            # Without token
+            resp = await client.post(
+                f"/api/lists/{lst.id}/items",
+                json={"reminder": "Test"},
+            )
+            assert resp.status == 401
+            # With token
+            resp = await client.post(
+                f"/api/lists/{lst.id}/items",
+                json={"reminder": "Test"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert resp.status == 201
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_token_auto_generated_when_config_present(self):
+        config = WebConfig(enabled=True)
+        assert config.auth_token == ""
+        ws = WebServer(database=_make_db_with_data(), config=config)
+        ws.create_app()
+        assert config.auth_token != ""
+        assert len(config.auth_token) > 20
+
+    @pytest.mark.asyncio
+    async def test_no_auth_without_config(self):
+        """When no config is passed (test mode), auth is disabled."""
+        client = await _make_client()
+        await client.start_server()
+        try:
+            resp = await client.get("/api/lists")
+            assert resp.status == 200
+        finally:
+            await client.close()

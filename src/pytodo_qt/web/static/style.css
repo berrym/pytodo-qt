@@ -81,6 +81,85 @@ body {
 }
 
 /* ============================================================
+   Login screen
+   ============================================================ */
+
+#login-screen {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  z-index: 9999;
+}
+
+.login-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px;
+  max-width: 360px;
+  width: 90%;
+  text-align: center;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.1);
+}
+
+.login-card h1 {
+  font-size: 22px;
+  margin: 0 0 8px;
+  color: var(--accent);
+}
+
+.login-card p {
+  font-size: 14px;
+  color: var(--text);
+  margin: 0 0 16px;
+  opacity: 0.8;
+}
+
+.login-hint {
+  font-size: 12px !important;
+  opacity: 0.6 !important;
+}
+
+.login-card input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 15px;
+  margin-bottom: 12px;
+  box-sizing: border-box;
+}
+
+.login-card input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.login-card button {
+  width: 100%;
+  padding: 10px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.login-error {
+  color: var(--danger, #c0392b);
+  font-size: 13px;
+  margin-top: 8px;
+  min-height: 18px;
+}
+
+/* ============================================================
    Offline & install banners
    ============================================================ */
 

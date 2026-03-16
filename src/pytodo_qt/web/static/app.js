@@ -6,6 +6,7 @@
   var OFFLINE_QUEUE_KEY = "pytodo_offline_queue";
   var VIEW_MODE_KEY = "pytodo_view_mode";
   var INSTALL_DISMISSED_KEY = "pytodo_install_dismissed";
+  var AUTH_TOKEN_KEY = "pytodo_auth_token";
 
   var currentListId = null;
   var cachedLists = [];
@@ -153,8 +154,32 @@
   // API helpers
   // ====================================================================
 
+  function getAuthToken() {
+    return localStorage.getItem(AUTH_TOKEN_KEY) || "";
+  }
+
+  function setAuthToken(token) {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+  }
+
+  function authHeaders(extra) {
+    var h = Object.assign({}, extra || {});
+    var token = getAuthToken();
+    if (token) h["Authorization"] = "Bearer " + token;
+    return h;
+  }
+
   async function api(path, opts) {
+    if (!opts) opts = {};
+    opts.headers = authHeaders(opts.headers);
     var resp = await fetch(API + path, opts);
+    if (resp.status === 401) {
+      showLoginScreen();
+      var err401 = new Error("Authentication required");
+      err401.status = 401;
+      err401.body = {};
+      throw err401;
+    }
     if (!resp.ok) {
       var body = await resp.json().catch(function () { return {}; });
       var err = new Error(body.error || resp.statusText);
@@ -163,6 +188,56 @@
       throw err;
     }
     return resp.json();
+  }
+
+  // ====================================================================
+  // Login screen
+  // ====================================================================
+
+  var loginScreen = document.getElementById("login-screen");
+  var loginInput = document.getElementById("login-token-input");
+  var loginBtn = document.getElementById("login-btn");
+  var loginError = document.getElementById("login-error");
+  var appContainer = document.getElementById("app-container");
+
+  function showLoginScreen() {
+    if (loginScreen) loginScreen.classList.remove("hidden");
+    if (appContainer) appContainer.classList.add("hidden");
+    stopPolling();
+    disconnectWebSocket();
+  }
+
+  function hideLoginScreen() {
+    if (loginScreen) loginScreen.classList.add("hidden");
+    if (appContainer) appContainer.classList.remove("hidden");
+  }
+
+  if (loginBtn) {
+    loginBtn.addEventListener("click", async function () {
+      var token = loginInput ? loginInput.value.trim() : "";
+      if (!token) return;
+      if (loginError) loginError.textContent = "";
+      try {
+        var resp = await fetch(API + "/status", {
+          headers: { "Authorization": "Bearer " + token }
+        });
+        if (resp.ok) {
+          setAuthToken(token);
+          hideLoginScreen();
+          init();
+        } else {
+          if (loginError) loginError.textContent = "Invalid token";
+        }
+      } catch (e) {
+        if (loginError) loginError.textContent = "Connection failed";
+      }
+    });
+  }
+
+  if (loginInput) {
+    loginInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); if (loginBtn) loginBtn.click(); }
+    });
   }
 
   function getItemUpdatedAt(itemId) {
@@ -336,6 +411,7 @@
         } catch (e) { /* leave body as-is */ }
       }
       try {
+        entry.opts.headers = authHeaders(entry.opts.headers);
         var resp = await fetch(API + entry.path, entry.opts);
         if (resp.status === 409) {
           conflicts++;
@@ -560,7 +636,7 @@
 
   // Fetch sort tiers from API (non-blocking, falls back to defaults)
   function fetchSortTiers() {
-    fetch(API + "/sort")
+    fetch(API + "/sort", { headers: authHeaders() })
       .then(function (r) {
         return r.ok ? r.json() : null;
       })
@@ -669,7 +745,7 @@
     var payload = { tiers: currentSortTiers };
     fetch(API + "/sort", {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
     }).catch(function () {
       /* best-effort save */
@@ -3312,7 +3388,8 @@
   function connectWebSocket() {
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
     var protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    var url = protocol + "//" + location.host + "/ws";
+    var wsToken = getAuthToken();
+    var url = protocol + "//" + location.host + "/ws" + (wsToken ? "?token=" + encodeURIComponent(wsToken) : "");
     try {
       ws = new WebSocket(url);
     } catch (e) {
@@ -3431,6 +3508,7 @@
     updateOnlineStatus(navigator.onLine);
     await openIDB();
     updatePendingBadge();
+    hideLoginScreen();
     await refreshLists();
     await refreshCurrentList();
     onRouteChange();
@@ -3441,5 +3519,25 @@
     setInterval(updateLastSyncedText, 15000);
   }
 
-  init();
+  // Check for existing token — if none, show login; if valid, init app
+  (async function () {
+    var token = getAuthToken();
+    if (!token) {
+      // Try without token (server might have auth disabled)
+      try {
+        var resp = await fetch(API + "/status");
+        if (resp.ok) { init(); return; }
+      } catch (e) { /* server unreachable */ }
+      showLoginScreen();
+      return;
+    }
+    // Validate stored token
+    try {
+      var resp2 = await fetch(API + "/status", {
+        headers: { "Authorization": "Bearer " + token }
+      });
+      if (resp2.ok) { init(); return; }
+    } catch (e) { /* server unreachable */ }
+    showLoginScreen();
+  })();
 })();

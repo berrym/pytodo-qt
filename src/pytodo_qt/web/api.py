@@ -27,6 +27,31 @@ database_key: web.AppKey[Database] = web.AppKey("database")
 save_callback_key: web.AppKey[Callable[[], None]] = web.AppKey("save_callback")
 config_manager_key: web.AppKey[ConfigManager] = web.AppKey("config_manager")
 ws_clients_key: web.AppKey[set[web.WebSocketResponse]] = web.AppKey("ws_clients")
+auth_token_key: web.AppKey[str] = web.AppKey("auth_token")
+
+
+@web.middleware
+async def auth_middleware(request: web.Request, handler: Callable[..., Any]) -> web.StreamResponse:
+    """Require Bearer token for API and WebSocket requests."""
+    token = request.app.get(auth_token_key, "")
+    if not token:
+        return await handler(request)  # No token configured — allow all
+
+    # Static assets and index page are public (login page needs them)
+    path = request.path
+    if path in ("/", "/sw.js") or path.startswith("/static/"):
+        return await handler(request)
+
+    # Check Authorization header
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer ") and auth_header[7:] == token:
+        return await handler(request)
+
+    # Check query parameter (for WebSocket — browsers can't set WS headers)
+    if request.query.get("token") == token:
+        return await handler(request)
+
+    return web.json_response({"error": "Authentication required", "status": 401}, status=401)
 
 
 def _item_to_json(item: TodoItem) -> dict[str, Any]:

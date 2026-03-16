@@ -462,6 +462,30 @@ class SettingsDialog(QDialog):
         self.web_port_spin.setRange(1024, 65535)
         form.addRow("Port:", self.web_port_spin)
 
+        self.web_bind_combo = QComboBox()
+        self.web_bind_combo.addItem("All interfaces (0.0.0.0)", "0.0.0.0")
+        self.web_bind_combo.addItem("Localhost only (127.0.0.1)", "127.0.0.1")
+        form.addRow("Bind:", self.web_bind_combo)
+
+        self.web_tls_check = QCheckBox("Enable TLS (HTTPS)")
+        form.addRow("", self.web_tls_check)
+
+        # Access token display
+        token_row = QHBoxLayout()
+        self.web_token_label = QLineEdit()
+        self.web_token_label.setReadOnly(True)
+        self.web_token_label.setEchoMode(QLineEdit.EchoMode.Password)
+        token_row.addWidget(self.web_token_label)
+        self.web_token_show_btn = QPushButton("Show")
+        self.web_token_show_btn.setFixedWidth(50)
+        self.web_token_show_btn.clicked.connect(self._toggle_token_visibility)
+        token_row.addWidget(self.web_token_show_btn)
+        self.web_token_copy_btn = QPushButton("Copy")
+        self.web_token_copy_btn.setFixedWidth(50)
+        self.web_token_copy_btn.clicked.connect(self._copy_web_token)
+        token_row.addWidget(self.web_token_copy_btn)
+        form.addRow("Access Token:", token_row)
+
         layout.addWidget(group)
         layout.addStretch()
 
@@ -564,6 +588,11 @@ class SettingsDialog(QDialog):
         # Web
         self.web_enabled_check.setChecked(config.web.enabled)
         self.web_port_spin.setValue(config.web.port)
+        self.web_tls_check.setChecked(config.web.tls_enabled)
+        bind_idx = self.web_bind_combo.findData(config.web.bind_address)
+        if bind_idx >= 0:
+            self.web_bind_combo.setCurrentIndex(bind_idx)
+        self.web_token_label.setText(config.web.auth_token)
 
     def _save_settings(self) -> bool:
         """Save settings from UI to config."""
@@ -616,6 +645,8 @@ class SettingsDialog(QDialog):
         # Web
         config.web.enabled = self.web_enabled_check.isChecked()
         config.web.port = self.web_port_spin.value()
+        config.web.tls_enabled = self.web_tls_check.isChecked()
+        config.web.bind_address = self.web_bind_combo.currentData() or "0.0.0.0"
 
         # Save to file
         if not self._config_manager.save():
@@ -646,6 +677,27 @@ class SettingsDialog(QDialog):
     def _on_apply(self) -> None:
         """Handle Apply button."""
         self._save_settings()
+
+    def _toggle_token_visibility(self) -> None:
+        """Toggle between showing and hiding the access token."""
+        if self.web_token_label.echoMode() == QLineEdit.EchoMode.Password:
+            self.web_token_label.setEchoMode(QLineEdit.EchoMode.Normal)
+            self.web_token_show_btn.setText("Hide")
+        else:
+            self.web_token_label.setEchoMode(QLineEdit.EchoMode.Password)
+            self.web_token_show_btn.setText("Show")
+
+    def _copy_web_token(self) -> None:
+        """Copy the web access token to clipboard."""
+        from PyQt6.QtWidgets import QApplication
+
+        clipboard = QApplication.clipboard()
+        if clipboard:
+            clipboard.setText(self.web_token_label.text())
+            self.web_token_copy_btn.setText("\u2713")
+            from PyQt6.QtCore import QTimer
+
+            QTimer.singleShot(2000, lambda: self.web_token_copy_btn.setText("Copy"))
 
     def _on_font_changed(self, index: int) -> None:
         """Handle font combo box change."""

@@ -96,6 +96,9 @@ class WebConfig:
 
     enabled: bool = False  # Disabled by default
     port: int = 8080
+    auth_token: str = ""  # Auto-generated on first start if empty
+    tls_enabled: bool = False  # TLS with self-signed cert
+    bind_address: str = "0.0.0.0"  # "0.0.0.0" or "127.0.0.1"
 
 
 @dataclass
@@ -186,6 +189,9 @@ class AppConfig:
         lines.append("[web]")
         lines.append(f"enabled = {str(self.web.enabled).lower()}")
         lines.append(f"port = {self.web.port}")
+        lines.append(f'auth_token = "{self.web.auth_token}"')
+        lines.append(f"tls_enabled = {str(self.web.tls_enabled).lower()}")
+        lines.append(f'bind_address = "{self.web.bind_address}"')
         lines.append("")
 
         return "\n".join(lines)
@@ -262,6 +268,9 @@ class AppConfig:
             config.web = WebConfig(
                 enabled=w.get("enabled", False),
                 port=w.get("port", 8080),
+                auth_token=w.get("auth_token", ""),
+                tls_enabled=w.get("tls_enabled", False),
+                bind_address=w.get("bind_address", "0.0.0.0"),
             )
 
         return config

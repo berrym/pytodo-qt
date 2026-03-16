@@ -11,6 +11,19 @@
   <link rel="apple-touch-icon" href="/static/icon-192.png">
 </head>
 <body>
+  <!-- Login screen (shown when no valid token) -->
+  <div id="login-screen" class="hidden">
+    <div class="login-card">
+      <h1>PyTodo-Qt</h1>
+      <p>Enter your access token to connect.</p>
+      <p class="login-hint">Find it in Desktop &rarr; Settings &rarr; Web Server</p>
+      <input id="login-token-input" type="password" placeholder="Access token" autocomplete="off">
+      <button id="login-btn">Connect</button>
+      <div id="login-error" class="login-error"></div>
+    </div>
+  </div>
+
+  <div id="app-container">
   <div id="offline-banner" class="hidden">Offline — changes will sync when reconnected</div>
 
   <div id="install-banner" class="hidden">
@@ -285,6 +298,8 @@
       <span>More</span>
     </button>
   </nav>
+
+  </div><!-- /app-container -->
 
   <script src="/static/app.js"></script>
   <script>
