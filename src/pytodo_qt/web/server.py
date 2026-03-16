@@ -213,7 +213,7 @@ class WebServer:
 
     async def start(self, host: str = "0.0.0.0", port: int = 8080) -> None:
         """Start the web server."""
-        app = self.create_app()
+        app = self._app if self._app is not None else self.create_app()
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         ssl_ctx = self._create_ssl_context()

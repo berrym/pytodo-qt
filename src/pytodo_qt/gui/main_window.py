@@ -916,6 +916,7 @@ class MainWindow(QMainWindow):
         """Set up the status bar."""
         self.status_bar_widget = StatusBarWidget()
         self.status_bar_widget.pomodoro_clicked.connect(self._show_focus_timer_dialog)
+        self.status_bar_widget.web_connect_clicked.connect(self._on_web_connect)
         self.setStatusBar(self.status_bar_widget)
 
     def _setup_tray_icon(self) -> None:
@@ -1397,13 +1398,17 @@ class MainWindow(QMainWindow):
                 config=self._config.web,
                 config_manager=self._config_manager,
             )
+            # Create app synchronously so PIN is available immediately
+            self._web_server.create_app()
             asyncio.ensure_future(
                 self._web_server.start(
                     host=self._config.web.bind_address,
                     port=self._config.web.port,
                 )
             )
-            self.status_bar_widget.set_web_status(True, port=self._config.web.port)
+            self.status_bar_widget.set_web_status(
+                True, port=self._config.web.port, pin=self._web_server.pairing_pin
+            )
             logger.log.info("Web server started on port %d", self._config.web.port)
         except Exception as e:
             logger.log.warning("Failed to start web server: %s", e)
@@ -3092,7 +3097,12 @@ class MainWindow(QMainWindow):
             return
         from .dialogs.web_connect import WebConnectDialog
 
-        dialog = WebConnectDialog(self._config.web.port, self)
+        dialog = WebConnectDialog(
+            port=self._config.web.port,
+            auth_token=self._web_server.auth_token,
+            pairing_pin=self._web_server.pairing_pin,
+            parent=self,
+        )
         dialog.exec()
 
     def _on_import_ics(self) -> None:

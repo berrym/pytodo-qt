@@ -81,16 +81,33 @@ def _render_qr_pixmap(url: str, size: int = 250) -> QPixmap:
 
 
 class WebConnectDialog(QDialog):
-    """Dialog showing a QR code for mobile Web UI connection."""
+    """Dialog showing a QR code and pairing PIN for mobile Web UI connection."""
 
-    def __init__(self, port: int, parent=None):
+    def __init__(
+        self,
+        port: int,
+        auth_token: str = "",
+        pairing_pin: str = "",
+        parent: object = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("Connect Mobile Device")
-        self.setMinimumWidth(350)
+        self.setMinimumWidth(360)
 
         self._port = port
+        self._auth_token = auth_token
+        self._pairing_pin = pairing_pin
         self._lan_ip = _get_lan_ip()
-        self._url = f"http://{self._lan_ip}:{port}" if self._lan_ip else None
+
+        # Build the URL — if we have a token, use the auto-login URL
+        if self._lan_ip:
+            base = f"http://{self._lan_ip}:{port}"
+            if auth_token:
+                self._url = f"{base}/auth/{auth_token}"
+            else:
+                self._url = base
+        else:
+            self._url = None
 
         self._setup_ui()
 
@@ -100,7 +117,6 @@ class WebConnectDialog(QDialog):
         layout.setContentsMargins(24, 24, 24, 24)
 
         if self._url is None:
-            # No network detected
             error_label = QLabel("Could not detect network address.")
             error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             error_label.setStyleSheet("color: gray;")
@@ -112,28 +128,48 @@ class WebConnectDialog(QDialog):
             hint.setStyleSheet("color: gray;")
             layout.addWidget(hint)
         else:
-            # QR code
+            # Instructions
+            scan_label = QLabel("Scan to connect instantly")
+            scan_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            scan_label.setStyleSheet("color: gray; font-size: 13px;")
+            layout.addWidget(scan_label)
+
+            # QR code (encodes auto-login URL)
             qr_label = QLabel()
             qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             pixmap = _render_qr_pixmap(self._url, size=250)
             qr_label.setPixmap(pixmap)
             layout.addWidget(qr_label)
 
-            # URL display
-            url_label = QLabel(self._url)
+            # PIN section (below QR code)
+            if self._pairing_pin:
+                divider = QLabel("or enter this PIN on your phone")
+                divider.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                divider.setStyleSheet("color: gray; font-size: 12px; margin-top: 4px;")
+                layout.addWidget(divider)
+
+                pin_label = QLabel(self._pairing_pin)
+                pin_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                pin_font = QFont("monospace", 32)
+                pin_font.setBold(True)
+                pin_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 8)
+                pin_label.setFont(pin_font)
+                pin_label.setStyleSheet("color: palette(highlight); margin: 4px 0;")
+                pin_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                layout.addWidget(pin_label)
+
+                pin_hint = QLabel("PIN expires in 5 minutes")
+                pin_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                pin_hint.setStyleSheet("color: gray; font-size: 11px;")
+                layout.addWidget(pin_hint)
+
+            # URL display (small, for reference)
+            base_url = f"http://{self._lan_ip}:{self._port}"
+            url_label = QLabel(base_url)
             url_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             url_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            url_font = QFont()
-            url_font.setPointSize(13)
-            url_label.setFont(url_font)
+            url_label.setStyleSheet("color: gray; font-size: 12px; margin-top: 8px;")
             layout.addWidget(url_label)
-
-            # Instructions
-            instructions = QLabel("Scan with your phone camera to open the Web UI.")
-            instructions.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            instructions.setWordWrap(True)
-            instructions.setStyleSheet("color: gray;")
-            layout.addWidget(instructions)
 
         # Buttons
         btn_layout = QHBoxLayout()

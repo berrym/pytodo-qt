@@ -116,6 +116,7 @@ class StatusBarWidget(QStatusBar):
     """
 
     pomodoro_clicked = pyqtSignal()
+    web_connect_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -145,6 +146,8 @@ class StatusBarWidget(QStatusBar):
         self.status_label = QLabel()
         self.server_status_label = QLabel()
         self.web_status_label = QLabel()
+        self.web_status_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.web_status_label.installEventFilter(self)
         self.pending_sync_label = QLabel()
         self.sync_status_label = QLabel()
 
@@ -220,15 +223,17 @@ class StatusBarWidget(QStatusBar):
         return sep
 
     def eventFilter(self, a0, a1) -> bool:  # noqa: N802
-        """Detect clicks on the pomodoro label."""
-        if (
-            a0 in (self.pomodoro_label, self._pomodoro_icon_label)
-            and a1 is not None
-            and a1.type() == QEvent.Type.MouseButtonPress
-            and self.pomodoro_label.isVisible()
-        ):
-            self.pomodoro_clicked.emit()
-            return True
+        """Detect clicks on the pomodoro and web status labels."""
+        if a1 is not None and a1.type() == QEvent.Type.MouseButtonPress:
+            if (
+                a0 in (self.pomodoro_label, self._pomodoro_icon_label)
+                and self.pomodoro_label.isVisible()
+            ):
+                self.pomodoro_clicked.emit()
+                return True
+            if a0 is self.web_status_label:
+                self.web_connect_clicked.emit()
+                return True
         return super().eventFilter(a0, a1)
 
     def update_stats(
@@ -270,14 +275,19 @@ class StatusBarWidget(QStatusBar):
             self.server_status_label.setText("Server: Off")
             self.server_status_label.setStyleSheet("color: gray;")
 
-    def set_web_status(self, running: bool, port: int = 0) -> None:
+    def set_web_status(self, running: bool, port: int = 0, pin: str = "") -> None:
         """Set the web server status display."""
         if running:
-            self.web_status_label.setText(f"Web: :{port}")
-            self.web_status_label.setStyleSheet("color: green;")
+            text = f"Web: :{port}"
+            if pin:
+                text += f"  PIN: {pin}"
+            self.web_status_label.setText(text)
+            self.web_status_label.setStyleSheet("color: green; cursor: pointer;")
+            self.web_status_label.setToolTip("Click to show connection QR code")
         else:
             self.web_status_label.setText("Web: Off")
             self.web_status_label.setStyleSheet("color: gray;")
+            self.web_status_label.setToolTip("")
 
     def show_message(self, message: str, timeout: int = 3000) -> None:
         """Show a temporary message without disrupting layout."""
