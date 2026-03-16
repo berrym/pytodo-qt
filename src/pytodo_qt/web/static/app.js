@@ -282,8 +282,26 @@
     updatePendingBadge();
   }
 
+  function extractEntityId(path) {
+    // Extract item or list UUID from API paths:
+    //   /items/abc-123         → abc-123
+    //   /items/abc-123/toggle  → abc-123
+    //   /lists/abc-123/columns → abc-123
+    var match = path.match(/^\/(items|lists)\/([0-9a-f-]+)/);
+    return match ? match[2] : null;
+  }
+
   function enqueueOfflineEdit(path, opts) {
     var queue = getOfflineQueue();
+    // DELETE makes prior pending ops for the same entity moot
+    if (opts.method === "DELETE") {
+      var delId = extractEntityId(path);
+      if (delId) {
+        queue = queue.filter(function (entry) {
+          return extractEntityId(entry.path) !== delId;
+        });
+      }
+    }
     queue.push({ path: path, opts: opts, timestamp: Date.now() });
     saveOfflineQueue(queue);
   }
@@ -300,16 +318,37 @@
     showToast("Syncing " + queue.length + " offline change" + (queue.length > 1 ? "s" : "") + "...");
     var remaining = [];
     var conflicts = 0;
+    var chainedTs = {}; // entityId → latest updated_at from successful replays
     for (var i = 0; i < queue.length; i++) {
+      var entry = queue[i];
+      var entityId = extractEntityId(entry.path);
+      // Chain updated_at from prior successful replay of same entity
+      if (entityId && chainedTs[entityId] && entry.opts.body) {
+        try {
+          var patchedBody = JSON.parse(entry.opts.body);
+          if (patchedBody.updated_at !== undefined) {
+            patchedBody.updated_at = chainedTs[entityId];
+            entry.opts.body = JSON.stringify(patchedBody);
+          }
+        } catch (e) { /* leave body as-is */ }
+      }
       try {
-        var resp = await fetch(API + queue[i].path, queue[i].opts);
+        var resp = await fetch(API + entry.path, entry.opts);
         if (resp.status === 409) {
           conflicts++;
         } else if (!resp.ok) {
-          remaining.push(queue[i]);
+          remaining.push(entry);
+        } else if (entityId) {
+          // Capture updated_at from response for chaining to subsequent ops
+          try {
+            var data = await resp.json();
+            if (data && data.updated_at) {
+              chainedTs[entityId] = data.updated_at;
+            }
+          } catch (e) { /* no parseable body */ }
         }
       } catch (e) {
-        remaining.push(queue[i]);
+        remaining.push(entry);
       }
     }
     saveOfflineQueue(remaining);
