@@ -470,7 +470,20 @@ class SettingsDialog(QDialog):
         self.web_tls_check = QCheckBox("Enable TLS (HTTPS)")
         form.addRow("", self.web_tls_check)
 
-        # Access token display
+        # Pairing PIN display
+        self.web_pin_label = QLabel("------")
+        self.web_pin_label.setStyleSheet(
+            "font-size: 28px; font-weight: bold; font-family: monospace;"
+            " letter-spacing: 6px; padding: 8px; color: palette(highlight);"
+        )
+        self.web_pin_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        form.addRow("Pairing PIN:", self.web_pin_label)
+
+        self.web_pin_hint = QLabel("Enter this PIN on your phone to connect")
+        self.web_pin_hint.setStyleSheet("font-size: 11px; color: palette(mid);")
+        form.addRow("", self.web_pin_hint)
+
+        # Access token (hidden, for advanced users)
         token_row = QHBoxLayout()
         self.web_token_label = QLineEdit()
         self.web_token_label.setReadOnly(True)
@@ -484,7 +497,7 @@ class SettingsDialog(QDialog):
         self.web_token_copy_btn.setFixedWidth(50)
         self.web_token_copy_btn.clicked.connect(self._copy_web_token)
         token_row.addWidget(self.web_token_copy_btn)
-        form.addRow("Access Token:", token_row)
+        form.addRow("Token:", token_row)
 
         layout.addWidget(group)
         layout.addStretch()
@@ -593,6 +606,14 @@ class SettingsDialog(QDialog):
         if bind_idx >= 0:
             self.web_bind_combo.setCurrentIndex(bind_idx)
         self.web_token_label.setText(config.web.auth_token)
+        # Show pairing PIN from running web server
+        parent = self.parent()
+        web_server = getattr(parent, "_web_server", None) if parent else None
+        if web_server is not None:
+            self.web_pin_label.setText(web_server.pairing_pin)
+        else:
+            self.web_pin_label.setText("Start web server to generate")
+            self.web_pin_label.setStyleSheet("font-size: 12px; color: palette(mid); padding: 8px;")
 
     def _save_settings(self) -> bool:
         """Save settings from UI to config."""

@@ -125,14 +125,18 @@ body {
 
 .login-card input {
   width: 100%;
-  padding: 10px 14px;
-  border: 1px solid var(--border);
+  padding: 14px;
+  border: 2px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg);
   color: var(--text);
-  font-size: 15px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 8px;
+  text-align: center;
   margin-bottom: 12px;
   box-sizing: border-box;
+  font-family: monospace;
 }
 
 .login-card input:focus {

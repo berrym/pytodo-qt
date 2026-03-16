@@ -195,7 +195,7 @@
   // ====================================================================
 
   var loginScreen = document.getElementById("login-screen");
-  var loginInput = document.getElementById("login-token-input");
+  var loginPinInput = document.getElementById("login-pin-input");
   var loginBtn = document.getElementById("login-btn");
   var loginError = document.getElementById("login-error");
   var appContainer = document.getElementById("app-container");
@@ -203,6 +203,8 @@
   function showLoginScreen() {
     if (loginScreen) loginScreen.classList.remove("hidden");
     if (appContainer) appContainer.classList.add("hidden");
+    if (loginPinInput) { loginPinInput.value = ""; loginPinInput.focus(); }
+    if (loginError) loginError.textContent = "";
     stopPolling();
     disconnectWebSocket();
   }
@@ -214,29 +216,41 @@
 
   if (loginBtn) {
     loginBtn.addEventListener("click", async function () {
-      var token = loginInput ? loginInput.value.trim() : "";
-      if (!token) return;
+      var pin = loginPinInput ? loginPinInput.value.trim() : "";
+      if (!pin || pin.length < 4) return;
       if (loginError) loginError.textContent = "";
+      loginBtn.disabled = true;
+      loginBtn.textContent = "Connecting...";
       try {
-        var resp = await fetch(API + "/status", {
-          headers: { "Authorization": "Bearer " + token }
+        var resp = await fetch(API + "/auth", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pin: pin })
         });
         if (resp.ok) {
-          setAuthToken(token);
+          var data = await resp.json();
+          setAuthToken(data.token);
           hideLoginScreen();
           init();
         } else {
-          if (loginError) loginError.textContent = "Invalid token";
+          var err = await resp.json().catch(function () { return {}; });
+          if (loginError) loginError.textContent = err.error || "Invalid PIN";
         }
       } catch (e) {
         if (loginError) loginError.textContent = "Connection failed";
       }
+      loginBtn.disabled = false;
+      loginBtn.textContent = "Connect";
     });
   }
 
-  if (loginInput) {
-    loginInput.addEventListener("keydown", function (e) {
+  if (loginPinInput) {
+    loginPinInput.addEventListener("keydown", function (e) {
       if (e.key === "Enter") { e.preventDefault(); if (loginBtn) loginBtn.click(); }
+    });
+    // Auto-submit when 6 digits entered
+    loginPinInput.addEventListener("input", function () {
+      if (loginPinInput.value.length === 6 && loginBtn) loginBtn.click();
     });
   }
 

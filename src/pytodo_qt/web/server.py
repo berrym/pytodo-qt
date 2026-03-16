@@ -42,6 +42,46 @@ class WebServer:
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._app: web.Application | None = None
+        self._pairing_pin: str = ""
+        self._pairing_pin_expiry: float = 0
+
+    def generate_pin(self) -> str:
+        """Generate a new 6-digit pairing PIN, valid for 5 minutes."""
+        import random
+        import time as _time
+
+        rng = random.SystemRandom()
+        self._pairing_pin = str(rng.randint(100000, 999999))
+        self._pairing_pin_expiry = _time.time() + 300  # 5 minutes
+        return self._pairing_pin
+
+    def validate_pin(self, pin: str) -> str | None:
+        """Validate a pairing PIN. Returns auth token if valid, None otherwise.
+
+        PIN is single-use — consumed on successful validation and regenerated.
+        """
+        import time as _time
+
+        if not self._pairing_pin or not pin:
+            return None
+        if _time.time() > self._pairing_pin_expiry:
+            self.generate_pin()  # Expired — regenerate
+            return None
+        if pin != self._pairing_pin:
+            return None
+        # Success — consume PIN and regenerate
+        token = self.auth_token
+        self.generate_pin()
+        return token
+
+    @property
+    def pairing_pin(self) -> str:
+        """Return the current pairing PIN, regenerating if expired."""
+        import time as _time
+
+        if not self._pairing_pin or _time.time() > self._pairing_pin_expiry:
+            self.generate_pin()
+        return self._pairing_pin
 
     def _ensure_auth_token(self) -> str:
         """Generate an auth token if one doesn't exist, persist to config.
@@ -131,20 +171,24 @@ class WebServer:
             database_key,
             save_callback_key,
             setup_routes,
+            web_server_key,
             ws_clients_key,
         )
 
         app = web.Application(middlewares=[auth_middleware])
         app[database_key] = self._database
         app[ws_clients_key] = set()
+        app[web_server_key] = self
         if self._save_callback:
             app[save_callback_key] = self._save_callback
         if self._config_manager:
             app[config_manager_key] = self._config_manager
 
-        # Auth token
+        # Auth token + pairing PIN
         token = self._ensure_auth_token()
         app[auth_token_key] = token
+        if token:
+            self.generate_pin()
 
         # API routes
         setup_routes(app)

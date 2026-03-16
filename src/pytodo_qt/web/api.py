@@ -28,6 +28,7 @@ save_callback_key: web.AppKey[Callable[[], None]] = web.AppKey("save_callback")
 config_manager_key: web.AppKey[ConfigManager] = web.AppKey("config_manager")
 ws_clients_key: web.AppKey[set[web.WebSocketResponse]] = web.AppKey("ws_clients")
 auth_token_key: web.AppKey[str] = web.AppKey("auth_token")
+web_server_key: web.AppKey[Any] = web.AppKey("web_server")
 
 
 @web.middleware
@@ -37,9 +38,13 @@ async def auth_middleware(request: web.Request, handler: Callable[..., Any]) -> 
     if not token:
         return await handler(request)  # No token configured — allow all
 
-    # Static assets and index page are public (login page needs them)
+    # Public paths: static assets, login page, pairing endpoint, auto-login URL
     path = request.path
-    if path in ("/", "/sw.js") or path.startswith("/static/"):
+    if (
+        path in ("/", "/sw.js", "/api/auth")
+        or path.startswith("/static/")
+        or path.startswith("/auth/")
+    ):
         return await handler(request)
 
     # Check Authorization header
@@ -140,6 +145,9 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_post("/api/lists/{list_id}/apply-preset", handle_apply_preset)
     # WebSocket
     app.router.add_get("/ws", handle_websocket)
+    # Authentication
+    app.router.add_post("/api/auth", handle_pair)
+    app.router.add_get("/auth/{token}", handle_auto_login)
 
 
 # ---------------------------------------------------------------------------
@@ -1160,6 +1168,55 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
             clients.discard(ws)
 
     return ws
+
+
+async def handle_pair(request: web.Request) -> web.Response:
+    """POST /api/auth — Validate a 6-digit pairing PIN and return the auth token."""
+    try:
+        body = await request.json()
+    except Exception:
+        return _error(400, "Invalid JSON body")
+
+    pin = str(body.get("pin", "")).strip()
+    if not pin:
+        return _error(400, "PIN is required")
+
+    server = request.app.get(web_server_key)
+    if server is None:
+        return _error(503, "Pairing not available")
+
+    token = server.validate_pin(pin)
+    if token is None:
+        return _error(401, "Invalid or expired PIN")
+
+    return web.json_response({"token": token})
+
+
+async def handle_auto_login(request: web.Request) -> web.Response:
+    """GET /auth/{token} — Auto-login page that stores token and redirects."""
+    url_token = request.match_info["token"]
+    real_token = request.app.get(auth_token_key, "")
+
+    if not real_token or url_token != real_token:
+        return web.Response(
+            text="<html><body><h2>Invalid or expired link</h2></body></html>",
+            content_type="text/html",
+            status=403,
+        )
+
+    return web.Response(
+        text=(
+            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>PyTodo-Qt</title></head><body>"
+            "<script>"
+            f"localStorage.setItem('pytodo_auth_token','{url_token}');"
+            "location.href='/';"
+            "</script>"
+            "<p>Connecting...</p></body></html>"
+        ),
+        content_type="text/html",
+    )
 
 
 async def _broadcast_refresh(clients: set[web.WebSocketResponse]) -> None:

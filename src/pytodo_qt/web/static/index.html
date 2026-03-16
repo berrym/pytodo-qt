@@ -15,9 +15,10 @@
   <div id="login-screen" class="hidden">
     <div class="login-card">
       <h1>PyTodo-Qt</h1>
-      <p>Enter your access token to connect.</p>
-      <p class="login-hint">Find it in Desktop &rarr; Settings &rarr; Web Server</p>
-      <input id="login-token-input" type="password" placeholder="Access token" autocomplete="off">
+      <p>Enter the 6-digit PIN shown in your desktop app.</p>
+      <p class="login-hint">Desktop &rarr; Settings &rarr; Web Server</p>
+      <input id="login-pin-input" type="text" inputmode="numeric" pattern="[0-9]*"
+             maxlength="6" placeholder="000000" autocomplete="off">
       <button id="login-btn">Connect</button>
       <div id="login-error" class="login-error"></div>
     </div>

@@ -3088,3 +3088,98 @@ class TestAuth:
             assert resp.status == 200
         finally:
             await client.close()
+
+
+class TestPairing:
+    @pytest.mark.asyncio
+    async def test_pair_with_valid_pin(self):
+        ws, token = _make_authed_client()
+        app = ws.create_app()
+        pin = ws.pairing_pin
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            resp = await client.post("/api/auth", json={"pin": pin})
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["token"] == token
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_pair_with_invalid_pin(self):
+        ws, token = _make_authed_client()
+        client = TestClient(TestServer(ws.create_app()))
+        await client.start_server()
+        try:
+            resp = await client.post("/api/auth", json={"pin": "000000"})
+            assert resp.status == 401
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_pin_is_single_use(self):
+        ws, token = _make_authed_client()
+        app = ws.create_app()
+        pin = ws.pairing_pin
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            # First use succeeds
+            resp = await client.post("/api/auth", json={"pin": pin})
+            assert resp.status == 200
+            # Same PIN is consumed — second use fails
+            resp2 = await client.post("/api/auth", json={"pin": pin})
+            assert resp2.status == 401
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_pin_regenerates_after_use(self):
+        ws, token = _make_authed_client()
+        ws.create_app()  # Generates initial PIN
+        old_pin = ws.pairing_pin
+        ws.validate_pin(old_pin)
+        new_pin = ws.pairing_pin
+        assert new_pin != old_pin
+        assert len(new_pin) == 6
+
+    @pytest.mark.asyncio
+    async def test_pair_endpoint_accessible_without_token(self):
+        """Pairing endpoint must be public (no auth header required)."""
+        ws, token = _make_authed_client()
+        client = TestClient(TestServer(ws.create_app()))
+        await client.start_server()
+        try:
+            # No Authorization header — should not get 401
+            resp = await client.post("/api/auth", json={"pin": "wrong"})
+            assert resp.status == 401  # Invalid PIN, but not "auth required"
+            data = await resp.json()
+            assert data["error"] == "Invalid or expired PIN"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_auto_login_url(self):
+        ws, token = _make_authed_client()
+        client = TestClient(TestServer(ws.create_app()))
+        await client.start_server()
+        try:
+            resp = await client.get(f"/auth/{token}")
+            assert resp.status == 200
+            text = await resp.text()
+            assert "localStorage.setItem" in text
+            assert token in text
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_auto_login_url_wrong_token(self):
+        ws, token = _make_authed_client()
+        client = TestClient(TestServer(ws.create_app()))
+        await client.start_server()
+        try:
+            resp = await client.get("/auth/wrong-token")
+            assert resp.status == 403
+        finally:
+            await client.close()
