@@ -2474,24 +2474,24 @@ class TestInterruptionInsights:
 
         sessions = []
         item = uuid4()
-        # Last week: 1/4 completed (25%)
+        # Last week: 1/4 completed (25%) — all on last week's Monday
         for i in range(4):
-            d = last_week_start + timedelta(days=i % 6)
+            d = last_week_start
             sessions.append(
                 self._session(
                     date=d.isoformat(),
-                    start_time=f"{d.isoformat()}T10:00:00",
+                    start_time=f"{d.isoformat()}T{10 + i}:00:00",
                     completed=(i == 0),
                     item_id=item,
                 )
             )
-        # This week: 3/3 completed (100%)
+        # This week: 3/3 completed (100%) — all on today (always in this week)
         for i in range(3):
-            d = week_start + timedelta(days=i % 5)
+            d = today
             sessions.append(
                 self._session(
                     date=d.isoformat(),
-                    start_time=f"{d.isoformat()}T10:00:00",
+                    start_time=f"{d.isoformat()}T{10 + i}:00:00",
                     completed=True,
                     item_id=item,
                 )
@@ -2513,24 +2513,24 @@ class TestInterruptionInsights:
 
         sessions = []
         item = uuid4()
-        # Last week: 3/3 completed (100%)
+        # Last week: 3/3 completed (100%) — all on last week's Monday
         for i in range(3):
-            d = last_week_start + timedelta(days=i % 6)
+            d = last_week_start
             sessions.append(
                 self._session(
                     date=d.isoformat(),
-                    start_time=f"{d.isoformat()}T10:00:00",
+                    start_time=f"{d.isoformat()}T{10 + i}:00:00",
                     completed=True,
                     item_id=item,
                 )
             )
-        # This week: 1/4 completed (25%)
+        # This week: 1/4 completed (25%) — all on today (always in this week)
         for i in range(4):
-            d = week_start + timedelta(days=i % 5)
+            d = today
             sessions.append(
                 self._session(
                     date=d.isoformat(),
-                    start_time=f"{d.isoformat()}T10:00:00",
+                    start_time=f"{d.isoformat()}T{10 + i}:00:00",
                     completed=(i == 0),
                     item_id=item,
                 )
