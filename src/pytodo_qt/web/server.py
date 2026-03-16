@@ -44,6 +44,7 @@ class WebServer:
         self._app: web.Application | None = None
         self._pairing_pin: str = ""
         self._pairing_pin_expiry: float = 0
+        self._pin_attempts: dict[str, tuple[int, float]] = {}  # ip → (count, lockout_until)
 
     def generate_pin(self) -> str:
         """Generate a new 6-digit pairing PIN, valid for 5 minutes."""
@@ -55,24 +56,81 @@ class WebServer:
         self._pairing_pin_expiry = _time.time() + 300  # 5 minutes
         return self._pairing_pin
 
-    def validate_pin(self, pin: str) -> str | None:
-        """Validate a pairing PIN. Returns auth token if valid, None otherwise.
+    def check_pin_rate_limit(self, client_ip: str) -> bool:
+        """Check if a client IP is rate-limited for PIN attempts.
 
-        PIN is single-use — consumed on successful validation and regenerated.
+        Returns True if the client is locked out.
         """
         import time as _time
 
+        entry = self._pin_attempts.get(client_ip)
+        if entry is None:
+            return False
+        count, lockout_until = entry
+        if _time.time() < lockout_until:
+            return True  # Still locked out
+        if count >= 5 and _time.time() >= lockout_until:
+            # Lockout expired — reset
+            del self._pin_attempts[client_ip]
+        return False
+
+    def record_pin_failure(self, client_ip: str) -> None:
+        """Record a failed PIN attempt. Lockout after 5 failures."""
+        import time as _time
+
+        entry = self._pin_attempts.get(client_ip)
+        count = (entry[0] if entry else 0) + 1
+        lockout_until = _time.time() + 60 if count >= 5 else 0
+        self._pin_attempts[client_ip] = (count, lockout_until)
+        if count >= 5:
+            logger.log.warning("PIN rate limit: %s locked out for 60s", client_ip)
+
+    def validate_pin(self, pin: str, client_ip: str = "") -> str | None:
+        """Validate a pairing PIN. Returns auth token if valid, None otherwise.
+
+        PIN is single-use — consumed on successful validation and regenerated.
+        Rate-limited to 5 attempts per IP, then 60-second lockout.
+        """
+        import time as _time
+
+        if client_ip and self.check_pin_rate_limit(client_ip):
+            return None
         if not self._pairing_pin or not pin:
+            if client_ip:
+                self.record_pin_failure(client_ip)
             return None
         if _time.time() > self._pairing_pin_expiry:
             self.generate_pin()  # Expired — regenerate
+            if client_ip:
+                self.record_pin_failure(client_ip)
             return None
         if pin != self._pairing_pin:
+            if client_ip:
+                self.record_pin_failure(client_ip)
             return None
-        # Success — consume PIN and regenerate
+        # Success — consume PIN, regenerate, clear rate limit
         token = self.auth_token
         self.generate_pin()
+        if client_ip:
+            self._pin_attempts.pop(client_ip, None)
         return token
+
+    def revoke_token(self) -> str:
+        """Revoke the current auth token and generate a new one.
+
+        All existing sessions will immediately fail with 401.
+        Returns the new token.
+        """
+        import secrets
+
+        new_token = secrets.token_urlsafe(32)
+        if self._config:
+            self._config.auth_token = new_token
+        if self._config_manager:
+            self._config_manager.save()
+        self.generate_pin()
+        logger.log.info("Auth token revoked — all sessions invalidated")
+        return new_token
 
     @property
     def pairing_pin(self) -> str:
@@ -170,12 +228,13 @@ class WebServer:
             config_manager_key,
             database_key,
             save_callback_key,
+            security_headers_middleware,
             setup_routes,
             web_server_key,
             ws_clients_key,
         )
 
-        app = web.Application(middlewares=[auth_middleware])
+        app = web.Application(middlewares=[security_headers_middleware, auth_middleware])
         app[database_key] = self._database
         app[ws_clients_key] = set()
         app[web_server_key] = self
@@ -205,6 +264,8 @@ class WebServer:
     @property
     def auth_token(self) -> str:
         """Return the current auth token."""
+        if self._config and self._config.auth_token:
+            return self._config.auth_token
         if self._app:
             from .api import auth_token_key
 

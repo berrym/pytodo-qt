@@ -31,10 +31,35 @@ auth_token_key: web.AppKey[str] = web.AppKey("auth_token")
 web_server_key: web.AppKey[Any] = web.AppKey("web_server")
 
 
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';"
+        " img-src 'self' data:; connect-src 'self' ws: wss:; font-src 'self'"
+    ),
+}
+
+
+@web.middleware
+async def security_headers_middleware(
+    request: web.Request, handler: Callable[..., Any]
+) -> web.StreamResponse:
+    """Add security headers to all responses."""
+    response = await handler(request)
+    for key, value in _SECURITY_HEADERS.items():
+        # Don't override per-response CSP (e.g., auto-login nonce)
+        if key not in response.headers:
+            response.headers[key] = value
+    return response
+
+
 @web.middleware
 async def auth_middleware(request: web.Request, handler: Callable[..., Any]) -> web.StreamResponse:
     """Require Bearer token for API and WebSocket requests."""
-    token = request.app.get(auth_token_key, "")
+    server = request.app.get(web_server_key)
+    token = server.auth_token if server else request.app.get(auth_token_key, "")
     if not token:
         return await handler(request)  # No token configured — allow all
 
@@ -1185,7 +1210,11 @@ async def handle_pair(request: web.Request) -> web.Response:
     if server is None:
         return _error(503, "Pairing not available")
 
-    token = server.validate_pin(pin)
+    client_ip = request.remote or ""
+    if server.check_pin_rate_limit(client_ip):
+        return _error(429, "Too many attempts — try again in 60 seconds")
+
+    token = server.validate_pin(pin, client_ip)
     if token is None:
         return _error(401, "Invalid or expired PIN")
 
@@ -1194,8 +1223,11 @@ async def handle_pair(request: web.Request) -> web.Response:
 
 async def handle_auto_login(request: web.Request) -> web.Response:
     """GET /auth/{token} — Auto-login page that stores token and redirects."""
+    import secrets as _secrets
+
     url_token = request.match_info["token"]
-    real_token = request.app.get(auth_token_key, "")
+    server = request.app.get(web_server_key)
+    real_token = server.auth_token if server else request.app.get(auth_token_key, "")
 
     if not real_token or url_token != real_token:
         return web.Response(
@@ -1204,18 +1236,22 @@ async def handle_auto_login(request: web.Request) -> web.Response:
             status=403,
         )
 
+    nonce = _secrets.token_urlsafe(16)
     return web.Response(
         text=(
             "<!DOCTYPE html><html><head><meta charset='utf-8'>"
             "<meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>PyTodo-Qt</title></head><body>"
-            "<script>"
+            f"<script nonce='{nonce}'>"
             f"localStorage.setItem('pytodo_auth_token','{url_token}');"
             "location.href='/';"
             "</script>"
             "<p>Connecting...</p></body></html>"
         ),
         content_type="text/html",
+        headers={
+            "Content-Security-Policy": f"default-src 'none'; script-src 'nonce-{nonce}'",
+        },
     )
 
 

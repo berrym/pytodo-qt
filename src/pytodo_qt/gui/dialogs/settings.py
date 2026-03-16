@@ -499,6 +499,11 @@ class SettingsDialog(QDialog):
         token_row.addWidget(self.web_token_copy_btn)
         form.addRow("Token:", token_row)
 
+        self.web_revoke_btn = QPushButton("Disconnect All Devices")
+        self.web_revoke_btn.setStyleSheet("color: #c0392b;")
+        self.web_revoke_btn.clicked.connect(self._revoke_web_token)
+        form.addRow("", self.web_revoke_btn)
+
         layout.addWidget(group)
         layout.addStretch()
 
@@ -707,6 +712,33 @@ class SettingsDialog(QDialog):
         else:
             self.web_token_label.setEchoMode(QLineEdit.EchoMode.Password)
             self.web_token_show_btn.setText("Show")
+
+    def _revoke_web_token(self) -> None:
+        """Revoke the web access token, disconnecting all devices."""
+        parent = self.parent()
+        web_server = getattr(parent, "_web_server", None) if parent else None
+        if web_server is None:
+            QMessageBox.information(self, "Info", "Web server is not running.")
+            return
+        if (
+            QMessageBox.question(
+                self,
+                "Disconnect All Devices",
+                "This will immediately disconnect all phones and tablets.\n"
+                "They will need to re-pair using a new PIN.\n\nContinue?",
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        new_token = web_server.revoke_token()
+        self.web_token_label.setText(new_token)
+        self.web_pin_label.setText(web_server.pairing_pin)
+        # Update status bar PIN
+        main_window = parent
+        if hasattr(main_window, "status_bar_widget"):
+            main_window.status_bar_widget.set_web_status(
+                True, port=self._config.web.port, pin=web_server.pairing_pin
+            )
 
     def _copy_web_token(self) -> None:
         """Copy the web access token to clipboard."""

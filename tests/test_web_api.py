@@ -3183,3 +3183,120 @@ class TestPairing:
             assert resp.status == 403
         finally:
             await client.close()
+
+
+class TestPinRateLimit:
+    def test_rate_limit_after_5_failures(self):
+        ws, _ = _make_authed_client()
+        ws.create_app()
+        for _ in range(5):
+            result = ws.validate_pin("000000", client_ip="1.2.3.4")
+            assert result is None
+        # 6th attempt should be rate-limited (returns None even with correct PIN)
+        pin = ws.pairing_pin
+        result = ws.validate_pin(pin, client_ip="1.2.3.4")
+        assert result is None
+
+    def test_different_ips_independent(self):
+        ws, _ = _make_authed_client()
+        ws.create_app()
+        for _ in range(5):
+            ws.validate_pin("000000", client_ip="1.2.3.4")
+        # Different IP should not be locked out
+        pin = ws.pairing_pin
+        result = ws.validate_pin(pin, client_ip="5.6.7.8")
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_returns_429(self):
+        ws, _ = _make_authed_client()
+        client = TestClient(TestServer(ws.create_app()))
+        await client.start_server()
+        try:
+            for _ in range(5):
+                await client.post("/api/auth", json={"pin": "000000"})
+            resp = await client.post("/api/auth", json={"pin": "000000"})
+            assert resp.status == 429
+            data = await resp.json()
+            assert "Too many attempts" in data["error"]
+        finally:
+            await client.close()
+
+
+class TestTokenRevocation:
+    def test_revoke_generates_new_token(self):
+        ws, old_token = _make_authed_client()
+        ws.create_app()
+        new_token = ws.revoke_token()
+        assert new_token != old_token
+        assert len(new_token) > 20
+        assert ws.auth_token == new_token
+
+    @pytest.mark.asyncio
+    async def test_revoked_token_returns_401(self):
+        ws, old_token = _make_authed_client()
+        client = TestClient(TestServer(ws.create_app()))
+        await client.start_server()
+        try:
+            # Old token works
+            resp = await client.get(
+                "/api/status",
+                headers={"Authorization": f"Bearer {old_token}"},
+            )
+            assert resp.status == 200
+            # Revoke
+            new_token = ws.revoke_token()
+            # Old token fails
+            resp = await client.get(
+                "/api/status",
+                headers={"Authorization": f"Bearer {old_token}"},
+            )
+            assert resp.status == 401
+            # New token works
+            resp = await client.get(
+                "/api/status",
+                headers={"Authorization": f"Bearer {new_token}"},
+            )
+            assert resp.status == 200
+        finally:
+            await client.close()
+
+
+class TestSecurityHeaders:
+    @pytest.mark.asyncio
+    async def test_api_has_security_headers(self):
+        client = await _make_client()
+        await client.start_server()
+        try:
+            resp = await client.get("/api/lists")
+            assert resp.headers["X-Content-Type-Options"] == "nosniff"
+            assert resp.headers["X-Frame-Options"] == "DENY"
+            assert resp.headers["Referrer-Policy"] == "no-referrer"
+            assert "default-src" in resp.headers["Content-Security-Policy"]
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_auto_login_has_csp_nonce(self):
+        ws, token = _make_authed_client()
+        client = TestClient(TestServer(ws.create_app()))
+        await client.start_server()
+        try:
+            resp = await client.get(f"/auth/{token}")
+            csp = resp.headers["Content-Security-Policy"]
+            assert "nonce-" in csp
+            text = await resp.text()
+            assert "nonce=" in text
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_static_has_security_headers(self):
+        client = await _make_client()
+        await client.start_server()
+        try:
+            resp = await client.get("/")
+            assert resp.headers["X-Content-Type-Options"] == "nosniff"
+            assert resp.headers["Referrer-Policy"] == "no-referrer"
+        finally:
+            await client.close()
