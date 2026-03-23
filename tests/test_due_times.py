@@ -211,53 +211,88 @@ class TestFormatDueDateWithTime:
             result = format_due_date(fake_today, due_time=time(14, 30), time_format="12h")
         assert result == "Today 2:30 PM"
 
-    def test_tomorrow_with_time(self):
-        tomorrow = date.today() + timedelta(days=1)
+    def test_tomorrow_with_time(self, monkeypatch):
+        fake_today = date(2026, 6, 15)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: fake_today)}),
+        )
+        tomorrow = date(2026, 6, 16)
         result = format_due_date(tomorrow, due_time=time(9, 0), time_format="12h")
         assert result == "Tomorrow 9:00 AM"
 
-    def test_this_week_with_time(self):
-        three_days = date.today() + timedelta(days=3)
+    def test_this_week_with_time(self, monkeypatch):
+        fake_today = date(2026, 6, 15)  # Monday
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: fake_today)}),
+        )
+        three_days = date(2026, 6, 18)  # Thursday
         result = format_due_date(three_days, due_time=time(15, 0), time_format="12h")
-        expected = three_days.strftime("%A") + " 3:00 PM"
-        assert result == expected
+        assert result == "Thursday 3:00 PM"
 
-    def test_same_year_with_time(self):
-        future = date.today() + timedelta(days=15)
-        if future.year == date.today().year:
-            result = format_due_date(future, due_time=time(9, 0), time_format="12h")
-            expected = future.strftime("%b %d") + " 9:00 AM"
-            assert result == expected
+    def test_same_year_with_time(self, monkeypatch):
+        fake_today = date(2026, 6, 15)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: fake_today)}),
+        )
+        future = date(2026, 7, 1)
+        result = format_due_date(future, due_time=time(9, 0), time_format="12h")
+        assert result == "Jul 01 9:00 AM"
 
-    def test_different_year_with_time(self):
-        next_year = date(date.today().year + 1, 3, 15)
+    def test_different_year_with_time(self, monkeypatch):
+        fake_today = date(2026, 6, 15)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: fake_today)}),
+        )
+        next_year = date(2027, 3, 15)
         result = format_due_date(next_year, due_time=time(14, 0), time_format="12h")
-        expected = next_year.strftime("%b %d, %Y") + " 2:00 PM"
-        assert result == expected
+        assert result == "Mar 15, 2027 2:00 PM"
 
-    def test_completed_with_time(self):
-        today = date.today()
-        result = format_due_date(today, complete=True, due_time=time(14, 30), time_format="12h")
-        expected = today.strftime("%b %d") + " 2:30 PM"
-        assert result == expected
+    def test_completed_with_time(self, monkeypatch):
+        fake_today = date(2026, 6, 15)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: fake_today)}),
+        )
+        result = format_due_date(
+            fake_today, complete=True, due_time=time(14, 30), time_format="12h"
+        )
+        assert result == "Jun 15 2:30 PM"
 
-    def test_completed_different_year_with_time(self):
-        past = date(date.today().year - 1, 6, 15)
+    def test_completed_different_year_with_time(self, monkeypatch):
+        fake_today = date(2026, 6, 15)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: fake_today)}),
+        )
+        past = date(2025, 6, 15)
         result = format_due_date(past, complete=True, due_time=time(10, 0), time_format="24h")
-        expected = past.strftime("%b %d, %Y") + " 10:00"
-        assert result == expected
+        assert result == "Jun 15, 2025 10:00"
 
-    def test_today_without_time(self):
-        today = date.today()
-        assert format_due_date(today) == "Today"
+    def test_today_without_time(self, monkeypatch):
+        fake_today = date(2026, 6, 15)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: fake_today)}),
+        )
+        assert format_due_date(fake_today) == "Today"
 
     def test_none_date(self):
         assert format_due_date(None, due_time=time(14, 0)) == ""
 
     def test_overdue_date_only_unchanged(self):
-        yesterday = date.today() - timedelta(days=1)
-        result = format_due_date(yesterday)
-        assert result == "Overdue (1d)"
+        fake_today = date(2026, 6, 15)
+        fake_now = datetime(2026, 6, 15, 12, 0)
+        with (
+            patch("pytodo_qt.core.models.date", _mock_date(fake_today)),
+            patch("pytodo_qt.core.models.datetime", _mock_datetime(fake_now)),
+        ):
+            yesterday = date(2026, 6, 14)
+            result = format_due_date(yesterday)
+            assert result == "Overdue (1d)"
 
     def test_24h_format(self):
         fake_today = date(2026, 3, 15)

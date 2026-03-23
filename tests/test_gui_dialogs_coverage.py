@@ -213,7 +213,9 @@ class TestAddTodoDialogAdvancedMode:
         assert dialog.priority_combo.currentIndex() == 1  # Normal
         assert not dialog.due_date_checkbox.isChecked()
         assert not dialog.due_date_edit.isEnabled()
-        assert not dialog.recurrence_checkbox.isEnabled()
+        # Recurrence is always available (auto-sets today if needed)
+        assert dialog.recurrence_checkbox.isEnabled()
+        assert not dialog.recurrence_checkbox.isChecked()
         assert not dialog.interval_spin.isEnabled()
         assert not dialog.type_combo.isEnabled()
 
@@ -315,7 +317,8 @@ class TestAddTodoDialogAdvancedMode:
         dialog.reminder_edit.setText("Daily standup")
         dialog.due_date_checkbox.setChecked(True)
         dialog.recurrence_checkbox.setChecked(True)
-        dialog.type_combo.setCurrentIndex(0)  # Daily
+        idx = dialog.type_combo.findData("daily")
+        dialog.type_combo.setCurrentIndex(idx)
         dialog.interval_spin.setValue(1)
         dialog._on_accept()
         item = dialog.get_item()
@@ -328,7 +331,8 @@ class TestAddTodoDialogAdvancedMode:
         dialog.reminder_edit.setText("Weekly report")
         dialog.due_date_checkbox.setChecked(True)
         dialog.recurrence_checkbox.setChecked(True)
-        dialog.type_combo.setCurrentIndex(1)  # Weekly
+        idx = dialog.type_combo.findData("weekly")
+        dialog.type_combo.setCurrentIndex(idx)
         dialog.interval_spin.setValue(1)
         dialog.end_date_radio.setChecked(True)
         dialog._on_end_condition_changed()
@@ -344,7 +348,8 @@ class TestAddTodoDialogAdvancedMode:
         dialog.reminder_edit.setText("Monthly review")
         dialog.due_date_checkbox.setChecked(True)
         dialog.recurrence_checkbox.setChecked(True)
-        dialog.type_combo.setCurrentIndex(2)  # Monthly
+        idx = dialog.type_combo.findData("monthly")
+        dialog.type_combo.setCurrentIndex(idx)
         dialog.interval_spin.setValue(3)
         dialog.end_count_radio.setChecked(True)
         dialog._on_end_condition_changed()

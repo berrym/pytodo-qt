@@ -859,6 +859,22 @@ def is_due_this_week(due_date: date | None) -> bool:
     return today <= due_date <= today + timedelta(days=7)
 
 
+def logical_today(day_start_hour: int = 0) -> date:
+    """Return the logical current date respecting the user's day boundary.
+
+    If the current hour is before day_start_hour, the logical day is
+    still yesterday. A night owl with day_start_hour=4 sees 2am as
+    part of the previous day.
+
+    Uses the module-level ``date.today()`` so tests can monkeypatch it,
+    and ``datetime.now().hour`` for the hour check.
+    """
+    today = date.today()
+    if day_start_hour > 0 and datetime.now().hour < day_start_hour:
+        return today - timedelta(days=1)
+    return today
+
+
 def compute_next_due_date(
     current_due: date,
     recurrence_type: str,
@@ -868,9 +884,13 @@ def compute_next_due_date(
 
     Calculates from today to avoid cascading completions for overdue items.
     Preserves day-of-week for weekly and day-of-month for monthly patterns.
+    For minutely recurrence, returns the date component of the next occurrence.
     """
     today = date.today()
-    if recurrence_type == "daily":
+    if recurrence_type == "minutely":
+        next_dt = datetime.now() + timedelta(minutes=interval)
+        return next_dt.date()
+    elif recurrence_type == "daily":
         return today + timedelta(days=interval)
     elif recurrence_type == "weekly":
         original_weekday = current_due.weekday()
@@ -895,6 +915,26 @@ def compute_next_due_date(
     else:
         msg = f"Unknown recurrence type: {recurrence_type}"
         raise ValueError(msg)
+
+
+def compute_next_due_datetime(
+    current_due_date: date,
+    current_due_time: time | None,
+    recurrence_type: str,
+    interval: int = 1,
+) -> tuple[date, time | None]:
+    """Compute next due date AND time for any recurrence type.
+
+    For minutely: advances by interval minutes from now, crossing midnight
+    boundaries naturally.
+    For daily/weekly/monthly/yearly: delegates to compute_next_due_date
+    and preserves the existing due_time.
+    """
+    if recurrence_type == "minutely":
+        next_dt = datetime.now() + timedelta(minutes=interval)
+        return next_dt.date(), next_dt.time().replace(second=0, microsecond=0)
+    next_date = compute_next_due_date(current_due_date, recurrence_type, interval)
+    return next_date, current_due_time
 
 
 def is_recurrence_ended(item: TodoItem, next_due: date | None = None) -> bool:
@@ -945,13 +985,15 @@ def advance_overdue_recurring(item: TodoItem) -> bool:
     return True
 
 
-def cycle_completed_recurring(item: TodoItem, todo_list: TodoList) -> bool:
+def cycle_completed_recurring(item: TodoItem, todo_list: TodoList, day_start_hour: int = 0) -> bool:
     """Cycle a completed recurring item to its next occurrence when due.
 
     After the user completes a recurring item, it stays complete until the
     next due date arrives. This function detects that the next occurrence
     is now due and resets the item: complete→False, due_date advanced,
     board_column reset, and all subtask completions cleared.
+
+    For minutely recurrence, cycles when the interval has elapsed (sub-day).
 
     Returns True if the item was cycled, False otherwise.
     """
@@ -963,19 +1005,29 @@ def cycle_completed_recurring(item: TodoItem, todo_list: TodoList) -> bool:
     if item.recurrence_end_count is not None and item.recurrence_count >= item.recurrence_end_count:
         return False
 
-    # Only cycle when the current due date has passed — the item was due
-    # yesterday (or earlier) and the user completed it, so set up the next one.
-    if item.due_date >= date.today():
-        return False  # Still the same day as the due date — stay complete
+    today = logical_today(day_start_hour)
 
-    next_due = compute_next_due_date(item.due_date, item.recurrence_type, item.recurrence_interval)
+    if item.recurrence_type == "minutely":
+        # For minutely recurrence, check if the interval has elapsed
+        if not is_overdue(item.due_date, item.due_time):
+            return False  # Not yet time — stay complete
+    else:
+        # For daily+ recurrence, only cycle when the due date has passed
+        if item.due_date >= today:
+            return False  # Still the same logical day — stay complete
 
-    if is_recurrence_ended(item, next_due):
+    next_date, next_time = compute_next_due_datetime(
+        item.due_date, item.due_time, item.recurrence_type, item.recurrence_interval
+    )
+
+    if is_recurrence_ended(item, next_date):
         return False  # Recurrence ended — stay complete permanently
 
     # Cycle to next occurrence
     item.complete = False
-    item.due_date = next_due
+    item.due_date = next_date
+    if next_time is not None:
+        item.due_time = next_time
 
     # Reset board column — items with work history go to progress, else inbox
     cols = todo_list.board_columns
@@ -1031,29 +1083,44 @@ def advance_all_overdue_recurring(database: Database) -> int:
     return advanced_count
 
 
+def _format_minutes_interval(minutes: int) -> str:
+    """Format a minute interval smartly: 60→'hour', 240→'4 hours', 30→'30 min'."""
+    if minutes >= 60 and minutes % 60 == 0:
+        hours = minutes // 60
+        return f"{hours} hour{'s' if hours != 1 else ''}"
+    if minutes > 60:
+        hours = minutes // 60
+        mins = minutes % 60
+        return f"{hours}h {mins}m"
+    return f"{minutes} min"
+
+
 def format_recurrence(item: TodoItem) -> str:
-    """Format recurrence rule for display (e.g., 'Every day', 'Every 2 weeks')."""
+    """Format recurrence rule for display (e.g., 'Every day', 'Every 30 min')."""
     if not item.is_recurring or item.recurrence_type is None:
         return ""
-    type_singular = {
-        "daily": "day",
-        "weekly": "week",
-        "monthly": "month",
-        "yearly": "year",
-    }
-    type_plural = {
-        "daily": "days",
-        "weekly": "weeks",
-        "monthly": "months",
-        "yearly": "years",
-    }
-    if item.recurrence_interval == 1:
-        text = f"Every {type_singular.get(item.recurrence_type, item.recurrence_type)}"
+    if item.recurrence_type == "minutely":
+        text = f"Every {_format_minutes_interval(item.recurrence_interval)}"
     else:
-        text = (
-            f"Every {item.recurrence_interval} "
-            f"{type_plural.get(item.recurrence_type, item.recurrence_type)}"
-        )
+        type_singular = {
+            "daily": "day",
+            "weekly": "week",
+            "monthly": "month",
+            "yearly": "year",
+        }
+        type_plural = {
+            "daily": "days",
+            "weekly": "weeks",
+            "monthly": "months",
+            "yearly": "years",
+        }
+        if item.recurrence_interval == 1:
+            text = f"Every {type_singular.get(item.recurrence_type, item.recurrence_type)}"
+        else:
+            text = (
+                f"Every {item.recurrence_interval} "
+                f"{type_plural.get(item.recurrence_type, item.recurrence_type)}"
+            )
     if item.recurrence_end_count is not None:
         text += f" ({item.recurrence_count}/{item.recurrence_end_count} completed)"
     elif item.recurrence_end_date is not None:
@@ -1061,3 +1128,30 @@ def format_recurrence(item: TodoItem) -> str:
     if item.missed_recurrences > 0:
         text += f" ({item.missed_recurrences} missed)"
     return text
+
+
+def format_recurrence_short(item: TodoItem) -> str:
+    """Compact recurrence display for cards and badges."""
+    if not item.is_recurring or item.recurrence_type is None:
+        return ""
+    if item.recurrence_type == "minutely":
+        return f"Every {_format_minutes_interval(item.recurrence_interval)}"
+    labels = {"daily": "Daily", "weekly": "Weekly", "monthly": "Monthly", "yearly": "Yearly"}
+    if item.recurrence_interval == 1:
+        return labels.get(item.recurrence_type, item.recurrence_type)
+    units = {"daily": "days", "weekly": "weeks", "monthly": "months", "yearly": "years"}
+    return f"Every {item.recurrence_interval} {units.get(item.recurrence_type, '')}"
+
+
+def format_next_occurrence(item: TodoItem, time_format: str = "system") -> str:
+    """Format when the next occurrence is due for display."""
+    if not item.is_recurring or item.recurrence_type is None or item.due_date is None:
+        return ""
+    if item.recurrence_end_count is not None and item.recurrence_count >= item.recurrence_end_count:
+        return ""
+    next_date, next_time = compute_next_due_datetime(
+        item.due_date, item.due_time, item.recurrence_type, item.recurrence_interval
+    )
+    prefix = "Resets" if item.complete else "Next"
+    date_str = format_due_date(next_date, due_time=next_time, time_format=time_format)
+    return f"{prefix}: {date_str}"

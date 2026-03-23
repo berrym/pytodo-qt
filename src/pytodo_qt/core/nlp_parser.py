@@ -153,18 +153,33 @@ def _add_months(d: date, months: int) -> date:
     return date(year, month, min(d.day, max_day))
 
 
-def _unit_to_recurrence_type(unit: str) -> str:
-    """Map 'day'/'days'/'week'/'weeks'/... to 'daily'/'weekly'/..."""
+def _unit_to_recurrence_type(unit: str) -> tuple[str, int | None]:
+    """Map 'minute'/'hour'/'day'/... to (recurrence_type, interval_multiplier).
+
+    For minute/hour units, returns ("minutely", multiplier) where multiplier
+    converts the user's number into minutes. For day+ units, returns the
+    standard type with no multiplier.
+    """
     u = unit.lower().rstrip("s")
-    return {"day": "daily", "week": "weekly", "month": "monthly", "year": "yearly"}[u]
+    # Normalize shortened forms
+    if u in ("min", "minute"):
+        return ("minutely", 1)  # interval is already in minutes
+    if u in ("hr", "hour"):
+        return ("minutely", 60)  # multiply user's number by 60
+    mapping = {"day": "daily", "week": "weekly", "month": "monthly", "year": "yearly"}
+    return (mapping[u], None)
 
 
-def _freq_word_to_type(word: str) -> str:
-    """Map 'daily'/'weekly'/'annually'/... to recurrence type."""
+def _freq_word_to_type(word: str) -> tuple[str, int]:
+    """Map 'minutely'/'hourly'/'daily'/... to (recurrence_type, interval)."""
     w = word.lower()
     if w == "annually":
-        return "yearly"
-    return w
+        return ("yearly", 1)
+    if w == "minutely":
+        return ("minutely", 1)
+    if w == "hourly":
+        return ("minutely", 60)
+    return (w, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -236,10 +251,14 @@ def _extract_priority(text: str, tracker: _SpanTracker) -> int | None:
 # ---------------------------------------------------------------------------
 
 _RECURRENCE_EVERY_N_RE = re.compile(
-    r"\bevery\s+(\d+)\s+(days?|weeks?|months?|years?)\b", re.IGNORECASE
+    r"\bevery\s+(\d+)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b", re.IGNORECASE
 )
-_RECURRENCE_EVERY_UNIT_RE = re.compile(r"\bevery\s+(day|week|month|year)\b", re.IGNORECASE)
-_RECURRENCE_FREQ_WORD_RE = re.compile(r"\b(daily|weekly|monthly|yearly|annually)\b", re.IGNORECASE)
+_RECURRENCE_EVERY_UNIT_RE = re.compile(
+    r"\bevery\s+(minute|hour|day|week|month|year)\b", re.IGNORECASE
+)
+_RECURRENCE_FREQ_WORD_RE = re.compile(
+    r"\b(minutely|hourly|daily|weekly|monthly|yearly|annually)\b", re.IGNORECASE
+)
 _RECURRENCE_TIMES_RE = re.compile(r"\b(\d+)\s+times?\s+a\s+(day|week|month)\b", re.IGNORECASE)
 _RECURRENCE_FOR_RE = re.compile(r"\bfor\s+(\d+)\s+(days?|weeks?|months?|years?)\b", re.IGNORECASE)
 _RECURRENCE_UNTIL_RE = re.compile(
@@ -262,28 +281,35 @@ def _extract_recurrence(
     times_annotation: str | None = None
     main_span_start: int | None = None
     main_span_end: int | None = None
+    display_base: str = ""
 
-    # Try "every N days/weeks/months/years"
+    # Try "every N minutes/hours/days/weeks/months/years"
     m = _RECURRENCE_EVERY_N_RE.search(text)
     if m and tracker.is_free(m.start(), m.end()):
-        interval = int(m.group(1))
-        rec_type = _unit_to_recurrence_type(m.group(2))
+        user_interval = int(m.group(1))
+        rec_type, multiplier = _unit_to_recurrence_type(m.group(2))
+        interval = user_interval * multiplier if multiplier else user_interval
+        display_base = f"every {m.group(1)} {m.group(2).lower()}"
         main_span_start = m.start()
         main_span_end = m.end()
 
-    # Try "every day/week/month/year"
+    # Try "every minute/hour/day/week/month/year"
     if rec_type is None:
         m = _RECURRENCE_EVERY_UNIT_RE.search(text)
         if m and tracker.is_free(m.start(), m.end()):
-            rec_type = _unit_to_recurrence_type(m.group(1))
+            rec_type, multiplier = _unit_to_recurrence_type(m.group(1))
+            if multiplier:
+                interval = multiplier
+            display_base = f"every {m.group(1).lower()}"
             main_span_start = m.start()
             main_span_end = m.end()
 
-    # Try "daily/weekly/monthly/yearly/annually"
+    # Try "minutely/hourly/daily/weekly/monthly/yearly/annually"
     if rec_type is None:
         m = _RECURRENCE_FREQ_WORD_RE.search(text)
         if m and tracker.is_free(m.start(), m.end()):
-            rec_type = _freq_word_to_type(m.group(1))
+            rec_type, interval = _freq_word_to_type(m.group(1))
+            display_base = m.group(1).lower()
             main_span_start = m.start()
             main_span_end = m.end()
 
@@ -293,18 +319,17 @@ def _extract_recurrence(
         if m and tracker.is_free(m.start(), m.end()):
             n = int(m.group(1))
             unit = m.group(2).lower()
-            rec_type = _unit_to_recurrence_type(unit)
+            rec_type, _ = _unit_to_recurrence_type(unit)
             times_annotation = f"({n}x/{unit})"
+            display_base = m.group(0).lower()
             main_span_start = m.start()
             main_span_end = m.end()
 
     if rec_type is None:
         return None, 1, None, None, None
 
-    # Build display text
-    display_parts = [rec_type]
-    if interval > 1:
-        display_parts = [f"every {interval} {rec_type.replace('ly', '')}s"]
+    # Display text preserves the user's original phrasing
+    display_parts = [display_base]
 
     # Reserve main span
     assert main_span_start is not None and main_span_end is not None

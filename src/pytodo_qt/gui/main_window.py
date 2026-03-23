@@ -2295,16 +2295,43 @@ class MainWindow(QMainWindow):
             f"Focus session complete! Total: {spent_str} ({sessions} sessions)"
         )
 
-        # Gentle breakdown suggestion when estimate is exceeded
+        # Auto-complete recurring tasks when pomodoro estimate is met
         if (
             item.estimated_pomodoros > 0
-            and item.pomodoro_count == item.estimated_pomodoros
+            and item.pomodoro_count >= item.estimated_pomodoros
             and not item.complete
         ):
-            self.status_bar_widget.show_message(
-                "This task has reached its estimate \u2014 consider breaking it into subtasks",
-                5000,
-            )
+            if item.is_recurring and item.due_date and item.recurrence_type:
+                already_exhausted = (
+                    item.recurrence_end_count is not None
+                    and item.recurrence_count >= item.recurrence_end_count
+                )
+                if not already_exhausted:
+                    from ..core.models import compute_next_due_date, is_recurrence_ended
+                    from .commands import ToggleCompleteRecurringCommand
+
+                    next_due = compute_next_due_date(
+                        item.due_date, item.recurrence_type, item.recurrence_interval
+                    )
+                    ended = is_recurrence_ended(item, next_due)
+                    cmd = ToggleCompleteRecurringCommand(
+                        self,
+                        active_list.id,
+                        item_id,
+                        old_due_date=item.due_date,
+                        new_due_date=None if ended else next_due,
+                        old_count=item.recurrence_count,
+                        recurrence_ended=ended,
+                    )
+                    self._undo_stack.push(cmd)
+                    self.status_bar_widget.show_message(
+                        "Recurring task completed \u2014 next occurrence scheduled", 3000
+                    )
+            else:
+                self.status_bar_widget.show_message(
+                    "This task has reached its estimate \u2014 consider breaking it into subtasks",
+                    5000,
+                )
 
     def _on_pomodoro_state_changed(self, state: str) -> None:
         """Handle focus timer state transition."""

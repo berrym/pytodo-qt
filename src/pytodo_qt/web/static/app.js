@@ -53,6 +53,7 @@
   var addSheet = document.getElementById("add-sheet");
   var addForm = document.getElementById("add-form");
   var addInput = document.getElementById("add-input");
+  var addPresetsEl = document.getElementById("add-presets");
   var addEntities = document.getElementById("add-entities");
   var addListSelect = document.getElementById("add-list-select");
   var addSheetClose = document.getElementById("add-sheet-close");
@@ -1089,6 +1090,30 @@
       });
     }
 
+    // Recurrence submenu
+    var recPresets = [
+      { label: "Every 25 min", type: "minutely", interval: 25 },
+      { label: "Every hour", type: "minutely", interval: 60 },
+      { label: "Daily", type: "daily", interval: 1 },
+      { label: "Weekly", type: "weekly", interval: 1 },
+      { label: "Monthly", type: "monthly", interval: 1 },
+      { label: "None", type: null, interval: 1 },
+    ];
+    actions.push({
+      icon: "\u{1F504}",
+      label: "Recurrence",
+      submenu: recPresets.map(function (p) {
+        return {
+          icon: p.type === null ? "\u274C" : "\u{1F504}",
+          label: p.label,
+          checked: p.type === null ? !item.recurrence_type : (item.recurrence_type === p.type && item.recurrence_interval === p.interval),
+          onTap: function () {
+            setRecurrence(item.id, p.type, p.interval);
+          }
+        };
+      })
+    });
+
     actions.push({ divider: true });
 
     // Delete
@@ -1122,6 +1147,34 @@
     try {
       await api(path, opts);
       await refreshCurrentList();
+    } catch (e) {
+      if (e.status === 409) {
+        showToast("Updated elsewhere \u2014 refreshing");
+        await refreshCurrentList();
+      } else {
+        enqueueOfflineEdit(path, opts);
+      }
+    }
+  }
+
+  async function setRecurrence(itemId, recType, recInterval) {
+    var path = "/items/" + itemId;
+    var fields = { recurrence_type: recType, recurrence_interval: recInterval || 1 };
+    var ua = getItemUpdatedAt(itemId);
+    if (ua !== undefined) fields.updated_at = ua;
+    var opts = {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields)
+    };
+    if (!isOnline) {
+      enqueueOfflineEdit(path, opts);
+      return;
+    }
+    try {
+      await api(path, opts);
+      await refreshCurrentList();
+      showToast(recType ? "Recurrence set" : "Recurrence removed");
     } catch (e) {
       if (e.status === 409) {
         showToast("Updated elsewhere \u2014 refreshing");
@@ -1923,7 +1976,7 @@
     if (item.is_recurring) {
       var rec = document.createElement("span");
       rec.className = "item-recurrence";
-      rec.textContent = "\u{1F504}";
+      rec.textContent = "\u{1F504} " + (item.recurrence_display || "");
       meta.appendChild(rec);
     }
 
@@ -2140,6 +2193,20 @@
       });
     }
 
+    if (item.is_recurring) {
+      var boardRec = document.createElement("span");
+      boardRec.className = "item-recurrence";
+      boardRec.textContent = "\u{1F504} " + (item.recurrence_display || "");
+      meta.appendChild(boardRec);
+    }
+
+    if (item.missed_recurrences > 0) {
+      var boardMissed = document.createElement("span");
+      boardMissed.className = "item-missed-badge";
+      boardMissed.textContent = item.missed_recurrences + " missed";
+      meta.appendChild(boardMissed);
+    }
+
     if (meta.childNodes.length > 0) card.appendChild(meta);
 
     // Grip icon for pick-up-and-place / drag
@@ -2249,6 +2316,55 @@
       chip.className = "entity-chip " + span.kind;
       chip.textContent = span.display;
       addEntities.appendChild(chip);
+    });
+
+    // Sync preset pill active states
+    updateAddPresetPills(parseResult.recurrence_type, parseResult.recurrence_interval);
+  }
+
+  // Recurrence preset pills in add sheet
+  var ADD_PRESETS = [
+    { label: "25m", text: "every 25 minutes", type: "minutely", interval: 25 },
+    { label: "1h", text: "every hour", type: "minutely", interval: 60 },
+    { label: "Daily", text: "daily", type: "daily", interval: 1 },
+    { label: "Weekly", text: "weekly", type: "weekly", interval: 1 },
+    { label: "Monthly", text: "monthly", type: "monthly", interval: 1 },
+  ];
+
+  function initAddPresetPills() {
+    if (!addPresetsEl) return;
+    ADD_PRESETS.forEach(function (p) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "preset-pill";
+      btn.textContent = p.label;
+      btn.dataset.recText = p.text;
+      btn.addEventListener("click", function () {
+        if (!addInput) return;
+        var current = addInput.value.trim();
+        var has = current.toLowerCase().indexOf(p.text) >= 0;
+        if (has) {
+          addInput.value = current.replace(new RegExp(p.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), "").trim();
+        } else {
+          ADD_PRESETS.forEach(function (other) {
+            current = current.replace(new RegExp(other.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), "").trim();
+          });
+          addInput.value = current + (current ? " " : "") + p.text;
+        }
+        addInput.dispatchEvent(new Event("input"));
+      });
+      addPresetsEl.appendChild(btn);
+    });
+  }
+  initAddPresetPills();
+
+  function updateAddPresetPills(recType, recInterval) {
+    if (!addPresetsEl) return;
+    var pills = addPresetsEl.querySelectorAll(".preset-pill");
+    pills.forEach(function (pill, i) {
+      var p = ADD_PRESETS[i];
+      if (!p) return;
+      pill.classList.toggle("active", recType === p.type && recInterval === p.interval);
     });
   }
 
@@ -2406,9 +2522,9 @@
     var recRow = document.createElement("div");
     recRow.className = "detail-recurrence-row";
     var recTypeSelect = document.createElement("select");
-    [{ label: "None", value: "" }, { label: "Daily", value: "daily" },
-     { label: "Weekly", value: "weekly" }, { label: "Monthly", value: "monthly" },
-     { label: "Yearly", value: "yearly" }].forEach(function (opt) {
+    [{ label: "None", value: "" }, { label: "Minutes", value: "minutely" },
+     { label: "Daily", value: "daily" }, { label: "Weekly", value: "weekly" },
+     { label: "Monthly", value: "monthly" }, { label: "Yearly", value: "yearly" }].forEach(function (opt) {
       var o = document.createElement("option");
       o.value = opt.value;
       o.textContent = opt.label;

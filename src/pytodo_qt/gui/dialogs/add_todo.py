@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPushButton,
     QRadioButton,
     QSpinBox,
     QVBoxLayout,
@@ -65,6 +66,34 @@ class AddTodoDialog(QDialog):
         self._smart_input.parse_changed.connect(self._on_smart_parse_changed)
         self._smart_input.accepted.connect(self._on_accept)
         layout.addWidget(self._smart_input)
+
+        # Recurrence preset pills
+        self._preset_row = QWidget()
+        preset_layout = QHBoxLayout(self._preset_row)
+        preset_layout.setContentsMargins(0, 0, 0, 0)
+        preset_layout.setSpacing(4)
+        self._preset_pills: list[tuple[QPushButton, str, str, int]] = []
+        presets = [
+            ("25m", "every 25 minutes", "minutely", 25),
+            ("1h", "every hour", "minutely", 60),
+            ("Daily", "daily", "daily", 1),
+            ("Weekly", "weekly", "weekly", 1),
+            ("Monthly", "monthly", "monthly", 1),
+        ]
+        for label, nlp_text, rec_type, rec_interval in presets:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setFixedHeight(24)
+            btn.setStyleSheet(
+                "QPushButton { border: 1px solid #5BA55B; border-radius: 12px;"
+                " padding: 2px 8px; font-size: 11px; color: #5BA55B; background: transparent; }"
+                " QPushButton:checked { background: #5BA55B; color: white; }"
+            )
+            btn.clicked.connect(lambda checked, t=nlp_text: self._on_preset_clicked(t, checked))
+            preset_layout.addWidget(btn)
+            self._preset_pills.append((btn, nlp_text, rec_type, rec_interval))
+        preset_layout.addStretch()
+        layout.addWidget(self._preset_row)
 
         # Advanced toggle
         self._advanced_toggle = QLabel('<a href="#">Advanced ▶</a>')
@@ -139,7 +168,7 @@ class AddTodoDialog(QDialog):
 
         # Recurrence section
         self.recurrence_checkbox = QCheckBox("Repeat")
-        self.recurrence_checkbox.setEnabled(False)
+        # Recurrence always available — auto-sets due_date=today if needed
         self.recurrence_checkbox.stateChanged.connect(self._on_recurrence_toggled)
 
         recurrence_layout = QHBoxLayout()
@@ -152,10 +181,12 @@ class AddTodoDialog(QDialog):
         recurrence_layout.addWidget(self.interval_spin)
 
         self.type_combo = QComboBox()
+        self.type_combo.addItem("Minute(s)", "minutely")
         self.type_combo.addItem("Day(s)", "daily")
         self.type_combo.addItem("Week(s)", "weekly")
         self.type_combo.addItem("Month(s)", "monthly")
         self.type_combo.addItem("Year(s)", "yearly")
+        self.type_combo.setCurrentIndex(1)  # Default to daily
         self.type_combo.setEnabled(False)
         recurrence_layout.addWidget(self.type_combo)
 
@@ -215,6 +246,26 @@ class AddTodoDialog(QDialog):
 
         # Focus smart input
         self._smart_input.set_focus()
+
+    def _on_preset_clicked(self, nlp_text: str, checked: bool) -> None:
+        """Handle recurrence preset pill click — inject/remove NLP text."""
+        current = self._smart_input.toPlainText().strip()
+        if checked:
+            # Remove any other preset text first
+            for _, other_text, _, _ in self._preset_pills:
+                current = current.replace(f" {other_text}", "").replace(other_text, "")
+            current = current.strip()
+            self._smart_input.setPlainText(f"{current} {nlp_text}" if current else nlp_text)
+        else:
+            cleaned = current.replace(f" {nlp_text}", "").replace(nlp_text, "").strip()
+            self._smart_input.setPlainText(cleaned)
+
+    def _update_preset_pills(self, rec_type: str | None, rec_interval: int) -> None:
+        """Sync preset pill checked states from parse result."""
+        for btn, _, pill_type, pill_interval in self._preset_pills:
+            btn.blockSignals(True)
+            btn.setChecked(rec_type == pill_type and rec_interval == pill_interval)
+            btn.blockSignals(False)
 
     def _on_toggle_advanced(self) -> None:
         """Toggle advanced fields visibility."""
@@ -290,6 +341,9 @@ class AddTodoDialog(QDialog):
                     self.end_never_radio.setChecked(True)
             else:
                 self.recurrence_checkbox.setChecked(False)
+
+            # Sync preset pill states
+            self._update_preset_pills(result.recurrence_type, result.recurrence_interval)
         finally:
             self._syncing = False
 
@@ -298,7 +352,7 @@ class AddTodoDialog(QDialog):
         enabled = state == Qt.CheckState.Checked.value
         self.due_date_edit.setEnabled(enabled)
         self.due_time_checkbox.setEnabled(enabled)
-        self.recurrence_checkbox.setEnabled(enabled)
+        # Recurrence is always available — auto-sets today if no date
         if not enabled:
             self.due_time_checkbox.setChecked(False)
             self.recurrence_checkbox.setChecked(False)
@@ -334,10 +388,15 @@ class AddTodoDialog(QDialog):
                 self._smart_input.set_focus()
                 return
 
+            # Auto-set due date when recurrence is set without one
+            due_date = result.due_date
+            if result.recurrence_type is not None and due_date is None:
+                due_date = date.today()
+
             self._item = TodoItem(
                 reminder=reminder,
                 priority=result.priority or 2,
-                due_date=result.due_date,
+                due_date=due_date,
                 due_time=result.due_time,
                 tags=result.tags,
                 recurrence_type=result.recurrence_type,
@@ -369,9 +428,12 @@ class AddTodoDialog(QDialog):
             recurrence_end_date = None
             recurrence_end_count = None
 
-            if self.recurrence_checkbox.isChecked() and due_date is not None:
+            if self.recurrence_checkbox.isChecked():
                 recurrence_type = self.type_combo.currentData()
                 recurrence_interval = self.interval_spin.value()
+                # Auto-set due date to today when recurrence is set without one
+                if due_date is None:
+                    due_date = date.today()
                 if self.end_date_radio.isChecked():
                     qd = self.end_date_edit.date()
                     recurrence_end_date = date(qd.year(), qd.month(), qd.day())

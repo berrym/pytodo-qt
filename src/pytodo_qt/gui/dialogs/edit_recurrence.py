@@ -55,6 +55,7 @@ class EditRecurrenceDialog(QDialog):
         recurrence_layout.addWidget(self.interval_spin)
 
         self.type_combo = QComboBox()
+        self.type_combo.addItem("Minute(s)", "minutely")
         self.type_combo.addItem("Day(s)", "daily")
         self.type_combo.addItem("Week(s)", "weekly")
         self.type_combo.addItem("Month(s)", "monthly")

@@ -30,6 +30,7 @@ class DatabaseConfig:
     sort_tier3: str = "priority"
     sort_tier3_reverse: bool = False
     view_mode: str = "list"  # "list" or "board"
+    day_start_hour: int = 0  # Hour when the logical day starts (0-23)
 
     def sort_tiers(self) -> list[tuple[str, bool]]:
         """Return sort tiers as [(dimension, reverse), ...]."""
@@ -137,6 +138,7 @@ class AppConfig:
         lines.append(f'sort_tier3 = "{self.database.sort_tier3}"')
         lines.append(f"sort_tier3_reverse = {str(self.database.sort_tier3_reverse).lower()}")
         lines.append(f'view_mode = "{self.database.view_mode}"')
+        lines.append(f"day_start_hour = {self.database.day_start_hour}")
         lines.append("")
 
         # Server section
@@ -212,6 +214,7 @@ class AppConfig:
                 sort_tier3=db.get("sort_tier3", "priority"),
                 sort_tier3_reverse=db.get("sort_tier3_reverse", False),
                 view_mode=db.get("view_mode", "list"),
+                day_start_hour=db.get("day_start_hour", 0),
             )
 
         if "server" in data:

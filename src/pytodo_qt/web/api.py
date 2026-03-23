@@ -14,7 +14,15 @@ from uuid import UUID
 from aiohttp import web
 
 from ..core import settings
-from ..core.models import TodoItem, TodoList, create_todo_item, create_todo_list, is_overdue
+from ..core.models import (
+    TodoItem,
+    TodoList,
+    create_todo_item,
+    create_todo_list,
+    format_recurrence,
+    format_recurrence_short,
+    is_overdue,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -110,6 +118,8 @@ def _item_to_json(item: TodoItem) -> dict[str, Any]:
         "missed_recurrences": item.missed_recurrences,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
+        "recurrence_display": format_recurrence_short(item),
+        "recurrence_display_full": format_recurrence(item),
     }
 
 
@@ -504,7 +514,7 @@ def _apply_item_fields(item: TodoItem, body: dict[str, Any], lst: TodoList | Non
         item.estimated_pomodoros = max(0, int(body["estimated_pomodoros"]))
     if "recurrence_type" in body:
         val = body["recurrence_type"]
-        if val in ("daily", "weekly", "monthly", "yearly", None):
+        if val in ("minutely", "daily", "weekly", "monthly", "yearly", None):
             item.recurrence_type = val
     if "recurrence_interval" in body:
         item.recurrence_interval = max(1, int(body["recurrence_interval"]))
