@@ -561,9 +561,10 @@ class TestRecurrenceTimePreservation:
 
         db = Database()
         lst = create_todo_list("Test")
+        original_due = date(2026, 3, 15)
         item = create_todo_item(
             "Daily standup",
-            due_date=date(2026, 3, 15),
+            due_date=original_due,
             due_time=time(9, 0),
             recurrence_type="daily",
             recurrence_interval=1,
@@ -587,8 +588,8 @@ class TestRecurrenceTimePreservation:
         cmd.redo()
         # Time should be preserved (command doesn't touch due_time)
         assert item.due_time == time(9, 0)
-        assert item.due_date == next_due
-        assert item.complete is False
+        assert item.due_date == original_due  # unchanged; auto-advance cycles later
+        assert item.complete is True
 
     def test_recurring_without_time(self):
         """Existing behavior unchanged for items without a due time."""
@@ -597,9 +598,10 @@ class TestRecurrenceTimePreservation:
 
         db = Database()
         lst = create_todo_list("Test")
+        original_due = date(2026, 3, 15)
         item = create_todo_item(
             "Weekly review",
-            due_date=date(2026, 3, 15),
+            due_date=original_due,
             recurrence_type="weekly",
             recurrence_interval=1,
         )
@@ -621,7 +623,8 @@ class TestRecurrenceTimePreservation:
         )
         cmd.redo()
         assert item.due_time is None
-        assert item.due_date == next_due
+        assert item.due_date == original_due  # unchanged; auto-advance cycles later
+        assert item.complete is True
 
 
 # ---------------------------------------------------------------------------

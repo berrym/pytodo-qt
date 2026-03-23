@@ -945,16 +945,85 @@ def advance_overdue_recurring(item: TodoItem) -> bool:
     return True
 
 
+def cycle_completed_recurring(item: TodoItem, todo_list: TodoList) -> bool:
+    """Cycle a completed recurring item to its next occurrence when due.
+
+    After the user completes a recurring item, it stays complete until the
+    next due date arrives. This function detects that the next occurrence
+    is now due and resets the item: complete→False, due_date advanced,
+    board_column reset, and all subtask completions cleared.
+
+    Returns True if the item was cycled, False otherwise.
+    """
+    if not item.is_recurring or not item.complete:
+        return False
+    if item.due_date is None or item.recurrence_type is None:
+        return False
+    # Don't cycle if recurrence is exhausted
+    if item.recurrence_end_count is not None and item.recurrence_count >= item.recurrence_end_count:
+        return False
+
+    # Only cycle when the current due date has passed — the item was due
+    # yesterday (or earlier) and the user completed it, so set up the next one.
+    if item.due_date >= date.today():
+        return False  # Still the same day as the due date — stay complete
+
+    next_due = compute_next_due_date(item.due_date, item.recurrence_type, item.recurrence_interval)
+
+    if is_recurrence_ended(item, next_due):
+        return False  # Recurrence ended — stay complete permanently
+
+    # Cycle to next occurrence
+    item.complete = False
+    item.due_date = next_due
+
+    # Reset board column — items with work history go to progress, else inbox
+    cols = todo_list.board_columns
+    if cols and item.board_column == cols[-1]:
+        first_col = cols[0]
+        if len(cols) >= 3:
+            # Check for work indicators (pomodoro time or completed subtasks)
+            has_work = item.time_spent > 0
+            if not has_work:
+                has_work = any(
+                    c.parent_id == item.id and not c.deleted and c.complete
+                    for c in todo_list.items.values()
+                )
+            progress_col = next((c for c in cols[1:-1] if c == "In Progress"), cols[1])
+            item.board_column = progress_col if has_work else first_col
+        else:
+            item.board_column = first_col
+
+    # Reset subtask completions (only non-recurring subtasks — independently
+    # recurring subtasks cycle on their own schedule)
+    for child in todo_list.items.values():
+        if (
+            child.parent_id == item.id
+            and not child.deleted
+            and child.complete
+            and not child.is_recurring
+        ):
+            child.complete = False
+            child.mark_updated()
+
+    item.mark_updated()
+    return True
+
+
 def advance_all_overdue_recurring(database: Database) -> int:
     """Scan all lists and auto-advance overdue recurring items.
 
-    Returns the number of items that were advanced.
+    Handles two cases:
+    1. Incomplete overdue items → advance due date (existing behavior)
+    2. Completed recurring items whose next occurrence is due → cycle them
+
+    Returns the number of items that were advanced or cycled.
     """
     advanced_count = 0
     for todo_list in database.active_lists():
         list_changed = False
-        for item in todo_list.active_items():
-            if advance_overdue_recurring(item):
+        for item in list(todo_list.active_items()):
+            if advance_overdue_recurring(item) or cycle_completed_recurring(item, todo_list):
                 advanced_count += 1
                 list_changed = True
         if list_changed:

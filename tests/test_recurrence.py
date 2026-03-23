@@ -333,10 +333,11 @@ class TestFormatRecurrence:
 # ToggleCompleteRecurringCommand
 # ---------------------------------------------------------------------------
 class TestToggleCompleteRecurringCommand:
-    def test_redo_advances_due_date(self):
+    def test_redo_marks_complete_for_cycle(self):
         db = Database()
         lst = create_todo_list("Test")
-        item = make_recurring_item(due_date=date.today())
+        original_due = date.today()
+        item = make_recurring_item(due_date=original_due)
         lst.add_item(item)
         db.add_list(lst)
         window = make_window(db)
@@ -353,8 +354,8 @@ class TestToggleCompleteRecurringCommand:
         )
         cmd.redo()
 
-        assert item.complete is False
-        assert item.due_date == next_due
+        assert item.complete is True
+        assert item.due_date == original_due  # due_date unchanged; auto-advance cycles later
         assert item.recurrence_count == 1
         window._save_database.assert_called()
 
@@ -400,7 +401,7 @@ class TestToggleCompleteRecurringCommand:
             recurrence_ended=False,
         )
         cmd.redo()
-        assert item.due_date == next_due
+        assert item.complete is True
         assert item.recurrence_count == 1
 
         cmd.undo()
@@ -428,10 +429,14 @@ class TestToggleCompleteRecurringCommand:
             recurrence_ended=False,
         )
         cmd.redo()
+        assert item.complete is True
         cmd.undo()
+        assert item.complete is False
+        assert item.due_date == original_due
         cmd.redo()
 
-        assert item.due_date == next_due
+        assert item.complete is True
+        assert item.due_date == original_due  # due_date unchanged
         assert item.recurrence_count == 1
 
     def test_noop_missing_list(self):

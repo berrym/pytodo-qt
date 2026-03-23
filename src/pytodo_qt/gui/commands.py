@@ -393,7 +393,12 @@ class EditTagsCommand(QUndoCommand):
 
 
 class ToggleCompleteRecurringCommand(QUndoCommand):
-    """Complete a recurring item: advance due date and reset completion."""
+    """Complete a recurring item for the current cycle.
+
+    Marks the item complete and moves to the Done column. The auto-advance
+    system handles cycling to the next occurrence when the next due date
+    arrives — the item stays visibly complete until then.
+    """
 
     def __init__(
         self,
@@ -423,20 +428,14 @@ class ToggleCompleteRecurringCommand(QUndoCommand):
         if not item:
             return
         self._old_board_column = item.board_column
+        item.complete = True
         item.recurrence_count = self._old_count + 1
+        # Move to completion column
         cols = todo_list.board_columns
         last_col = cols[-1] if cols else ""
-        if self._ended:
-            item.complete = True
-            # Exhausted recurrence → move to completion column
-            if last_col and item.board_column != last_col:
-                item.board_column = last_col
-        else:
-            item.complete = False
-            item.due_date = self._new_due_date
-            # Recurrence advance → place based on work indicators
-            if item.board_column == last_col:
-                item.board_column = _best_incomplete_column(item, todo_list)
+        if last_col and item.board_column != last_col:
+            item.board_column = last_col
+        # Auto-advance will cycle to next occurrence when next_due arrives
         item.mark_updated()
         self._window._save_database()
         self._window._refresh_ui()

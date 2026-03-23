@@ -668,7 +668,17 @@ async def handle_toggle_item(request: web.Request) -> web.Response:
     ):
         return _conflict_response(_item_to_json(item))
 
-    item.toggle_complete()
+    # Recurring item completion: mark complete for this cycle, let auto-advance
+    # handle cycling to the next occurrence when the next due date arrives.
+    already_exhausted = (
+        item.recurrence_end_count is not None and item.recurrence_count >= item.recurrence_end_count
+    )
+    if item.is_recurring and not item.complete and not already_exhausted:
+        item.complete = True
+        item.recurrence_count += 1
+    else:
+        item.toggle_complete()
+
     # Sync board_column with completion state
     if lst and lst.board_columns:
         last_col = lst.board_columns[-1]

@@ -12,6 +12,7 @@ from pytodo_qt.core.models import (
     advance_overdue_recurring,
     create_todo_item,
     create_todo_list,
+    cycle_completed_recurring,
     format_recurrence,
 )
 
@@ -344,3 +345,186 @@ class TestMissedRecurrencesDisplay:
         item.missed_recurrences = 0
         text = format_recurrence(item)
         assert "missed" not in text
+
+
+class TestCycleCompletedRecurring:
+    """Tests for cycle_completed_recurring() — cycling completed items at next due date."""
+
+    def test_completed_daily_stays_complete_same_day(self, monkeypatch):
+        """A daily item completed today should NOT cycle until tomorrow."""
+        today = date(2026, 3, 18)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: today)}),
+        )
+
+        lst = create_todo_list("Tasks")
+        item = create_todo_item("Take meds", due_date=today)
+        item.recurrence_type = "daily"
+        item.complete = True
+        item.recurrence_count = 1
+        lst.add_item(item)
+
+        result = cycle_completed_recurring(item, lst)
+        assert result is False
+        assert item.complete is True  # Still complete
+
+    def test_completed_daily_cycles_next_day(self, monkeypatch):
+        """A daily item completed yesterday should cycle when tomorrow arrives."""
+        yesterday = date(2026, 3, 17)
+        today = date(2026, 3, 18)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: today)}),
+        )
+
+        lst = create_todo_list("Tasks")
+        item = create_todo_item("Take meds", due_date=yesterday)
+        item.recurrence_type = "daily"
+        item.complete = True
+        item.recurrence_count = 1
+        lst.add_item(item)
+
+        result = cycle_completed_recurring(item, lst)
+        assert result is True
+        assert item.complete is False
+        assert item.due_date >= today
+
+    def test_cycle_resets_subtask_completions(self, monkeypatch):
+        """Cycling a parent resets all non-recurring subtask completions."""
+        yesterday = date(2026, 3, 17)
+        today = date(2026, 3, 18)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: today)}),
+        )
+
+        lst = create_todo_list("Tasks")
+        parent = create_todo_item("Take meds", due_date=yesterday)
+        parent.recurrence_type = "daily"
+        parent.complete = True
+        parent.recurrence_count = 1
+        lst.add_item(parent)
+
+        sub1 = create_todo_item("Morning dose")
+        sub1.parent_id = parent.id
+        sub1.complete = True
+        lst.add_item(sub1)
+
+        sub2 = create_todo_item("Evening dose")
+        sub2.parent_id = parent.id
+        sub2.complete = True
+        lst.add_item(sub2)
+
+        result = cycle_completed_recurring(parent, lst)
+        assert result is True
+        assert sub1.complete is False
+        assert sub2.complete is False
+
+    def test_cycle_preserves_independently_recurring_subtasks(self, monkeypatch):
+        """Subtasks with their own recurrence are NOT reset by parent cycling."""
+        yesterday = date(2026, 3, 17)
+        today = date(2026, 3, 18)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: today)}),
+        )
+
+        lst = create_todo_list("Tasks")
+        parent = create_todo_item("Take meds", due_date=yesterday)
+        parent.recurrence_type = "daily"
+        parent.complete = True
+        parent.recurrence_count = 1
+        lst.add_item(parent)
+
+        sub = create_todo_item("Morning dose", due_date=yesterday)
+        sub.parent_id = parent.id
+        sub.recurrence_type = "daily"  # Has its own recurrence
+        sub.complete = True
+        lst.add_item(sub)
+
+        cycle_completed_recurring(parent, lst)
+        # Independently recurring subtask keeps its state
+        assert sub.complete is True
+
+    def test_cycle_resets_board_column_to_inbox(self, monkeypatch):
+        """Cycled item moves from Done back to first column."""
+        yesterday = date(2026, 3, 17)
+        today = date(2026, 3, 18)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: today)}),
+        )
+
+        lst = create_todo_list("Tasks")
+        item = create_todo_item("Daily standup", due_date=yesterday)
+        item.recurrence_type = "daily"
+        item.complete = True
+        item.board_column = "Done"  # In completion column
+        lst.add_item(item)
+
+        cycle_completed_recurring(item, lst)
+        assert item.board_column == "To Do"
+
+    def test_cycle_resets_to_in_progress_with_work_history(self, monkeypatch):
+        """Cycled item with pomodoro time goes to In Progress, not To Do."""
+        yesterday = date(2026, 3, 17)
+        today = date(2026, 3, 18)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: today)}),
+        )
+
+        lst = create_todo_list("Tasks")
+        item = create_todo_item("Focus work", due_date=yesterday)
+        item.recurrence_type = "daily"
+        item.complete = True
+        item.time_spent = 1500  # Has pomodoro history
+        item.board_column = "Done"
+        lst.add_item(item)
+
+        cycle_completed_recurring(item, lst)
+        assert item.board_column == "In Progress"
+
+    def test_exhausted_recurrence_does_not_cycle(self, monkeypatch):
+        """Exhausted recurring items stay complete permanently."""
+        yesterday = date(2026, 3, 17)
+        today = date(2026, 3, 18)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: today)}),
+        )
+
+        lst = create_todo_list("Tasks")
+        item = create_todo_item("Limited task", due_date=yesterday)
+        item.recurrence_type = "daily"
+        item.complete = True
+        item.recurrence_count = 5
+        item.recurrence_end_count = 5  # Exhausted
+        lst.add_item(item)
+
+        result = cycle_completed_recurring(item, lst)
+        assert result is False
+        assert item.complete is True
+
+    def test_advance_all_includes_cycle(self, monkeypatch):
+        """advance_all_overdue_recurring also cycles completed recurring items."""
+        yesterday = date(2026, 3, 17)
+        today = date(2026, 3, 18)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: today)}),
+        )
+
+        db = Database()
+        lst = create_todo_list("Tasks")
+        item = create_todo_item("Daily task", due_date=yesterday)
+        item.recurrence_type = "daily"
+        item.complete = True
+        item.recurrence_count = 1
+        lst.add_item(item)
+        db.add_list(lst)
+
+        count = advance_all_overdue_recurring(db)
+        assert count == 1
+        assert item.complete is False

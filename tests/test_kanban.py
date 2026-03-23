@@ -1876,14 +1876,14 @@ class TestViewSwitchingBoardColumn:
 
     # -- ToggleCompleteRecurringCommand board_column sync --
 
-    def test_recurring_advance_moves_from_done(self):
-        """Recurrence advance (complete→False) moves item from Done to inbox."""
+    def test_recurring_toggle_moves_to_done(self):
+        """Recurring toggle marks complete and moves item to Done column."""
         from pytodo_qt.gui.commands import ToggleCompleteRecurringCommand
 
         db, lst, window = self._make_db_and_window()
         today = date.today()
         tomorrow = today + timedelta(days=1)
-        item = create_todo_item("Recurring", board_column="Done")
+        item = create_todo_item("Recurring", board_column="In Progress")
         item.recurrence_type = "daily"
         item.recurrence_interval = 1
         item.due_date = today
@@ -1899,8 +1899,8 @@ class TestViewSwitchingBoardColumn:
             recurrence_ended=False,
         )
         cmd.redo()
-        assert not item.complete
-        assert item.board_column == "To Do"
+        assert item.complete
+        assert item.board_column == "Done"
 
     def test_recurring_exhausted_moves_to_done(self):
         """Exhausted recurrence (complete=True) moves item to Done."""
@@ -1928,13 +1928,13 @@ class TestViewSwitchingBoardColumn:
         assert item.board_column == "Done"
 
     def test_recurring_undo_restores_column(self):
-        """Undo of recurrence advance restores original board_column."""
+        """Undo of recurring toggle restores original board_column."""
         from pytodo_qt.gui.commands import ToggleCompleteRecurringCommand
 
         db, lst, window = self._make_db_and_window()
         today = date.today()
         tomorrow = today + timedelta(days=1)
-        item = create_todo_item("Recurring", board_column="Done")
+        item = create_todo_item("Recurring", board_column="In Progress")
         item.recurrence_type = "daily"
         item.recurrence_interval = 1
         item.due_date = today
@@ -1950,9 +1950,9 @@ class TestViewSwitchingBoardColumn:
             recurrence_ended=False,
         )
         cmd.redo()
-        assert item.board_column == "To Do"
-        cmd.undo()
         assert item.board_column == "Done"
+        cmd.undo()
+        assert item.board_column == "In Progress"
 
     # -- Default column assignment --
 
@@ -2298,8 +2298,8 @@ class TestBestIncompleteColumn:
         assert not parent.complete
         assert parent.board_column == "In Progress"
 
-    def test_recurring_advance_with_time_goes_to_progress(self):
-        """Recurring advance with pomodoro time goes to In Progress."""
+    def test_recurring_toggle_with_time_goes_to_done(self):
+        """Recurring toggle with pomodoro time goes to Done (complete now, cycle later)."""
         from pytodo_qt.core.models import Database
         from pytodo_qt.gui.commands import ToggleCompleteRecurringCommand
 
@@ -2308,7 +2308,7 @@ class TestBestIncompleteColumn:
         lst.board_columns = ["To Do", "In Progress", "Done"]
         today = date.today()
         tomorrow = today + timedelta(days=1)
-        item = create_todo_item("Recurring", board_column="Done")
+        item = create_todo_item("Recurring", board_column="In Progress")
         item.recurrence_type = "daily"
         item.recurrence_interval = 1
         item.due_date = today
@@ -2329,5 +2329,5 @@ class TestBestIncompleteColumn:
             recurrence_ended=False,
         )
         cmd.redo()
-        assert not item.complete
-        assert item.board_column == "In Progress"
+        assert item.complete
+        assert item.board_column == "Done"

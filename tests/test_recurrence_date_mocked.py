@@ -7,7 +7,7 @@ and is_recurrence_ended without waiting or relying on the real clock.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from unittest.mock import MagicMock, patch
 
 from pytodo_qt.core.models import (
@@ -434,7 +434,7 @@ class TestToggleCompleteRecurringCommandMocked:
         return db, lst, item, window
 
     def test_daily_complete_and_advance(self):
-        """Complete a daily task: due date advances by 1 day from 'today'."""
+        """Complete a daily task: marks complete, due_date unchanged (auto-advance cycles later)."""
         fake_today = date(2026, 4, 15)
         due = date(2026, 4, 15)
         db, lst, item, window = self._make_setup(due, "daily")
@@ -446,12 +446,12 @@ class TestToggleCompleteRecurringCommandMocked:
         cmd = ToggleCompleteRecurringCommand(window, lst.id, item.id, due, next_due, 0, ended)
         cmd.redo()
 
-        assert item.complete is False
-        assert item.due_date == date(2026, 4, 16)
+        assert item.complete is True
+        assert item.due_date == due  # unchanged; auto-advance cycles later
         assert item.recurrence_count == 1
 
     def test_weekly_complete_preserves_weekday(self):
-        """Complete weekly task: next due is same weekday, 1 week ahead."""
+        """Complete weekly task: marks complete, due_date stays at original."""
         fake_today = date(2026, 3, 4)  # Wednesday
         due = date(2026, 3, 4)  # Wednesday
         db, lst, item, window = self._make_setup(due, "weekly")
@@ -463,13 +463,11 @@ class TestToggleCompleteRecurringCommandMocked:
         cmd = ToggleCompleteRecurringCommand(window, lst.id, item.id, due, next_due, 0, ended)
         cmd.redo()
 
-        assert item.due_date is not None
-        assert item.due_date == date(2026, 3, 11)  # Next Wednesday
-        assert item.due_date.weekday() == 2  # Wednesday
-        assert item.complete is False
+        assert item.complete is True
+        assert item.due_date == due  # unchanged; auto-advance cycles later
 
     def test_monthly_complete_with_clamping(self):
-        """Complete monthly Jan 31 → advances to Feb 28."""
+        """Complete monthly Jan 31: marks complete, due_date stays at original."""
         fake_today = date(2026, 1, 31)
         due = date(2026, 1, 31)
         db, lst, item, window = self._make_setup(due, "monthly")
@@ -481,12 +479,12 @@ class TestToggleCompleteRecurringCommandMocked:
         cmd = ToggleCompleteRecurringCommand(window, lst.id, item.id, due, next_due, 0, ended)
         cmd.redo()
 
-        assert item.due_date == date(2026, 2, 28)
-        assert item.complete is False
+        assert item.complete is True
+        assert item.due_date == due  # unchanged; auto-advance cycles later
         assert item.recurrence_count == 1
 
     def test_yearly_feb29_to_feb28(self):
-        """Complete yearly Feb 29 in leap year → Feb 28 in non-leap year."""
+        """Complete yearly Feb 29 in leap year: marks complete, due_date stays."""
         fake_today = date(2024, 2, 29)
         due = date(2024, 2, 29)
         db, lst, item, window = self._make_setup(due, "yearly")
@@ -498,8 +496,8 @@ class TestToggleCompleteRecurringCommandMocked:
         cmd = ToggleCompleteRecurringCommand(window, lst.id, item.id, due, next_due, 0, ended)
         cmd.redo()
 
-        assert item.due_date == date(2025, 2, 28)
-        assert item.complete is False
+        assert item.complete is True
+        assert item.due_date == due  # unchanged; auto-advance cycles later
 
     def test_undo_restores_exact_original(self):
         """Undo after completing a recurring task restores original state."""
@@ -512,7 +510,7 @@ class TestToggleCompleteRecurringCommandMocked:
 
         cmd = ToggleCompleteRecurringCommand(window, lst.id, item.id, due, next_due, 0, False)
         cmd.redo()
-        assert item.due_date == date(2026, 5, 2)
+        assert item.complete is True
         assert item.recurrence_count == 1
 
         cmd.undo()
@@ -539,7 +537,7 @@ class TestToggleCompleteRecurringCommandMocked:
         assert item.recurrence_count == 3
 
     def test_end_count_not_reached_continues(self):
-        """When count is below end_count, item continues recurring."""
+        """When count is below end_count, item marks complete (auto-advance cycles later)."""
         fake_today = date(2026, 6, 1)
         due = date(2026, 6, 1)
         db, lst, item, window = self._make_setup(due, "daily", end_count=5, count=1)
@@ -553,12 +551,12 @@ class TestToggleCompleteRecurringCommandMocked:
         cmd = ToggleCompleteRecurringCommand(window, lst.id, item.id, due, next_due, 1, False)
         cmd.redo()
 
-        assert item.complete is False
-        assert item.due_date == date(2026, 6, 2)
+        assert item.complete is True
+        assert item.due_date == due  # unchanged; auto-advance cycles later
         assert item.recurrence_count == 2
 
     def test_multiple_completions_sequence(self):
-        """Simulate completing a daily task 5 times in sequence."""
+        """Simulate completing a daily task 5 times, with auto-advance between cycles."""
         due = date(2026, 7, 1)
         db, lst, item, window = self._make_setup(due, "daily")
 
@@ -571,14 +569,17 @@ class TestToggleCompleteRecurringCommandMocked:
             cmd = ToggleCompleteRecurringCommand(window, lst.id, item.id, due, next_due, i, ended)
             cmd.redo()
 
-            assert item.complete is False
+            assert item.complete is True
             assert item.recurrence_count == i + 1
-            assert item.due_date is not None
-            assert item.due_date == date(2026, 7, 1) + timedelta(days=i + 1)
-            due = item.due_date
+            assert item.due_date == due  # unchanged by toggle
 
-    def test_overdue_weekly_complete_advances_from_today(self):
-        """Overdue weekly on Monday, completed on Thursday → next Monday."""
+            # Simulate auto-advance cycling the item to the next occurrence
+            item.complete = False
+            item.due_date = next_due
+            due = next_due
+
+    def test_overdue_weekly_complete_marks_done(self):
+        """Overdue weekly on Monday, completed on Thursday: marks complete, date unchanged."""
         original_due = date(2026, 3, 2)  # Monday
         fake_today = date(2026, 3, 5)  # Thursday (3 days late)
         db, lst, item, window = self._make_setup(original_due, "weekly")
@@ -592,12 +593,8 @@ class TestToggleCompleteRecurringCommandMocked:
         )
         cmd.redo()
 
-        # Next Monday from Thursday: Mon weekday=0, Thu weekday=3
-        # days_ahead = 0-3 = -3 → -3+7 = 4 → Thursday + 4 = Monday Mar 9
-        assert item.due_date is not None
-        assert item.due_date == date(2026, 3, 9)
-        assert item.due_date.weekday() == 0  # Monday
-        assert item.complete is False
+        assert item.complete is True
+        assert item.due_date == original_due  # unchanged; auto-advance cycles later
 
 
 # ---------------------------------------------------------------------------
