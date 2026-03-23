@@ -2451,14 +2451,12 @@ class TestConflictGuardsItems:
         client = await _make_client(db)
         await client.start_server()
         try:
+            # Use the child's own updated_at — child was not modified, so this should pass
             resp = await client.patch(
                 f"/api/items/{child.id}/parent",
-                json={"parent_id": str(item.id), "updated_at": stale_ts},
+                json={"parent_id": str(item.id), "updated_at": child.updated_at},
             )
-            # stale_ts is for the parent item; child is the one being modified
-            # The conflict check is on the child, not the parent
-            # So we need the child's stale timestamp instead
-            assert resp.status == 200  # child was not modified server-side
+            assert resp.status == 200
         finally:
             await client.close()
 
