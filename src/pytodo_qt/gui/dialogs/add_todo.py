@@ -249,16 +249,16 @@ class AddTodoDialog(QDialog):
 
     def _on_preset_clicked(self, nlp_text: str, checked: bool) -> None:
         """Handle recurrence preset pill click — inject/remove NLP text."""
-        current = self._smart_input.toPlainText().strip()
+        current = self._smart_input.get_text().strip()
         if checked:
             # Remove any other preset text first
             for _, other_text, _, _ in self._preset_pills:
                 current = current.replace(f" {other_text}", "").replace(other_text, "")
             current = current.strip()
-            self._smart_input.setPlainText(f"{current} {nlp_text}" if current else nlp_text)
+            self._smart_input.set_text(f"{current} {nlp_text}" if current else nlp_text)
         else:
             cleaned = current.replace(f" {nlp_text}", "").replace(nlp_text, "").strip()
-            self._smart_input.setPlainText(cleaned)
+            self._smart_input.set_text(cleaned)
 
     def _update_preset_pills(self, rec_type: str | None, rec_interval: int) -> None:
         """Sync preset pill checked states from parse result."""
