@@ -388,16 +388,24 @@ class AddTodoDialog(QDialog):
                 self._smart_input.set_focus()
                 return
 
-            # Auto-set due date when recurrence is set without one
+            # Auto-set due date/time when recurrence is set without one
             due_date = result.due_date
+            due_time = result.due_time
             if result.recurrence_type is not None and due_date is None:
                 due_date = date.today()
+            # Minutely recurrence needs a due_time — auto-set to now + interval
+            if result.recurrence_type == "minutely" and due_time is None:
+                from datetime import datetime as _dt
+                from datetime import timedelta as _td
+
+                next_dt = _dt.now() + _td(minutes=result.recurrence_interval)
+                due_time = next_dt.time().replace(second=0, microsecond=0)
 
             self._item = TodoItem(
                 reminder=reminder,
                 priority=result.priority or 2,
                 due_date=due_date,
-                due_time=result.due_time,
+                due_time=due_time,
                 tags=result.tags,
                 recurrence_type=result.recurrence_type,
                 recurrence_interval=result.recurrence_interval,
@@ -434,6 +442,13 @@ class AddTodoDialog(QDialog):
                 # Auto-set due date to today when recurrence is set without one
                 if due_date is None:
                     due_date = date.today()
+                # Minutely needs a due_time
+                if recurrence_type == "minutely" and due_time is None:
+                    from datetime import datetime as _dt
+                    from datetime import timedelta as _td
+
+                    next_dt = _dt.now() + _td(minutes=recurrence_interval)
+                    due_time = next_dt.time().replace(second=0, microsecond=0)
                 if self.end_date_radio.isChecked():
                     qd = self.end_date_edit.date()
                     recurrence_end_date = date(qd.year(), qd.month(), qd.day())

@@ -7,7 +7,7 @@ a UI refresh is scheduled via QTimer.singleShot(0, ...).
 
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -570,6 +570,10 @@ async def handle_create_item(request: web.Request) -> web.Response:
         if result.recurrence_type is not None:
             item.recurrence_type = result.recurrence_type
             item.recurrence_interval = result.recurrence_interval
+            # Minutely recurrence needs a due_time — auto-set to now + interval
+            if result.recurrence_type == "minutely" and item.due_time is None:
+                next_dt = datetime.now() + timedelta(minutes=result.recurrence_interval)
+                item.due_time = next_dt.time().replace(second=0, microsecond=0)
         if result.recurrence_end_date is not None:
             item.recurrence_end_date = result.recurrence_end_date
         if result.recurrence_end_count is not None:
