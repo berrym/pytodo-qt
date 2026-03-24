@@ -35,17 +35,18 @@ database_key: web.AppKey[Database] = web.AppKey("database")
 save_callback_key: web.AppKey[Callable[[], None]] = web.AppKey("save_callback")
 config_manager_key: web.AppKey[ConfigManager] = web.AppKey("config_manager")
 ws_clients_key: web.AppKey[set[web.WebSocketResponse]] = web.AppKey("ws_clients")
-auth_token_key: web.AppKey[str] = web.AppKey("auth_token")
 web_server_key: web.AppKey[Any] = web.AppKey("web_server")
+device_store_key: web.AppKey[Any] = web.AppKey("device_store")
 
 
 _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
     "Content-Security-Policy": (
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';"
-        " img-src 'self' data:; connect-src 'self' ws: wss:; font-src 'self'"
+        " img-src 'self' data:; connect-src 'self' wss:; font-src 'self'"
     ),
 }
 
@@ -63,33 +64,53 @@ async def security_headers_middleware(
     return response
 
 
+# Debounced last_seen tracking: device_id → last_update_timestamp
+_last_seen_cache: dict[str, float] = {}
+_LAST_SEEN_DEBOUNCE_SECONDS = 60
+
+
 @web.middleware
 async def auth_middleware(request: web.Request, handler: Callable[..., Any]) -> web.StreamResponse:
-    """Require Bearer token for API and WebSocket requests."""
-    server = request.app.get(web_server_key)
-    token = server.auth_token if server else request.app.get(auth_token_key, "")
-    if not token:
-        return await handler(request)  # No token configured — allow all
+    """Require per-device Bearer token for API and WebSocket requests."""
+    import time as _time
 
-    # Public paths: static assets, login page, pairing endpoint, auto-login URL
+    from .device_store import WebDeviceStore
+
+    device_store: WebDeviceStore | None = request.app.get(device_store_key)
+    if device_store is None:
+        return await handler(request)  # Test mode — no auth
+
+    # Public paths: static assets, login page, pairing endpoint, CA cert
     path = request.path
-    if (
-        path in ("/", "/sw.js", "/api/auth", "/ca.pem")
-        or path.startswith("/static/")
-        or path.startswith("/auth/")
-    ):
+    if path in ("/", "/sw.js", "/api/auth", "/ca.pem") or path.startswith("/static/"):
         return await handler(request)
 
-    # Check Authorization header
+    # Extract token from Bearer header or query param
+    token = None
     auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer ") and auth_header[7:] == token:
-        return await handler(request)
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    elif "token" in request.query:
+        token = request.query["token"]
 
-    # Check query parameter (for WebSocket — browsers can't set WS headers)
-    if request.query.get("token") == token:
-        return await handler(request)
+    if not token:
+        return web.json_response({"error": "Authentication required", "status": 401}, status=401)
 
-    return web.json_response({"error": "Authentication required", "status": 401}, status=401)
+    device = device_store.get_device_by_token(token)
+    if device is None:
+        return web.json_response({"error": "Authentication required", "status": 401}, status=401)
+
+    # Stash device on request for downstream handlers
+    request["authenticated_device"] = device
+
+    # Debounced last_seen update
+    now = _time.time()
+    last_update = _last_seen_cache.get(device.id, 0)
+    if now - last_update >= _LAST_SEEN_DEBOUNCE_SECONDS:
+        device_store.update_last_seen(device.id)
+        _last_seen_cache[device.id] = now
+
+    return await handler(request)
 
 
 def _item_to_json(item: TodoItem) -> dict[str, Any]:
@@ -180,9 +201,10 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_post("/api/lists/{list_id}/apply-preset", handle_apply_preset)
     # WebSocket
     app.router.add_get("/ws", handle_websocket)
-    # Authentication
+    # Authentication & device management
     app.router.add_post("/api/auth", handle_pair)
-    app.router.add_get("/auth/{token}", handle_auto_login)
+    app.router.add_get("/api/devices", handle_get_devices)
+    app.router.add_delete("/api/devices/{device_id}", handle_remove_device)
     app.router.add_get("/ca.pem", handle_ca_cert_download)
 
 
@@ -1221,7 +1243,7 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
 
 
 async def handle_pair(request: web.Request) -> web.Response:
-    """POST /api/auth — Validate a 6-digit pairing PIN and return the auth token."""
+    """POST /api/auth — Validate a 6-digit pairing PIN and return a per-device token."""
     try:
         body = await request.json()
     except Exception:
@@ -1239,45 +1261,57 @@ async def handle_pair(request: web.Request) -> web.Response:
     if server.check_pin_rate_limit(client_ip):
         return _error(429, "Too many attempts — try again in 60 seconds")
 
-    token = server.validate_pin(pin, client_ip)
-    if token is None:
+    user_agent = request.headers.get("User-Agent", "")
+    pairing_method = str(body.get("method", "quick")).strip()
+    if pairing_method not in ("quick", "trusted"):
+        pairing_method = "quick"
+
+    device = server.validate_pin(
+        pin, client_ip, user_agent=user_agent, pairing_method=pairing_method
+    )
+    if device is None:
         return _error(401, "Invalid or expired PIN")
 
-    return web.json_response({"token": token})
-
-
-async def handle_auto_login(request: web.Request) -> web.Response:
-    """GET /auth/{token} — Auto-login page that stores token and redirects."""
-    import secrets as _secrets
-
-    url_token = request.match_info["token"]
-    server = request.app.get(web_server_key)
-    real_token = server.auth_token if server else request.app.get(auth_token_key, "")
-
-    if not real_token or url_token != real_token:
-        return web.Response(
-            text="<html><body><h2>Invalid or expired link</h2></body></html>",
-            content_type="text/html",
-            status=403,
-        )
-
-    nonce = _secrets.token_urlsafe(16)
-    return web.Response(
-        text=(
-            "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            "<title>PyTodo-Qt</title></head><body>"
-            f"<script nonce='{nonce}'>"
-            f"localStorage.setItem('pytodo_auth_token','{url_token}');"
-            "location.href='/';"
-            "</script>"
-            "<p>Connecting...</p></body></html>"
-        ),
-        content_type="text/html",
-        headers={
-            "Content-Security-Policy": f"default-src 'none'; script-src 'nonce-{nonce}'",
-        },
+    return web.json_response(
+        {
+            "token": device.token,
+            "device_name": device.device_name,
+        }
     )
+
+
+async def handle_get_devices(request: web.Request) -> web.Response:
+    """GET /api/devices — List all paired devices."""
+    server = request.app.get(web_server_key)
+    if server is None:
+        return _error(503, "Not available")
+    devices = server.get_paired_devices()
+    return web.json_response(
+        {
+            "devices": [
+                {
+                    "id": d.id,
+                    "device_name": d.device_name,
+                    "pairing_method": d.pairing_method,
+                    "paired_at": d.paired_at,
+                    "last_seen": d.last_seen,
+                    "ca_generation": d.ca_generation,
+                }
+                for d in devices
+            ]
+        }
+    )
+
+
+async def handle_remove_device(request: web.Request) -> web.Response:
+    """DELETE /api/devices/{device_id} — Remove a paired device."""
+    server = request.app.get(web_server_key)
+    if server is None:
+        return _error(503, "Not available")
+    device_id = request.match_info["device_id"]
+    if server.remove_device(device_id):
+        return web.json_response({"ok": True})
+    return _error(404, "Device not found")
 
 
 async def handle_ca_cert_download(request: web.Request) -> web.Response:

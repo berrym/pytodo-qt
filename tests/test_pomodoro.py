@@ -1953,33 +1953,44 @@ class TestStreakComputation:
 
 
 # ===========================================================================
-# WebConnectDialog tests
+# MobileAccessWizard tests
 # ===========================================================================
 
 
-class TestWebConnectDialog:
-    def test_dialog_creation_with_url(self, monkeypatch):
-        """Dialog creates successfully when LAN IP is detected."""
+class TestMobileAccessWizard:
+    def test_wizard_creation_with_url(self, monkeypatch):
+        """Wizard creates successfully when LAN IP is detected."""
         monkeypatch.setattr(
             "pytodo_qt.gui.dialogs.web_connect._get_lan_ip",
             lambda: "192.168.1.42",
         )
-        from pytodo_qt.gui.dialogs.web_connect import WebConnectDialog
+        from pytodo_qt.gui.dialogs.web_connect import MobileAccessWizard
 
-        dialog = WebConnectDialog(8080, tls_enabled=True)
-        assert dialog._url == "https://192.168.1.42:8080"
-        assert dialog._port == 8080
+        dialog = MobileAccessWizard(parent=None)
+        # Without a parent MainWindow, URL is built from LAN IP with default HTTPS
+        assert dialog._lan_ip == "192.168.1.42"
 
-    def test_dialog_creation_no_network(self, monkeypatch):
-        """Dialog handles missing network gracefully."""
+    def test_wizard_creation_no_network(self, monkeypatch):
+        """Wizard handles missing network gracefully."""
         monkeypatch.setattr(
             "pytodo_qt.gui.dialogs.web_connect._get_lan_ip",
             lambda: None,
         )
-        from pytodo_qt.gui.dialogs.web_connect import WebConnectDialog
+        from pytodo_qt.gui.dialogs.web_connect import MobileAccessWizard
 
-        dialog = WebConnectDialog(8080)
+        dialog = MobileAccessWizard(parent=None)
         assert dialog._url is None
+
+    def test_wizard_starts_on_choose_page(self, monkeypatch):
+        """Wizard shows choose page by default (no parent = no devices)."""
+        monkeypatch.setattr(
+            "pytodo_qt.gui.dialogs.web_connect._get_lan_ip",
+            lambda: "192.168.1.42",
+        )
+        from pytodo_qt.gui.dialogs.web_connect import MobileAccessWizard
+
+        dialog = MobileAccessWizard(parent=None)
+        assert dialog._stack.currentIndex() == MobileAccessWizard.PAGE_CHOOSE
 
     def test_qr_pixmap_generated(self):
         """QR code renders to a non-empty pixmap."""

@@ -467,8 +467,10 @@ class SettingsDialog(QDialog):
         self.web_bind_combo.addItem("Localhost only (127.0.0.1)", "127.0.0.1")
         form.addRow("Bind:", self.web_bind_combo)
 
-        self.web_tls_check = QCheckBox("Enable TLS (HTTPS)")
-        form.addRow("", self.web_tls_check)
+        # TLS is always on — no user toggle (security requirement)
+        tls_label = QLabel("\U0001f512 All connections are encrypted (TLS)")
+        tls_label.setStyleSheet("color: palette(highlight); font-size: 11px;")
+        form.addRow("", tls_label)
 
         # Pairing PIN display
         self.web_pin_label = QLabel("------")
@@ -483,21 +485,10 @@ class SettingsDialog(QDialog):
         self.web_pin_hint.setStyleSheet("font-size: 11px; color: palette(mid);")
         form.addRow("", self.web_pin_hint)
 
-        # Access token (hidden, for advanced users)
-        token_row = QHBoxLayout()
-        self.web_token_label = QLineEdit()
-        self.web_token_label.setReadOnly(True)
-        self.web_token_label.setEchoMode(QLineEdit.EchoMode.Password)
-        token_row.addWidget(self.web_token_label)
-        self.web_token_show_btn = QPushButton("Show")
-        self.web_token_show_btn.setFixedWidth(50)
-        self.web_token_show_btn.clicked.connect(self._toggle_token_visibility)
-        token_row.addWidget(self.web_token_show_btn)
-        self.web_token_copy_btn = QPushButton("Copy")
-        self.web_token_copy_btn.setFixedWidth(50)
-        self.web_token_copy_btn.clicked.connect(self._copy_web_token)
-        token_row.addWidget(self.web_token_copy_btn)
-        form.addRow("Token:", token_row)
+        # Device count indicator
+        self.web_device_count_label = QLabel("0 devices paired")
+        self.web_device_count_label.setStyleSheet("font-size: 12px;")
+        form.addRow("Devices:", self.web_device_count_label)
 
         self.web_revoke_btn = QPushButton("Disconnect All Devices")
         self.web_revoke_btn.setStyleSheet("color: #c0392b;")
@@ -606,17 +597,20 @@ class SettingsDialog(QDialog):
         # Web
         self.web_enabled_check.setChecked(config.web.enabled)
         self.web_port_spin.setValue(config.web.port)
-        self.web_tls_check.setChecked(config.web.tls_enabled)
+        # TLS always on — no toggle to load
         bind_idx = self.web_bind_combo.findData(config.web.bind_address)
         if bind_idx >= 0:
             self.web_bind_combo.setCurrentIndex(bind_idx)
-        self.web_token_label.setText(config.web.auth_token)
-        # Show pairing PIN from running web server
+        # Show device count and pairing PIN from running web server
         parent = self.parent()
         web_server = getattr(parent, "_web_server", None) if parent else None
         if web_server is not None:
+            devices = web_server.get_paired_devices()
+            count = len(devices)
+            self.web_device_count_label.setText(f"{count} device{'s' if count != 1 else ''} paired")
             self.web_pin_label.setText(web_server.pairing_pin)
         else:
+            self.web_device_count_label.setText("Server not running")
             self.web_pin_label.setText("Start web server to generate")
             self.web_pin_label.setStyleSheet("font-size: 12px; color: palette(mid); padding: 8px;")
 
@@ -671,7 +665,7 @@ class SettingsDialog(QDialog):
         # Web
         config.web.enabled = self.web_enabled_check.isChecked()
         config.web.port = self.web_port_spin.value()
-        config.web.tls_enabled = self.web_tls_check.isChecked()
+        # TLS always on — no toggle to save
         config.web.bind_address = self.web_bind_combo.currentData() or "0.0.0.0"
 
         # Save to file
@@ -704,15 +698,6 @@ class SettingsDialog(QDialog):
         """Handle Apply button."""
         self._save_settings()
 
-    def _toggle_token_visibility(self) -> None:
-        """Toggle between showing and hiding the access token."""
-        if self.web_token_label.echoMode() == QLineEdit.EchoMode.Password:
-            self.web_token_label.setEchoMode(QLineEdit.EchoMode.Normal)
-            self.web_token_show_btn.setText("Hide")
-        else:
-            self.web_token_label.setEchoMode(QLineEdit.EchoMode.Password)
-            self.web_token_show_btn.setText("Show")
-
     def _revoke_web_token(self) -> None:
         """Revoke the web access token, disconnecting all devices."""
         parent = self.parent()
@@ -730,8 +715,8 @@ class SettingsDialog(QDialog):
             != QMessageBox.StandardButton.Yes
         ):
             return
-        new_token = web_server.revoke_token()
-        self.web_token_label.setText(new_token)
+        count = web_server.revoke_all_devices()
+        self.web_device_count_label.setText("0 devices paired")
         self.web_pin_label.setText(web_server.pairing_pin)
         # Update status bar PIN
         main_window = parent
@@ -739,18 +724,7 @@ class SettingsDialog(QDialog):
             main_window.status_bar_widget.set_web_status(
                 True, port=self._config.web.port, pin=web_server.pairing_pin
             )
-
-    def _copy_web_token(self) -> None:
-        """Copy the web access token to clipboard."""
-        from PyQt6.QtWidgets import QApplication
-
-        clipboard = QApplication.clipboard()
-        if clipboard:
-            clipboard.setText(self.web_token_label.text())
-            self.web_token_copy_btn.setText("\u2713")
-            from PyQt6.QtCore import QTimer
-
-            QTimer.singleShot(2000, lambda: self.web_token_copy_btn.setText("Copy"))
+        logger.log.info("Revoked %d device(s) from settings", count)
 
     def _on_font_changed(self, index: int) -> None:
         """Handle font combo box change."""

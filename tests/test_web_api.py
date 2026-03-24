@@ -2955,20 +2955,39 @@ class TestWebSocket:
 # ===========================================================================
 
 
-def _make_authed_client(db: Database | None = None, token: str = "test-secret-token"):
-    """Create a WebServer with auth enabled via WebConfig."""
+def _make_authed_client(db: Database | None = None, tmp_path: str | None = None):
+    """Create a WebServer with per-device auth via ConfigManager.
+
+    Returns (WebServer, device_token) where device_token is a valid
+    per-device token created via PIN pairing.
+    """
+    import tempfile
+
     if db is None:
         db = _make_db_with_data()
-    config = WebConfig(enabled=True, auth_token=token)
-    ws = WebServer(database=db, config=config)
-    return ws, token
+    if tmp_path is None:
+        tmp_path = tempfile.mkdtemp()
+    from pathlib import Path
+
+    config_dir = Path(tmp_path)
+    cm = ConfigManager(config_dir=config_dir, data_dir=config_dir)
+    cm.ensure_directories()
+    config = cm.config
+    config.web.enabled = True
+    ws = WebServer(database=db, config=config.web, config_manager=cm)
+    ws.create_app()
+    # Pair a device to get a valid token
+    pin = ws.pairing_pin
+    device = ws.validate_pin(pin, user_agent="TestAgent/1.0")
+    assert device is not None
+    return ws, device.token
 
 
 class TestAuth:
     @pytest.mark.asyncio
     async def test_api_returns_401_without_token(self):
         ws, token = _make_authed_client()
-        client = TestClient(TestServer(ws.create_app()))
+        client = TestClient(TestServer(ws.app))
         await client.start_server()
         try:
             resp = await client.get("/api/lists")
@@ -2981,7 +3000,7 @@ class TestAuth:
     @pytest.mark.asyncio
     async def test_api_returns_200_with_correct_token(self):
         ws, token = _make_authed_client()
-        client = TestClient(TestServer(ws.create_app()))
+        client = TestClient(TestServer(ws.app))
         await client.start_server()
         try:
             resp = await client.get(
@@ -2995,7 +3014,7 @@ class TestAuth:
     @pytest.mark.asyncio
     async def test_api_returns_401_with_wrong_token(self):
         ws, token = _make_authed_client()
-        client = TestClient(TestServer(ws.create_app()))
+        client = TestClient(TestServer(ws.app))
         await client.start_server()
         try:
             resp = await client.get(
@@ -3009,7 +3028,7 @@ class TestAuth:
     @pytest.mark.asyncio
     async def test_static_files_accessible_without_token(self):
         ws, token = _make_authed_client()
-        client = TestClient(TestServer(ws.create_app()))
+        client = TestClient(TestServer(ws.app))
         await client.start_server()
         try:
             resp = await client.get("/")
@@ -3023,7 +3042,7 @@ class TestAuth:
     @pytest.mark.asyncio
     async def test_ws_accepts_token_in_query_param(self):
         ws, token = _make_authed_client()
-        client = TestClient(TestServer(ws.create_app()))
+        client = TestClient(TestServer(ws.app))
         await client.start_server()
         try:
             async with client.ws_connect(f"/ws?token={token}") as ws_conn:
@@ -3035,7 +3054,7 @@ class TestAuth:
     @pytest.mark.asyncio
     async def test_ws_rejects_without_token(self):
         ws, token = _make_authed_client()
-        client = TestClient(TestServer(ws.create_app()))
+        client = TestClient(TestServer(ws.app))
         await client.start_server()
         try:
             resp = await client.get("/ws")
@@ -3048,7 +3067,7 @@ class TestAuth:
         db = _make_db_with_data()
         ws, token = _make_authed_client(db)
         lst = next(iter(db.lists.values()))
-        client = TestClient(TestServer(ws.create_app()))
+        client = TestClient(TestServer(ws.app))
         await client.start_server()
         try:
             # Without token
@@ -3068,15 +3087,6 @@ class TestAuth:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_token_auto_generated_when_config_present(self):
-        config = WebConfig(enabled=True)
-        assert config.auth_token == ""
-        ws = WebServer(database=_make_db_with_data(), config=config)
-        ws.create_app()
-        assert config.auth_token != ""
-        assert len(config.auth_token) > 20
-
-    @pytest.mark.asyncio
     async def test_no_auth_without_config(self):
         """When no config is passed (test mode), auth is disabled."""
         client = await _make_client()
@@ -3091,23 +3101,24 @@ class TestAuth:
 class TestPairing:
     @pytest.mark.asyncio
     async def test_pair_with_valid_pin(self):
-        ws, token = _make_authed_client()
-        app = ws.create_app()
+        ws, _ = _make_authed_client()
         pin = ws.pairing_pin
-        client = TestClient(TestServer(app))
+        client = TestClient(TestServer(ws.app))
         await client.start_server()
         try:
             resp = await client.post("/api/auth", json={"pin": pin})
             assert resp.status == 200
             data = await resp.json()
-            assert data["token"] == token
+            assert "token" in data
+            assert "device_name" in data
+            assert len(data["token"]) > 20
         finally:
             await client.close()
 
     @pytest.mark.asyncio
     async def test_pair_with_invalid_pin(self):
-        ws, token = _make_authed_client()
-        client = TestClient(TestServer(ws.create_app()))
+        ws, _ = _make_authed_client()
+        client = TestClient(TestServer(ws.app))
         await client.start_server()
         try:
             resp = await client.post("/api/auth", json={"pin": "000000"})
@@ -3117,10 +3128,9 @@ class TestPairing:
 
     @pytest.mark.asyncio
     async def test_pin_is_single_use(self):
-        ws, token = _make_authed_client()
-        app = ws.create_app()
+        ws, _ = _make_authed_client()
         pin = ws.pairing_pin
-        client = TestClient(TestServer(app))
+        client = TestClient(TestServer(ws.app))
         await client.start_server()
         try:
             # First use succeeds
@@ -3134,10 +3144,9 @@ class TestPairing:
 
     @pytest.mark.asyncio
     async def test_pin_regenerates_after_use(self):
-        ws, token = _make_authed_client()
-        ws.create_app()  # Generates initial PIN
+        ws, _ = _make_authed_client()
         old_pin = ws.pairing_pin
-        ws.validate_pin(old_pin)
+        ws.validate_pin(old_pin, user_agent="Test/1.0")
         new_pin = ws.pairing_pin
         assert new_pin != old_pin
         assert len(new_pin) == 6
@@ -3145,8 +3154,8 @@ class TestPairing:
     @pytest.mark.asyncio
     async def test_pair_endpoint_accessible_without_token(self):
         """Pairing endpoint must be public (no auth header required)."""
-        ws, token = _make_authed_client()
-        client = TestClient(TestServer(ws.create_app()))
+        ws, _ = _make_authed_client()
+        client = TestClient(TestServer(ws.app))
         await client.start_server()
         try:
             # No Authorization header — should not get 401
@@ -3158,27 +3167,21 @@ class TestPairing:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_auto_login_url(self):
-        ws, token = _make_authed_client()
-        client = TestClient(TestServer(ws.create_app()))
+    async def test_pair_creates_device_record(self):
+        ws, _ = _make_authed_client()
+        pin = ws.pairing_pin
+        client = TestClient(TestServer(ws.app))
         await client.start_server()
         try:
-            resp = await client.get(f"/auth/{token}")
+            initial_count = len(ws.get_paired_devices())
+            resp = await client.post(
+                "/api/auth",
+                json={"pin": pin, "method": "trusted"},
+                headers={"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17)"},
+            )
             assert resp.status == 200
-            text = await resp.text()
-            assert "localStorage.setItem" in text
-            assert token in text
-        finally:
-            await client.close()
-
-    @pytest.mark.asyncio
-    async def test_auto_login_url_wrong_token(self):
-        ws, token = _make_authed_client()
-        client = TestClient(TestServer(ws.create_app()))
-        await client.start_server()
-        try:
-            resp = await client.get("/auth/wrong-token")
-            assert resp.status == 403
+            devices = ws.get_paired_devices()
+            assert len(devices) == initial_count + 1
         finally:
             await client.close()
 
@@ -3186,7 +3189,6 @@ class TestPairing:
 class TestPinRateLimit:
     def test_rate_limit_after_5_failures(self):
         ws, _ = _make_authed_client()
-        ws.create_app()
         for _ in range(5):
             result = ws.validate_pin("000000", client_ip="1.2.3.4")
             assert result is None
@@ -3197,7 +3199,6 @@ class TestPinRateLimit:
 
     def test_different_ips_independent(self):
         ws, _ = _make_authed_client()
-        ws.create_app()
         for _ in range(5):
             ws.validate_pin("000000", client_ip="1.2.3.4")
         # Different IP should not be locked out
@@ -3208,7 +3209,7 @@ class TestPinRateLimit:
     @pytest.mark.asyncio
     async def test_rate_limit_returns_429(self):
         ws, _ = _make_authed_client()
-        client = TestClient(TestServer(ws.create_app()))
+        client = TestClient(TestServer(ws.app))
         await client.start_server()
         try:
             for _ in range(5):
@@ -3221,41 +3222,88 @@ class TestPinRateLimit:
             await client.close()
 
 
-class TestTokenRevocation:
-    def test_revoke_generates_new_token(self):
-        ws, old_token = _make_authed_client()
-        ws.create_app()
-        new_token = ws.revoke_token()
-        assert new_token != old_token
-        assert len(new_token) > 20
-        assert ws.auth_token == new_token
+class TestDeviceRevocation:
+    def test_revoke_all_removes_devices(self):
+        ws, _ = _make_authed_client()
+        # Already has 1 device from _make_authed_client
+        assert len(ws.get_paired_devices()) >= 1
+        count = ws.revoke_all_devices()
+        assert count >= 1
+        assert ws.get_paired_devices() == []
+
+    def test_remove_single_device(self):
+        ws, token = _make_authed_client()
+        # Pair a second device
+        pin = ws.pairing_pin
+        device2 = ws.validate_pin(pin, user_agent="Device2/1.0")
+        assert device2 is not None
+
+        devices = ws.get_paired_devices()
+        assert len(devices) >= 2
+
+        # Remove one device
+        ws.remove_device(device2.id)
+        remaining = ws.get_paired_devices()
+        assert len(remaining) == len(devices) - 1
+        # Original token still works
+        assert ws.device_store is not None
+        assert ws.device_store.get_device_by_token(token) is not None
 
     @pytest.mark.asyncio
-    async def test_revoked_token_returns_401(self):
-        ws, old_token = _make_authed_client()
-        client = TestClient(TestServer(ws.create_app()))
+    async def test_revoked_device_token_returns_401(self):
+        ws, token = _make_authed_client()
+        client = TestClient(TestServer(ws.app))
         await client.start_server()
         try:
-            # Old token works
+            # Token works
             resp = await client.get(
                 "/api/status",
-                headers={"Authorization": f"Bearer {old_token}"},
+                headers={"Authorization": f"Bearer {token}"},
             )
             assert resp.status == 200
-            # Revoke
-            new_token = ws.revoke_token()
-            # Old token fails
+            # Revoke all
+            ws.revoke_all_devices()
+            # Token fails
             resp = await client.get(
                 "/api/status",
-                headers={"Authorization": f"Bearer {old_token}"},
+                headers={"Authorization": f"Bearer {token}"},
             )
             assert resp.status == 401
-            # New token works
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_device_list_endpoint(self):
+        ws, token = _make_authed_client()
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
             resp = await client.get(
-                "/api/status",
-                headers={"Authorization": f"Bearer {new_token}"},
+                "/api/devices",
+                headers={"Authorization": f"Bearer {token}"},
             )
             assert resp.status == 200
+            data = await resp.json()
+            assert "devices" in data
+            assert len(data["devices"]) >= 1
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_remove_device_endpoint(self):
+        ws, token = _make_authed_client()
+        devices = ws.get_paired_devices()
+        device_id = devices[0].id
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
+            resp = await client.delete(
+                f"/api/devices/{device_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["ok"] is True
         finally:
             await client.close()
 
@@ -3271,20 +3319,6 @@ class TestSecurityHeaders:
             assert resp.headers["X-Frame-Options"] == "DENY"
             assert resp.headers["Referrer-Policy"] == "no-referrer"
             assert "default-src" in resp.headers["Content-Security-Policy"]
-        finally:
-            await client.close()
-
-    @pytest.mark.asyncio
-    async def test_auto_login_has_csp_nonce(self):
-        ws, token = _make_authed_client()
-        client = TestClient(TestServer(ws.create_app()))
-        await client.start_server()
-        try:
-            resp = await client.get(f"/auth/{token}")
-            csp = resp.headers["Content-Security-Policy"]
-            assert "nonce-" in csp
-            text = await resp.text()
-            assert "nonce=" in text
         finally:
             await client.close()
 

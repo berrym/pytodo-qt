@@ -959,6 +959,11 @@ def advance_overdue_recurring(item: TodoItem) -> bool:
     Returns True if the item was modified, False otherwise.
     Does NOT increment recurrence_count (that tracks completions only).
     Increments missed_recurrences for tracking purposes.
+
+    For minutely recurrence, calculates all missed intervals at once and
+    jumps directly to the next future occurrence (updates both due_date
+    and due_time).  For daily+ recurrence, a single advance is sufficient
+    since compute_next_due_date always produces a future date.
     """
     if not item.is_recurring or item.complete:
         return False
@@ -969,6 +974,39 @@ def advance_overdue_recurring(item: TodoItem) -> bool:
     # Don't advance if recurrence already exhausted by count
     if item.recurrence_end_count is not None and item.recurrence_count >= item.recurrence_end_count:
         return False
+
+    if item.recurrence_type == "minutely":
+        # Calculate all missed intervals at once to avoid runaway accumulation
+        now = datetime.now()
+        due_dt = datetime.combine(
+            item.due_date,
+            item.due_time if item.due_time is not None else time(0, 0),
+        )
+        elapsed_minutes = (now - due_dt).total_seconds() / 60
+        interval = item.recurrence_interval or 1
+        missed_count = max(1, int(elapsed_minutes / interval))
+
+        # Jump to the next occurrence after now
+        next_dt = due_dt + timedelta(minutes=interval * (missed_count + 1))
+        # If we're still in the past (rounding), advance one more
+        while next_dt <= now:
+            next_dt += timedelta(minutes=interval)
+            missed_count += 1
+
+        next_date = next_dt.date()
+        next_time = next_dt.time().replace(second=0, microsecond=0)
+
+        if is_recurrence_ended(item, next_date):
+            item.complete = True
+            item.missed_recurrences += missed_count
+            item.mark_updated()
+            return True
+
+        item.due_date = next_date
+        item.due_time = next_time
+        item.missed_recurrences += missed_count
+        item.mark_updated()
+        return True
 
     next_due = compute_next_due_date(item.due_date, item.recurrence_type, item.recurrence_interval)
 

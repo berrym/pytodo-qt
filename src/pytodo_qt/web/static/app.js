@@ -238,7 +238,18 @@
           if (loginError) loginError.textContent = err.error || "Invalid PIN";
         }
       } catch (e) {
-        if (loginError) loginError.textContent = "Connection failed";
+        if (loginError) loginError.textContent = "Connection failed — try refreshing the page";
+        // Network error during PIN — likely a stale service worker blocking
+        // connections after cert change. Unregister SW so direct browser
+        // requests can show the cert acceptance dialog.
+        if (navigator.serviceWorker) {
+          try {
+            var swRegs = await navigator.serviceWorker.getRegistrations();
+            for (var k = 0; k < swRegs.length; k++) { await swRegs[k].unregister(); }
+            var cn = await caches.keys();
+            for (var m = 0; m < cn.length; m++) { await caches.delete(cn[m]); }
+          } catch (swE) { /* best effort */ }
+        }
       }
       loginBtn.disabled = false;
       loginBtn.textContent = "Connect";
@@ -3649,6 +3660,33 @@
     setInterval(updateLastSyncedText, 15000);
   }
 
+  // Block insecure HTTP connections — require HTTPS
+  if (location.protocol === "http:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+    var upgradeUrl = "https://" + location.host + location.pathname;
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;'
+      + 'min-height:100vh;background:var(--bg,#fff);padding:24px;text-align:center;">'
+      + '<div style="max-width:360px;">'
+      + '<h2 style="color:var(--danger,#c0392b);">Insecure Connection</h2>'
+      + '<p>This app requires an encrypted (HTTPS) connection.</p>'
+      + '<p>Please reinstall from:</p>'
+      + '<a href="' + upgradeUrl + '" style="color:var(--accent,#2196F3);word-break:break-all;">'
+      + upgradeUrl + '</a>'
+      + '<p style="margin-top:16px;font-size:12px;opacity:0.7;">'
+      + 'If you previously added this app to your home screen over HTTP, '
+      + 'remove it and add again from the HTTPS URL above.</p>'
+      + '</div></div>';
+    return;
+  }
+
+  // Listen for SW upgrade message (old HTTP SW unregistering)
+  if (navigator.serviceWorker) {
+    navigator.serviceWorker.addEventListener("message", function (e) {
+      if (e.data && e.data.type === "http-upgrade-needed") {
+        location.reload();
+      }
+    });
+  }
+
   // Check for existing token — if none, show login; if valid, init app
   (async function () {
     var token = getAuthToken();
@@ -3667,7 +3705,24 @@
         headers: { "Authorization": "Bearer " + token }
       });
       if (resp2.ok) { init(); return; }
-    } catch (e) { /* server unreachable */ }
+      // Token rejected (401) — clear it so user re-pairs
+      if (resp2.status === 401) {
+        localStorage.removeItem(AUTH_TOKEN_KEY);
+      }
+    } catch (e) {
+      // Network error — could be cert issue with active service worker.
+      // Unregister SW so the browser handles TLS directly (allows user
+      // to accept self-signed cert warnings in Quick Connect mode).
+      if (navigator.serviceWorker) {
+        try {
+          var regs = await navigator.serviceWorker.getRegistrations();
+          for (var i = 0; i < regs.length; i++) { await regs[i].unregister(); }
+          // Clear caches too so stale content doesn't persist
+          var cacheNames = await caches.keys();
+          for (var j = 0; j < cacheNames.length; j++) { await caches.delete(cacheNames[j]); }
+        } catch (swErr) { /* best effort */ }
+      }
+    }
     showLoginScreen();
   })();
 })();

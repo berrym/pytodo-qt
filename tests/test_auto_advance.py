@@ -161,8 +161,8 @@ class TestAdvanceOverdueRecurring:
         assert item.complete
         assert item.missed_recurrences == 1
 
-    def test_due_time_preserved(self):
-        """due_time is preserved after advance (only date changes)."""
+    def test_due_time_preserved_daily(self):
+        """due_time is preserved after daily advance (only date changes)."""
         item = create_todo_item("Task")
         item.recurrence_type = "daily"
         item.due_date = date.today() - timedelta(days=1)
@@ -179,6 +179,96 @@ class TestAdvanceOverdueRecurring:
 
         assert advance_overdue_recurring(item)
         assert not advance_overdue_recurring(item)
+
+    def test_minutely_updates_due_time(self, monkeypatch):
+        """Minutely advance must update both due_date and due_time."""
+        from datetime import datetime as real_datetime
+
+        now = real_datetime(2026, 3, 23, 14, 0, 0)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.datetime",
+            type("DT", (real_datetime,), {"now": classmethod(lambda cls: now)}),
+        )
+
+        item = create_todo_item("Task")
+        item.recurrence_type = "minutely"
+        item.recurrence_interval = 25
+        item.due_date = date(2026, 3, 23)
+        item.due_time = time(13, 0)  # 1 hour ago
+
+        assert advance_overdue_recurring(item)
+        # Should jump to next future occurrence, not stay at 13:00
+        assert item.due_time is not None
+        assert item.due_time > time(14, 0)  # Must be after "now"
+        assert item.due_date == date(2026, 3, 23)
+
+    def test_minutely_missed_count_correct(self, monkeypatch):
+        """Minutely advance counts all missed intervals, not just 1."""
+        from datetime import datetime as real_datetime
+
+        now = real_datetime(2026, 3, 23, 15, 0, 0)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.datetime",
+            type("DT", (real_datetime,), {"now": classmethod(lambda cls: now)}),
+        )
+
+        item = create_todo_item("Task")
+        item.recurrence_type = "minutely"
+        item.recurrence_interval = 25
+        item.due_date = date(2026, 3, 23)
+        item.due_time = time(13, 0)  # 2 hours = 120 min ago → 4 missed (25, 50, 75, 100)
+        item.missed_recurrences = 0
+
+        assert advance_overdue_recurring(item)
+        # 120 min / 25 min = 4.8 → 4 missed intervals
+        assert item.missed_recurrences == 4
+
+    def test_minutely_idempotent_after_advance(self, monkeypatch):
+        """After minutely advance, calling again returns False."""
+        from datetime import datetime as real_datetime
+
+        fake_today = date(2026, 3, 23)
+        now = real_datetime(2026, 3, 23, 14, 30, 0)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.datetime",
+            type("DT", (real_datetime,), {"now": classmethod(lambda cls: now)}),
+        )
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: fake_today)}),
+        )
+
+        item = create_todo_item("Task")
+        item.recurrence_type = "minutely"
+        item.recurrence_interval = 25
+        item.due_date = date(2026, 3, 23)
+        item.due_time = time(14, 0)
+
+        assert advance_overdue_recurring(item)
+        assert not advance_overdue_recurring(item)
+
+    def test_minutely_hourly_missed_count(self, monkeypatch):
+        """Hourly (60-min) recurring after 3 hours = 3 missed, not 57."""
+        from datetime import datetime as real_datetime
+
+        now = real_datetime(2026, 3, 23, 21, 42, 0)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.datetime",
+            type("DT", (real_datetime,), {"now": classmethod(lambda cls: now)}),
+        )
+
+        item = create_todo_item("Task")
+        item.recurrence_type = "minutely"
+        item.recurrence_interval = 60
+        item.due_date = date(2026, 3, 23)
+        item.due_time = time(18, 42)  # 3 hours ago
+
+        assert advance_overdue_recurring(item)
+        assert item.missed_recurrences == 3
+        # Next due should be in the future, same day
+        assert item.due_date == date(2026, 3, 23)
+        assert item.due_time is not None
+        assert item.due_time > time(21, 42)
 
 
 class TestAdvanceAllOverdueRecurring:

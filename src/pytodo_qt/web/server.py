@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from ..core.logger import Logger
+from .device_store import PairedDevice, WebDeviceStore, parse_device_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -46,6 +47,7 @@ class WebServer:
         self._pairing_pin: str = ""
         self._pairing_pin_expiry: float = 0
         self._pin_attempts: dict[str, tuple[int, float]] = {}  # ip → (count, lockout_until)
+        self._device_store: WebDeviceStore | None = None
 
     def generate_pin(self) -> str:
         """Generate a new 6-digit pairing PIN, valid for 5 minutes."""
@@ -86,9 +88,16 @@ class WebServer:
         if count >= 5:
             logger.log.warning("PIN rate limit: %s locked out for 60s", client_ip)
 
-    def validate_pin(self, pin: str, client_ip: str = "") -> str | None:
-        """Validate a pairing PIN. Returns auth token if valid, None otherwise.
+    def validate_pin(
+        self,
+        pin: str,
+        client_ip: str = "",
+        user_agent: str = "",
+        pairing_method: str = "quick",
+    ) -> PairedDevice | None:
+        """Validate a pairing PIN. Returns a new PairedDevice if valid.
 
+        On success, creates a per-device token and stores the device record.
         PIN is single-use — consumed on successful validation and regenerated.
         Rate-limited to 5 attempts per IP, then 60-second lockout.
         """
@@ -110,28 +119,55 @@ class WebServer:
                 self.record_pin_failure(client_ip)
             return None
         # Success — consume PIN, regenerate, clear rate limit
-        token = self.auth_token
         self.generate_pin()
         if client_ip:
             self._pin_attempts.pop(client_ip, None)
-        return token
 
-    def revoke_token(self) -> str:
-        """Revoke the current auth token and generate a new one.
+        device_name = parse_device_name(user_agent)
+        ca_gen = self._config.ca_generation if self._config else 0
+
+        if self._device_store:
+            device = self._device_store.add_device(
+                device_name=device_name,
+                user_agent=user_agent,
+                pairing_method=pairing_method,
+                ca_generation=ca_gen,
+            )
+        else:
+            # Test mode — return synthetic device without persistence
+            device = PairedDevice(
+                device_name=device_name,
+                user_agent=user_agent,
+                pairing_method=pairing_method,
+                ca_generation=ca_gen,
+            )
+        logger.log.info("Device paired: %s (%s) UA: %s", device_name, pairing_method, user_agent)
+        return device
+
+    def revoke_all_devices(self) -> int:
+        """Revoke all paired device tokens.
 
         All existing sessions will immediately fail with 401.
-        Returns the new token.
+        Returns the number of devices revoked.
         """
-        import secrets
-
-        new_token = secrets.token_urlsafe(32)
-        if self._config:
-            self._config.auth_token = new_token
-        if self._config_manager:
-            self._config_manager.save()
+        count = 0
+        if self._device_store:
+            count = self._device_store.remove_all_devices()
         self.generate_pin()
-        logger.log.info("Auth token revoked — all sessions invalidated")
-        return new_token
+        logger.log.info("All device tokens revoked — %d devices removed", count)
+        return count
+
+    def remove_device(self, device_id: str) -> bool:
+        """Remove a single paired device. Returns True if found and removed."""
+        if self._device_store:
+            return self._device_store.remove_device(device_id)
+        return False
+
+    def get_paired_devices(self) -> list[PairedDevice]:
+        """Return all paired devices."""
+        if self._device_store:
+            return self._device_store.get_all_devices()
+        return []
 
     @property
     def pairing_pin(self) -> str:
@@ -142,36 +178,22 @@ class WebServer:
             self.generate_pin()
         return self._pairing_pin
 
-    def _ensure_auth_token(self) -> str:
-        """Generate an auth token if one doesn't exist, persist to config.
-
-        Returns empty string if no config is available (e.g., tests),
-        which disables auth via the middleware's empty-token check.
-        """
-        if not self._config:
-            return ""  # No config = no auth (test mode)
-        if self._config.auth_token:
-            return self._config.auth_token
-        import secrets
-
-        token = secrets.token_urlsafe(32)
-        self._config.auth_token = token
-        if self._config_manager:
-            self._config_manager.save()
-        logger.log.info("Generated new web access token")
-        return token
+    @property
+    def device_store(self) -> WebDeviceStore | None:
+        """Return the device store (for middleware and testing)."""
+        return self._device_store
 
     def _create_ssl_context(self) -> ssl.SSLContext | None:
         """Create TLS context using a local CA and server certificate.
 
-        On first run, generates a root CA key/cert (stored permanently) and a
-        server cert signed by the CA with all detected local IPs in the SAN.
-        If the local IP changes, the server cert is regenerated automatically.
+        TLS is always enabled when a config_manager is available — there is
+        no opt-out. On first run, generates a root CA key/cert (stored
+        permanently) and a server cert signed by the CA with all detected
+        local IPs in the SAN. If the local IP changes, the server cert is
+        regenerated automatically.
         """
-        if not self._config or not self._config.tls_enabled:
-            return None
         if not self._config_manager:
-            return None
+            return None  # Test mode — no certs possible
 
         cert_dir = self._config_manager.config_dir
         ca_cert_path = cert_dir / "ca_cert.pem"
@@ -350,9 +372,9 @@ class WebServer:
         """Create and configure the aiohttp application."""
         from .api import (
             auth_middleware,
-            auth_token_key,
             config_manager_key,
             database_key,
+            device_store_key,
             save_callback_key,
             security_headers_middleware,
             setup_routes,
@@ -369,10 +391,13 @@ class WebServer:
         if self._config_manager:
             app[config_manager_key] = self._config_manager
 
-        # Auth token + pairing PIN
-        token = self._ensure_auth_token()
-        app[auth_token_key] = token
-        if token:
+        # Per-device token store + pairing PIN
+        # Only enable auth when both config AND config_manager are present.
+        # config_manager alone (e.g., sort persistence) does not enable auth.
+        if self._config and self._config_manager:
+            self._device_store = WebDeviceStore(self._config_manager.config_dir / "web_devices.db")
+            self._device_store.open()
+            app[device_store_key] = self._device_store
             self.generate_pin()
 
         # API routes
@@ -387,17 +412,6 @@ class WebServer:
         self._app = app
         return app
 
-    @property
-    def auth_token(self) -> str:
-        """Return the current auth token."""
-        if self._config and self._config.auth_token:
-            return self._config.auth_token
-        if self._app:
-            from .api import auth_token_key
-
-            return self._app.get(auth_token_key, "")
-        return ""
-
     async def start(self, host: str = "0.0.0.0", port: int = 8080) -> None:
         """Start the web server."""
         app = self._app if self._app is not None else self.create_app()
@@ -411,11 +425,39 @@ class WebServer:
 
     async def stop(self) -> None:
         """Stop the web server."""
+        if self._device_store:
+            self._device_store.close()
+            self._device_store = None
         if self._runner:
             await self._runner.cleanup()
             self._runner = None
             self._site = None
             logger.log.info("Web server stopped")
+
+    def regenerate_certs(self) -> bool:
+        """Regenerate CA and server certificates with fresh keys.
+
+        Returns True if successful, False if no config_manager available.
+        """
+        if not self._config_manager:
+            return False
+        cert_dir = self._config_manager.config_dir
+        self._generate_ca(cert_dir / "ca_cert.pem", cert_dir / "ca_key.pem")
+        local_ips = self._get_all_local_ips()
+        self._generate_server_cert(
+            cert_dir / "ca_cert.pem",
+            cert_dir / "ca_key.pem",
+            cert_dir / "web_cert.pem",
+            cert_dir / "web_key.pem",
+            local_ips,
+        )
+        # Increment CA generation so wizard can detect stale devices
+        if self._config:
+            self._config.ca_generation += 1
+        if self._config_manager:
+            self._config_manager.save()
+        logger.log.info("Certificates regenerated — devices must reinstall CA cert")
+        return True
 
     def notify_clients(self) -> None:
         """Broadcast a refresh event to all connected WebSocket clients.

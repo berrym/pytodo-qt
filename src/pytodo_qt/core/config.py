@@ -97,9 +97,10 @@ class WebConfig:
 
     enabled: bool = False  # Disabled by default
     port: int = 8080
-    auth_token: str = ""  # Auto-generated on first start if empty
     tls_enabled: bool = True  # TLS with auto-generated self-signed cert
     bind_address: str = "0.0.0.0"  # "0.0.0.0" or "127.0.0.1"
+    connect_method: str = ""  # Remembered wizard preference: "", "quick", or "trusted"
+    ca_generation: int = 0  # Incremented on CA cert regeneration
 
 
 @dataclass
@@ -191,9 +192,10 @@ class AppConfig:
         lines.append("[web]")
         lines.append(f"enabled = {str(self.web.enabled).lower()}")
         lines.append(f"port = {self.web.port}")
-        lines.append(f'auth_token = "{self.web.auth_token}"')
         lines.append(f"tls_enabled = {str(self.web.tls_enabled).lower()}")
         lines.append(f'bind_address = "{self.web.bind_address}"')
+        lines.append(f'connect_method = "{self.web.connect_method}"')
+        lines.append(f"ca_generation = {self.web.ca_generation}")
         lines.append("")
 
         return "\n".join(lines)
@@ -271,9 +273,10 @@ class AppConfig:
             config.web = WebConfig(
                 enabled=w.get("enabled", False),
                 port=w.get("port", 8080),
-                auth_token=w.get("auth_token", ""),
                 tls_enabled=w.get("tls_enabled", True),
                 bind_address=w.get("bind_address", "0.0.0.0"),
+                connect_method=w.get("connect_method", ""),
+                ca_generation=w.get("ca_generation", 0),
             )
 
         return config

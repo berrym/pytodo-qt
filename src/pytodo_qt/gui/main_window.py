@@ -422,7 +422,7 @@ class MainWindow(QMainWindow):
         self.focus_stats_action = QAction("Focus &Stats...", self)
         self.focus_stats_action.triggered.connect(self._on_focus_stats)
 
-        self.web_connect_action = QAction("Mobile &Setup...", self)
+        self.web_connect_action = QAction(self._get_icon("mobile.svg"), "Mobile &Setup...", self)
         self.web_connect_action.triggered.connect(self._on_web_connect)
 
         # Help actions
@@ -576,6 +576,8 @@ class MainWindow(QMainWindow):
             toolbar.addSeparator()
             toolbar.addAction(self.list_view_action)
             toolbar.addAction(self.board_view_action)
+            toolbar.addSeparator()
+            toolbar.addAction(self.web_connect_action)
             toolbar.addSeparator()
             toolbar.addAction(self.exit_action)
 
@@ -1624,6 +1626,12 @@ class MainWindow(QMainWindow):
                     break
         if needs_refresh:
             self._refresh_ui()
+
+        # Refresh status bar PIN (auto-regenerates when expired)
+        if self._web_server is not None:
+            self.status_bar_widget.set_web_status(
+                True, port=self._config.web.port, pin=self._web_server.pairing_pin
+            )
 
     def _active_view_widget(self) -> TodoTableWidget | KanbanBoardWidget:
         """Return the currently visible view widget."""
@@ -3118,20 +3126,10 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def _on_web_connect(self) -> None:
-        """Show the QR code connection dialog for mobile Web UI setup."""
-        if self._web_server is None:
-            self.status_bar_widget.show_message("Web UI is not enabled. Enable it in Settings.")
-            return
-        from .dialogs.web_connect import WebConnectDialog
+        """Show the mobile access wizard for connecting phones and tablets."""
+        from .dialogs.web_connect import MobileAccessWizard
 
-        dialog = WebConnectDialog(
-            port=self._config.web.port,
-            auth_token=self._web_server.auth_token,
-            pairing_pin=self._web_server.pairing_pin,
-            tls_enabled=self._config.web.tls_enabled,
-            ca_cert_available=self._web_server.ca_cert_path is not None,
-            parent=self,
-        )
+        dialog = MobileAccessWizard(parent=self)
         dialog.exec()
 
     def _on_import_ics(self) -> None:

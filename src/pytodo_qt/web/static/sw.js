@@ -1,5 +1,26 @@
 /* PyTodo-Qt Service Worker — Offline caching and edit queue */
-var CACHE_VERSION = "v19";
+
+// Refuse to run over insecure HTTP — unregister and clear caches
+if (self.location.protocol === "http:") {
+  self.addEventListener("install", function () { self.skipWaiting(); });
+  self.addEventListener("activate", function (event) {
+    event.waitUntil(
+      caches.keys().then(function (names) {
+        return Promise.all(names.map(function (n) { return caches.delete(n); }));
+      }).then(function () {
+        return self.registration.unregister();
+      }).then(function () {
+        return self.clients.matchAll();
+      }).then(function (clients) {
+        clients.forEach(function (c) { c.postMessage({ type: "http-upgrade-needed" }); });
+      })
+    );
+  });
+  // Stop here — do not register caches for HTTP origins
+  return;
+}
+
+var CACHE_VERSION = "v22";
 var CACHE_NAME = "pytodo-" + CACHE_VERSION;
 var STATIC_ASSETS = [
   "/",
