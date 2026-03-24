@@ -3258,6 +3258,10 @@ class MainWindow(QMainWindow):
     def _quit_application(self) -> None:
         """Fully quit the application (bypasses close-to-tray)."""
         self._force_quit = True
+        # Ensure window is visible before close — on macOS, close() on a
+        # hidden window may not trigger closeEvent at all.
+        if not self.isVisible():
+            self.show()
         self.close()
 
     def closeEvent(self, a0) -> None:  # noqa: N802
