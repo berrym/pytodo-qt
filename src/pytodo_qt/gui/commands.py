@@ -500,34 +500,41 @@ class AddListCommand(QUndoCommand):
     """Add a new todo list."""
 
     def __init__(
-        self, window: MainWindow, new_list: TodoList, prev_active_list_id: UUID | None
+        self,
+        window: MainWindow,
+        new_list: TodoList,
+        prev_active_list_id: UUID | None,
+        activate: bool = True,
     ) -> None:
         super().__init__(f'Add list "{new_list.name}"')
         self._window = window
         self._new_list = new_list
         self._prev_active_list_id = prev_active_list_id
+        self._activate = activate
 
     def redo(self) -> None:
         self._new_list.deleted = False
         self._new_list.mark_updated()
         self._window._database.lists[self._new_list.id] = self._new_list
-        self._window._database.set_active_list(self._new_list.id)
-        self._window._config.database.active_list = self._new_list.name
-        self._window._config_manager.save()
+        if self._activate:
+            self._window._database.set_active_list(self._new_list.id)
+            self._window._config.database.active_list = self._new_list.name
+            self._window._config_manager.save()
         self._window._save_database()
         self._window._refresh_ui()
 
     def undo(self) -> None:
         self._new_list.mark_deleted()
-        if self._prev_active_list_id:
-            self._window._database.set_active_list(self._prev_active_list_id)
-            prev_list = self._window._database.get_list(self._prev_active_list_id)
-            if prev_list:
-                self._window._config.database.active_list = prev_list.name
-        else:
-            self._window._database.active_list_id = None
-            self._window._config.database.active_list = ""
-        self._window._config_manager.save()
+        if self._activate:
+            if self._prev_active_list_id:
+                self._window._database.set_active_list(self._prev_active_list_id)
+                prev_list = self._window._database.get_list(self._prev_active_list_id)
+                if prev_list:
+                    self._window._config.database.active_list = prev_list.name
+            else:
+                self._window._database.active_list_id = None
+                self._window._config.database.active_list = ""
+            self._window._config_manager.save()
         self._window._save_database()
         self._window._refresh_ui()
 
@@ -1021,5 +1028,161 @@ class SetWipLimitCommand(QUndoCommand):
             return
         todo_list.set_wip_limit(self._column_name, self._old_limit)
         todo_list.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+
+class ReorderColumnsCommand(QUndoCommand):
+    """Reorder kanban board columns without adding or removing."""
+
+    def __init__(self, window: MainWindow, list_id: UUID, new_columns: list[str]) -> None:
+        super().__init__("Reorder columns")
+        self._window = window
+        self._list_id = list_id
+        self._new_columns = list(new_columns)
+        self._old_columns: list[str] = []
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        self._old_columns = list(todo_list.board_columns)
+        todo_list.board_columns = list(self._new_columns)
+        todo_list.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        todo_list.board_columns = list(self._old_columns)
+        todo_list.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+
+class RestoreItemCommand(QUndoCommand):
+    """Un-delete a soft-deleted item."""
+
+    def __init__(self, window: MainWindow, list_id: UUID, item_id: UUID) -> None:
+        super().__init__("Restore item")
+        self._window = window
+        self._list_id = list_id
+        self._item_id = item_id
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.items.get(self._item_id)
+        if not item:
+            return
+        item.deleted = False
+        item.mark_updated()
+        todo_list.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.items.get(self._item_id)
+        if not item:
+            return
+        item.mark_deleted()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+
+class WebUpdateItemCommand(QUndoCommand):
+    """Apply a batch field update to a TodoItem (web API).
+
+    Captures a snapshot of all mutable fields before the update
+    and restores them on undo.
+    """
+
+    _SNAPSHOT_FIELDS = (
+        "reminder",
+        "priority",
+        "complete",
+        "due_date",
+        "due_time",
+        "tags",
+        "board_column",
+        "parent_id",
+        "estimated_pomodoros",
+        "recurrence_type",
+        "recurrence_interval",
+        "recurrence_end_date",
+        "recurrence_end_count",
+    )
+
+    def __init__(
+        self,
+        window: MainWindow,
+        list_id: UUID,
+        item_id: UUID,
+        new_fields: dict,
+    ) -> None:
+        super().__init__("Edit item")
+        self._window = window
+        self._list_id = list_id
+        self._item_id = item_id
+        self._new_fields = new_fields
+        self._old_snapshot: dict = {}
+
+    @staticmethod
+    def _snapshot(item: TodoItem) -> dict:
+        return {
+            "reminder": item.reminder,
+            "priority": item.priority,
+            "complete": item.complete,
+            "due_date": item.due_date,
+            "due_time": item.due_time,
+            "tags": list(item.tags),
+            "board_column": item.board_column,
+            "parent_id": item.parent_id,
+            "estimated_pomodoros": item.estimated_pomodoros,
+            "recurrence_type": item.recurrence_type,
+            "recurrence_interval": item.recurrence_interval,
+            "recurrence_end_date": item.recurrence_end_date,
+            "recurrence_end_count": item.recurrence_end_count,
+        }
+
+    @staticmethod
+    def _restore(item: TodoItem, snapshot: dict) -> None:
+        for key, value in snapshot.items():
+            if key == "tags":
+                item.tags = list(value)
+            else:
+                setattr(item, key, value)
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.items.get(self._item_id)
+        if not item:
+            return
+        self._old_snapshot = self._snapshot(item)
+
+        from ..web.api import _apply_item_fields
+
+        _apply_item_fields(item, self._new_fields, todo_list)
+        item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.items.get(self._item_id)
+        if not item:
+            return
+        self._restore(item, self._old_snapshot)
+        item.mark_updated()
         self._window._save_database()
         self._window._refresh_ui()

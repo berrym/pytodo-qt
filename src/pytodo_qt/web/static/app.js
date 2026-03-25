@@ -69,6 +69,8 @@
   var versionText = document.getElementById("version-text");
   var toastContainer = document.getElementById("toast-container");
   var bottomNav = document.getElementById("bottom-nav");
+  var undoBtn = document.getElementById("undo-btn");
+  var redoBtn = document.getElementById("redo-btn");
 
   // ====================================================================
   // Accessibility: keyboard & focus management
@@ -76,6 +78,17 @@
 
   // Escape key closes any open sheet or context menu
   document.addEventListener("keydown", function (e) {
+    // Undo/redo: Ctrl+Z / Ctrl+Shift+Z (or Cmd on Mac)
+    if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+      e.preventDefault();
+      if (e.shiftKey) { onRedo(); } else { onUndo(); }
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === "y") {
+      e.preventDefault();
+      onRedo();
+      return;
+    }
     if (e.key !== "Escape") return;
     // Context menu takes priority (highest z-index)
     if (activeContextMenu) {
@@ -3166,7 +3179,50 @@
   }
 
   // Delete with undo (delayed delete)
-  var pendingDeletes = {};
+  // ====================================================================
+  // Undo / Redo
+  // ====================================================================
+
+  async function fetchUndoState() {
+    try {
+      var resp = await api("/undo-state");
+      if (undoBtn) {
+        undoBtn.disabled = !resp.can_undo;
+        undoBtn.title = resp.undo_text ? "Undo: " + resp.undo_text : "Undo";
+      }
+      if (redoBtn) {
+        redoBtn.disabled = !resp.can_redo;
+        redoBtn.title = resp.redo_text ? "Redo: " + resp.redo_text : "Redo";
+      }
+    } catch (e) { /* server unreachable */ }
+  }
+
+  async function onUndo() {
+    try {
+      var resp = await api("/undo", { method: "POST", headers: { "Content-Type": "application/json" } });
+      if (resp && resp.ok) {
+        showToast("Undone: " + resp.undone);
+        refreshCurrentList();
+        if (undoBtn) undoBtn.disabled = !resp.can_undo;
+        if (redoBtn) redoBtn.disabled = !resp.can_redo;
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  async function onRedo() {
+    try {
+      var resp = await api("/redo", { method: "POST", headers: { "Content-Type": "application/json" } });
+      if (resp && resp.ok) {
+        showToast("Redone: " + resp.redone);
+        refreshCurrentList();
+        if (undoBtn) undoBtn.disabled = !resp.can_undo;
+        if (redoBtn) redoBtn.disabled = !resp.can_redo;
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  if (undoBtn) undoBtn.addEventListener("click", onUndo);
+  if (redoBtn) redoBtn.addEventListener("click", onRedo);
 
   function onDeleteWithUndo(itemId, reminderText, cardEl) {
     // Animate card removal
@@ -3175,20 +3231,10 @@
     }
     haptic(10);
 
-    // Set up a delayed delete (5 seconds — generous window to undo)
-    var timer = setTimeout(function () {
-      delete pendingDeletes[itemId];
-      onDelete(itemId, null); // silent delete, no toast
-    }, 5000);
-
-    pendingDeletes[itemId] = timer;
-
+    // Delete immediately via server (undo available via undo button/Ctrl+Z)
+    onDelete(itemId, null);
     showToast(reminderText ? '"' + reminderText + '" deleted' : "Item deleted", function () {
-      // Undo callback
-      clearTimeout(pendingDeletes[itemId]);
-      delete pendingDeletes[itemId];
-      haptic(10);
-      refreshCurrentList();
+      onUndo();
     });
   }
 
@@ -3548,6 +3594,7 @@
         var msg = JSON.parse(e.data);
         if (msg.event === "refresh") {
           refreshCurrentList();
+          fetchUndoState();
         }
       } catch (err) { /* ignore malformed messages */ }
     };
@@ -3656,6 +3703,7 @@
     setViewMode(viewMode);
     connectWebSocket();
     startPolling(); // Fallback until WS connects
+    fetchUndoState();
     // Keep "last synced" text fresh
     setInterval(updateLastSyncedText, 15000);
   }

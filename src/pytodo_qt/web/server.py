@@ -9,7 +9,7 @@ from __future__ import annotations
 import contextlib
 import ssl
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
@@ -36,11 +36,13 @@ class WebServer:
         save_callback: Callable[[], None] | None = None,
         config: WebConfig | None = None,
         config_manager: ConfigManager | None = None,
+        main_window: Any | None = None,
     ) -> None:
         self._database = database
         self._save_callback = save_callback
         self._config = config
         self._config_manager = config_manager
+        self._main_window = main_window
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
         self._app: web.Application | None = None
@@ -375,6 +377,7 @@ class WebServer:
             config_manager_key,
             database_key,
             device_store_key,
+            main_window_key,
             save_callback_key,
             security_headers_middleware,
             setup_routes,
@@ -390,6 +393,8 @@ class WebServer:
             app[save_callback_key] = self._save_callback
         if self._config_manager:
             app[config_manager_key] = self._config_manager
+        if self._main_window:
+            app[main_window_key] = self._main_window
 
         # Per-device token store + pairing PIN
         # Only enable auth when both config AND config_manager are present.

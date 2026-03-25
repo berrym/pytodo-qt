@@ -1399,6 +1399,7 @@ class MainWindow(QMainWindow):
                 save_callback=self._web_save_and_refresh,
                 config=self._config.web,
                 config_manager=self._config_manager,
+                main_window=self,
             )
             # Create app synchronously so PIN is available immediately
             self._web_server.create_app()

@@ -414,6 +414,35 @@ body {
   color: #fff;
 }
 
+/* Undo/redo buttons */
+.undo-redo {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.undo-btn {
+  background: transparent;
+  border: none;
+  color: rgba(255,255,255,0.7);
+  padding: 6px 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.undo-btn:not(:disabled):hover {
+  background: rgba(255,255,255,0.15);
+}
+
+.undo-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
 .view-btn:hover { color: #fff; }
 
 /* ============================================================

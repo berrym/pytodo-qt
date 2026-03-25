@@ -37,6 +37,7 @@ config_manager_key: web.AppKey[ConfigManager] = web.AppKey("config_manager")
 ws_clients_key: web.AppKey[set[web.WebSocketResponse]] = web.AppKey("ws_clients")
 web_server_key: web.AppKey[Any] = web.AppKey("web_server")
 device_store_key: web.AppKey[Any] = web.AppKey("device_store")
+main_window_key: web.AppKey[Any] = web.AppKey("main_window")
 
 
 _SECURITY_HEADERS = {
@@ -201,6 +202,10 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_post("/api/lists/{list_id}/apply-preset", handle_apply_preset)
     # WebSocket
     app.router.add_get("/ws", handle_websocket)
+    # Undo/redo
+    app.router.add_post("/api/undo", handle_undo)
+    app.router.add_post("/api/redo", handle_redo)
+    app.router.add_get("/api/undo-state", handle_undo_state)
     # Authentication & device management
     app.router.add_post("/api/auth", handle_pair)
     app.router.add_get("/api/devices", handle_get_devices)
@@ -286,9 +291,15 @@ async def handle_create_list(request: web.Request) -> web.Response:
         return _error(400, "List name is required")
 
     lst = create_todo_list(name)
-    db.add_list(lst)
+    window = request.app.get(main_window_key)
+    if window:
+        from ..gui.commands import AddListCommand
 
-    _schedule_save_and_refresh(request)
+        cmd = AddListCommand(window, lst, window._database.active_list_id, activate=False)
+        window._undo_stack.push(cmd)
+    else:
+        db.add_list(lst)
+        _schedule_save_and_refresh(request)
     return web.json_response({"id": str(lst.id), "name": lst.name}, status=201)
 
 
@@ -321,10 +332,17 @@ async def handle_rename_list(request: web.Request) -> web.Response:
     ):
         return _conflict_response(_list_to_json(lst))
 
-    lst.name = name
-    lst.mark_updated()
+    window = request.app.get(main_window_key)
+    old_name = lst.name
+    if window:
+        from ..gui.commands import RenameListCommand
 
-    _schedule_save_and_refresh(request)
+        cmd = RenameListCommand(window, list_id, old_name, name)
+        window._undo_stack.push(cmd)
+    else:
+        lst.name = name
+        lst.mark_updated()
+        _schedule_save_and_refresh(request)
     return web.json_response({"id": str(lst.id), "name": lst.name, "updated_at": lst.updated_at})
 
 
@@ -352,9 +370,22 @@ async def handle_delete_list(request: web.Request) -> web.Response:
     ):
         return _conflict_response(_list_to_json(lst))
 
-    lst.mark_deleted()
+    window = request.app.get(main_window_key)
+    if window:
+        from ..gui.commands import DeleteListCommand
 
-    _schedule_save_and_refresh(request)
+        # Find next active list if deleting the current one
+        new_active_id = None
+        if db.active_list_id == list_id:
+            for other in db.lists.values():
+                if other.id != list_id and not other.deleted:
+                    new_active_id = other.id
+                    break
+        cmd = DeleteListCommand(window, list_id, lst.name, new_active_id)
+        window._undo_stack.push(cmd)
+    else:
+        lst.mark_deleted()
+        _schedule_save_and_refresh(request)
     return web.json_response({"ok": True})
 
 
@@ -428,6 +459,7 @@ async def handle_update_columns(request: web.Request) -> web.Response:
         return _conflict_response(_list_to_json(lst))
 
     action = body.get("action", "")
+    window = request.app.get(main_window_key)
 
     if action == "add":
         name = body.get("name", "").strip()
@@ -435,7 +467,12 @@ async def handle_update_columns(request: web.Request) -> web.Response:
             return _error(400, "Column name is required")
         if name in lst.board_columns:
             return _error(400, "Column already exists")
-        lst.board_columns.append(name)
+        if window:
+            from ..gui.commands import AddColumnCommand
+
+            window._undo_stack.push(AddColumnCommand(window, list_id, name))
+        else:
+            lst.board_columns.append(name)
 
     elif action == "remove":
         name = body.get("name", "").strip()
@@ -447,13 +484,19 @@ async def handle_update_columns(request: web.Request) -> web.Response:
             return _error(400, "Cannot delete the first column (inbox)")
         if name == lst.board_columns[-1]:
             return _error(400, "Cannot delete the last column (completion)")
-        fallback = lst.board_columns[0]
-        for item in lst.active_items():
-            if item.board_column == name:
-                item.board_column = fallback
-                item.mark_updated()
-        lst.board_columns.remove(name)
-        lst.wip_limits.pop(name, None)
+        if window:
+            from ..gui.commands import RemoveColumnCommand
+
+            idx = lst.board_columns.index(name)
+            window._undo_stack.push(RemoveColumnCommand(window, list_id, name, idx))
+        else:
+            fallback = lst.board_columns[0]
+            for item in lst.active_items():
+                if item.board_column == name:
+                    item.board_column = fallback
+                    item.mark_updated()
+            lst.board_columns.remove(name)
+            lst.wip_limits.pop(name, None)
 
     elif action == "rename":
         old_name = body.get("old_name", "").strip()
@@ -464,20 +507,30 @@ async def handle_update_columns(request: web.Request) -> web.Response:
             return _error(404, "Column not found")
         if new_name in lst.board_columns:
             return _error(400, "Column name already exists")
-        idx = lst.board_columns.index(old_name)
-        lst.board_columns[idx] = new_name
-        if old_name in lst.wip_limits:
-            lst.wip_limits[new_name] = lst.wip_limits.pop(old_name)
-        for item in lst.active_items():
-            if item.board_column == old_name:
-                item.board_column = new_name
-                item.mark_updated()
+        if window:
+            from ..gui.commands import RenameColumnCommand
+
+            window._undo_stack.push(RenameColumnCommand(window, list_id, old_name, new_name))
+        else:
+            idx = lst.board_columns.index(old_name)
+            lst.board_columns[idx] = new_name
+            if old_name in lst.wip_limits:
+                lst.wip_limits[new_name] = lst.wip_limits.pop(old_name)
+            for item in lst.active_items():
+                if item.board_column == old_name:
+                    item.board_column = new_name
+                    item.mark_updated()
 
     elif action == "reorder":
         columns = body.get("columns")
         if not isinstance(columns, list) or set(columns) != set(lst.board_columns):
             return _error(400, "Must provide all existing columns in new order")
-        lst.board_columns = columns
+        if window:
+            from ..gui.commands import ReorderColumnsCommand
+
+            window._undo_stack.push(ReorderColumnsCommand(window, list_id, columns))
+        else:
+            lst.board_columns = columns
 
     elif action == "set_wip_limit":
         name = body.get("name", "").strip()
@@ -486,13 +539,20 @@ async def handle_update_columns(request: web.Request) -> web.Response:
             return _error(404, "Column not found")
         if name == lst.board_columns[0] or name == lst.board_columns[-1]:
             return _error(400, "Cannot set WIP limit on first or last column")
-        lst.set_wip_limit(name, limit)
+        if window:
+            from ..gui.commands import SetWipLimitCommand
+
+            old_limit = lst.wip_limits.get(name, 0)
+            window._undo_stack.push(SetWipLimitCommand(window, list_id, name, old_limit, limit))
+        else:
+            lst.set_wip_limit(name, limit)
 
     else:
         return _error(400, f"Unknown action: {action}")
 
-    lst.mark_updated()
-    _schedule_save_and_refresh(request)
+    if not window:
+        lst.mark_updated()
+        _schedule_save_and_refresh(request)
     return web.json_response(
         {
             "board_columns": lst.board_columns,
@@ -612,9 +672,15 @@ async def handle_create_item(request: web.Request) -> web.Response:
     if not item.board_column and lst.board_columns:
         item.board_column = lst.board_columns[0]
 
-    lst.add_item(item)
+    window = request.app.get(main_window_key)
+    if window:
+        from ..gui.commands import AddItemCommand
 
-    _schedule_save_and_refresh(request)
+        cmd = AddItemCommand(window, list_id, item)
+        window._undo_stack.push(cmd)
+    else:
+        lst.add_item(item)
+        _schedule_save_and_refresh(request)
     return web.json_response(_item_to_json(item), status=201)
 
 
@@ -643,10 +709,17 @@ async def handle_update_item(request: web.Request) -> web.Response:
     ):
         return _conflict_response(_item_to_json(item))
 
-    _apply_item_fields(item, body, lst)
-    item.mark_updated()
+    window = request.app.get(main_window_key)
+    if window:
+        from ..gui.commands import WebUpdateItemCommand
 
-    _schedule_save_and_refresh(request)
+        assert lst is not None
+        cmd = WebUpdateItemCommand(window, lst.id, item_id, body)
+        window._undo_stack.push(cmd)
+    else:
+        _apply_item_fields(item, body, lst)
+        item.mark_updated()
+        _schedule_save_and_refresh(request)
     return web.json_response(_item_to_json(item))
 
 
@@ -658,7 +731,7 @@ async def handle_delete_item(request: web.Request) -> web.Response:
     except ValueError:
         return _error(400, "Invalid item ID")
 
-    item = _find_item(db, item_id)
+    item, lst = _find_item_and_list(db, item_id)
     if item is None:
         return _error(404, "Item not found")
 
@@ -674,9 +747,15 @@ async def handle_delete_item(request: web.Request) -> web.Response:
     ):
         return _conflict_response(_item_to_json(item))
 
-    item.mark_deleted()
+    window = request.app.get(main_window_key)
+    if window and lst:
+        from ..gui.commands import DeleteItemsCommand
 
-    _schedule_save_and_refresh(request)
+        cmd = DeleteItemsCommand(window, lst.id, [item_id])
+        window._undo_stack.push(cmd)
+    else:
+        item.mark_deleted()
+        _schedule_save_and_refresh(request)
     return web.json_response({"ok": True})
 
 
@@ -704,28 +783,50 @@ async def handle_toggle_item(request: web.Request) -> web.Response:
     ):
         return _conflict_response(_item_to_json(item))
 
-    # Recurring item completion: mark complete for this cycle, let auto-advance
-    # handle cycling to the next occurrence when the next due date arrives.
-    already_exhausted = (
-        item.recurrence_end_count is not None and item.recurrence_count >= item.recurrence_end_count
-    )
-    if item.is_recurring and not item.complete and not already_exhausted:
-        item.complete = True
-        item.recurrence_count += 1
+    window = request.app.get(main_window_key)
+    if window and lst:
+        already_exhausted = (
+            item.recurrence_end_count is not None
+            and item.recurrence_count >= item.recurrence_end_count
+        )
+        if item.is_recurring and not item.complete and not already_exhausted:
+            from ..core.models import is_recurrence_ended
+            from ..gui.commands import ToggleCompleteRecurringCommand
+
+            ended = is_recurrence_ended(item)
+            cmd = ToggleCompleteRecurringCommand(
+                window,
+                lst.id,
+                item.id,
+                old_due_date=item.due_date,
+                new_due_date=item.due_date,
+                old_count=item.recurrence_count,
+                recurrence_ended=ended,
+            )
+        else:
+            from ..gui.commands import ToggleCompleteCommand
+
+            cmd = ToggleCompleteCommand(window, lst.id, [(item.id, item.complete)])
+        window._undo_stack.push(cmd)
     else:
-        item.toggle_complete()
+        already_exhausted = (
+            item.recurrence_end_count is not None
+            and item.recurrence_count >= item.recurrence_end_count
+        )
+        if item.is_recurring and not item.complete and not already_exhausted:
+            item.complete = True
+            item.recurrence_count += 1
+        else:
+            item.toggle_complete()
+        if lst and lst.board_columns:
+            last_col = lst.board_columns[-1]
+            if item.complete and item.board_column != last_col:
+                item.board_column = last_col
+            elif not item.complete and item.board_column == last_col:
+                from ..gui.commands import _best_incomplete_column
 
-    # Sync board_column with completion state
-    if lst and lst.board_columns:
-        last_col = lst.board_columns[-1]
-        if item.complete and item.board_column != last_col:
-            item.board_column = last_col
-        elif not item.complete and item.board_column == last_col:
-            from ..gui.commands import _best_incomplete_column
-
-            item.board_column = _best_incomplete_column(item, lst)
-
-    _schedule_save_and_refresh(request)
+                item.board_column = _best_incomplete_column(item, lst)
+        _schedule_save_and_refresh(request)
     return web.json_response(_item_to_json(item))
 
 
@@ -758,10 +859,22 @@ async def handle_move_item(request: web.Request) -> web.Response:
     if not lst or column not in lst.board_columns:
         return _error(400, "Invalid column name")
 
-    item.board_column = column
-    item.mark_updated()
+    window = request.app.get(main_window_key)
+    if window:
+        from ..gui.commands import MoveToColumnCommand
 
-    _schedule_save_and_refresh(request)
+        old_column = item.board_column
+        auto_complete: bool | None = None
+        if column == lst.board_columns[-1]:
+            auto_complete = True
+        elif old_column == lst.board_columns[-1]:
+            auto_complete = False
+        cmd = MoveToColumnCommand(window, lst.id, item.id, old_column, column, auto_complete)
+        window._undo_stack.push(cmd)
+    else:
+        item.board_column = column
+        item.mark_updated()
+        _schedule_save_and_refresh(request)
     return web.json_response(_item_to_json(item))
 
 
@@ -791,25 +904,31 @@ async def handle_set_parent(request: web.Request) -> web.Response:
         return _conflict_response(_item_to_json(item))
 
     parent_id_str = body.get("parent_id")
+    new_parent_id: UUID | None = None
     if parent_id_str:
         try:
-            parent_id = UUID(parent_id_str)
+            new_parent_id = UUID(parent_id_str)
         except ValueError:
             return _error(400, "Invalid parent ID")
-        parent = _find_item(db, parent_id)
+        parent = _find_item(db, new_parent_id)
         if parent is None:
             return _error(404, "Parent item not found")
         if parent.parent_id is not None:
             return _error(400, "Cannot nest subtasks more than one level")
-        if parent_id == item_id:
+        if new_parent_id == item_id:
             return _error(400, "Item cannot be its own parent")
-        item.parent_id = parent_id
+
+    window = request.app.get(main_window_key)
+    _, lst = _find_item_and_list(db, item_id)
+    if window and lst:
+        from ..gui.commands import ReparentCommand
+
+        cmd = ReparentCommand(window, lst.id, item_id, item.parent_id, new_parent_id)
+        window._undo_stack.push(cmd)
     else:
-        item.parent_id = None
-
-    item.mark_updated()
-
-    _schedule_save_and_refresh(request)
+        item.parent_id = new_parent_id
+        item.mark_updated()
+        _schedule_save_and_refresh(request)
     return web.json_response(_item_to_json(item))
 
 
@@ -839,10 +958,17 @@ async def handle_restore_item(request: web.Request) -> web.Response:
                 and client_updated_at < item.updated_at
             ):
                 return _conflict_response(_item_to_json(item))
-            item.deleted = False
-            item.mark_updated()
-            lst.mark_updated()
-            _schedule_save_and_refresh(request)
+            window = request.app.get(main_window_key)
+            if window:
+                from ..gui.commands import RestoreItemCommand
+
+                cmd = RestoreItemCommand(window, lst.id, item_id)
+                window._undo_stack.push(cmd)
+            else:
+                item.deleted = False
+                item.mark_updated()
+                lst.mark_updated()
+                _schedule_save_and_refresh(request)
             return web.json_response(_item_to_json(item))
 
     return _error(404, "Deleted item not found")
@@ -1098,6 +1224,21 @@ async def handle_apply_preset(request: web.Request) -> web.Response:
     if len(new_columns) != len(set(new_columns)):
         return _error(400, "Column names must be unique")
 
+    window = request.app.get(main_window_key)
+    if window:
+        from ..gui.commands import ApplyLayoutPresetCommand
+
+        cmd = ApplyLayoutPresetCommand(window, list_id, list(new_columns))
+        window._undo_stack.push(cmd)
+        return web.json_response(
+            {
+                "board_columns": lst.board_columns,
+                "wip_limits": lst.wip_limits,
+                "updated_at": lst.updated_at,
+            }
+        )
+
+    # Fallback: direct mutation (test mode)
     old_columns = list(lst.board_columns)
     new_set = set(new_columns)
     last_old = old_columns[-1] if old_columns else ""
@@ -1112,7 +1253,7 @@ async def handle_apply_preset(request: web.Request) -> web.Response:
         if item.parent_id is not None:
             continue
         if item.board_column in new_set:
-            continue  # Column still exists
+            continue
         if item.board_column == last_old and last_new:
             item.board_column = last_new
             item.mark_updated()
@@ -1129,7 +1270,6 @@ async def handle_apply_preset(request: web.Request) -> web.Response:
             item.mark_updated()
             remapped += 1
 
-    # Clear WIP limits for removed columns
     for col in old_columns:
         if col not in new_set:
             lst.set_wip_limit(col, 0)
@@ -1220,6 +1360,69 @@ def _find_item_and_list(db: Database, item_id: UUID) -> tuple[TodoItem | None, T
         if item and not item.deleted:
             return item, lst
     return None, None
+
+
+async def handle_undo(request: web.Request) -> web.Response:
+    """POST /api/undo — Undo the last action."""
+    window = request.app.get(main_window_key)
+    if not window:
+        return _error(503, "Undo not available")
+    stack = window._undo_stack
+    if not stack.canUndo():
+        return _error(400, "Nothing to undo")
+    text = stack.undoText()
+    stack.undo()
+    return web.json_response(
+        {
+            "ok": True,
+            "undone": text,
+            "can_undo": stack.canUndo(),
+            "can_redo": stack.canRedo(),
+        }
+    )
+
+
+async def handle_redo(request: web.Request) -> web.Response:
+    """POST /api/redo — Redo the last undone action."""
+    window = request.app.get(main_window_key)
+    if not window:
+        return _error(503, "Redo not available")
+    stack = window._undo_stack
+    if not stack.canRedo():
+        return _error(400, "Nothing to redo")
+    text = stack.redoText()
+    stack.redo()
+    return web.json_response(
+        {
+            "ok": True,
+            "redone": text,
+            "can_undo": stack.canUndo(),
+            "can_redo": stack.canRedo(),
+        }
+    )
+
+
+async def handle_undo_state(request: web.Request) -> web.Response:
+    """GET /api/undo-state — Return current undo/redo availability."""
+    window = request.app.get(main_window_key)
+    if not window:
+        return web.json_response(
+            {
+                "can_undo": False,
+                "can_redo": False,
+                "undo_text": "",
+                "redo_text": "",
+            }
+        )
+    stack = window._undo_stack
+    return web.json_response(
+        {
+            "can_undo": stack.canUndo(),
+            "can_redo": stack.canRedo(),
+            "undo_text": stack.undoText(),
+            "redo_text": stack.redoText(),
+        }
+    )
 
 
 async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
