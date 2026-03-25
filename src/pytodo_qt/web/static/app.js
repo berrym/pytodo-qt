@@ -22,6 +22,9 @@
   var lastListsFingerprint = "";
   var lastBoardFingerprint = "";
   var lastSyncTime = 0;
+  var offlineUndoStack = [];
+  var offlineRedoStack = [];
+  var serverUndoState = { can_undo: false, can_redo: false, undo_text: "", redo_text: "" };
 
   // ====================================================================
   // DOM refs
@@ -419,8 +422,10 @@
         });
       }
     }
-    queue.push({ path: path, opts: opts, timestamp: Date.now() });
+    var ts = Date.now();
+    queue.push({ path: path, opts: opts, timestamp: ts });
     saveOfflineQueue(queue);
+    return ts;
   }
 
   function removeFromOfflineQueue(index) {
@@ -495,6 +500,12 @@
     isOnline = online;
     if (offlineBanner) {
       offlineBanner.classList.toggle("hidden", online);
+    }
+    if (online) {
+      // Transitioning to online — clear offline undo stacks
+      // (server-side undo takes over after queue replay)
+      offlineUndoStack = [];
+      offlineRedoStack = [];
     }
     updateConnectionIndicator();
     updatePendingBadge();
@@ -1165,7 +1176,9 @@
       body: JSON.stringify(fields)
     };
     if (!isOnline) {
-      enqueueOfflineEdit(path, opts);
+      var snap = captureItemSnapshot(itemId);
+      var ts = enqueueOfflineEdit(path, opts);
+      pushOfflineUndo(snap, ts, path, opts);
       return;
     }
     try {
@@ -1192,7 +1205,9 @@
       body: JSON.stringify(fields)
     };
     if (!isOnline) {
-      enqueueOfflineEdit(path, opts);
+      var snap = captureItemSnapshot(itemId);
+      var ts = enqueueOfflineEdit(path, opts);
+      pushOfflineUndo(snap, ts, path, opts);
       return;
     }
     try {
@@ -1220,7 +1235,9 @@
       body: JSON.stringify(fields)
     };
     if (!isOnline) {
-      enqueueOfflineEdit(path, opts);
+      var snap = captureItemSnapshot(itemId);
+      var ts = enqueueOfflineEdit(path, opts);
+      pushOfflineUndo(snap, ts, path, opts);
       return;
     }
     try {
@@ -2408,7 +2425,8 @@
       };
 
       if (!isOnline) {
-        enqueueOfflineEdit(path, opts);
+        var ts = enqueueOfflineEdit(path, opts);
+        pushOfflineUndo(null, ts, path, opts);
         closeAddSheet();
         showToast("Added (offline)");
         return;
@@ -3135,7 +3153,9 @@
       opts.body = JSON.stringify({ updated_at: ua });
     }
     if (!isOnline) {
-      enqueueOfflineEdit(path, opts);
+      var snap = captureItemSnapshot(itemId);
+      var ts = enqueueOfflineEdit(path, opts);
+      pushOfflineUndo(snap, ts, path, opts);
       return;
     }
     try {
@@ -3160,7 +3180,9 @@
       opts.body = JSON.stringify({ updated_at: ua });
     }
     if (!isOnline) {
-      enqueueOfflineEdit(path, opts);
+      var snap = captureItemSnapshot(itemId);
+      var ts = enqueueOfflineEdit(path, opts);
+      pushOfflineUndo(snap, ts, path, opts);
       showToast("Deleted (offline)");
       return;
     }
@@ -3178,45 +3200,160 @@
     }
   }
 
-  // Delete with undo (delayed delete)
   // ====================================================================
-  // Undo / Redo
+  // Undo / Redo (online via server, offline via client-side stack)
   // ====================================================================
+
+  function captureItemSnapshot(itemId) {
+    for (var i = 0; i < cachedItems.length; i++) {
+      if (cachedItems[i].id === itemId) {
+        return JSON.parse(JSON.stringify(cachedItems[i]));
+      }
+    }
+    if (cachedBoardData && cachedBoardData.columns) {
+      var cols = Object.keys(cachedBoardData.columns);
+      for (var c = 0; c < cols.length; c++) {
+        var items = cachedBoardData.columns[cols[c]];
+        for (var j = 0; j < items.length; j++) {
+          if (items[j].id === itemId) {
+            return JSON.parse(JSON.stringify(items[j]));
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function pushOfflineUndo(snapshot, queueTimestamp, path, opts) {
+    offlineUndoStack.push({
+      snapshot: snapshot, timestamp: queueTimestamp,
+      path: path || "", opts: opts || {}
+    });
+    offlineRedoStack = []; // new action invalidates redo
+    updateUndoButtons();
+  }
+
+  function updateUndoButtons() {
+    if (!isOnline) {
+      if (undoBtn) {
+        undoBtn.disabled = offlineUndoStack.length === 0;
+        undoBtn.title = offlineUndoStack.length > 0 ? "Undo (offline)" : "Undo";
+      }
+      if (redoBtn) {
+        redoBtn.disabled = offlineRedoStack.length === 0;
+        redoBtn.title = offlineRedoStack.length > 0 ? "Redo (offline)" : "Redo";
+      }
+    } else {
+      if (undoBtn) {
+        undoBtn.disabled = !serverUndoState.can_undo;
+        undoBtn.title = serverUndoState.undo_text ? "Undo: " + serverUndoState.undo_text : "Undo";
+      }
+      if (redoBtn) {
+        redoBtn.disabled = !serverUndoState.can_redo;
+        redoBtn.title = serverUndoState.redo_text ? "Redo: " + serverUndoState.redo_text : "Redo";
+      }
+    }
+  }
 
   async function fetchUndoState() {
     try {
       var resp = await api("/undo-state");
-      if (undoBtn) {
-        undoBtn.disabled = !resp.can_undo;
-        undoBtn.title = resp.undo_text ? "Undo: " + resp.undo_text : "Undo";
-      }
-      if (redoBtn) {
-        redoBtn.disabled = !resp.can_redo;
-        redoBtn.title = resp.redo_text ? "Redo: " + resp.redo_text : "Redo";
-      }
+      serverUndoState = resp;
+      updateUndoButtons();
     } catch (e) { /* server unreachable */ }
   }
 
+  function offlineUndoAction() {
+    if (offlineUndoStack.length === 0) return;
+    var entry = offlineUndoStack.pop();
+    // Remove matching entry from offline queue
+    var queue = getOfflineQueue();
+    queue = queue.filter(function (q) { return q.timestamp !== entry.timestamp; });
+    saveOfflineQueue(queue);
+
+    // Restore snapshot into cached items
+    var snapshot = entry.snapshot;
+    if (snapshot && snapshot.id) {
+      var found = false;
+      for (var i = 0; i < cachedItems.length; i++) {
+        if (cachedItems[i].id === snapshot.id) {
+          cachedItems[i] = snapshot;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        // Item was added offline — removing it from cache
+        // Or item was deleted — re-adding the snapshot
+        cachedItems.push(snapshot);
+      }
+      // Update IndexedDB cache
+      if (currentListId) cacheListItems(currentListId, cachedItems);
+    }
+
+    offlineRedoStack.push(entry);
+    // Re-render
+    lastItemsFingerprint = "";
+    lastBoardFingerprint = "";
+    renderItems(cachedItems);
+    updateUndoButtons();
+    showToast("Undone (offline)");
+  }
+
+  function offlineRedoAction() {
+    if (offlineRedoStack.length === 0) return;
+    var entry = offlineRedoStack.pop();
+    // Re-enqueue the operation
+    var queue = getOfflineQueue();
+    // Re-create a queue entry from the snapshot's corresponding operation
+    // We stored the timestamp — find what path/opts would have been
+    // Simplest: we just re-enqueue and let the snapshot be the "before" state again
+    queue.push({ path: entry.path || "", opts: entry.opts || {}, timestamp: entry.timestamp });
+    saveOfflineQueue(queue);
+
+    offlineUndoStack.push(entry);
+    // Re-render from cache (the queue will replay on reconnect)
+    lastItemsFingerprint = "";
+    lastBoardFingerprint = "";
+    if (currentListId) {
+      getCachedListItems(currentListId).then(function (items) {
+        if (items) { cachedItems = items; renderItems(cachedItems); }
+      });
+    }
+    updateUndoButtons();
+    showToast("Redone (offline)");
+  }
+
   async function onUndo() {
+    if (!isOnline && offlineUndoStack.length > 0) {
+      offlineUndoAction();
+      return;
+    }
     try {
       var resp = await api("/undo", { method: "POST", headers: { "Content-Type": "application/json" } });
       if (resp && resp.ok) {
         showToast("Undone: " + resp.undone);
         refreshCurrentList();
-        if (undoBtn) undoBtn.disabled = !resp.can_undo;
-        if (redoBtn) redoBtn.disabled = !resp.can_redo;
+        serverUndoState.can_undo = resp.can_undo;
+        serverUndoState.can_redo = resp.can_redo;
+        updateUndoButtons();
       }
     } catch (e) { /* ignore */ }
   }
 
   async function onRedo() {
+    if (!isOnline && offlineRedoStack.length > 0) {
+      offlineRedoAction();
+      return;
+    }
     try {
       var resp = await api("/redo", { method: "POST", headers: { "Content-Type": "application/json" } });
       if (resp && resp.ok) {
         showToast("Redone: " + resp.redone);
         refreshCurrentList();
-        if (undoBtn) undoBtn.disabled = !resp.can_undo;
-        if (redoBtn) redoBtn.disabled = !resp.can_redo;
+        serverUndoState.can_undo = resp.can_undo;
+        serverUndoState.can_redo = resp.can_redo;
+        updateUndoButtons();
       }
     } catch (e) { /* ignore */ }
   }
@@ -3231,7 +3368,7 @@
     }
     haptic(10);
 
-    // Delete immediately via server (undo available via undo button/Ctrl+Z)
+    // Delete immediately (undo available via undo button/Ctrl+Z)
     onDelete(itemId, null);
     showToast(reminderText ? '"' + reminderText + '" deleted' : "Item deleted", function () {
       onUndo();
