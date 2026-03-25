@@ -199,14 +199,22 @@ class MainWindow(QMainWindow):
             # Load SVG as pixmap and set for all modes to prevent hover issues
             pixmap = QPixmap(str(icon_path))
             icon = QIcon()
-            # Set same pixmap for all modes to prevent Qt from modifying it
             for mode in (
                 QIcon.Mode.Normal,
                 QIcon.Mode.Active,
-                QIcon.Mode.Disabled,
                 QIcon.Mode.Selected,
             ):
                 icon.addPixmap(pixmap, mode)
+            # Disabled mode: 30% opacity for clear visual feedback
+            from PyQt6.QtGui import QColor, QPainter
+
+            disabled = QPixmap(pixmap.size())
+            disabled.fill(QColor(0, 0, 0, 0))
+            painter = QPainter(disabled)
+            painter.setOpacity(0.3)
+            painter.drawPixmap(0, 0, pixmap)
+            painter.end()
+            icon.addPixmap(disabled, QIcon.Mode.Disabled)
             return icon
         return QIcon(str(icon_path))
 
