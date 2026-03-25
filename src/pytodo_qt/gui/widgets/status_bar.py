@@ -282,12 +282,14 @@ class StatusBarWidget(QStatusBar):
             if pin:
                 text += f"  PIN: {pin}"
             self.web_status_label.setText(text)
-            self.web_status_label.setStyleSheet("color: green; cursor: pointer;")
+            self.web_status_label.setStyleSheet("color: green;")
+            self.web_status_label.setCursor(Qt.CursorShape.PointingHandCursor)
             self.web_status_label.setToolTip("Click to show connection QR code")
         else:
             self.web_status_label.setText("Web: Off")
             self.web_status_label.setStyleSheet("color: gray;")
             self.web_status_label.setToolTip("")
+            self.web_status_label.unsetCursor()
 
     def show_message(self, message: str, timeout: int = 3000) -> None:
         """Show a temporary message without disrupting layout."""
