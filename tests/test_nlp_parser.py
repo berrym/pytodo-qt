@@ -739,3 +739,327 @@ class TestSpanAccuracy:
         r = parse("task every day", today=TODAY)
         rec_spans = [s for s in r.spans if s.kind == EntityKind.RECURRENCE]
         assert len(rec_spans) == 1
+
+
+# ===========================================================================
+# Voice dictation date phrases
+# ===========================================================================
+
+
+class TestVoiceDatePhrases:
+    """Date patterns commonly produced by voice dictation."""
+
+    def test_this_friday(self) -> None:
+        # TODAY is Wednesday 2026-03-11 → this Friday = 2026-03-13
+        r = parse("Meeting this Friday", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+
+    def test_this_coming_monday(self) -> None:
+        # TODAY is Wednesday → this coming Monday = 2026-03-16
+        r = parse("Call dentist this coming Monday", today=TODAY)
+        assert r.due_date == date(2026, 3, 16)
+
+    def test_this_weekend(self) -> None:
+        # TODAY is Wednesday → this weekend = Saturday 2026-03-14
+        r = parse("Clean house this weekend", today=TODAY)
+        assert r.due_date == date(2026, 3, 14)
+
+    def test_day_after_tomorrow(self) -> None:
+        r = parse("Submit report day after tomorrow", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+
+    def test_end_of_week(self) -> None:
+        # TODAY is Wednesday → end of week = Friday 2026-03-13
+        r = parse("Finish docs end of week", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+
+    def test_end_of_the_week(self) -> None:
+        r = parse("Review PR end of the week", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+
+    def test_end_of_month(self) -> None:
+        r = parse("Pay rent end of month", today=TODAY)
+        assert r.due_date == date(2026, 3, 31)
+
+    def test_end_of_the_month(self) -> None:
+        r = parse("File taxes end of the month", today=TODAY)
+        assert r.due_date == date(2026, 3, 31)
+
+    def test_in_a_day(self) -> None:
+        r = parse("Reply to email in a day", today=TODAY)
+        assert r.due_date == date(2026, 3, 12)
+
+    def test_in_a_week(self) -> None:
+        r = parse("Follow up in a week", today=TODAY)
+        assert r.due_date == date(2026, 3, 18)
+
+    def test_in_a_month(self) -> None:
+        r = parse("Renew subscription in a month", today=TODAY)
+        assert r.due_date == date(2026, 4, 11)
+
+    def test_in_a_couple_days(self) -> None:
+        r = parse("Buy gift in a couple days", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+
+    def test_in_a_few_days(self) -> None:
+        r = parse("Schedule call in a few days", today=TODAY)
+        assert r.due_date == date(2026, 3, 14)
+
+    def test_the_15th(self) -> None:
+        r = parse("Meeting the 15th", today=TODAY)
+        assert r.due_date == date(2026, 3, 15)
+
+    def test_the_15th_past(self) -> None:
+        # If the 10th has passed, should go to next month
+        r = parse("Meeting the 10th", today=TODAY)
+        assert r.due_date == date(2026, 4, 10)
+
+    def test_the_3rd_of_april(self) -> None:
+        r = parse("Conference the 3rd of April", today=TODAY)
+        assert r.due_date == date(2026, 4, 3)
+
+
+# ===========================================================================
+# Voice dictation time phrases
+# ===========================================================================
+
+
+class TestVoiceTimePhrases:
+    """Time patterns commonly produced by voice dictation."""
+
+    def test_bare_3_pm(self) -> None:
+        r = parse("Meeting 3 PM", today=TODAY)
+        assert r.due_time == time(15, 0)
+
+    def test_bare_10_am(self) -> None:
+        r = parse("Call at 10 AM", today=TODAY)
+        assert r.due_time == time(10, 0)
+
+    def test_bare_330_pm(self) -> None:
+        r = parse("Dentist 3:30 PM", today=TODAY)
+        assert r.due_time == time(15, 30)
+
+    def test_tonight(self) -> None:
+        r = parse("Take out trash tonight", today=TODAY)
+        assert r.due_time == time(20, 0)
+
+    def test_this_morning(self) -> None:
+        r = parse("Review emails this morning", today=TODAY)
+        assert r.due_time == time(9, 0)
+
+    def test_this_afternoon(self) -> None:
+        r = parse("Pick up groceries this afternoon", today=TODAY)
+        assert r.due_time == time(14, 0)
+
+    def test_this_evening(self) -> None:
+        r = parse("Cook dinner this evening", today=TODAY)
+        assert r.due_time == time(18, 0)
+
+    def test_before_5(self) -> None:
+        r = parse("Submit form before 5 PM", today=TODAY)
+        assert r.due_time == time(17, 0)
+
+    def test_in_30_minutes(self) -> None:
+        r = parse("Check oven in 30 minutes", today=TODAY)
+        assert r.due_time is not None  # Can't assert exact time (depends on now)
+
+    def test_in_2_hours(self) -> None:
+        r = parse("Call back in 2 hours", today=TODAY)
+        assert r.due_time is not None
+
+    def test_in_an_hour(self) -> None:
+        r = parse("Review document in an hour", today=TODAY)
+        assert r.due_time is not None
+
+
+# ===========================================================================
+# Number word conversion
+# ===========================================================================
+
+
+class TestNumberWordConversion:
+    """Voice dictation often spells out numbers."""
+
+    def test_in_two_days(self) -> None:
+        r = parse("Buy present in two days", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+
+    def test_every_three_weeks(self) -> None:
+        r = parse("Review accounts every three weeks", today=TODAY)
+        assert r.recurrence_type == "weekly"
+        assert r.recurrence_interval == 3
+
+    def test_in_five_days(self) -> None:
+        r = parse("Follow up in five days", today=TODAY)
+        assert r.due_date == date(2026, 3, 16)
+
+    def test_a_couple_of_days(self) -> None:
+        r = parse("Fix bug in a couple of days", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+
+    def test_buy_two_apples_not_converted(self) -> None:
+        """Number words in non-pattern contexts stay as text."""
+        r = parse("Buy two apples", today=TODAY)
+        assert "two" in r.reminder.lower() or "2" not in r.reminder
+
+    def test_priority_one(self) -> None:
+        r = parse("Fix server priority one", today=TODAY)
+        assert r.priority == 1
+
+    def test_priority_three(self) -> None:
+        r = parse("Clean desk priority three", today=TODAY)
+        assert r.priority == 3
+
+
+# ===========================================================================
+# Compound recurrence patterns
+# ===========================================================================
+
+
+class TestCompoundRecurrence:
+    """Complex recurrence patterns for voice dictation."""
+
+    def test_every_other_day(self) -> None:
+        r = parse("Water plants every other day", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_interval == 2
+
+    def test_every_other_week(self) -> None:
+        r = parse("Team sync every other week", today=TODAY)
+        assert r.recurrence_type == "weekly"
+        assert r.recurrence_interval == 2
+
+    def test_every_other_month(self) -> None:
+        r = parse("Haircut every other month", today=TODAY)
+        assert r.recurrence_type == "monthly"
+        assert r.recurrence_interval == 2
+
+    def test_biweekly(self) -> None:
+        r = parse("Payroll biweekly", today=TODAY)
+        assert r.recurrence_type == "weekly"
+        assert r.recurrence_interval == 2
+
+    def test_bi_weekly_hyphen(self) -> None:
+        r = parse("Review bi-weekly", today=TODAY)
+        assert r.recurrence_type == "weekly"
+        assert r.recurrence_interval == 2
+
+    def test_bimonthly(self) -> None:
+        r = parse("Newsletter bimonthly", today=TODAY)
+        assert r.recurrence_type == "monthly"
+        assert r.recurrence_interval == 2
+
+    def test_twice_a_day(self) -> None:
+        r = parse("Take medicine twice a day", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert "(2x/day)" in r.reminder
+
+    def test_twice_a_week(self) -> None:
+        r = parse("Exercise twice a week", today=TODAY)
+        assert r.recurrence_type == "weekly"
+        assert "(2x/week)" in r.reminder
+
+    def test_every_weekday(self) -> None:
+        r = parse("Check email every weekday", today=TODAY)
+        assert r.recurrence_type == "daily"
+
+    def test_every_morning(self) -> None:
+        r = parse("Meditate every morning", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.due_time == time(9, 0)
+
+    def test_every_night(self) -> None:
+        r = parse("Journal every night", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.due_time == time(21, 0)
+
+    def test_every_evening(self) -> None:
+        r = parse("Walk dog every evening", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.due_time == time(18, 0)
+
+
+# ===========================================================================
+# Voice priority phrases
+# ===========================================================================
+
+
+class TestVoicePriority:
+    """Priority patterns commonly produced by voice dictation."""
+
+    def test_important(self) -> None:
+        r = parse("Fix login bug important", today=TODAY)
+        assert r.priority == 1
+
+    def test_not_important(self) -> None:
+        r = parse("Organize bookmarks not important", today=TODAY)
+        assert r.priority == 3
+
+    def test_asap(self) -> None:
+        r = parse("Deploy hotfix asap", today=TODAY)
+        assert r.priority == 1
+
+    def test_high_importance(self) -> None:
+        r = parse("Client meeting high importance", today=TODAY)
+        assert r.priority == 1
+
+
+# ===========================================================================
+# Full voice dictation sentences
+# ===========================================================================
+
+
+class TestVoiceDictationIntegration:
+    """Full sentences as they might come from voice dictation."""
+
+    def test_pick_up_groceries_this_afternoon(self) -> None:
+        r = parse("Pick up groceries this afternoon", today=TODAY)
+        assert "Pick up groceries" in r.reminder
+        assert r.due_time == time(14, 0)
+
+    def test_call_dentist_tomorrow_morning(self) -> None:
+        r = parse("Call dentist tomorrow morning", today=TODAY)
+        assert "Call dentist" in r.reminder
+        assert r.due_date == date(2026, 3, 12)
+        assert r.due_time == time(9, 0)
+
+    def test_submit_report_end_of_week_important(self) -> None:
+        r = parse("Submit report by end of week important", today=TODAY)
+        assert "Submit report" in r.reminder
+        assert r.due_date == date(2026, 3, 13)
+        assert r.priority == 1
+
+    def test_take_medicine_every_other_day_8am(self) -> None:
+        r = parse("Take medicine every other day at 8 AM", today=TODAY)
+        assert "Take medicine" in r.reminder
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_interval == 2
+        assert r.due_time == time(8, 0)
+
+    def test_review_pull_requests_twice_a_week(self) -> None:
+        r = parse("Review pull requests twice a week", today=TODAY)
+        assert r.recurrence_type == "weekly"
+
+    def test_buy_birthday_present_couple_days(self) -> None:
+        r = parse("Buy birthday present in a couple days", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+
+    def test_schedule_meeting_the_15th_3pm(self) -> None:
+        r = parse("Schedule meeting the 15th 3 PM", today=TODAY)
+        assert r.due_date == date(2026, 3, 15)
+        assert r.due_time == time(15, 0)
+
+    def test_water_plants_every_morning(self) -> None:
+        r = parse("Water plants every morning", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.due_time == time(9, 0)
+
+    def test_finish_presentation_this_friday_asap(self) -> None:
+        r = parse("Finish presentation this Friday asap", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+        assert r.priority == 1
+
+    def test_every_three_days_for_two_weeks(self) -> None:
+        r = parse("Check plants every three days", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_interval == 3

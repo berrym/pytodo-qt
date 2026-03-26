@@ -14,11 +14,76 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, time, timedelta
+from datetime import datetime as _datetime
 from enum import Enum
 
 from .logger import Logger
 
 logger = Logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Number word preprocessing
+# ---------------------------------------------------------------------------
+
+_NUMBER_WORDS: dict[str, str] = {
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
+    "ten": "10",
+    "eleven": "11",
+    "twelve": "12",
+    "fifteen": "15",
+    "twenty": "20",
+    "thirty": "30",
+}
+
+# Contexts where number words should be converted to digits
+_NUMBER_CONTEXT_RE = re.compile(
+    r"\b(?:in|every|for|priority)\s+("
+    + "|".join(re.escape(w) for w in sorted(_NUMBER_WORDS, key=len, reverse=True))
+    + r")\b"
+    r"|"
+    r"\b("
+    + "|".join(re.escape(w) for w in sorted(_NUMBER_WORDS, key=len, reverse=True))
+    + r")\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?"
+    r"|times?|pomodoros?|poms?|sessions?)\b",
+    re.IGNORECASE,
+)
+
+# Multi-word number phrases
+_COUPLE_FEW_RE = re.compile(
+    r"\b(?:a\s+couple\s+(?:of\s+)?|a\s+few\s+)(days?|weeks?|months?|hours?|minutes?)\b",
+    re.IGNORECASE,
+)
+
+
+def _normalize_number_words(text: str) -> str:
+    """Convert number words to digits in pattern-relevant contexts only."""
+
+    # Handle "a couple of days" / "a few days"
+    def _couple_few_replace(m: re.Match[str]) -> str:
+        full = m.group(0).lower()
+        unit = m.group(1)
+        if "couple" in full:
+            return f"2 {unit}"
+        return f"3 {unit}"
+
+    text = _COUPLE_FEW_RE.sub(_couple_few_replace, text)
+
+    # Handle contextual number words
+    def _number_replace(m: re.Match[str]) -> str:
+        word = (m.group(1) or m.group(2)).lower()
+        digit = _NUMBER_WORDS.get(word, word)
+        return m.group(0).replace(m.group(1) or m.group(2), digit, 1)
+
+    return _NUMBER_CONTEXT_RE.sub(_number_replace, text)
 
 
 # ---------------------------------------------------------------------------
@@ -172,13 +237,17 @@ def _unit_to_recurrence_type(unit: str) -> tuple[str, int | None]:
 
 def _freq_word_to_type(word: str) -> tuple[str, int]:
     """Map 'minutely'/'hourly'/'daily'/... to (recurrence_type, interval)."""
-    w = word.lower()
+    w = word.lower().replace("-", "")
     if w == "annually":
         return ("yearly", 1)
     if w == "minutely":
         return ("minutely", 1)
     if w == "hourly":
         return ("minutely", 60)
+    if w == "biweekly":
+        return ("weekly", 2)
+    if w == "bimonthly":
+        return ("monthly", 2)
     return (w, 1)
 
 
@@ -209,12 +278,18 @@ def _extract_tags(text: str, tracker: _SpanTracker) -> list[str]:
 # Priority extraction
 # ---------------------------------------------------------------------------
 
+_PRIORITY_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3}
+
 _PRIORITY_PATTERNS: list[tuple[re.Pattern[str], int | None]] = [
     (re.compile(r"\bp([1-3])\b", re.IGNORECASE), None),  # group capture
     (re.compile(r"(!{1,3})\s*$"), 1),
-    (re.compile(r"\bhigh\s+prio(?:rity)?\b", re.IGNORECASE), 1),
+    (re.compile(r"\bhigh\s+(?:prio(?:rity)?|importance)\b", re.IGNORECASE), 1),
     (re.compile(r"\blow\s+prio(?:rity)?\b", re.IGNORECASE), 3),
+    (re.compile(r"\bnot\s+important\b", re.IGNORECASE), 3),  # must be before "important"
+    (re.compile(r"\bimportant\b", re.IGNORECASE), 1),
     (re.compile(r"\burgent\b", re.IGNORECASE), 1),
+    (re.compile(r"\basap\b", re.IGNORECASE), 1),
+    (re.compile(r"\bpriority\s+(one|two|three|[1-3])\b", re.IGNORECASE), None),
 ]
 
 _PRIORITY_DISPLAY = {1: "High", 2: "Normal", 3: "Low"}
@@ -232,7 +307,8 @@ def _extract_priority(text: str, tracker: _SpanTracker) -> int | None:
             if fixed_value is not None:
                 value = fixed_value
             else:
-                value = int(m.group(1))
+                raw = m.group(1).lower()
+                value = _PRIORITY_NUMBER_WORDS.get(raw, int(raw) if raw.isdigit() else 2)
             # Last match wins — overwrite previous
             result = value
             if result_span is not None:
@@ -253,17 +329,26 @@ def _extract_priority(text: str, tracker: _SpanTracker) -> int | None:
 _RECURRENCE_EVERY_N_RE = re.compile(
     r"\bevery\s+(\d+)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b", re.IGNORECASE
 )
+_RECURRENCE_EVERY_OTHER_RE = re.compile(r"\bevery\s+other\s+(day|week|month|year)\b", re.IGNORECASE)
 _RECURRENCE_EVERY_UNIT_RE = re.compile(
     r"\bevery\s+(minute|hour|day|week|month|year)\b", re.IGNORECASE
 )
+_RECURRENCE_EVERY_TIME_OF_DAY_RE = re.compile(r"\bevery\s+(morning|night|evening)\b", re.IGNORECASE)
+_RECURRENCE_EVERY_WEEKDAY_RE = re.compile(r"\bevery\s+weekday\b", re.IGNORECASE)
 _RECURRENCE_FREQ_WORD_RE = re.compile(
-    r"\b(minutely|hourly|daily|weekly|monthly|yearly|annually)\b", re.IGNORECASE
+    r"\b(minutely|hourly|daily|weekly|monthly|yearly|annually"
+    r"|biweekly|bi-weekly|bimonthly|bi-monthly)\b",
+    re.IGNORECASE,
 )
-_RECURRENCE_TIMES_RE = re.compile(r"\b(\d+)\s+times?\s+a\s+(day|week|month)\b", re.IGNORECASE)
+_RECURRENCE_TIMES_RE = re.compile(
+    r"\b(?:(\d+)\s+times?|twice)\s+a\s+(day|week|month)\b", re.IGNORECASE
+)
 _RECURRENCE_FOR_RE = re.compile(r"\bfor\s+(\d+)\s+(days?|weeks?|months?|years?)\b", re.IGNORECASE)
 _RECURRENCE_UNTIL_RE = re.compile(
     r"\buntil\s+(.+?)(?:\s+(?:at|by|p[1-3]|[@#~])|\s*$)", re.IGNORECASE
 )
+
+_TIME_OF_DAY_MAP = {"morning": time(9, 0), "night": time(21, 0), "evening": time(18, 0)}
 
 
 def _extract_recurrence(
@@ -283,6 +368,9 @@ def _extract_recurrence(
     main_span_end: int | None = None
     display_base: str = ""
 
+    # Track time-of-day hint from recurrence (e.g., "every morning" → daily + 9:00)
+    rec_time_hint: time | None = None
+
     # Try "every N minutes/hours/days/weeks/months/years"
     m = _RECURRENCE_EVERY_N_RE.search(text)
     if m and tracker.is_free(m.start(), m.end()):
@@ -292,6 +380,37 @@ def _extract_recurrence(
         display_base = f"every {m.group(1)} {m.group(2).lower()}"
         main_span_start = m.start()
         main_span_end = m.end()
+
+    # Try "every other day/week/month/year"
+    if rec_type is None:
+        m = _RECURRENCE_EVERY_OTHER_RE.search(text)
+        if m and tracker.is_free(m.start(), m.end()):
+            unit = m.group(1).lower()
+            rec_type, _ = _unit_to_recurrence_type(unit)
+            interval = 2
+            display_base = f"every other {unit}"
+            main_span_start = m.start()
+            main_span_end = m.end()
+
+    # Try "every morning/night/evening" → daily + time hint
+    if rec_type is None:
+        m = _RECURRENCE_EVERY_TIME_OF_DAY_RE.search(text)
+        if m and tracker.is_free(m.start(), m.end()):
+            tod = m.group(1).lower()
+            rec_type = "daily"
+            rec_time_hint = _TIME_OF_DAY_MAP.get(tod)
+            display_base = f"every {tod}"
+            main_span_start = m.start()
+            main_span_end = m.end()
+
+    # Try "every weekday"
+    if rec_type is None:
+        m = _RECURRENCE_EVERY_WEEKDAY_RE.search(text)
+        if m and tracker.is_free(m.start(), m.end()):
+            rec_type = "daily"
+            display_base = "every weekday"
+            main_span_start = m.start()
+            main_span_end = m.end()
 
     # Try "every minute/hour/day/week/month/year"
     if rec_type is None:
@@ -304,7 +423,7 @@ def _extract_recurrence(
             main_span_start = m.start()
             main_span_end = m.end()
 
-    # Try "minutely/hourly/daily/weekly/monthly/yearly/annually"
+    # Try "minutely/hourly/daily/weekly/monthly/yearly/annually/biweekly/bimonthly"
     if rec_type is None:
         m = _RECURRENCE_FREQ_WORD_RE.search(text)
         if m and tracker.is_free(m.start(), m.end()):
@@ -313,11 +432,11 @@ def _extract_recurrence(
             main_span_start = m.start()
             main_span_end = m.end()
 
-    # Try "N times a day/week/month"
+    # Try "N times a day/week/month" or "twice a day/week/month"
     if rec_type is None:
         m = _RECURRENCE_TIMES_RE.search(text)
         if m and tracker.is_free(m.start(), m.end()):
-            n = int(m.group(1))
+            n = int(m.group(1)) if m.group(1) else 2  # "twice" has no group(1)
             unit = m.group(2).lower()
             rec_type, _ = _unit_to_recurrence_type(unit)
             times_annotation = f"({n}x/{unit})"
@@ -326,7 +445,7 @@ def _extract_recurrence(
             main_span_end = m.end()
 
     if rec_type is None:
-        return None, 1, None, None, None
+        return None, 1, None, None, None, None
 
     # Display text preserves the user's original phrasing
     display_parts = [display_base]
@@ -363,7 +482,7 @@ def _extract_recurrence(
         EntitySpan(main_span_start, main_span_end, EntityKind.RECURRENCE, " ".join(display_parts))
     )
 
-    return rec_type, interval, end_date, end_count, times_annotation
+    return rec_type, interval, end_date, end_count, times_annotation, rec_time_hint
 
 
 # ---------------------------------------------------------------------------
@@ -447,6 +566,80 @@ def _resolve_in_months(m: re.Match[str], today: date) -> date:
     return _add_months(today, int(m.group(1)))
 
 
+def _resolve_day_after_tomorrow(m: re.Match[str], today: date) -> date:
+    return today + timedelta(days=2)
+
+
+def _resolve_this_weekend(m: re.Match[str], today: date) -> date:
+    # Saturday of this week (or next if already Saturday/Sunday)
+    days_until_sat = (5 - today.weekday()) % 7
+    if days_until_sat == 0:
+        days_until_sat = 7
+    return today + timedelta(days=days_until_sat)
+
+
+def _resolve_end_of_week(m: re.Match[str], today: date) -> date:
+    # Friday of this week (or next Friday if already past)
+    days_until_fri = (4 - today.weekday()) % 7
+    if days_until_fri == 0 and today.weekday() != 4:
+        days_until_fri = 7
+    if days_until_fri == 0:
+        days_until_fri = 7  # If today IS Friday, next Friday
+    return today + timedelta(days=days_until_fri)
+
+
+def _resolve_end_of_month(m: re.Match[str], today: date) -> date:
+    last_day = calendar.monthrange(today.year, today.month)[1]
+    eom = date(today.year, today.month, last_day)
+    if eom <= today:
+        # Already past end of month — next month
+        return _add_months(today, 1).replace(
+            day=calendar.monthrange(_add_months(today, 1).year, _add_months(today, 1).month)[1]
+        )
+    return eom
+
+
+def _resolve_in_one_unit(m: re.Match[str], today: date) -> date:
+    unit = m.group(1).lower()
+    if unit == "day":
+        return today + timedelta(days=1)
+    if unit == "week":
+        return today + timedelta(weeks=1)
+    return _add_months(today, 1)
+
+
+def _resolve_ordinal_day(m: re.Match[str], today: date) -> date:
+    day = int(m.group(1))
+    # This month if not passed, else next month
+    try:
+        candidate = date(today.year, today.month, day)
+    except ValueError:
+        return _add_months(today, 1).replace(day=min(day, 28))
+    if candidate <= today:
+        return _add_months(today, 1).replace(
+            day=min(
+                day, calendar.monthrange(_add_months(today, 1).year, _add_months(today, 1).month)[1]
+            )
+        )
+    return candidate
+
+
+def _resolve_ordinal_of_month(m: re.Match[str], today: date) -> date:
+    day = int(m.group(1))
+    month_name = m.group(2).lower()
+    month = _MONTHS_MAP.get(month_name)
+    if month is None:
+        raise ValueError(f"Unknown month: {month_name}")
+    year = today.year
+    try:
+        candidate = date(year, month, day)
+    except ValueError:
+        raise
+    if candidate < today:
+        year += 1
+    return date(year, month, day)
+
+
 def _resolve_month_day(m: re.Match[str], today: date) -> date:
     month_name = m.group(1).lower()
     month = _MONTHS_MAP.get(month_name)
@@ -494,18 +687,48 @@ _DateResolver = Callable[[re.Match[str], date], date]
 
 _DATE_RESOLVERS: list[tuple[re.Pattern[str], _DateResolver]] = [
     (re.compile(r"\btoday\b", re.IGNORECASE), _resolve_today),
+    (re.compile(r"\bday\s+after\s+tomorrow\b", re.IGNORECASE), _resolve_day_after_tomorrow),
     (re.compile(r"\btomorrow\b", re.IGNORECASE), _resolve_tomorrow),
     (re.compile(r"\byesterday\b", re.IGNORECASE), _resolve_yesterday),
+    (
+        re.compile(r"\bthis\s+coming\s+(" + _DAYS_RE + r")\b", re.IGNORECASE),
+        lambda m, today: _resolve_day_name(m.group(1).lower(), today),
+    ),
     (
         re.compile(r"\bnext\s+(" + _DAYS_RE + r")\b", re.IGNORECASE),
         _resolve_next_day,
     ),
+    (
+        re.compile(r"\bthis\s+(" + _DAYS_RE + r")\b", re.IGNORECASE),
+        lambda m, today: _resolve_day_name(m.group(1).lower(), today),
+    ),
     (re.compile(r"\b(" + _DAYS_RE + r")\b", re.IGNORECASE), _resolve_day),
+    (re.compile(r"\bthis\s+weekend\b", re.IGNORECASE), _resolve_this_weekend),
     (re.compile(r"\bnext\s+week\b", re.IGNORECASE), _resolve_next_week),
     (re.compile(r"\bnext\s+month\b", re.IGNORECASE), _resolve_next_month),
+    (
+        re.compile(r"\bend\s+of\s+(?:the\s+)?week\b", re.IGNORECASE),
+        _resolve_end_of_week,
+    ),
+    (
+        re.compile(r"\bend\s+of\s+(?:the\s+)?month\b", re.IGNORECASE),
+        _resolve_end_of_month,
+    ),
+    (re.compile(r"\bin\s+an?\s+(day|week|month)\b", re.IGNORECASE), _resolve_in_one_unit),
     (re.compile(r"\bin\s+(\d+)\s+days?\b", re.IGNORECASE), _resolve_in_days),
     (re.compile(r"\bin\s+(\d+)\s+weeks?\b", re.IGNORECASE), _resolve_in_weeks),
     (re.compile(r"\bin\s+(\d+)\s+months?\b", re.IGNORECASE), _resolve_in_months),
+    (
+        re.compile(
+            r"\bthe\s+(\d{1,2})(?:st|nd|rd|th)\s+of\s+(" + _MONTHS_RE + r")\b",
+            re.IGNORECASE,
+        ),
+        _resolve_ordinal_of_month,
+    ),
+    (
+        re.compile(r"\bthe\s+(\d{1,2})(?:st|nd|rd|th)\b", re.IGNORECASE),
+        _resolve_ordinal_day,
+    ),
     (
         re.compile(
             r"\b(" + _MONTHS_RE + r")\s+(\d{1,2})(?:\s*,?\s*(\d{4}))?\b",
@@ -586,23 +809,69 @@ def _resolve_time_24h(m: re.Match[str]) -> time:
 
 _TimeResolver = Callable[[re.Match[str]], time]
 
+
+def _resolve_in_minutes_time(m: re.Match[str]) -> time:
+    mins = int(m.group(1))
+    dt = _datetime.now() + timedelta(minutes=mins)
+    return dt.time().replace(second=0, microsecond=0)
+
+
+def _resolve_in_hours_time(m: re.Match[str]) -> time:
+    hours = int(m.group(1))
+    dt = _datetime.now() + timedelta(hours=hours)
+    return dt.time().replace(second=0, microsecond=0)
+
+
+def _resolve_in_one_hour_time(m: re.Match[str]) -> time:
+    dt = _datetime.now() + timedelta(hours=1)
+    return dt.time().replace(second=0, microsecond=0)
+
+
 _TIME_PATTERNS: list[tuple[re.Pattern[str], _TimeResolver]] = [
+    # With "at/by" prefix (most specific)
     (
-        re.compile(r"\b(?:at|by)\s+(\d{1,2}):(\d{2})\s*(am|pm)\b", re.IGNORECASE),
+        re.compile(r"\b(?:at|by|before)\s+(\d{1,2}):(\d{2})\s*(am|pm)\b", re.IGNORECASE),
         _resolve_time_12h,
     ),
     (
-        re.compile(r"\b(?:at|by)\s+(\d{1,2})\s*(am|pm)\b", re.IGNORECASE),
+        re.compile(r"\b(?:at|by|before)\s+(\d{1,2})\s*(am|pm)\b", re.IGNORECASE),
         _resolve_time_12h_no_min,
     ),
     (
-        re.compile(r"\b(?:at|by)\s+(\d{1,2}):(\d{2})\b"),
+        re.compile(r"\b(?:at|by|before)\s+(\d{1,2}):(\d{2})\b"),
         _resolve_time_24h,
     ),
     (re.compile(r"\b(?:at|by)\s+noon\b", re.IGNORECASE), lambda _m: time(12, 0)),
     (re.compile(r"\b(?:at|by)\s+midnight\b", re.IGNORECASE), lambda _m: time(0, 0)),
+    # Bare times without prefix (voice dictation often omits "at")
+    (
+        re.compile(r"\b(\d{1,2}):(\d{2})\s*(am|pm)\b", re.IGNORECASE),
+        _resolve_time_12h,
+    ),
+    (
+        re.compile(r"\b(\d{1,2})\s*(am|pm)\b", re.IGNORECASE),
+        _resolve_time_12h_no_min,
+    ),
+    # Relative times
+    (
+        re.compile(r"\bin\s+(\d+)\s+minutes?\b", re.IGNORECASE),
+        _resolve_in_minutes_time,
+    ),
+    (
+        re.compile(r"\bin\s+(\d+)\s+hours?\b", re.IGNORECASE),
+        _resolve_in_hours_time,
+    ),
+    (
+        re.compile(r"\bin\s+an?\s+hour\b", re.IGNORECASE),
+        _resolve_in_one_hour_time,
+    ),
+    # Contextual keywords
     (re.compile(r"\bnoon\b", re.IGNORECASE), lambda _m: time(12, 0)),
     (re.compile(r"\bmidnight\b", re.IGNORECASE), lambda _m: time(0, 0)),
+    (re.compile(r"\btonight\b", re.IGNORECASE), lambda _m: time(20, 0)),
+    (re.compile(r"\bthis\s+morning\b", re.IGNORECASE), lambda _m: time(9, 0)),
+    (re.compile(r"\bthis\s+afternoon\b", re.IGNORECASE), lambda _m: time(14, 0)),
+    (re.compile(r"\bthis\s+evening\b", re.IGNORECASE), lambda _m: time(18, 0)),
     (re.compile(r"\bmorning\b", re.IGNORECASE), lambda _m: time(9, 0)),
     (re.compile(r"\bafternoon\b", re.IGNORECASE), lambda _m: time(14, 0)),
     (re.compile(r"\bevening\b", re.IGNORECASE), lambda _m: time(18, 0)),
@@ -677,6 +946,9 @@ def parse(text: str, today: date | None = None) -> ParseResult:
     if today is None:
         today = date.today()
 
+    # Preprocess: convert number words to digits in relevant contexts
+    text = _normalize_number_words(text)
+
     tracker = _SpanTracker()
 
     # 1. Tags (most unambiguous)
@@ -686,7 +958,7 @@ def parse(text: str, today: date | None = None) -> ParseResult:
     priority = _extract_priority(text, tracker)
 
     # 3. Recurrence (before dates — "every Monday" contains a day name)
-    rec_type, rec_interval, rec_end_date, rec_end_count, times_anno = _extract_recurrence(
+    rec_type, rec_interval, rec_end_date, rec_end_count, times_anno, rec_time = _extract_recurrence(
         text, tracker, today
     )
 
@@ -698,6 +970,10 @@ def parse(text: str, today: date | None = None) -> ParseResult:
 
     # 6. Times
     due_time = _extract_times(text, tracker)
+
+    # Apply recurrence time hint (e.g., "every morning" → 9:00)
+    if rec_time is not None and due_time is None:
+        due_time = rec_time
 
     # Rule 4: Recurrence implies due date today
     if rec_type is not None and due_date is None:
