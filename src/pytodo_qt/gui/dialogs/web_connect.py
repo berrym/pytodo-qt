@@ -9,7 +9,6 @@ Stateful: detects existing paired devices and adapts the UI accordingly.
 
 from __future__ import annotations
 
-import socket
 import time
 from typing import TYPE_CHECKING
 
@@ -39,15 +38,16 @@ if TYPE_CHECKING:
 
 def _get_lan_ip() -> str | None:
     """Detect the device's LAN IP via routing table probe."""
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("10.255.255.255", 1))
-            addr = s.getsockname()[0]
-            if addr and addr != "0.0.0.0":
-                return addr
-    except OSError:
-        pass
-    return None
+    from ...core.network import get_lan_ip
+
+    return get_lan_ip()
+
+
+def _get_local_hostname() -> str | None:
+    """Return the mDNS .local hostname, or None."""
+    from ...core.network import get_local_hostname
+
+    return get_local_hostname()
 
 
 def _render_qr_pixmap(url: str, size: int = 250) -> QPixmap:
@@ -328,6 +328,7 @@ class _DeviceRow(QFrame):
         device: PairedDevice,
         is_stale: bool,
         on_forget: object,
+        on_reconnect: object | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -339,7 +340,16 @@ class _DeviceRow(QFrame):
         row.setContentsMargins(12, 8, 12, 8)
         row.setSpacing(10)
 
-        # Device icon + name
+        # Status dot
+        recently_seen = (time.time() - device.last_seen / 1000) < 86400
+        dot_color = "#69f0ae" if recently_seen else "#888"
+        dot = QLabel("\u2022")
+        dot.setFixedWidth(14)
+        dot.setStyleSheet(f"font-size: 18px; color: {dot_color}; border: none; background: none;")
+        dot.setToolTip("Active" if recently_seen else "Not seen recently")
+        row.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        # Device name + details
         info = QVBoxLayout()
         info.setSpacing(2)
         display_name = device.device_name
@@ -369,18 +379,43 @@ class _DeviceRow(QFrame):
                 " border: none; background: none;"
             )
             info.addWidget(stale_lbl)
+        elif not recently_seen:
+            hint_lbl = QLabel("May need to reconnect")
+            hint_lbl.setStyleSheet(
+                "font-size: 10px; color: palette(placeholderText);"
+                " font-style: italic; border: none; background: none;"
+            )
+            info.addWidget(hint_lbl)
 
         row.addLayout(info, 1)
 
+        # Action buttons
+        btn_col = QVBoxLayout()
+        btn_col.setSpacing(4)
+
+        if on_reconnect:
+            reconnect_btn = QPushButton("Reconnect")
+            reconnect_btn.setFixedWidth(72)
+            reconnect_btn.setStyleSheet(
+                "QPushButton { color: palette(highlight); font-size: 11px;"
+                " border: 1px solid palette(highlight);"
+                " border-radius: 4px; padding: 4px 8px; background: none; }"
+                " QPushButton:hover { background: palette(highlight); color: white; }"
+            )
+            reconnect_btn.clicked.connect(on_reconnect)
+            btn_col.addWidget(reconnect_btn)
+
         forget_btn = QPushButton("Forget")
-        forget_btn.setFixedWidth(60)
+        forget_btn.setFixedWidth(72)
         forget_btn.setStyleSheet(
             "QPushButton { color: #c0392b; font-size: 11px; border: 1px solid #c0392b;"
             " border-radius: 4px; padding: 4px 8px; background: none; }"
             " QPushButton:hover { background: #c0392b; color: white; }"
         )
         forget_btn.clicked.connect(on_forget)
-        row.addWidget(forget_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        btn_col.addWidget(forget_btn)
+
+        row.addLayout(btn_col, 0)
 
 
 class MobileAccessWizard(QDialog):
@@ -398,6 +433,7 @@ class MobileAccessWizard(QDialog):
     PAGE_QUICK = 2
     PAGE_TRUSTED = 3
     PAGE_RECONFIGURE = 4
+    PAGE_RECONNECT = 5
 
     def __init__(self, parent: MainWindow | None = None) -> None:
         super().__init__(parent)
@@ -406,9 +442,12 @@ class MobileAccessWizard(QDialog):
 
         self._main_window: MainWindow | None = parent
         self._lan_ip = _get_lan_ip()
+        self._local_hostname = _get_local_hostname()
         self._url: str | None = None
+        self._url_ip: str | None = None
         self._pairing_pin = ""
         self._remembered = ""
+        self._reconnect_device_name = ""
 
         self._ensure_server_running()
         self._setup_ui()
@@ -429,8 +468,14 @@ class MobileAccessWizard(QDialog):
 
         if mw._web_server is not None:
             self._pairing_pin = mw._web_server.pairing_pin
-            if self._lan_ip:
-                self._url = f"https://{self._lan_ip}:{mw._config.web.port}"
+            port = mw._config.web.port
+            # Prefer .local hostname (IP-change resilient), fall back to IP
+            if self._local_hostname:
+                self._url = f"https://{self._local_hostname}:{port}"
+                if self._lan_ip:
+                    self._url_ip = f"https://{self._lan_ip}:{port}"
+            elif self._lan_ip:
+                self._url = f"https://{self._lan_ip}:{port}"
 
     def _navigate_to_initial_page(self) -> None:
         """Detect state and show the appropriate page."""
@@ -469,6 +514,7 @@ class MobileAccessWizard(QDialog):
         self._stack.addWidget(self._build_quick_steps_page())  # 2
         self._stack.addWidget(self._build_trusted_steps_page())  # 3
         self._stack.addWidget(self._build_reconfigure_page())  # 4
+        self._stack.addWidget(self._build_reconnect_page())  # 5
         layout.addWidget(self._stack, 1)
 
         # Bottom bar
@@ -555,10 +601,16 @@ class MobileAccessWizard(QDialog):
         else:
             for device in devices:
                 is_stale = device.ca_generation < ca_gen
+                display_name = device.device_name
+                if not display_name or display_name == "Unknown device":
+                    display_name = "Mobile device"
                 row = _DeviceRow(
                     device,
                     is_stale=is_stale,
                     on_forget=lambda _checked=False, d=device: self._on_forget_device(d.id),
+                    on_reconnect=lambda _checked=False, n=display_name: self._on_reconnect_device(
+                        n
+                    ),
                 )
                 layout.addWidget(row)
 
@@ -928,6 +980,62 @@ class MobileAccessWizard(QDialog):
         layout.addStretch()
         self._reconfigure_scroll.setWidget(content)
 
+    def _build_reconnect_page(self) -> QWidget:
+        """Page showing a QR code for reconnecting an existing device."""
+        page = QWidget()
+        self._reconnect_scroll = QScrollArea()
+        self._reconnect_scroll.setWidgetResizable(True)
+        self._reconnect_scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        self._populate_reconnect()
+
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.addWidget(self._reconnect_scroll)
+        return page
+
+    def _populate_reconnect(self) -> None:
+        """Build the reconnect page content."""
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(16)
+
+        title = QLabel(f"Reconnect {self._reconnect_device_name}")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size: 17px; font-weight: 600;")
+        title.setWordWrap(True)
+        layout.addWidget(title)
+
+        instruction = QLabel("Scan this QR code on the device to reconnect.\nNo re-pairing needed.")
+        instruction.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        instruction.setWordWrap(True)
+        instruction.setStyleSheet(
+            "font-size: 12px; color: palette(placeholderText); padding: 0 12px;"
+        )
+        layout.addWidget(instruction)
+
+        if self._url:
+            qr = _qr_widget(self._url, 280)
+            layout.addWidget(qr)
+
+            url_lbl = QLabel(self._url)
+            url_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            url_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            url_lbl.setStyleSheet("font-size: 11px;")
+            layout.addWidget(url_lbl)
+
+            # Show IP fallback if using .local
+            if self._url_ip and self._url_ip != self._url:
+                fallback_lbl = QLabel(f"IP address: {self._url_ip}")
+                fallback_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                fallback_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                fallback_lbl.setStyleSheet("font-size: 10px; color: palette(placeholderText);")
+                layout.addWidget(fallback_lbl)
+
+        layout.addStretch()
+        self._reconnect_scroll.setWidget(content)
+
     def _build_pin_step(self, step_number: int) -> QFrame:
         """Build the reusable PIN entry step."""
         pin_container = QWidget()
@@ -962,12 +1070,15 @@ class MobileAccessWizard(QDialog):
         is_steps = index in (self.PAGE_QUICK, self.PAGE_TRUSTED)
         is_reconfigure = index == self.PAGE_RECONFIGURE
         is_device_list = index == self.PAGE_DEVICE_LIST
+        is_reconnect = index == self.PAGE_RECONNECT
 
         mw = self._main_window
         has_remembered = bool(mw and mw._config.web.connect_method) if mw else False
 
-        # Back button: shown on step pages (goes to choose or device list)
-        self._back_btn.setVisible((is_steps and not has_remembered) or is_reconfigure)
+        # Back button: shown on step pages, reconfigure, and reconnect
+        self._back_btn.setVisible(
+            (is_steps and not has_remembered) or is_reconfigure or is_reconnect
+        )
         # Change method link: shown when user has a remembered method
         self._change_link.setVisible(is_steps and has_remembered)
 
@@ -983,6 +1094,8 @@ class MobileAccessWizard(QDialog):
             self._populate_device_list()
         elif is_reconfigure:
             self._populate_reconfigure()
+        elif is_reconnect:
+            self._populate_reconnect()
 
     def _on_back(self) -> None:
         """Navigate back — to device list if devices exist, else choose."""
@@ -1000,6 +1113,11 @@ class MobileAccessWizard(QDialog):
         self._go_to_page(self.PAGE_CHOOSE)
 
     # --- Actions ---
+
+    def _on_reconnect_device(self, device_name: str) -> None:
+        """Show reconnect QR code for an existing device."""
+        self._reconnect_device_name = device_name
+        self._go_to_page(self.PAGE_RECONNECT)
 
     def _on_forget_device(self, device_id: str, *, refresh_reconfigure: bool = False) -> None:
         mw = self._main_window

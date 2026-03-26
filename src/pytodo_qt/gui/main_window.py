@@ -162,6 +162,11 @@ class MainWindow(QMainWindow):
         # Start server
         self._start_server()
 
+        # Track LAN IP for change detection
+        from ..core.network import get_lan_ip
+
+        self._last_known_ip = get_lan_ip()
+
         # Start web server
         self._start_web_server()
 
@@ -1641,6 +1646,16 @@ class MainWindow(QMainWindow):
             self.status_bar_widget.set_web_status(
                 True, port=self._config.web.port, pin=self._web_server.pairing_pin
             )
+
+        # IP change detection
+        from ..core.network import get_lan_ip as _get_current_ip
+
+        current_ip = _get_current_ip()
+        if current_ip and current_ip != self._last_known_ip:
+            old_ip = self._last_known_ip
+            self._last_known_ip = current_ip
+            logger.log.info("Network address changed: %s → %s", old_ip, current_ip)
+            self.status_bar_widget.show_message(f"Network address changed to {current_ip}")
 
     def _active_view_widget(self) -> TodoTableWidget | KanbanBoardWidget:
         """Return the currently visible view widget."""

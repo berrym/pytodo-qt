@@ -207,14 +207,21 @@ class WebServer:
         if not ca_cert_path.exists() or not ca_key_path.exists():
             self._generate_ca(ca_cert_path, ca_key_path)
 
-        # Ensure server cert exists and covers current IPs
+        # Ensure server cert exists and covers current IPs + hostname
+        from ..core.network import get_local_hostname
+
         local_ips = self._get_all_local_ips()
+        local_hostname = get_local_hostname()
+        required_dns = ["localhost"]
+        if local_hostname:
+            required_dns.append(local_hostname)
+
         if not srv_cert_path.exists() or not srv_key_path.exists():
             self._generate_server_cert(
                 ca_cert_path, ca_key_path, srv_cert_path, srv_key_path, local_ips
             )
-        elif not self._cert_covers_ips(srv_cert_path, local_ips):
-            logger.log.info("Local IP changed — regenerating server certificate")
+        elif not self._cert_covers_san(srv_cert_path, local_ips, required_dns):
+            logger.log.info("Network config changed — regenerating server certificate")
             self._generate_server_cert(
                 ca_cert_path, ca_key_path, srv_cert_path, srv_key_path, local_ips
             )
@@ -233,38 +240,28 @@ class WebServer:
 
     @staticmethod
     def _get_all_local_ips() -> list[str]:
-        """Detect all local IP addresses for the server certificate SAN."""
-        import socket
+        """Detect all local IP addresses (IPv4 + IPv6) for the cert SAN."""
+        from ..core.network import get_all_local_addresses
 
-        ips: set[str] = {"127.0.0.1"}
-        try:
-            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-                addr = info[4][0]
-                if addr and addr != "0.0.0.0":
-                    ips.add(addr)
-        except OSError:
-            pass
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.connect(("10.255.255.255", 1))
-                addr = s.getsockname()[0]
-                if addr and addr != "0.0.0.0":
-                    ips.add(addr)
-        except OSError:
-            pass
-        return sorted(ips)
+        ipv4, ipv6 = get_all_local_addresses()
+        # Always include loopback
+        if "127.0.0.1" not in ipv4:
+            ipv4.insert(0, "127.0.0.1")
+        return sorted(set(ipv4 + ipv6))
 
     @staticmethod
-    def _cert_covers_ips(cert_path: Path, required_ips: list[str]) -> bool:
-        """Check if an existing certificate's SAN covers all required IPs."""
-
+    def _cert_covers_san(cert_path: Path, required_ips: list[str], required_dns: list[str]) -> bool:
+        """Check if a certificate's SAN covers all required IPs and DNS names."""
         from cryptography import x509
 
         try:
             cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
             san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
             cert_ips = {str(ip) for ip in san.value.get_values_for_type(x509.IPAddress)}
-            return all(ip in cert_ips for ip in required_ips)
+            cert_dns = set(san.value.get_values_for_type(x509.DNSName))
+            return all(ip in cert_ips for ip in required_ips) and all(
+                dns in cert_dns for dns in required_dns
+            )
         except Exception:
             return False
 
@@ -342,10 +339,19 @@ class WebServer:
 
         srv_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
+        from ..core.network import get_local_hostname
+
         san_entries: list[x509.GeneralName] = [x509.DNSName("localhost")]
+        # Add .local hostname for mDNS (IP-change resilient)
+        local_hostname = get_local_hostname()
+        if local_hostname:
+            san_entries.append(x509.DNSName(local_hostname))
+        # Add all local IPs (IPv4 + IPv6)
         for ip_str in local_ips:
             with contextlib.suppress(ValueError):
                 san_entries.append(x509.IPAddress(_ipa.IPv4Address(ip_str)))
+            with contextlib.suppress(ValueError):
+                san_entries.append(x509.IPAddress(_ipa.IPv6Address(ip_str)))
 
         cert = (
             x509.CertificateBuilder()
@@ -367,8 +373,11 @@ class WebServer:
             )
         )
         srv_cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-        ip_list = ", ".join(local_ips)
-        logger.log.info("Generated server certificate (SAN: localhost, %s)", ip_list)
+        san_names = ["localhost"]
+        if local_hostname:
+            san_names.append(local_hostname)
+        san_names.extend(local_ips)
+        logger.log.info("Generated server certificate (SAN: %s)", ", ".join(san_names))
 
     def create_app(self) -> web.Application:
         """Create and configure the aiohttp application."""
