@@ -524,8 +524,22 @@ class SettingsDialog(QDialog):
         caldav_pw_row.addWidget(self.caldav_copy_btn)
         caldav_form.addRow("Password:", caldav_pw_row)
 
+        # Certificate section
+        cert_row = QHBoxLayout()
+        self.caldav_cert_btn = QPushButton("Open CA Certificate")
+        self.caldav_cert_btn.setToolTip(
+            "Open the certificate file for import into your CalDAV client"
+        )
+        self.caldav_cert_btn.clicked.connect(self._open_caldav_cert)
+        cert_row.addWidget(self.caldav_cert_btn)
+        cert_row.addStretch()
+        caldav_form.addRow("Certificate:", cert_row)
+
         caldav_hint = QLabel(
-            "Add this as a CalDAV account in Thunderbird, DAVx5, Tasks.org, or other CalDAV clients."
+            "CalDAV clients need to trust the certificate before connecting.\n"
+            "Thunderbird: Settings \u2192 Privacy & Security \u2192 Certificates"
+            " \u2192 View Certificates \u2192 Authorities \u2192 Import\n"
+            "DAVx5: accepts self-signed certs during setup"
         )
         caldav_hint.setWordWrap(True)
         caldav_hint.setStyleSheet("font-size: 10px; color: palette(mid);")
@@ -733,6 +747,24 @@ class SettingsDialog(QDialog):
 
         logger.log.info("Settings saved")
         return True
+
+    def _open_caldav_cert(self) -> None:
+        """Open the CA certificate file for the user to import."""
+        parent = self.parent()
+        web_server = getattr(parent, "_web_server", None) if parent else None
+        if web_server is None or web_server.ca_cert_path is None:
+            QMessageBox.information(self, "Certificate", "Web server is not running.")
+            return
+        import subprocess
+        import sys
+
+        cert_path = str(web_server.ca_cert_path)
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", cert_path])
+        elif sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", cert_path])
+        else:
+            subprocess.Popen(["xdg-open", str(web_server.ca_cert_path.parent)])
 
     def _toggle_caldav_visibility(self) -> None:
         """Toggle CalDAV password visibility."""
