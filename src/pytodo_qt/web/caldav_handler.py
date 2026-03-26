@@ -43,8 +43,8 @@ from .caldav_xml import (
     prop_supported_components,
 )
 
-_XML_CONTENT = "application/xml; charset=utf-8"
-_ICS_CONTENT = "text/calendar; charset=utf-8"
+_XML_CONTENT = "application/xml"
+_ICS_CONTENT = "text/calendar"
 
 
 # ---------------------------------------------------------------------------
@@ -57,8 +57,10 @@ def setup_caldav_routes(app: web.Application) -> None:
     # Well-known discovery
     app.router.add_route("GET", "/.well-known/caldav", handle_wellknown)
 
-    # OPTIONS for DAV header discovery
+    # OPTIONS and HEAD for DAV capability discovery (Thunderbird probes with these)
     app.router.add_route("OPTIONS", "/caldav/{path:.*}", handle_options)
+    app.router.add_route("HEAD", "/caldav/{path:.*}", handle_head)
+    app.router.add_route("GET", "/caldav/", handle_get_root)
 
     # PROPFIND at each level
     app.router.add_route("PROPFIND", "/caldav/", handle_propfind_root)
@@ -165,7 +167,29 @@ async def handle_options(request: web.Request) -> web.Response:
         status=200,
         headers={
             "DAV": "1, 2, 3, calendar-access",
-            "Allow": "OPTIONS, GET, PUT, DELETE, PROPFIND, REPORT",
+            "Allow": "OPTIONS, HEAD, GET, PUT, DELETE, PROPFIND, REPORT",
+        },
+    )
+
+
+async def handle_head(request: web.Request) -> web.Response:
+    """HEAD /caldav/* — connection test (Thunderbird probes before PROPFIND)."""
+    return web.Response(
+        status=200,
+        headers={
+            "DAV": "1, 2, 3, calendar-access",
+        },
+    )
+
+
+async def handle_get_root(request: web.Request) -> web.Response:
+    """GET /caldav/ — simple response for connection verification."""
+    return web.Response(
+        status=200,
+        text="PyTodo-Qt CalDAV Server",
+        content_type="text/plain",
+        headers={
+            "DAV": "1, 2, 3, calendar-access",
         },
     )
 

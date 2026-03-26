@@ -206,12 +206,23 @@ class WebServer:
     def validate_caldav_auth(self, username: str, password: str) -> bool:
         """Validate CalDAV Basic Auth credentials."""
         if not self._config:
+            logger.log.debug("CalDAV auth: no config")
             return False
         if username != "pytodo":
+            logger.log.debug("CalDAV auth: wrong username %r", username)
             return False
         if not self._config.caldav_password:
+            logger.log.debug("CalDAV auth: no password configured")
             return False
-        return password == self._config.caldav_password
+        if password != self._config.caldav_password:
+            logger.log.debug(
+                "CalDAV auth: password mismatch (got %d chars, expected %d chars)",
+                len(password),
+                len(self._config.caldav_password),
+            )
+            return False
+        logger.log.debug("CalDAV auth: success for user %r", username)
+        return True
 
     def _create_ssl_context(self) -> ssl.SSLContext | None:
         """Create TLS context using a local CA and server certificate.

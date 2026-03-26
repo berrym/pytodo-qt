@@ -95,11 +95,16 @@ async def auth_middleware(request: web.Request, handler: Callable[..., Any]) -> 
             try:
                 decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
                 username, _, password = decoded.partition(":")
+                username = username.strip()
+                password = password.strip()
                 server = request.app.get(web_server_key)
                 if server and server.validate_caldav_auth(username, password):
                     return await handler(request)
             except Exception:
                 pass
+        # Allow well-known redirect without auth (client hasn't sent creds yet)
+        if path == "/.well-known/caldav":
+            return await handler(request)
         return web.Response(
             status=401,
             headers={"WWW-Authenticate": 'Basic realm="PyTodo-Qt CalDAV"'},
