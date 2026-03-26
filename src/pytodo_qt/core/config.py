@@ -101,6 +101,8 @@ class WebConfig:
     bind_address: str = "0.0.0.0"  # "0.0.0.0" or "127.0.0.1"
     connect_method: str = ""  # Remembered wizard preference: "", "quick", or "trusted"
     ca_generation: int = 0  # Incremented on CA cert regeneration
+    caldav_enabled: bool = True  # CalDAV server on /caldav/ path
+    caldav_password: str = ""  # Auto-generated on first use
 
 
 @dataclass
@@ -196,6 +198,8 @@ class AppConfig:
         lines.append(f'bind_address = "{self.web.bind_address}"')
         lines.append(f'connect_method = "{self.web.connect_method}"')
         lines.append(f"ca_generation = {self.web.ca_generation}")
+        lines.append(f"caldav_enabled = {str(self.web.caldav_enabled).lower()}")
+        lines.append(f'caldav_password = "{self.web.caldav_password}"')
         lines.append("")
 
         return "\n".join(lines)
@@ -277,6 +281,8 @@ class AppConfig:
                 bind_address=w.get("bind_address", "0.0.0.0"),
                 connect_method=w.get("connect_method", ""),
                 ca_generation=w.get("ca_generation", 0),
+                caldav_enabled=w.get("caldav_enabled", True),
+                caldav_password=w.get("caldav_password", ""),
             )
 
         return config

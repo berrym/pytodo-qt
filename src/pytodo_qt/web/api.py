@@ -86,6 +86,26 @@ async def auth_middleware(request: web.Request, handler: Callable[..., Any]) -> 
     if path in ("/", "/sw.js", "/api/auth", "/ca.pem") or path.startswith("/static/"):
         return await handler(request)
 
+    # CalDAV paths use HTTP Basic Auth (CalDAV clients don't support Bearer)
+    if path.startswith("/caldav/") or path == "/.well-known/caldav":
+        import base64
+
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Basic "):
+            try:
+                decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
+                username, _, password = decoded.partition(":")
+                server = request.app.get(web_server_key)
+                if server and server.validate_caldav_auth(username, password):
+                    return await handler(request)
+            except Exception:
+                pass
+        return web.Response(
+            status=401,
+            headers={"WWW-Authenticate": 'Basic realm="PyTodo-Qt CalDAV"'},
+            text="Authentication required",
+        )
+
     # Extract token from Bearer header or query param
     token = None
     auth_header = request.headers.get("Authorization", "")

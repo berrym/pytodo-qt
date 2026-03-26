@@ -242,3 +242,86 @@ def _vtodo_to_item(vtodo: Component) -> TodoItem | None:
             item.recurrence_end_count = int(count_list[0])
 
     return item
+
+
+def item_to_ics(item: TodoItem) -> bytes:
+    """Wrap a single TodoItem as a complete iCalendar VCALENDAR document."""
+    cal = Calendar()
+    cal.add("prodid", "-//pytodo-qt//EN")
+    cal.add("version", "2.0")
+    cal.add_component(_item_to_vtodo(item))
+    return cal.to_ical()
+
+
+def vtodo_to_field_dict(data: bytes) -> dict:
+    """Parse iCalendar data and return a field dict for _apply_item_fields.
+
+    Extracts fields from the first VTODO found, mapping iCalendar
+    properties to pytodo-qt TodoItem field names.
+    """
+    cal = Calendar.from_ical(data)
+    for component in cal.walk("VTODO"):
+        fields: dict = {}
+
+        summary = component.get("summary")
+        if summary:
+            fields["reminder"] = str(summary)
+
+        priority_val = component.get("priority")
+        if priority_val is not None:
+            fields["priority"] = _ical_priority_to_pytodo(int(priority_val))
+
+        status = component.get("status")
+        if status:
+            fields["complete"] = str(status).upper() == "COMPLETED"
+
+        due = component.get("due")
+        if due is not None:
+            dt = due.dt
+            if isinstance(dt, datetime):
+                fields["due_date"] = dt.date().isoformat()
+                t = dt.time()
+                if t != time(0, 0, 0):
+                    fields["due_time"] = t.strftime("%H:%M:%S")
+                else:
+                    fields["due_time"] = None
+            elif isinstance(dt, date):
+                fields["due_date"] = dt.isoformat()
+                fields["due_time"] = None
+
+        categories = component.get("categories")
+        if categories is not None:
+            raw_tags: list[str] = []
+            if hasattr(categories, "to_ical"):
+                raw = categories.to_ical()
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8")
+                raw_tags = [c.strip() for c in raw.split(",") if c.strip()]
+            elif isinstance(categories, list):
+                raw_tags = [str(c) for c in categories]
+            fields["tags"] = [t if t.startswith("@") else f"@{t}" for t in raw_tags]
+
+        rrule = component.get("rrule")
+        if rrule:
+            freq_list = rrule.get("FREQ", [])
+            if freq_list:
+                freq = str(freq_list[0])
+                rtype = _FREQ_TO_RECURRENCE_TYPE.get(freq)
+                if rtype:
+                    fields["recurrence_type"] = rtype
+            interval_list = rrule.get("INTERVAL", [])
+            if interval_list:
+                fields["recurrence_interval"] = int(interval_list[0])
+            until_list = rrule.get("UNTIL", [])
+            if until_list:
+                until_val = until_list[0]
+                if isinstance(until_val, datetime):
+                    fields["recurrence_end_date"] = until_val.date().isoformat()
+                elif isinstance(until_val, date):
+                    fields["recurrence_end_date"] = until_val.isoformat()
+            count_list = rrule.get("COUNT", [])
+            if count_list:
+                fields["recurrence_end_count"] = int(count_list[0])
+
+        return fields
+    return {}

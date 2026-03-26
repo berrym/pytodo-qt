@@ -185,6 +185,22 @@ class WebServer:
         """Return the device store (for middleware and testing)."""
         return self._device_store
 
+    def validate_caldav_auth(self, username: str, password: str) -> bool:
+        """Validate CalDAV Basic Auth credentials."""
+        if not self._config:
+            return False
+        if username != "pytodo":
+            return False
+        # Auto-generate CalDAV password on first use
+        if not self._config.caldav_password:
+            import secrets
+
+            self._config.caldav_password = secrets.token_urlsafe(24)
+            if self._config_manager:
+                self._config_manager.save()
+            logger.log.info("Generated CalDAV password")
+        return password == self._config.caldav_password
+
     def _create_ssl_context(self) -> ssl.SSLContext | None:
         """Create TLS context using a local CA and server certificate.
 
@@ -416,6 +432,12 @@ class WebServer:
 
         # API routes
         setup_routes(app)
+
+        # CalDAV routes
+        if not self._config or self._config.caldav_enabled:
+            from .caldav_handler import setup_caldav_routes
+
+            setup_caldav_routes(app)
 
         # Static file serving
         app.router.add_get("/", self._serve_index)
