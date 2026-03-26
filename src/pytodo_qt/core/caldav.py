@@ -7,7 +7,7 @@ Tasks, and other calendar/todo applications.
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time
 from typing import TYPE_CHECKING
 
 from icalendar import Calendar, Todo
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 # Priority mapping: pytodo-qt (1-3) ↔ iCalendar (1-9)
 _PRIORITY_TO_ICAL = {1: 1, 2: 5, 3: 9}
 _RECURRENCE_TYPE_TO_FREQ = {
+    "minutely": "MINUTELY",
     "daily": "DAILY",
     "weekly": "WEEKLY",
     "monthly": "MONTHLY",
@@ -29,9 +30,9 @@ _RECURRENCE_TYPE_TO_FREQ = {
 _FREQ_TO_RECURRENCE_TYPE = {v: k for k, v in _RECURRENCE_TYPE_TO_FREQ.items()}
 
 
-def _ms_to_datetime(ms: int) -> datetime:
-    """Convert millisecond timestamp to datetime."""
-    return datetime.fromtimestamp(ms / 1000)
+def _ms_to_utc_datetime(ms: int) -> datetime:
+    """Convert millisecond timestamp to timezone-aware UTC datetime."""
+    return datetime.fromtimestamp(ms / 1000, tz=UTC)
 
 
 def _ical_priority_to_pytodo(ical_priority: int) -> int:
@@ -63,6 +64,7 @@ def _build_rrule(item: TodoItem) -> dict[str, object] | None:
                 item.recurrence_end_date.year,
                 item.recurrence_end_date.month,
                 item.recurrence_end_date.day,
+                tzinfo=UTC,
             )
         ]
     elif item.recurrence_end_count:
@@ -79,6 +81,9 @@ def _item_to_vtodo(item: TodoItem) -> Todo:
     todo.add("status", "COMPLETED" if item.complete else "NEEDS-ACTION")
     todo.add("percent-complete", 100 if item.complete else 0)
 
+    # Always export DUE as datetime (RFC 5545 compliance).
+    # Date-only items use midnight UTC — imported back as date-only
+    # via the time(0,0,0) check in _vtodo_to_item.
     if item.due_date:
         if item.due_time:
             todo.add(
@@ -90,16 +95,27 @@ def _item_to_vtodo(item: TodoItem) -> Todo:
                     item.due_time.hour,
                     item.due_time.minute,
                     item.due_time.second,
+                    tzinfo=UTC,
                 ),
             )
         else:
-            todo.add("due", item.due_date)
+            todo.add(
+                "due",
+                datetime(
+                    item.due_date.year,
+                    item.due_date.month,
+                    item.due_date.day,
+                    tzinfo=UTC,
+                ),
+            )
 
+    # Strip @ prefix from tags for standard CATEGORIES format
     if item.tags:
-        todo.add("categories", item.tags)
+        clean_tags = [t.lstrip("@") for t in item.tags]
+        todo.add("categories", clean_tags)
 
-    todo.add("created", _ms_to_datetime(item.created_at))
-    todo.add("last-modified", _ms_to_datetime(item.updated_at))
+    todo.add("created", _ms_to_utc_datetime(item.created_at))
+    todo.add("last-modified", _ms_to_utc_datetime(item.updated_at))
 
     rrule = _build_rrule(item)
     if rrule:
@@ -171,17 +187,20 @@ def _vtodo_to_item(vtodo: Component) -> TodoItem | None:
         elif isinstance(dt, date):
             item.due_date = dt
 
-    # Tags
+    # Tags — re-add @ prefix for pytodo-qt convention
     categories = vtodo.get("categories")
     if categories is not None:
+        raw_tags: list[str] = []
         if hasattr(categories, "to_ical"):
             # Single categories property — decode the comma-separated value
             raw = categories.to_ical()
             if isinstance(raw, bytes):
                 raw = raw.decode("utf-8")
-            item.tags = [c.strip() for c in raw.split(",") if c.strip()]
+            raw_tags = [c.strip() for c in raw.split(",") if c.strip()]
         elif isinstance(categories, list):
-            item.tags = [str(c) for c in categories]
+            raw_tags = [str(c) for c in categories]
+        # Ensure @ prefix
+        item.tags = [t if t.startswith("@") else f"@{t}" for t in raw_tags]
 
     # Timestamps
     created = vtodo.get("created")

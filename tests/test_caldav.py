@@ -182,8 +182,9 @@ class TestExportFieldMapping:
 
         data = export_list_to_ics(lst)
         assert b"CATEGORIES" in data
-        assert b"@work" in data
-        assert b"@urgent" in data
+        # Tags exported without @ prefix for standard iCalendar format
+        assert b"work" in data
+        assert b"urgent" in data
 
     def test_created_timestamp(self):
         lst = create_todo_list("Test")

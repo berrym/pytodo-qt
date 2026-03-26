@@ -3184,17 +3184,24 @@ class MainWindow(QMainWindow):
             )
             return
 
+        # Import through undo stack for consistency with unified undo system
+        from .commands import AddItemCommand
+
         completed = 0
+        self._undo_stack.beginMacro(f"Import {len(items)} items from .ics")
         for item in items:
-            active_list.add_item(item)
-            self._storage.save_item(active_list.id, item)
+            # Assign default board column
+            if not item.board_column and active_list.board_columns:
+                item.board_column = active_list.board_columns[0]
+            cmd = AddItemCommand(self, active_list.id, item)
+            self._undo_stack.push(cmd)
             if item.complete:
                 completed += 1
+        self._undo_stack.endMacro()
 
         self.status_bar_widget.show_message(
             f"Imported {len(items)} items ({completed} completed) from {Path(path).name}"
         )
-        self._refresh_ui()
 
     def _on_export_ics(self) -> None:
         """Export the active list as an .ics file."""
