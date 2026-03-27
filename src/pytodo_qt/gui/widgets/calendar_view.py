@@ -487,6 +487,265 @@ class _CalendarTableView(QTableView):
 
 
 # ---------------------------------------------------------------------------
+# Timeline View — horizontal bars showing task spans and effort
+# ---------------------------------------------------------------------------
+
+
+class _TimelineWidget(QWidget):
+    """Custom-painted horizontal timeline with task bars.
+
+    Three bar types per task (layered):
+    - Blue: time span (creation → due date)
+    - Amber: estimated effort (estimated_pomodoros)
+    - Green: actual work done (pomodoro_count / time_spent)
+    """
+
+    task_clicked = pyqtSignal(object)  # item_id
+    task_right_clicked = pyqtSignal(object, object)  # item_id, global_pos
+
+    ROW_HEIGHT = 32
+    HEADER_HEIGHT = 30
+    LABEL_WIDTH = 160
+    BAR_HEIGHT = 8
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._items: list = []
+        self._range_start: date = date.today() - timedelta(days=3)
+        self._range_end: date = date.today() + timedelta(days=11)
+        self._selected_item_id: UUID | None = None
+        self._colors: dict[str, str] = {}
+        self._todo_list = None
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self._refresh_colors()
+
+    def _refresh_colors(self) -> None:
+        from ...gui.styles.themes import get_colors
+
+        self._colors = get_colors()
+
+    def set_data(self, items: list, current_date: date, todo_list=None) -> None:
+        self._items = [i for i in items if i.parent_id is None]
+        self._range_start = current_date - timedelta(days=3)
+        self._range_end = current_date + timedelta(days=11)
+        self._todo_list = todo_list
+        self.setMinimumHeight(self.HEADER_HEIGHT + len(self._items) * self.ROW_HEIGHT + 20)
+        self.update()
+
+    def set_selected(self, item_id: UUID | None) -> None:
+        self._selected_item_id = item_id
+        self.update()
+
+    def _date_to_x(self, d: date) -> float:
+        """Map a date to x coordinate in the timeline area."""
+        total_days = (self._range_end - self._range_start).days
+        if total_days <= 0:
+            return float(self.LABEL_WIDTH)
+        day_offset = (d - self._range_start).days
+        timeline_width = self.width() - self.LABEL_WIDTH - 10
+        return self.LABEL_WIDTH + (day_offset / total_days) * timeline_width
+
+    def _ms_to_date(self, ms: int) -> date:
+        from datetime import datetime as _dt
+
+        return _dt.fromtimestamp(ms / 1000).date()
+
+    def paintEvent(self, a0) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        c = self._colors
+        col_base = QColor(c["base"])
+        col_text = QColor(c["text"])
+        col_border = QColor(c["border"])
+        col_completed_text = QColor(c["completed_text"])
+        col_completed_bg = QColor(c["completed_bg"])
+        col_highlight = QColor(c["highlight"])
+        today = date.today()
+
+        # Background
+        painter.fillRect(self.rect(), col_base)
+
+        # --- Header: date labels ---
+        painter.setPen(col_text)
+        header_font = QFont(painter.font())
+        header_font.setPixelSize(10)
+        painter.setFont(header_font)
+
+        total_days = (self._range_end - self._range_start).days
+        for i in range(total_days + 1):
+            d = self._range_start + timedelta(days=i)
+            x = self._date_to_x(d)
+            # Vertical grid line
+            line_color = col_highlight if d == today else col_border
+            painter.setPen(QPen(line_color, 1 if d != today else 2))
+            painter.drawLine(int(x), self.HEADER_HEIGHT, int(x), self.height())
+            # Date label (show every other day to avoid crowding)
+            if i % 2 == 0 or d == today:
+                painter.setPen(col_highlight if d == today else col_text)
+                label = d.strftime("%b %d")
+                painter.drawText(
+                    int(x) - 20, 2, 50, self.HEADER_HEIGHT - 4, Qt.AlignmentFlag.AlignCenter, label
+                )
+
+        # --- Task rows ---
+        item_font = QFont(painter.font())
+        item_font.setPixelSize(11)
+        painter.setFont(item_font)
+        fm = QFontMetrics(item_font)
+
+        # Bar colors
+        col_span = QColor("#4a90d2")  # Blue: time span
+        col_span.setAlpha(120)
+        col_estimated = QColor("#e6a817")  # Amber: estimated effort
+        col_actual = QColor("#27ae60")  # Green: actual work
+
+        config_work_mins = 25  # Default pomodoro duration
+
+        for row, item in enumerate(self._items):
+            y = self.HEADER_HEIGHT + row * self.ROW_HEIGHT
+            is_selected = bool(self._selected_item_id and item.id == self._selected_item_id)
+
+            # Row background
+            if is_selected:
+                sel_bg = QColor(c["alternate_base"])
+                sel_bg.setAlpha(200)
+                painter.fillRect(0, y, self.width(), self.ROW_HEIGHT, sel_bg)
+            elif item.complete:
+                painter.fillRect(0, y, self.width(), self.ROW_HEIGHT, col_completed_bg)
+
+            # Row separator
+            painter.setPen(QPen(col_border, 1))
+            painter.drawLine(0, y + self.ROW_HEIGHT - 1, self.width(), y + self.ROW_HEIGHT - 1)
+
+            # Task label (left side)
+            painter.setPen(col_completed_text if item.complete else col_text)
+            prefix = "\u2713 " if item.complete else ""
+            label = fm.elidedText(
+                prefix + item.reminder, Qt.TextElideMode.ElideRight, self.LABEL_WIDTH - 10
+            )
+            painter.drawText(
+                4,
+                y,
+                self.LABEL_WIDTH - 8,
+                self.ROW_HEIGHT,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                label,
+            )
+
+            # --- Bars ---
+            bar_y = y + (self.ROW_HEIGHT - self.BAR_HEIGHT * 3 - 4) // 2
+
+            # Blue bar: creation → due date (or today if no due date)
+            created_date = self._ms_to_date(item.created_at)
+            end_date = item.due_date or today
+            x_start = max(self._date_to_x(created_date), self.LABEL_WIDTH)
+            x_end = min(self._date_to_x(end_date), self.width() - 10)
+            if x_end > x_start:
+                painter.fillRect(
+                    int(x_start), bar_y, int(x_end - x_start), self.BAR_HEIGHT, col_span
+                )
+
+            # Amber bar: estimated effort (pomodoros × work duration as fraction of span)
+            bar_y += self.BAR_HEIGHT + 2
+            if item.estimated_pomodoros > 0 and x_end > x_start:
+                est_mins = item.estimated_pomodoros * config_work_mins
+                # Scale: estimate as fraction of total span
+                span_days = max(1, (end_date - created_date).days)
+                est_fraction = min(1.0, est_mins / (span_days * 8 * 60))  # vs 8hr workday
+                est_width = max(4, int((x_end - x_start) * est_fraction))
+                painter.fillRect(int(x_start), bar_y, est_width, self.BAR_HEIGHT, col_estimated)
+
+            # Green bar: actual work done
+            bar_y += self.BAR_HEIGHT + 2
+            if (item.pomodoro_count > 0 or item.time_spent > 0) and x_end > x_start:
+                actual_mins = (
+                    item.time_spent / 60
+                    if item.time_spent
+                    else item.pomodoro_count * config_work_mins
+                )
+                span_days = max(1, (end_date - created_date).days)
+                actual_fraction = min(1.0, actual_mins / (span_days * 8 * 60))
+                actual_width = max(4, int((x_end - x_start) * actual_fraction))
+                painter.fillRect(int(x_start), bar_y, actual_width, self.BAR_HEIGHT, col_actual)
+
+        # --- Legend ---
+        legend_y = self.height() - 16
+        painter.setPen(col_text)
+        legend_font = QFont(painter.font())
+        legend_font.setPixelSize(9)
+        painter.setFont(legend_font)
+        lx = self.LABEL_WIDTH
+        for color, label in [
+            (col_span, "Time Span"),
+            (col_estimated, "Estimated"),
+            (col_actual, "Actual Work"),
+        ]:
+            color_full = QColor(color)
+            color_full.setAlpha(255)
+            painter.fillRect(lx, legend_y, 10, 10, color_full)
+            painter.drawText(lx + 14, legend_y - 1, 70, 12, Qt.AlignmentFlag.AlignLeft, label)
+            lx += 90
+
+        painter.end()
+
+    def _hit_test_row(self, pos) -> int:
+        """Return item index at pos, or -1."""
+        y = pos.y() - self.HEADER_HEIGHT
+        if y < 0:
+            return -1
+        row = int(y / self.ROW_HEIGHT)
+        if 0 <= row < len(self._items):
+            return row
+        return -1
+
+    def mousePressEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None:
+            return
+        row = self._hit_test_row(a0.pos())
+        if row >= 0:
+            self.task_clicked.emit(self._items[row].id)
+
+    def contextMenuEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None:
+            return
+        row = self._hit_test_row(a0.pos())
+        if row >= 0:
+            item = self._items[row]
+            self.task_clicked.emit(item.id)
+            self.task_right_clicked.emit(item.id, a0.globalPos())
+
+    def mouseMoveEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None:
+            return
+        row = self._hit_test_row(a0.pos())
+        if row >= 0:
+            item = self._items[row]
+            parts = [item.reminder]
+            if item.due_date:
+                parts.append(f"Due: {item.due_date.strftime('%b %d')}")
+            if item.due_time:
+                parts.append(f"Time: {item.due_time.strftime('%I:%M %p').lstrip('0')}")
+            if item.estimated_pomodoros:
+                parts.append(f"Estimated: {item.estimated_pomodoros} pomodoros")
+            if item.pomodoro_count:
+                parts.append(f"Completed: {item.pomodoro_count} pomodoros")
+            if item.time_spent:
+                mins = item.time_spent // 60
+                parts.append(f"Time spent: {mins}m")
+            if item.tags:
+                parts.append(f"Tags: {', '.join(item.tags)}")
+            from PyQt6.QtWidgets import QToolTip
+
+            QToolTip.showText(a0.globalPosition().toPoint(), "\n".join(parts), self)
+        else:
+            from PyQt6.QtWidgets import QToolTip
+
+            QToolTip.hideText()
+
+
+# ---------------------------------------------------------------------------
 # Day-of-week header bar
 # ---------------------------------------------------------------------------
 
@@ -1156,9 +1415,15 @@ class CalendarViewWidget(QWidget):
 
         self._sub_stack.addWidget(month_container)  # 2
 
-        self._timeline_view = QLabel("Timeline view — coming soon")
-        self._timeline_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._sub_stack.addWidget(self._timeline_view)  # 3
+        # Timeline view — horizontal bars
+        self._timeline_widget = _TimelineWidget()
+        self._timeline_widget.task_clicked.connect(self._on_task_clicked)
+        self._timeline_widget.task_right_clicked.connect(self._on_task_right_clicked)
+        timeline_scroll = QScrollArea()
+        timeline_scroll.setWidgetResizable(True)
+        timeline_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        timeline_scroll.setWidget(self._timeline_widget)
+        self._sub_stack.addWidget(timeline_scroll)  # 3
 
         self._sub_stack.setCurrentIndex(self._sub_view)
         content.addWidget(self._sub_stack, 1)
@@ -1261,6 +1526,12 @@ class CalendarViewWidget(QWidget):
         h_header = self._day_table.horizontalHeader()
         if h_header:
             h_header.hide()  # Single column doesn't need day header
+
+        # Timeline view — all items with any date info
+        all_items = list(self._todo_list.active_items())
+        all_items = [i for i in all_items if i.parent_id is None]
+        all_items = self._apply_filter(all_items)
+        self._timeline_widget.set_data(all_items, self._current_date, self._todo_list)
 
         self._unscheduled.set_items(unscheduled, todo_list=self._todo_list)
 
@@ -1380,6 +1651,7 @@ class CalendarViewWidget(QWidget):
         self._cal_delegate.set_selected(item_id)
         self._week_delegate.set_selected(item_id)
         self._day_delegate.set_selected(item_id)
+        self._timeline_widget.set_selected(item_id)
         self._cal_table.viewport().update()  # type: ignore[union-attr]
         self._week_table.viewport().update()  # type: ignore[union-attr]
         self._day_table.viewport().update()  # type: ignore[union-attr]
