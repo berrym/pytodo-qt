@@ -426,9 +426,17 @@ class MainWindow(QMainWindow):
         self.board_view_action.setToolTip(self._tip("Switch to board view", "Ctrl+Shift+B"))
         self.board_view_action.triggered.connect(lambda: self._set_view_mode(1))
 
+        self.calendar_view_action = QAction(
+            self._get_icon("view-calendar.svg"), "&Calendar View", self
+        )
+        self.calendar_view_action.setCheckable(True)
+        self.calendar_view_action.setToolTip(self._tip("Switch to calendar view", "Ctrl+Shift+B"))
+        self.calendar_view_action.triggered.connect(lambda: self._set_view_mode(2))
+
         self._view_action_group = QActionGroup(self)
         self._view_action_group.addAction(self.list_view_action)
         self._view_action_group.addAction(self.board_view_action)
+        self._view_action_group.addAction(self.calendar_view_action)
         self._view_action_group.setExclusive(True)
 
         # Tools actions
@@ -492,6 +500,7 @@ class MainWindow(QMainWindow):
         if view_menu:
             view_menu.addAction(self.list_view_action)
             view_menu.addAction(self.board_view_action)
+            view_menu.addAction(self.calendar_view_action)
 
         # Todo menu
         todo_menu = menu_bar.addMenu("&To-Do")
@@ -589,6 +598,7 @@ class MainWindow(QMainWindow):
             toolbar.addSeparator()
             toolbar.addAction(self.list_view_action)
             toolbar.addAction(self.board_view_action)
+            toolbar.addAction(self.calendar_view_action)
             toolbar.addSeparator()
             toolbar.addAction(self.web_connect_action)
             toolbar.addSeparator()
@@ -659,13 +669,24 @@ class MainWindow(QMainWindow):
         self._connect_kanban_signals()
         self._view_stack.addWidget(self.kanban_board)
 
+        # Calendar view
+        from .widgets.calendar_view import CalendarViewWidget
+
+        self.calendar_view = CalendarViewWidget()
+        self._connect_calendar_signals()
+        self._view_stack.addWidget(self.calendar_view)
+
         layout.addWidget(self._view_stack)
 
         # Set initial view mode from config
-        if self._config.database.view_mode == "board":
+        view_mode = self._config.database.view_mode
+        if view_mode == "board":
             self._view_stack.setCurrentIndex(1)
             self._board_view_btn.setChecked(True)
             self.board_view_action.setChecked(True)
+        elif view_mode == "calendar":
+            self._view_stack.setCurrentIndex(2)
+            self.calendar_view_action.setChecked(True)
         else:
             self._view_stack.setCurrentIndex(0)
             self._list_view_btn.setChecked(True)
@@ -710,31 +731,42 @@ class MainWindow(QMainWindow):
         self.kanban_board.add_item_in_column_requested.connect(self._on_add_item_in_column)
         self.kanban_board.wip_limit_changed.connect(self._on_wip_limit_changed)
 
+    def _connect_calendar_signals(self) -> None:
+        """Connect CalendarViewWidget signals to handlers (same as table/board)."""
+        self.calendar_view.item_priority_changed.connect(self._on_item_priority_changed)
+        self.calendar_view.item_reminder_changed.connect(self._on_item_reminder_changed)
+        self.calendar_view.item_due_date_changed.connect(self._on_item_due_date_changed)
+        self.calendar_view.item_due_time_changed.connect(self._on_item_due_time_changed)
+        self.calendar_view.edit_tags_requested.connect(self._on_edit_tags_for_item)
+        self.calendar_view.toggle_requested.connect(self._on_toggle_todo)
+        self.calendar_view.delete_requested.connect(self._on_delete_todo)
+        self.calendar_view.edit_recurrence_requested.connect(self._on_edit_recurrence)
+        self.calendar_view.focus_requested.connect(self._on_context_menu_focus)
+        self.calendar_view.add_subtask_requested.connect(self._on_add_subtask)
+
     def _on_view_toggle(self, view_id: int) -> None:
         """Handle view toggle button click."""
         self._set_view_mode(view_id)
 
     def _toggle_view_mode(self) -> None:
-        """Toggle between list and board view (Ctrl+Shift+B)."""
-        new_index = 1 if self._view_stack.currentIndex() == 0 else 0
+        """Cycle through list → board → calendar (Ctrl+Shift+B)."""
+        current = self._view_stack.currentIndex()
+        new_index = (current + 1) % 3
         self._set_view_mode(new_index)
 
     def _set_view_mode(self, view_id: int) -> None:
-        """Set the view mode (0=list, 1=board), syncing all UI controls."""
+        """Set the view mode (0=list, 1=board, 2=calendar), syncing all UI controls."""
         self._view_stack.setCurrentIndex(view_id)
         # Sync inline toggle buttons
-        if view_id == 0:
-            self._list_view_btn.setChecked(True)
-        else:
-            self._board_view_btn.setChecked(True)
+        self._list_view_btn.setChecked(view_id == 0)
+        self._board_view_btn.setChecked(view_id == 1)
         # Sync toolbar actions
-        if view_id == 0:
-            self.list_view_action.setChecked(True)
-        else:
-            self.board_view_action.setChecked(True)
+        self.list_view_action.setChecked(view_id == 0)
+        self.board_view_action.setChecked(view_id == 1)
+        self.calendar_view_action.setChecked(view_id == 2)
         if view_id == 1:
             self._reconcile_board_columns()
-        mode = "board" if view_id == 1 else "list"
+        mode = {0: "list", 1: "board", 2: "calendar"}.get(view_id, "list")
         self._config.database.view_mode = mode
         self._config_manager.save()
         self._refresh_ui()
@@ -1658,10 +1690,19 @@ class MainWindow(QMainWindow):
             self.status_bar_widget.show_message(f"Network address changed to {current_ip}")
 
     def _active_view_widget(self) -> TodoTableWidget | KanbanBoardWidget:
-        """Return the currently visible view widget."""
+        """Return the currently visible view widget.
+
+        Returns the table or board widget for action dispatching.
+        Calendar view also supports the shared API but returns
+        through the board/table interface for type compatibility.
+        """
+        from .widgets.calendar_view import CalendarViewWidget
+
         w = self._view_stack.currentWidget()
         if isinstance(w, KanbanBoardWidget):
             return w
+        if isinstance(w, CalendarViewWidget):
+            return w  # type: ignore[return-value]
         return self.todo_table
 
     def _refresh_ui(self) -> None:
@@ -1682,10 +1723,13 @@ class MainWindow(QMainWindow):
 
             self.list_selector.set_database(self._database)
             self.list_selector.set_unseen(self._unseen_changes)
-            if self._view_stack.currentIndex() == 0:
+            idx = self._view_stack.currentIndex()
+            if idx == 0:
                 self.todo_table.set_list(self._database.active_list)
-            else:
+            elif idx == 1:
                 self.kanban_board.set_list(self._database.active_list)
+            else:
+                self.calendar_view.set_list(self._database.active_list)
             self._update_tags()
             self._update_status()
         finally:
@@ -2207,6 +2251,7 @@ class MainWindow(QMainWindow):
         """Handle filter state change."""
         self.todo_table.set_filter(filter_state)
         self.kanban_board.set_filter(filter_state)
+        self.calendar_view.set_filter(filter_state)
 
     def _on_search_focus(self) -> None:
         """Handle Ctrl+F shortcut."""
