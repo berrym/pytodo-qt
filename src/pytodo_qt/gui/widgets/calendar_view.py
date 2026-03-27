@@ -51,9 +51,62 @@ if TYPE_CHECKING:
 # Model/View/Delegate for Month Grid
 # ---------------------------------------------------------------------------
 
+
+class _CloseButton(QWidget):
+    """QPainter-rendered close button for reliable cross-platform display."""
+
+    def __init__(self, on_click=None, parent=None):
+        super().__init__(parent)
+        self._on_click = on_click
+        self.setFixedSize(20, 20)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def paintEvent(self, a0):  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(128, 128, 128, 60))
+        p.drawEllipse(0, 0, 20, 20)
+        p.setPen(QPen(QColor(200, 200, 200), 2))
+        p.drawLine(6, 6, 14, 14)
+        p.drawLine(14, 6, 6, 14)
+        p.end()
+
+    def mousePressEvent(self, a0):  # noqa: N802
+        if self._on_click:
+            self._on_click()
+
+
 _ITEMS_ROLE = Qt.ItemDataRole.UserRole + 1
 _DATE_ROLE = Qt.ItemDataRole.UserRole + 2
-_PRIORITY_COLORS = {1: QColor("#e74c3c"), 2: QColor("#3498db"), 3: QColor("#95a5a6")}
+_DAY_HEADER_HEIGHT = 18
+_ITEM_FONT_SIZE = 10
+
+
+def _calc_cell_layout(
+    cell_height: int, item_count: int, font: QFont | None = None
+) -> tuple[int, int, int, int]:
+    """Calculate shared layout geometry for a calendar cell.
+
+    Returns (item_height, max_visible, overflow_height, y_start).
+    Used by both the delegate paint and the table view hit-test
+    to ensure click zones align with rendered positions.
+    """
+    if font is None:
+        font = QFont()
+        font.setPixelSize(_ITEM_FONT_SIZE)
+    fm = QFontMetrics(font)
+    item_height = fm.height() + 4
+    overflow_height = fm.height() + 2
+    y_start = _DAY_HEADER_HEIGHT
+    available = cell_height - _DAY_HEADER_HEIGHT - 2
+
+    if item_count * item_height <= available:
+        max_visible = item_count
+    else:
+        max_visible = max(1, (available - overflow_height) // item_height)
+
+    return item_height, max_visible, overflow_height, y_start
 
 
 class _CalendarModel(QAbstractTableModel):
@@ -122,6 +175,14 @@ class _CalendarDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self._today = date.today()
         self._selected_item_id: UUID | None = None
+        self._todo_list: TodoList | None = None
+        self._colors: dict[str, str] = {}
+        self._refresh_colors()
+
+    def _refresh_colors(self) -> None:
+        from ...gui.styles.themes import get_colors
+
+        self._colors = get_colors()
 
     def set_selected(self, item_id: UUID | None) -> None:
         self._selected_item_id = item_id
@@ -135,23 +196,34 @@ class _CalendarDelegate(QStyledItemDelegate):
         cell_date = index.data(_DATE_ROLE)
         items: list = index.data(_ITEMS_ROLE) or []
         day_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
-        palette = option.palette
+        c = self._colors
+
+        # Semantic colors from theme system (WCAG AA tuned)
+        col_base = QColor(c["base"])
+        col_alt_base = QColor(c["alternate_base"])
+        col_highlight = QColor(c["highlight"])
+        col_highlight_text = QColor(c["highlight_text"])
+        col_text = QColor(c["text"])
+        col_completed_text = QColor(c["completed_text"])
+        col_border = QColor(c["border"])
+        col_priority = {
+            1: QColor(c["priority_high"]),
+            2: QColor(c["priority_normal"]),
+            3: QColor(c["priority_low"]),
+        }
 
         # --- Background ---
         if cell_date is None:
-            # Empty cell (outside month)
-            painter.fillRect(rect, palette.window())
+            painter.fillRect(rect, QColor(c["window"]))
         elif cell_date == self._today:
-            painter.fillRect(rect, palette.highlight())
+            painter.fillRect(rect, col_highlight)
         elif cell_date.weekday() >= 5:
-            # Weekend — subtle alternate
-            bg = palette.alternateBase().color()
-            painter.fillRect(rect, bg)
+            painter.fillRect(rect, col_alt_base)
         else:
-            painter.fillRect(rect, palette.base())
+            painter.fillRect(rect, col_base)
 
         # --- Border ---
-        painter.setPen(QPen(palette.mid().color(), 1))
+        painter.setPen(QPen(col_border, 1))
         painter.drawRect(rect.adjusted(0, 0, -1, -1))
 
         if cell_date is None:
@@ -164,11 +236,7 @@ class _CalendarDelegate(QStyledItemDelegate):
         if cell_date == self._today:
             day_font.setBold(True)
         painter.setFont(day_font)
-
-        if cell_date == self._today:
-            painter.setPen(palette.highlightedText().color())
-        else:
-            painter.setPen(palette.text().color())
+        painter.setPen(col_highlight_text if cell_date == self._today else col_text)
 
         day_rect = rect.adjusted(0, 2, -4, 0)
         painter.drawText(
@@ -183,49 +251,51 @@ class _CalendarDelegate(QStyledItemDelegate):
             return
 
         item_font = QFont(painter.font())
-        item_font.setPixelSize(10)
+        item_font.setPixelSize(_ITEM_FONT_SIZE)
         painter.setFont(item_font)
         fm = QFontMetrics(item_font)
 
-        item_height = fm.height() + 4
-        day_header_height = 18
-        overflow_height = fm.height() + 2
-        y = rect.top() + day_header_height
+        item_height, max_items, overflow_height, y_start = _calc_cell_layout(
+            rect.height(), len(items), item_font
+        )
+        y = rect.top() + y_start
         x = rect.left() + 4
-        available_height = rect.height() - day_header_height - 2
-        text_width = rect.width() - 14  # left bar + padding + right margin
-
-        # Calculate how many items fit
-        if len(items) * item_height <= available_height:
-            max_items = len(items)
-        else:
-            max_items = max(1, (available_height - overflow_height) // item_height)
+        text_width = rect.width() - 14
 
         for i in range(min(max_items, len(items))):
             item = items[i]
             item_y = y + i * item_height
+            is_selected = bool(self._selected_item_id and item.id == self._selected_item_id)
+
+            chip_rect = rect.adjusted(3, 0, -3, 0)
+            chip_rect.setTop(item_y)
+            chip_rect.setHeight(item_height)
+
+            # Background: completed (green) or selected (neutral) or none
+            if item.complete:
+                painter.fillRect(chip_rect, QColor(c["completed_bg"]))
+            if is_selected:
+                sel_bg = QColor(col_alt_base)
+                sel_bg.setAlpha(200)
+                painter.fillRect(chip_rect, sel_bg)
+                painter.setPen(QPen(col_border.lighter(150), 2))
+                painter.drawRoundedRect(chip_rect, 3, 3)
 
             # Priority color bar
-            color = _PRIORITY_COLORS.get(item.priority, _PRIORITY_COLORS[2])
-            painter.fillRect(x, item_y + 1, 3, item_height - 2, color)
+            p_color = col_priority.get(item.priority, col_priority[2])
+            painter.fillRect(x, item_y + 1, 3, item_height - 2, p_color)
 
-            # Selection highlight
-            if self._selected_item_id and item.id == self._selected_item_id:
-                sel_rect = rect.adjusted(2, 0, -2, 0)
-                sel_rect.setTop(item_y)
-                sel_rect.setHeight(item_height)
-                painter.setPen(QPen(palette.highlight().color(), 1))
-                painter.drawRect(sel_rect)
-
-            # Text
+            # Text — clean month view: checkmark + title only
             if item.complete:
-                painter.setPen(palette.placeholderText().color())
+                painter.setPen(col_completed_text)
             elif cell_date == self._today:
-                painter.setPen(palette.highlightedText().color())
+                painter.setPen(col_highlight_text)
             else:
-                painter.setPen(palette.text().color())
+                painter.setPen(col_text)
 
-            text = fm.elidedText(item.reminder, Qt.TextElideMode.ElideRight, text_width)
+            prefix = "\u2713 " if item.complete else ""
+            full_text = prefix + item.reminder
+            text = fm.elidedText(full_text, Qt.TextElideMode.ElideRight, text_width)
             text_rect = rect.adjusted(x + 6 - rect.left(), 0, -4, 0)
             text_rect.setTop(item_y)
             text_rect.setHeight(item_height)
@@ -235,22 +305,24 @@ class _CalendarDelegate(QStyledItemDelegate):
                 text,
             )
 
-            # Strikethrough for completed
+            # Strikethrough for completed (over the text after checkmark)
             if item.complete:
+                painter.setPen(QPen(col_completed_text, 1))
                 strike_y = item_y + item_height // 2
-                painter.drawLine(x + 6, strike_y, x + 6 + fm.horizontalAdvance(text), strike_y)
-
-            # Recurrence indicator
-            if item.recurrence_type:
-                rec_x = rect.right() - 12
-                painter.drawText(
-                    rec_x, item_y, 10, item_height, Qt.AlignmentFlag.AlignCenter, "\u21bb"
+                # Strikethrough only the reminder part, not the checkmark
+                prefix_w = fm.horizontalAdvance(prefix)
+                reminder_w = fm.horizontalAdvance(text) - prefix_w
+                painter.drawLine(
+                    x + 6 + prefix_w,
+                    strike_y,
+                    x + 6 + prefix_w + reminder_w,
+                    strike_y,
                 )
 
         # --- Overflow indicator ---
         overflow = len(items) - max_items
         if overflow > 0:
-            painter.setPen(palette.placeholderText().color())
+            painter.setPen(col_completed_text)
             overflow_y = y + max_items * item_height
             overflow_rect = rect.adjusted(4, 0, -4, 0)
             overflow_rect.setTop(overflow_y)
@@ -274,6 +346,8 @@ class _CalendarTableView(QTableView):
 
     task_clicked = pyqtSignal(object)  # item_id
     task_double_clicked = pyqtSignal(object)  # item_id
+    task_right_clicked = pyqtSignal(object, object)  # (item_id, QPoint global pos)
+    more_clicked = pyqtSignal(object, object)  # (date, list[TodoItem])
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -290,7 +364,8 @@ class _CalendarTableView(QTableView):
 
         self.setShowGrid(False)
         self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.setMouseTracking(True)
         self.setStyleSheet("QTableView { border: none; background: palette(window); }")
 
     def resizeEvent(self, a0) -> None:  # noqa: N802
@@ -308,41 +383,107 @@ class _CalendarTableView(QTableView):
         for row in range(row_count):
             self.setRowHeight(row, row_height)
 
+    def _hit_test(self, pos):
+        """Determine what was clicked: ('task', item, index), ('more', date, items), or None."""
+        index = self.indexAt(pos)
+        if not index.isValid():
+            return None
+        items = index.data(_ITEMS_ROLE) or []
+        cell_date = index.data(_DATE_ROLE)
+        if not items or cell_date is None:
+            return None
+
+        rect = self.visualRect(index)
+
+        # Use the SAME font and layout calculation as the delegate paint
+        font = QFont()
+        font.setPixelSize(_ITEM_FONT_SIZE)
+        item_height, max_visible, _overflow_h, y_start = _calc_cell_layout(
+            rect.height(), len(items), font
+        )
+
+        click_y = pos.y() - rect.top() - y_start
+        item_idx = int(click_y / item_height) if item_height > 0 else -1
+
+        # Check if clicking "+N more" area
+        if len(items) > max_visible and item_idx >= max_visible:
+            return ("more", cell_date, items)
+
+        if 0 <= item_idx < min(max_visible, len(items)):
+            return ("task", items[item_idx], index)
+
+        return None
+
     def mousePressEvent(self, a0) -> None:  # noqa: N802
         super().mousePressEvent(a0)
         if a0 is None:
             return
-        index = self.indexAt(a0.pos())
-        if not index.isValid():
+        hit = self._hit_test(a0.pos())
+        if hit is None:
             return
-        items = index.data(_ITEMS_ROLE) or []
-        if not items:
-            return
-        # Find which item was clicked based on y position
-        rect = self.visualRect(index)
-        click_y = a0.pos().y() - rect.top() - 18  # subtract day header
-        fm = QFontMetrics(self.font())
-        item_height = fm.height() + 4
-        item_idx = int(click_y / item_height) if item_height > 0 else 0
-        if 0 <= item_idx < len(items):
-            self.task_clicked.emit(items[item_idx].id)
+        if hit[0] == "task":
+            self.task_clicked.emit(hit[1].id)
+        elif hit[0] == "more":
+            self.more_clicked.emit(hit[1], hit[2])
 
     def mouseDoubleClickEvent(self, a0) -> None:  # noqa: N802
         if a0 is None:
             return
-        index = self.indexAt(a0.pos())
-        if not index.isValid():
+        hit = self._hit_test(a0.pos())
+        if hit is not None and hit[0] == "task":
+            self.task_double_clicked.emit(hit[1].id)
+
+    def mouseMoveEvent(self, a0) -> None:  # noqa: N802
+        """Show tooltip with full task info on hover."""
+        if a0 is None:
             return
-        items = index.data(_ITEMS_ROLE) or []
-        if not items:
+        hit = self._hit_test(a0.pos())
+        if hit is not None and hit[0] == "task":
+            item = hit[1]
+            parts = [item.reminder]
+            if item.due_time:
+                parts.append(f"Due: {item.due_time.strftime('%I:%M %p').lstrip('0')}")
+            if item.recurrence_type:
+                from ...core.models import format_recurrence
+
+                parts.append(format_recurrence(item))
+            if item.estimated_pomodoros > 0 or item.pomodoro_count > 0:
+                pom = (
+                    f"\U0001f345 {item.pomodoro_count}/{item.estimated_pomodoros}"
+                    if item.estimated_pomodoros
+                    else f"\U0001f345 {item.pomodoro_count}"
+                )
+                parts.append(pom)
+            if item.tags:
+                parts.append(f"Tags: {', '.join(item.tags)}")
+            if item.complete:
+                parts.append("\u2713 Completed")
+            from PyQt6.QtWidgets import QToolTip
+
+            QToolTip.showText(a0.globalPosition().toPoint(), "\n".join(parts), self)
+        elif hit is not None and hit[0] == "more":
+            from PyQt6.QtWidgets import QToolTip
+
+            n = len(hit[2])
+            QToolTip.showText(
+                a0.globalPosition().toPoint(),
+                f"Click to see all {n} tasks",
+                self,
+            )
+        else:
+            from PyQt6.QtWidgets import QToolTip
+
+            QToolTip.hideText()
+
+    def contextMenuEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None:
             return
-        rect = self.visualRect(index)
-        click_y = a0.pos().y() - rect.top() - 18
-        fm = QFontMetrics(self.font())
-        item_height = fm.height() + 4
-        item_idx = int(click_y / item_height) if item_height > 0 else 0
-        if 0 <= item_idx < len(items):
-            self.task_double_clicked.emit(items[item_idx].id)
+        hit = self._hit_test(a0.pos())
+        if hit is not None and hit[0] == "task":
+            self.task_clicked.emit(hit[1].id)
+            self.task_right_clicked.emit(hit[1].id, a0.globalPos())
+        else:
+            super().contextMenuEvent(a0)
 
 
 # ---------------------------------------------------------------------------
@@ -409,31 +550,88 @@ class _UnscheduledPanel(QFrame):
         self._scroll.setWidget(self._content)
         layout.addWidget(self._scroll, 1)
 
-    def set_items(self, items: list) -> None:
-        # Rebuild content widget to avoid ghost rendering
+    def set_items(self, items: list, todo_list=None) -> None:
+        from ...gui.styles.themes import get_colors
+
+        c = get_colors()
+
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(2)
+        content_layout.setSpacing(3)
 
         for item in items:
-            row = QFrame()
+            p_key = {1: "priority_high", 2: "priority_normal", 3: "priority_low"}.get(
+                item.priority, "priority_normal"
+            )
+            bg = c["completed_bg"] if item.complete else c["base"]
+            text_color = c["completed_text"] if item.complete else c["text"]
+            strike = "text-decoration: line-through;" if item.complete else ""
+
+            row = QPushButton()
             row.setStyleSheet(
-                "QFrame { background: palette(base); border-left: 3px solid #3498db;"
-                " border-radius: 3px; padding: 2px 4px; margin: 1px 0; }"
+                f"QPushButton {{ border-left: 3px solid {c[p_key]}; border-radius: 3px;"
+                f" padding: 3px 5px; background: {bg}; text-align: left; margin: 1px 0; }}"
+                f" QPushButton:hover {{ background: {c['alternate_base']}; }}"
             )
             row.setCursor(Qt.CursorShape.PointingHandCursor)
-            row.setToolTip(item.reminder)
-            row_layout = QHBoxLayout(row)
+            row_layout = QVBoxLayout(row)
             row_layout.setContentsMargins(4, 2, 4, 2)
-            row_layout.setSpacing(2)
+            row_layout.setSpacing(1)
 
-            text = item.reminder
-            if len(text) > 22:
-                text = text[:21] + "\u2026"
-            lbl = QLabel(text)
-            lbl.setStyleSheet("font-size: 10px; border: none; background: none;")
-            row_layout.addWidget(lbl)
+            # Title with checkmark
+            prefix = "\u2713 " if item.complete else ""
+            title = QLabel(prefix + item.reminder)
+            title.setWordWrap(True)
+            title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            title.setStyleSheet(
+                f"font-size: 10px; {strike} color: {text_color}; border: none; background: none;"
+            )
+            row_layout.addWidget(title)
+
+            # Detail line
+            details = []
+            if item.recurrence_type:
+                from ...core.models import format_recurrence
+
+                details.append("\u21bb " + format_recurrence(item))
+            if item.estimated_pomodoros > 0 or item.pomodoro_count > 0:
+                pom = (
+                    f"\U0001f345 {item.pomodoro_count}/{item.estimated_pomodoros}"
+                    if item.estimated_pomodoros
+                    else f"\U0001f345 {item.pomodoro_count}"
+                )
+                details.append(pom)
+            if todo_list:
+                children = [
+                    ch
+                    for ch in todo_list.items.values()
+                    if ch.parent_id == item.id and not ch.deleted
+                ]
+                if children:
+                    done_n = sum(1 for ch in children if ch.complete)
+                    details.append(f"[{done_n}/{len(children)}]")
+            if item.tags:
+                details.append(" ".join(item.tags))
+            if details:
+                detail_lbl = QLabel(" \u2022 ".join(details))
+                detail_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+                detail_lbl.setStyleSheet(
+                    f"font-size: 9px; color: {c['completed_text']}; border: none; background: none;"
+                )
+                row_layout.addWidget(detail_lbl)
+
+            # Tooltip with full info
+            tip_parts = [item.reminder]
+            if item.tags:
+                tip_parts.append("Tags: " + ", ".join(item.tags))
+            if item.recurrence_type:
+                from ...core.models import format_recurrence as _fmt_rec
+
+                tip_parts.append(_fmt_rec(item))
+            row.setToolTip("\n".join(tip_parts))
+
+            row.clicked.connect(lambda _checked=False, iid=item.id: self.task_clicked.emit(iid))
             content_layout.addWidget(row)
 
         content_layout.addStretch()
@@ -584,6 +782,8 @@ class CalendarViewWidget(QWidget):
         self._cal_table.setItemDelegate(self._cal_delegate)
         self._cal_table.task_clicked.connect(self._on_task_clicked)
         self._cal_table.task_double_clicked.connect(self._on_task_double_clicked)
+        self._cal_table.task_right_clicked.connect(self._on_task_right_clicked)
+        self._cal_table.more_clicked.connect(self._on_more_clicked)
         month_layout.addWidget(self._cal_table, 1)
 
         self._sub_stack.addWidget(month_container)  # 2
@@ -624,6 +824,7 @@ class CalendarViewWidget(QWidget):
             self.refresh()
 
     def refresh(self) -> None:
+        self._close_popover()
         if self._todo_list is None:
             self._cal_model.set_items({})
             self._unscheduled.set_items([])
@@ -654,7 +855,8 @@ class CalendarViewWidget(QWidget):
         self._cal_model.set_items(scheduled)
         self._cal_model.set_month(self._current_date.year, self._current_date.month)
         self._cal_delegate._today = date.today()
-        self._unscheduled.set_items(unscheduled)
+        self._cal_delegate._todo_list = self._todo_list
+        self._unscheduled.set_items(unscheduled, todo_list=self._todo_list)
 
     # --- Filter ---
 
@@ -757,4 +959,245 @@ class CalendarViewWidget(QWidget):
 
     def _on_task_double_clicked(self, item_id: UUID) -> None:
         self._selected_item_id = item_id
-        # TODO: open task detail/edit dialog (same as list/board views)
+        # TODO: open task detail/edit dialog
+
+    def _on_task_right_clicked(self, item_id: UUID, global_pos) -> None:
+        """Show context menu — parity with list/kanban context menus."""
+        self._on_task_clicked(item_id)
+        self._show_context_menu(item_id, global_pos)
+
+    def _show_context_menu(self, item_id: UUID, global_pos) -> None:
+        """Build and show context menu for a task."""
+        from PyQt6.QtGui import QAction
+        from PyQt6.QtWidgets import QInputDialog, QMenu
+
+        item = None
+        if self._todo_list:
+            item = self._todo_list.items.get(item_id)
+
+        menu = QMenu(self)
+
+        if item:
+            edit_action = QAction("Edit Reminder...", self)
+
+            def _edit_reminder(_checked=False, it=item, iid=item_id):
+                text, ok = QInputDialog.getText(
+                    self, "Edit Reminder", "Reminder:", text=it.reminder
+                )
+                if ok and text.strip():
+                    self.item_reminder_changed.emit(iid, text.strip())
+
+            edit_action.triggered.connect(_edit_reminder)
+            menu.addAction(edit_action)
+
+        edit_tags = QAction("Edit Tags...", self)
+        edit_tags.triggered.connect(lambda: self.edit_tags_requested.emit(item_id))
+        menu.addAction(edit_tags)
+
+        edit_rec = QAction("Edit Recurrence...", self)
+        edit_rec.triggered.connect(self.edit_recurrence_requested.emit)
+        menu.addAction(edit_rec)
+
+        focus = QAction("Start Focus Session", self)
+        focus.triggered.connect(lambda: self.focus_requested.emit(item_id))
+        menu.addAction(focus)
+
+        if item and item.parent_id is None:
+            add_sub = QAction("Add Subtask...", self)
+            add_sub.triggered.connect(lambda: self.add_subtask_requested.emit(item_id))
+            menu.addAction(add_sub)
+
+        menu.addSeparator()
+
+        toggle = QAction("Toggle Complete", self)
+        toggle.triggered.connect(self.toggle_requested.emit)
+        menu.addAction(toggle)
+
+        delete = QAction("Delete", self)
+        delete.triggered.connect(self.delete_requested.emit)
+        menu.addAction(delete)
+
+        menu.exec(global_pos)
+
+    def _on_more_clicked(self, cell_date: date, items: list) -> None:
+        """Show popover with all tasks for a date."""
+        self._show_day_popover(cell_date, items)
+
+    def _show_day_popover(self, cell_date: date, items: list) -> None:
+        """Display a floating panel listing all tasks for a specific date."""
+        self._close_popover()
+
+        from ...gui.styles.themes import get_colors
+
+        c = get_colors()
+
+        popover = QFrame(
+            self,
+            Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint,
+        )
+        popover.setStyleSheet(
+            f"QFrame {{ background: {c['base']}; border: 1px solid {c['border']};"
+            f" border-radius: 6px; }}"
+        )
+        popover.setMinimumWidth(340)
+        popover.setMaximumWidth(450)
+        popover.setMaximumHeight(400)
+
+        pop_layout = QVBoxLayout(popover)
+        pop_layout.setContentsMargins(10, 8, 10, 8)
+        pop_layout.setSpacing(4)
+
+        # Header with close button (QPainter rendered for readability)
+        header_row = QHBoxLayout()
+        header = QLabel(cell_date.strftime("%A, %B %d"))
+        header.setStyleSheet(
+            f"font-weight: bold; font-size: 13px; color: {c['text']}; border: none;"
+        )
+        header_row.addWidget(header)
+        header_row.addStretch()
+
+        close_btn = _CloseButton(on_click=self._close_popover)
+        header_row.addWidget(close_btn)
+        pop_layout.addLayout(header_row)
+
+        count_lbl = QLabel(f"{len(items)} task{'s' if len(items) != 1 else ''}")
+        count_lbl.setStyleSheet(f"font-size: 10px; color: {c['completed_text']}; border: none;")
+        pop_layout.addWidget(count_lbl)
+
+        # Scrollable task list
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setMaximumHeight(270)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 4, 0, 0)
+        content_layout.setSpacing(3)
+
+        for item in items:
+            p_key = {1: "priority_high", 2: "priority_normal", 3: "priority_low"}.get(
+                item.priority, "priority_normal"
+            )
+            p_color = c[p_key]
+            bg = c["completed_bg"] if item.complete else "none"
+            text_color = c["completed_text"] if item.complete else c["text"]
+            strike = "text-decoration: line-through;" if item.complete else ""
+
+            row = QPushButton()
+            row._item_id = item.id  # type: ignore[attr-defined]
+            row.setStyleSheet(
+                f"QPushButton {{ border-left: 3px solid {p_color}; border-radius: 4px;"
+                f" padding: 6px 8px; background: {bg}; text-align: left; }}"
+                f" QPushButton:hover {{ background: {c['alternate_base']}; }}"
+            )
+            row.setCursor(Qt.CursorShape.PointingHandCursor)
+            row_layout = QVBoxLayout(row)
+            row_layout.setContentsMargins(6, 3, 6, 3)
+            row_layout.setSpacing(2)
+
+            # Title line: checkmark + reminder
+            prefix = "\u2713 " if item.complete else ""
+            title = QLabel(prefix + item.reminder)
+            title.setWordWrap(True)
+            title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            title.setStyleSheet(
+                f"font-size: 12px; {strike} color: {text_color}; border: none; background: none;"
+            )
+            row_layout.addWidget(title)
+
+            # Detail line: time, recurrence, pomodoro, subtasks, tags
+            details = []
+            if item.due_time:
+                details.append(item.due_time.strftime("%I:%M %p").lstrip("0"))
+            if item.recurrence_type:
+                from ...core.models import format_recurrence
+
+                details.append("\u21bb " + format_recurrence(item))
+            if item.estimated_pomodoros > 0 or item.pomodoro_count > 0:
+                pom = (
+                    f"\U0001f345 {item.pomodoro_count}/{item.estimated_pomodoros}"
+                    if item.estimated_pomodoros
+                    else f"\U0001f345 {item.pomodoro_count}"
+                )
+                details.append(pom)
+            # Subtask count
+            if self._todo_list:
+                children = [
+                    ch
+                    for ch in self._todo_list.items.values()
+                    if ch.parent_id == item.id and not ch.deleted
+                ]
+                if children:
+                    done_n = sum(1 for ch in children if ch.complete)
+                    details.append(f"[{done_n}/{len(children)}]")
+            if item.tags:
+                details.append(" ".join(item.tags))
+            if details:
+                detail_lbl = QLabel(" \u2022 ".join(details))
+                detail_lbl.setWordWrap(True)
+                detail_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+                detail_lbl.setStyleSheet(
+                    f"font-size: 10px; color: {c['completed_text']};"
+                    f" border: none; background: none;"
+                )
+                row_layout.addWidget(detail_lbl)
+
+            row.clicked.connect(lambda _checked=False, iid=item.id: self._select_from_popover(iid))
+            row.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            row.customContextMenuRequested.connect(
+                lambda pos, btn=row, iid=item.id: self._popover_context_menu(
+                    iid, btn.mapToGlobal(pos)
+                )
+            )
+            content_layout.addWidget(row)
+
+        content_layout.addStretch()
+        scroll.setWidget(content)
+        pop_layout.addWidget(scroll)
+
+        # Position near the mouse
+        from PyQt6.QtGui import QCursor
+
+        pos = QCursor.pos()
+        popover.move(pos.x() - 125, pos.y() + 10)
+        popover.show()
+        self._popover = popover
+
+    def _select_from_popover(self, item_id: UUID) -> None:
+        """Select a task from the day popover — stays open, highlights selection."""
+        self._selected_item_id = item_id
+        self._cal_delegate.set_selected(item_id)
+        vp = self._cal_table.viewport()
+        if vp:
+            vp.update()
+        # Highlight the selected row in the popover
+        if hasattr(self, "_popover") and self._popover is not None:
+            from ...gui.styles.themes import get_colors
+
+            c = get_colors()
+            for btn in self._popover.findChildren(QPushButton):
+                if getattr(btn, "_item_id", None) == item_id:
+                    btn.setStyleSheet(
+                        btn.styleSheet().replace(
+                            "background: none", f"background: {c['alternate_base']}"
+                        )
+                    )
+                elif hasattr(btn, "_item_id"):
+                    # Reset other buttons
+                    btn.setStyleSheet(
+                        btn.styleSheet().replace(
+                            f"background: {c['alternate_base']}", "background: none"
+                        )
+                    )
+
+    def _popover_context_menu(self, item_id: UUID, global_pos) -> None:
+        """Right-click on popover item — select and show context menu."""
+        self._select_from_popover(item_id)
+        self._show_context_menu(item_id, global_pos)
+
+    def _close_popover(self) -> None:
+        """Close the day popover."""
+        if hasattr(self, "_popover") and self._popover is not None:
+            self._popover.close()
+            self._popover = None
