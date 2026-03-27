@@ -275,10 +275,10 @@ class MainWindow(QMainWindow):
         self.settings_action = QAction("&Settings...", self)
         self.settings_action.triggered.connect(self._on_settings)
 
-        self.exit_action = QAction(self._get_icon("exit.svg"), "E&xit", self)
-        self.exit_action.setShortcut("Ctrl+Q")
-        self.exit_action.setToolTip(self._tip("Exit application", "Ctrl+Q"))
-        self.exit_action.triggered.connect(self.close)
+        self.exit_action = QAction(self._get_icon("exit.svg"), "&Quit", self)
+        self.exit_action.setShortcut(QKeySequence.StandardKey.Quit)
+        self.exit_action.setToolTip(self._tip("Quit application", "Ctrl+Q"))
+        self.exit_action.triggered.connect(self._quit_application)
 
         # Todo actions
         self.add_todo_action = QAction(self._get_icon("plus.svg"), "&Add To-Do", self)
