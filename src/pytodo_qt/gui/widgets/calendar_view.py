@@ -7,6 +7,10 @@ navigation controls, and an unscheduled tasks sidebar panel. Tasks are
 displayed on their due dates and can be dragged between dates or from
 the unscheduled panel to assign due dates.
 
+The month view uses QTableView + QStyledItemDelegate for guaranteed
+equal column/row sizing and QPainter-based rendering (same architecture
+as Qt's own QCalendarWidget).
+
 Follows the same signal/API contract as TodoTableWidget and
 KanbanBoardWidget for seamless integration with MainWindow.
 """
@@ -15,230 +19,355 @@ from __future__ import annotations
 
 import calendar
 from datetime import date, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QStackedWidget,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QTableView,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 if TYPE_CHECKING:
-    from ...core.models import TodoItem, TodoList
+    from ...core.models import TodoList
     from ..widgets.search_filter import FilterState
 
 
 # ---------------------------------------------------------------------------
-# Helper: date utilities
+# Model/View/Delegate for Month Grid
 # ---------------------------------------------------------------------------
 
-
-def _month_calendar(year: int, month: int) -> list[list[int]]:
-    """Return weeks of the month as lists of day numbers (0 = empty)."""
-    return calendar.monthcalendar(year, month)
-
-
-def _week_dates(d: date) -> list[date]:
-    """Return the 7 dates of the week containing d (Monday-based)."""
-    start = d - timedelta(days=d.weekday())
-    return [start + timedelta(days=i) for i in range(7)]
+_ITEMS_ROLE = Qt.ItemDataRole.UserRole + 1
+_DATE_ROLE = Qt.ItemDataRole.UserRole + 2
+_PRIORITY_COLORS = {1: QColor("#e74c3c"), 2: QColor("#3498db"), 3: QColor("#95a5a6")}
 
 
-# ---------------------------------------------------------------------------
-# Task chip — compact task display for calendar cells
-# ---------------------------------------------------------------------------
+class _CalendarModel(QAbstractTableModel):
+    """Data model for the month grid — 7 columns × 6 rows."""
 
-
-class _TaskChip(QFrame):
-    """A compact task item displayed in a calendar cell."""
-
-    clicked = pyqtSignal(object)  # item_id
-    double_clicked = pyqtSignal(object)  # item_id
-
-    _PRIORITY_COLORS = {1: "#e74c3c", 2: "#3498db", 3: "#95a5a6"}
-
-    def __init__(self, item: TodoItem, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._item_id = item.id
-        self._selected = False
+        self._year = date.today().year
+        self._month = date.today().month
+        self._weeks: list[list[int]] = []
+        self._items_by_date: dict[date, list] = {}
+        self._rebuild_weeks()
 
-        color = self._PRIORITY_COLORS.get(item.priority, "#3498db")
-        completed_style = "text-decoration: line-through; opacity: 0.6;" if item.complete else ""
+    def rowCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
+        return len(self._weeks)
 
-        self.setStyleSheet(
-            f"QFrame {{ background: palette(base); border-left: 3px solid {color};"
-            f" border-radius: 3px; padding: 2px 4px; margin: 1px 0; }}"
+    def columnCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
+        return 7
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
+        if not index.isValid():
+            return None
+        row, col = index.row(), index.column()
+        if row >= len(self._weeks):
+            return None
+        day_num = self._weeks[row][col]
+
+        if role == Qt.ItemDataRole.DisplayRole:
+            return str(day_num) if day_num != 0 else ""
+        if role == _DATE_ROLE:
+            if day_num == 0:
+                return None
+            return date(self._year, self._month, day_num)
+        if role == _ITEMS_ROLE:
+            if day_num == 0:
+                return []
+            d = date(self._year, self._month, day_num)
+            return self._items_by_date.get(d, [])
+        return None
+
+    def set_month(self, year: int, month: int) -> None:
+        self.beginResetModel()
+        self._year = year
+        self._month = month
+        self._rebuild_weeks()
+        self.endResetModel()
+
+    def set_items(self, items_by_date: dict[date, list]) -> None:
+        self.beginResetModel()
+        self._items_by_date = items_by_date
+        self.endResetModel()
+
+    def _rebuild_weeks(self) -> None:
+        self._weeks = calendar.monthcalendar(self._year, self._month)
+        # Pad to exactly 6 rows for consistent layout
+        while len(self._weeks) < 6:
+            self._weeks.append([0] * 7)
+
+
+class _CalendarDelegate(QStyledItemDelegate):
+    """Custom painter for month grid cells — draws day numbers, task items, overflow."""
+
+    task_clicked = pyqtSignal(object)  # item_id
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._today = date.today()
+        self._selected_item_id: UUID | None = None
+
+    def set_selected(self, item_id: UUID | None) -> None:
+        self._selected_item_id = item_id
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setClipRect(option.rect)
+
+        rect = option.rect
+        cell_date = index.data(_DATE_ROLE)
+        items: list = index.data(_ITEMS_ROLE) or []
+        day_text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        palette = option.palette
+
+        # --- Background ---
+        if cell_date is None:
+            # Empty cell (outside month)
+            painter.fillRect(rect, palette.window())
+        elif cell_date == self._today:
+            painter.fillRect(rect, palette.highlight())
+        elif cell_date.weekday() >= 5:
+            # Weekend — subtle alternate
+            bg = palette.alternateBase().color()
+            painter.fillRect(rect, bg)
+        else:
+            painter.fillRect(rect, palette.base())
+
+        # --- Border ---
+        painter.setPen(QPen(palette.mid().color(), 1))
+        painter.drawRect(rect.adjusted(0, 0, -1, -1))
+
+        if cell_date is None:
+            painter.restore()
+            return
+
+        # --- Day number ---
+        day_font = QFont(painter.font())
+        day_font.setPixelSize(11)
+        if cell_date == self._today:
+            day_font.setBold(True)
+        painter.setFont(day_font)
+
+        if cell_date == self._today:
+            painter.setPen(palette.highlightedText().color())
+        else:
+            painter.setPen(palette.text().color())
+
+        day_rect = rect.adjusted(0, 2, -4, 0)
+        painter.drawText(
+            day_rect,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop,
+            day_text,
         )
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip(item.reminder)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 1, 4, 1)
-        layout.setSpacing(2)
+        # --- Task items ---
+        if not items:
+            painter.restore()
+            return
 
-        text = QLabel(item.reminder)
-        text.setStyleSheet(f"font-size: 10px; {completed_style} border: none; background: none;")
-        text.setWordWrap(False)
-        layout.addWidget(text, 1)
+        item_font = QFont(painter.font())
+        item_font.setPixelSize(10)
+        painter.setFont(item_font)
+        fm = QFontMetrics(item_font)
 
-        # Recurrence indicator
-        if item.recurrence_type:
-            rec = QLabel("\u21bb")
-            rec.setStyleSheet("font-size: 9px; border: none; background: none;")
-            rec.setToolTip("Recurring")
-            layout.addWidget(rec)
+        item_height = fm.height() + 4
+        day_header_height = 18
+        overflow_height = fm.height() + 2
+        y = rect.top() + day_header_height
+        x = rect.left() + 4
+        available_height = rect.height() - day_header_height - 2
+        text_width = rect.width() - 14  # left bar + padding + right margin
 
-    def set_selected(self, selected: bool) -> None:
-        self._selected = selected
-        border = "palette(highlight)" if selected else self._PRIORITY_COLORS.get(2, "#3498db")
-        self.setStyleSheet(
-            f"QFrame {{ background: palette(base); border-left: 3px solid {border};"
-            f" border-radius: 3px; padding: 2px 4px; margin: 1px 0;"
-            f" {'border: 2px solid palette(highlight);' if selected else ''} }}"
-        )
+        # Calculate how many items fit
+        if len(items) * item_height <= available_height:
+            max_items = len(items)
+        else:
+            max_items = max(1, (available_height - overflow_height) // item_height)
 
-    def mousePressEvent(self, a0) -> None:  # noqa: N802
-        self.clicked.emit(self._item_id)
+        for i in range(min(max_items, len(items))):
+            item = items[i]
+            item_y = y + i * item_height
 
-    def mouseDoubleClickEvent(self, a0) -> None:  # noqa: N802
-        self.double_clicked.emit(self._item_id)
+            # Priority color bar
+            color = _PRIORITY_COLORS.get(item.priority, _PRIORITY_COLORS[2])
+            painter.fillRect(x, item_y + 1, 3, item_height - 2, color)
+
+            # Selection highlight
+            if self._selected_item_id and item.id == self._selected_item_id:
+                sel_rect = rect.adjusted(2, 0, -2, 0)
+                sel_rect.setTop(item_y)
+                sel_rect.setHeight(item_height)
+                painter.setPen(QPen(palette.highlight().color(), 1))
+                painter.drawRect(sel_rect)
+
+            # Text
+            if item.complete:
+                painter.setPen(palette.placeholderText().color())
+            elif cell_date == self._today:
+                painter.setPen(palette.highlightedText().color())
+            else:
+                painter.setPen(palette.text().color())
+
+            text = fm.elidedText(item.reminder, Qt.TextElideMode.ElideRight, text_width)
+            text_rect = rect.adjusted(x + 6 - rect.left(), 0, -4, 0)
+            text_rect.setTop(item_y)
+            text_rect.setHeight(item_height)
+            painter.drawText(
+                text_rect,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                text,
+            )
+
+            # Strikethrough for completed
+            if item.complete:
+                strike_y = item_y + item_height // 2
+                painter.drawLine(x + 6, strike_y, x + 6 + fm.horizontalAdvance(text), strike_y)
+
+            # Recurrence indicator
+            if item.recurrence_type:
+                rec_x = rect.right() - 12
+                painter.drawText(
+                    rec_x, item_y, 10, item_height, Qt.AlignmentFlag.AlignCenter, "\u21bb"
+                )
+
+        # --- Overflow indicator ---
+        overflow = len(items) - max_items
+        if overflow > 0:
+            painter.setPen(palette.placeholderText().color())
+            overflow_y = y + max_items * item_height
+            overflow_rect = rect.adjusted(4, 0, -4, 0)
+            overflow_rect.setTop(overflow_y)
+            overflow_rect.setHeight(overflow_height)
+            painter.drawText(
+                overflow_rect,
+                Qt.AlignmentFlag.AlignCenter,
+                f"+{overflow} more",
+            )
+
+        painter.restore()
+
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> Any:
+        from PyQt6.QtCore import QSize
+
+        return QSize(100, 90)
 
 
-# ---------------------------------------------------------------------------
-# Month view sub-widget
-# ---------------------------------------------------------------------------
-
-
-class _MonthView(QWidget):
-    """Traditional month grid with task chips on due dates."""
+class _CalendarTableView(QTableView):
+    """Month grid table view with guaranteed equal columns and rows."""
 
     task_clicked = pyqtSignal(object)  # item_id
     task_double_clicked = pyqtSignal(object)  # item_id
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._year = date.today().year
-        self._month = date.today().month
-        self._items_by_date: dict[date, list] = {}
 
-        layout = QVBoxLayout(self)
+        # Hide all chrome
+        h_header = self.horizontalHeader()
+        assert h_header is not None
+        h_header.hide()
+        h_header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+        v_header = self.verticalHeader()
+        assert v_header is not None
+        v_header.hide()
+
+        self.setShowGrid(False)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setStyleSheet("QTableView { border: none; background: palette(window); }")
+
+    def resizeEvent(self, a0) -> None:  # noqa: N802
+        super().resizeEvent(a0)
+        model = self.model()
+        if model is None:
+            return
+        row_count = model.rowCount()
+        if row_count == 0:
+            return
+        viewport = self.viewport()
+        if viewport is None:
+            return
+        row_height = viewport.height() // row_count
+        for row in range(row_count):
+            self.setRowHeight(row, row_height)
+
+    def mousePressEvent(self, a0) -> None:  # noqa: N802
+        super().mousePressEvent(a0)
+        if a0 is None:
+            return
+        index = self.indexAt(a0.pos())
+        if not index.isValid():
+            return
+        items = index.data(_ITEMS_ROLE) or []
+        if not items:
+            return
+        # Find which item was clicked based on y position
+        rect = self.visualRect(index)
+        click_y = a0.pos().y() - rect.top() - 18  # subtract day header
+        fm = QFontMetrics(self.font())
+        item_height = fm.height() + 4
+        item_idx = int(click_y / item_height) if item_height > 0 else 0
+        if 0 <= item_idx < len(items):
+            self.task_clicked.emit(items[item_idx].id)
+
+    def mouseDoubleClickEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None:
+            return
+        index = self.indexAt(a0.pos())
+        if not index.isValid():
+            return
+        items = index.data(_ITEMS_ROLE) or []
+        if not items:
+            return
+        rect = self.visualRect(index)
+        click_y = a0.pos().y() - rect.top() - 18
+        fm = QFontMetrics(self.font())
+        item_height = fm.height() + 4
+        item_idx = int(click_y / item_height) if item_height > 0 else 0
+        if 0 <= item_idx < len(items):
+            self.task_double_clicked.emit(items[item_idx].id)
+
+
+# ---------------------------------------------------------------------------
+# Day-of-week header bar
+# ---------------------------------------------------------------------------
+
+
+class _DayHeaders(QWidget):
+    """Fixed header row showing Mon-Sun labels."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFixedHeight(24)
+        layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-
-        # Day-of-week headers
-        header = QHBoxLayout()
-        header.setSpacing(0)
-        for day_name in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]:
-            lbl = QLabel(day_name)
+        for name in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]:
+            lbl = QLabel(name)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(
-                "font-size: 11px; font-weight: bold; padding: 4px; color: palette(placeholderText);"
+                "font-size: 11px; font-weight: bold; padding: 2px;"
+                " color: palette(placeholderText); border: none;"
             )
-            header.addWidget(lbl)
-        layout.addLayout(header)
-
-        # Grid of day cells
-        self._grid_widget = QWidget()
-        self._grid_layout = QGridLayout(self._grid_widget)
-        self._grid_layout.setContentsMargins(0, 0, 0, 0)
-        self._grid_layout.setSpacing(1)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setWidget(self._grid_widget)
-        layout.addWidget(scroll, 1)
-
-    def set_month(self, year: int, month: int) -> None:
-        self._year = year
-        self._month = month
-        self._rebuild()
-
-    def set_items(self, items_by_date: dict[date, list]) -> None:
-        self._items_by_date = items_by_date
-        self._rebuild()
-
-    def _rebuild(self) -> None:
-        # Clear existing cells
-        while self._grid_layout.count():
-            child = self._grid_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        weeks = _month_calendar(self._year, self._month)
-        today = date.today()
-
-        for row, week in enumerate(weeks):
-            for col, day_num in enumerate(week):
-                cell = QFrame()
-                cell_layout = QVBoxLayout(cell)
-                cell_layout.setContentsMargins(2, 2, 2, 2)
-                cell_layout.setSpacing(1)
-
-                if day_num == 0:
-                    cell.setStyleSheet(
-                        "QFrame { background: palette(window); border: 1px solid palette(mid);"
-                        " border-radius: 2px; }"
-                    )
-                else:
-                    d = date(self._year, self._month, day_num)
-                    is_today = d == today
-                    is_weekend = col >= 5
-
-                    bg = (
-                        "palette(highlight)"
-                        if is_today
-                        else ("palette(window)" if is_weekend else "palette(base)")
-                    )
-                    cell.setStyleSheet(
-                        f"QFrame {{ background: {bg}; border: 1px solid palette(mid);"
-                        f" border-radius: 2px;"
-                        f" {'opacity: 0.9;' if is_today else ''} }}"
-                    )
-
-                    # Day number
-                    day_lbl = QLabel(str(day_num))
-                    day_lbl.setAlignment(Qt.AlignmentFlag.AlignRight)
-                    font_style = "font-weight: bold;" if is_today else ""
-                    color = "color: white;" if is_today else ""
-                    day_lbl.setStyleSheet(
-                        f"font-size: 11px; {font_style} {color}"
-                        f" border: none; background: none; padding: 1px 3px;"
-                    )
-                    cell_layout.addWidget(day_lbl)
-
-                    # Task chips for this date
-                    items = self._items_by_date.get(d, [])
-                    for item in items[:4]:  # Show max 4 per cell
-                        chip = _TaskChip(item)
-                        chip.clicked.connect(self.task_clicked.emit)
-                        chip.double_clicked.connect(self.task_double_clicked.emit)
-                        cell_layout.addWidget(chip)
-
-                    if len(items) > 4:
-                        more = QLabel(f"+{len(items) - 4} more")
-                        more.setStyleSheet(
-                            "font-size: 9px; color: palette(placeholderText);"
-                            " border: none; background: none;"
-                        )
-                        more.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                        cell_layout.addWidget(more)
-
-                    cell_layout.addStretch()
-
-                cell.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-                cell.setMinimumHeight(80)
-                self._grid_layout.addWidget(cell, row, col)
+            lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            layout.addWidget(lbl)
 
 
 # ---------------------------------------------------------------------------
@@ -281,19 +410,35 @@ class _UnscheduledPanel(QFrame):
         layout.addWidget(self._scroll, 1)
 
     def set_items(self, items: list) -> None:
-        # Clear existing
-        while self._content_layout.count():
-            child = self._content_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+        # Rebuild content widget to avoid ghost rendering
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(2)
 
         for item in items:
-            chip = _TaskChip(item)
-            chip.clicked.connect(self.task_clicked.emit)
-            chip.double_clicked.connect(self.task_double_clicked.emit)
-            self._content_layout.addWidget(chip)
+            row = QFrame()
+            row.setStyleSheet(
+                "QFrame { background: palette(base); border-left: 3px solid #3498db;"
+                " border-radius: 3px; padding: 2px 4px; margin: 1px 0; }"
+            )
+            row.setCursor(Qt.CursorShape.PointingHandCursor)
+            row.setToolTip(item.reminder)
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(4, 2, 4, 2)
+            row_layout.setSpacing(2)
 
-        self._content_layout.addStretch()
+            text = item.reminder
+            if len(text) > 22:
+                text = text[:21] + "\u2026"
+            lbl = QLabel(text)
+            lbl.setStyleSheet("font-size: 10px; border: none; background: none;")
+            row_layout.addWidget(lbl)
+            content_layout.addWidget(row)
+
+        content_layout.addStretch()
+        self._scroll.setWidget(content)
+
         n = len(items)
         self._count_label.setText(f"{n} task{'s' if n != 1 else ''}")
 
@@ -334,7 +479,7 @@ class CalendarViewWidget(QWidget):
         self._selected_item_id: UUID | None = None
         self._focus_session_item_id: UUID | None = None
         self._current_date = date.today()
-        self._sub_view = self.SUB_MONTH  # Start with month for initial build
+        self._sub_view = self.SUB_MONTH
 
         self._setup_ui()
 
@@ -414,7 +559,7 @@ class CalendarViewWidget(QWidget):
         # Sub-view stack
         self._sub_stack = QStackedWidget()
 
-        # Placeholder views (Day, Week will be implemented later)
+        # Placeholder views (Day, Week, Timeline)
         self._day_view = QLabel("Day view — coming soon")
         self._day_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._sub_stack.addWidget(self._day_view)  # 0
@@ -423,10 +568,25 @@ class CalendarViewWidget(QWidget):
         self._week_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._sub_stack.addWidget(self._week_view)  # 1
 
-        self._month_view = _MonthView()
-        self._month_view.task_clicked.connect(self._on_task_clicked)
-        self._month_view.task_double_clicked.connect(self._on_task_double_clicked)
-        self._sub_stack.addWidget(self._month_view)  # 2
+        # Month view — QTableView with custom model/delegate
+        month_container = QWidget()
+        month_layout = QVBoxLayout(month_container)
+        month_layout.setContentsMargins(0, 0, 0, 0)
+        month_layout.setSpacing(0)
+
+        self._day_headers = _DayHeaders()
+        month_layout.addWidget(self._day_headers)
+
+        self._cal_model = _CalendarModel()
+        self._cal_delegate = _CalendarDelegate()
+        self._cal_table = _CalendarTableView()
+        self._cal_table.setModel(self._cal_model)
+        self._cal_table.setItemDelegate(self._cal_delegate)
+        self._cal_table.task_clicked.connect(self._on_task_clicked)
+        self._cal_table.task_double_clicked.connect(self._on_task_double_clicked)
+        month_layout.addWidget(self._cal_table, 1)
+
+        self._sub_stack.addWidget(month_container)  # 2
 
         self._timeline_view = QLabel("Timeline view — coming soon")
         self._timeline_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -437,51 +597,42 @@ class CalendarViewWidget(QWidget):
 
         # Unscheduled panel
         self._unscheduled = _UnscheduledPanel()
-        self._unscheduled.task_clicked.connect(self._on_task_clicked)
-        self._unscheduled.task_double_clicked.connect(self._on_task_double_clicked)
         content.addWidget(self._unscheduled)
 
         layout.addLayout(content, 1)
 
         self._update_nav_label()
 
-    # --- Public API (matches TodoTableWidget / KanbanBoardWidget) ---
+    # --- Public API ---
 
     def set_list(self, todo_list: TodoList | None) -> None:
-        """Set the list to display and refresh."""
         self._todo_list = todo_list
         self.refresh()
 
     def set_filter(self, filter_state: FilterState | None) -> None:
-        """Apply a filter state."""
         self._filter_state = filter_state
         self.refresh()
 
     def get_selected_item_ids(self) -> list[UUID]:
-        """Return currently selected item IDs."""
         if self._selected_item_id is not None:
             return [self._selected_item_id]
         return []
 
     def set_focus_session_item(self, item_id: UUID | None) -> None:
-        """Highlight the item with an active focus session."""
         if self._focus_session_item_id != item_id:
             self._focus_session_item_id = item_id
             self.refresh()
 
     def refresh(self) -> None:
-        """Rebuild the calendar with current data."""
         if self._todo_list is None:
-            self._month_view.set_items({})
+            self._cal_model.set_items({})
             self._unscheduled.set_items([])
             return
 
-        # Gather items, apply filter
         items = list(self._todo_list.active_items())
-        items = [i for i in items if i.parent_id is None]  # Top-level only
+        items = [i for i in items if i.parent_id is None]
         items = self._apply_filter(items)
 
-        # Split into scheduled and unscheduled
         scheduled: dict[date, list] = {}
         unscheduled: list = []
         for item in items:
@@ -490,7 +641,6 @@ class CalendarViewWidget(QWidget):
             else:
                 unscheduled.append(item)
 
-        # Sort items within each date
         for d in scheduled:
             scheduled[d].sort(
                 key=lambda i: (
@@ -501,12 +651,12 @@ class CalendarViewWidget(QWidget):
                 )
             )
 
-        # Update sub-views
-        self._month_view.set_items(scheduled)
-        self._month_view.set_month(self._current_date.year, self._current_date.month)
+        self._cal_model.set_items(scheduled)
+        self._cal_model.set_month(self._current_date.year, self._current_date.month)
+        self._cal_delegate._today = date.today()
         self._unscheduled.set_items(unscheduled)
 
-    # --- Filter (same logic as kanban) ---
+    # --- Filter ---
 
     def _apply_filter(self, items: list) -> list:
         if self._filter_state is None:
@@ -580,14 +730,13 @@ class CalendarViewWidget(QWidget):
         if self._sub_view == self.SUB_MONTH:
             self._nav_label.setText(f"{calendar.month_name[d.month]} {d.year}")
         elif self._sub_view == self.SUB_WEEK:
-            week = _week_dates(d)
-            self._nav_label.setText(
-                f"{week[0].strftime('%b %d')} — {week[6].strftime('%b %d, %Y')}"
-            )
+            start = d - timedelta(days=d.weekday())
+            end = start + timedelta(days=6)
+            self._nav_label.setText(f"{start.strftime('%b %d')} \u2014 {end.strftime('%b %d, %Y')}")
         elif self._sub_view == self.SUB_DAY:
             self._nav_label.setText(d.strftime("%A, %B %d, %Y"))
         else:
-            self._nav_label.setText(f"Timeline — {d.strftime('%B %Y')}")
+            self._nav_label.setText(f"Timeline \u2014 {d.strftime('%B %Y')}")
 
     # --- Sub-view switching ---
 
@@ -603,7 +752,9 @@ class CalendarViewWidget(QWidget):
 
     def _on_task_clicked(self, item_id: UUID) -> None:
         self._selected_item_id = item_id
+        self._cal_delegate.set_selected(item_id)
+        self._cal_table.viewport().update()  # type: ignore[union-attr]
 
     def _on_task_double_clicked(self, item_id: UUID) -> None:
         self._selected_item_id = item_id
-        self.edit_tags_requested.emit(item_id)
+        # TODO: open task detail/edit dialog (same as list/board views)
