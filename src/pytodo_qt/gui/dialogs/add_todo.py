@@ -273,11 +273,23 @@ class AddTodoDialog(QDialog):
         self._advanced_container.setVisible(self._advanced_shown)
         arrow = "\u25bc" if self._advanced_shown else "\u25b6"
         self._advanced_toggle.setText(f'<a href="#">Advanced {arrow}</a>')
+        # Populate fields from current parse result when opening advanced
+        if self._advanced_shown:
+            result = self._smart_input.get_parse_result()
+            if result:
+                # Temporarily bypass guard to populate fields once
+                self._advanced_shown = False
+                self._on_smart_parse_changed(result)
+                self._advanced_shown = True
         self.adjustSize()
 
     def _on_smart_parse_changed(self, result: ParseResult) -> None:
-        """Sync smart input parse result to discrete fields."""
-        if self._syncing:
+        """Sync smart input parse result to discrete fields.
+
+        When advanced mode is shown, the user is editing fields directly —
+        don't overwrite their edits with parsed values from the smart input.
+        """
+        if self._syncing or self._advanced_shown:
             return
         self._syncing = True
         try:

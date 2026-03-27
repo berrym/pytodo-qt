@@ -98,17 +98,18 @@ Research confirmed QGridLayout with QFrame cells causes unsolvable layout issues
 ## Implementation Order
 
 1. CalendarViewWidget skeleton (DONE — 64cc7a3)
-2. Month view rewrite with QTableView+Delegate
+2. Month view rewrite with QTableView+Delegate (DONE — cd11fb6)
 3. MainWindow integration (DONE — 64cc7a3)
-4. Week view
-5. Day view
-6. Timeline view
-7. Unscheduled panel drag-to-schedule
-8. Drag-and-drop between dates
-9. "+N more" popover
+4. Week view (DONE — 4a3b6df)
+5. Day view (DONE — 3fac4c3)
+6. Timeline view (DONE — 183763d)
+7. Calendar interaction layer + visual polish (DONE — 2fc5b1f)
+8. Unscheduled panel drag-to-schedule
+9. Drag-and-drop between dates
 10. Web UI calendar mode
 11. Calendar SVG icon for inline toggle
-12. Tests
+12. 12h/24h time toggle for day/week views
+13. Tests
 
 ---
 
