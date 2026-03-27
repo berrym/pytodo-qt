@@ -81,33 +81,36 @@ def _item_to_vtodo(item: TodoItem) -> Todo:
     todo.add("status", "COMPLETED" if item.complete else "NEEDS-ACTION")
     todo.add("percent-complete", 100 if item.complete else 0)
 
+    # COMPLETED timestamp (RFC 5545: SHOULD be present when STATUS=COMPLETED)
+    if item.complete:
+        todo.add("completed", _ms_to_utc_datetime(item.updated_at))
+
     # Always export DUE as datetime (RFC 5545 compliance).
     # Date-only items use midnight UTC — imported back as date-only
     # via the time(0,0,0) check in _vtodo_to_item.
     if item.due_date:
+        due_dt: datetime
         if item.due_time:
-            todo.add(
-                "due",
-                datetime(
-                    item.due_date.year,
-                    item.due_date.month,
-                    item.due_date.day,
-                    item.due_time.hour,
-                    item.due_time.minute,
-                    item.due_time.second,
-                    tzinfo=UTC,
-                ),
+            due_dt = datetime(
+                item.due_date.year,
+                item.due_date.month,
+                item.due_date.day,
+                item.due_time.hour,
+                item.due_time.minute,
+                item.due_time.second,
+                tzinfo=UTC,
             )
         else:
-            todo.add(
-                "due",
-                datetime(
-                    item.due_date.year,
-                    item.due_date.month,
-                    item.due_date.day,
-                    tzinfo=UTC,
-                ),
+            due_dt = datetime(
+                item.due_date.year,
+                item.due_date.month,
+                item.due_date.day,
+                tzinfo=UTC,
             )
+        todo.add("due", due_dt)
+        # DTSTART — many CalDAV clients need this for calendar display.
+        # Use same as DUE for tasks (they're point-in-time, not ranges).
+        todo.add("dtstart", due_dt)
 
     # Strip @ prefix from tags for standard CATEGORIES format
     if item.tags:
@@ -117,9 +120,23 @@ def _item_to_vtodo(item: TodoItem) -> Todo:
     todo.add("created", _ms_to_utc_datetime(item.created_at))
     todo.add("last-modified", _ms_to_utc_datetime(item.updated_at))
 
+    # Recurrence: minutely is valid RFC 5545 but many clients only support
+    # daily+. Convert minutely to a description annotation rather than
+    # exporting an unsupported RRULE that causes clients to drop the item.
     rrule = _build_rrule(item)
     if rrule:
-        todo.add("rrule", rrule)
+        freq_list = rrule.get("FREQ", [])
+        if freq_list and freq_list[0] == "MINUTELY":
+            # Most CalDAV clients can't handle FREQ=MINUTELY.
+            # Add as DESCRIPTION instead of RRULE to avoid silent drops.
+            interval = item.recurrence_interval
+            if interval >= 60 and interval % 60 == 0:
+                desc = f"Repeats every {interval // 60} hour(s)"
+            else:
+                desc = f"Repeats every {interval} minute(s)"
+            todo.add("description", desc)
+        else:
+            todo.add("rrule", rrule)
 
     return todo
 
