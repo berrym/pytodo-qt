@@ -491,6 +491,354 @@ class _CalendarTableView(QTableView):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Week View — 7 day columns × 25 rows (all-day + 24 hours)
+# ---------------------------------------------------------------------------
+
+_WEEK_ITEMS_ROLE = Qt.ItemDataRole.UserRole + 10
+_WEEK_HOUR_ROLE = Qt.ItemDataRole.UserRole + 11
+_WEEK_DATE_ROLE = Qt.ItemDataRole.UserRole + 12
+
+
+class _WeekModel(QAbstractTableModel):
+    """Data model for week view — 7 columns (days) × 25 rows (all-day + hours)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._week_dates: list[date] = []
+        self._items_by_date: dict[date, list] = {}
+        self._set_week(date.today())
+
+    def rowCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
+        return 25  # row 0 = all-day, rows 1-24 = hours 0-23
+
+    def columnCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
+        return 7
+
+    def data(self, index: QModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:
+        if not index.isValid():
+            return None
+        row, col = index.row(), index.column()
+        if col >= len(self._week_dates):
+            return None
+
+        d = self._week_dates[col]
+
+        if role == _WEEK_DATE_ROLE:
+            return d
+        if role == _WEEK_HOUR_ROLE:
+            return row - 1 if row > 0 else -1  # -1 = all-day
+
+        if role == _WEEK_ITEMS_ROLE:
+            items = self._items_by_date.get(d, [])
+            if row == 0:
+                # All-day: items with due_date but no due_time
+                return [i for i in items if i.due_time is None]
+            hour = row - 1
+            return [i for i in items if i.due_time and i.due_time.hour == hour]
+
+        if role == Qt.ItemDataRole.DisplayRole:
+            if row == 0:
+                return "All Day"
+            return f"{row - 1:02d}:00"
+        return None
+
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole
+    ) -> Any:  # noqa: N802
+        if role != Qt.ItemDataRole.DisplayRole:
+            return None
+        if orientation == Qt.Orientation.Horizontal:
+            if section < len(self._week_dates):
+                d = self._week_dates[section]
+                return d.strftime("%a %d")
+            return ""
+        # Vertical: hour labels
+        if section == 0:
+            return "All Day"
+        return f"{section - 1:02d}:00"
+
+    def _set_week(self, d: date) -> None:
+        start = d - timedelta(days=d.weekday())
+        self._week_dates = [start + timedelta(days=i) for i in range(7)]
+
+    def set_week(self, d: date) -> None:
+        self.beginResetModel()
+        self._set_week(d)
+        self.endResetModel()
+
+    def set_items(self, items_by_date: dict[date, list]) -> None:
+        self.beginResetModel()
+        self._items_by_date = items_by_date
+        self.endResetModel()
+
+    def week_dates(self) -> list[date]:
+        return list(self._week_dates)
+
+
+class _WeekDelegate(QStyledItemDelegate):
+    """Painter for week view cells — shows task chips in hour slots."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._today = date.today()
+        self._selected_item_id: UUID | None = None
+        self._colors: dict[str, str] = {}
+        self._refresh_colors()
+
+    def _refresh_colors(self) -> None:
+        from ...gui.styles.themes import get_colors
+
+        self._colors = get_colors()
+
+    def set_selected(self, item_id: UUID | None) -> None:
+        self._selected_item_id = item_id
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setClipRect(option.rect)
+
+        rect = option.rect
+        c = self._colors
+        cell_date = index.data(_WEEK_DATE_ROLE)
+        hour = index.data(_WEEK_HOUR_ROLE)
+        items: list = index.data(_WEEK_ITEMS_ROLE) or []
+
+        col_base = QColor(c["base"])
+        col_alt_base = QColor(c["alternate_base"])
+        col_highlight = QColor(c["highlight"])
+        col_highlight_text = QColor(c["highlight_text"])
+        col_text = QColor(c["text"])
+        col_completed_text = QColor(c["completed_text"])
+        col_border = QColor(c["border"])
+
+        # Background
+        is_today = cell_date == self._today if cell_date else False
+        is_weekend = cell_date.weekday() >= 5 if cell_date else False
+        is_all_day = hour == -1
+
+        if is_today and is_all_day:
+            painter.fillRect(rect, col_highlight)
+        elif is_today:
+            # Subtle today tint for hour cells
+            today_bg = QColor(col_highlight)
+            today_bg.setAlpha(30)
+            painter.fillRect(rect, col_base)
+            painter.fillRect(rect, today_bg)
+        elif is_weekend:
+            painter.fillRect(rect, col_alt_base)
+        else:
+            painter.fillRect(rect, col_base)
+
+        # Grid lines
+        painter.setPen(QPen(col_border, 1))
+        painter.drawRect(rect.adjusted(0, 0, -1, -1))
+
+        if not items:
+            painter.restore()
+            return
+
+        # Draw task chips
+        item_font = QFont(painter.font())
+        item_font.setPixelSize(10)
+        painter.setFont(item_font)
+        fm = QFontMetrics(item_font)
+
+        chip_height = fm.height() + 4
+        y = rect.top() + 2
+        x = rect.left() + 2
+        text_width = rect.width() - 8
+        max_chips = max(1, (rect.height() - 4) // chip_height)
+
+        col_priority = {
+            1: QColor(c["priority_high"]),
+            2: QColor(c["priority_normal"]),
+            3: QColor(c["priority_low"]),
+        }
+
+        for i in range(min(max_chips, len(items))):
+            item = items[i]
+            chip_y = y + i * chip_height
+            is_selected = bool(self._selected_item_id and item.id == self._selected_item_id)
+
+            # Completed bg
+            if item.complete:
+                chip_rect = rect.adjusted(2, 0, -2, 0)
+                chip_rect.setTop(chip_y)
+                chip_rect.setHeight(chip_height)
+                painter.fillRect(chip_rect, QColor(c["completed_bg"]))
+
+            # Selection
+            if is_selected:
+                sel_rect = rect.adjusted(2, 0, -2, 0)
+                sel_rect.setTop(chip_y)
+                sel_rect.setHeight(chip_height)
+                sel_bg = QColor(col_alt_base)
+                sel_bg.setAlpha(200)
+                painter.fillRect(sel_rect, sel_bg)
+                painter.setPen(QPen(col_border.lighter(150), 2))
+                painter.drawRoundedRect(sel_rect, 2, 2)
+
+            # Priority bar
+            p_color = col_priority.get(item.priority, col_priority[2])
+            painter.fillRect(x, chip_y + 1, 3, chip_height - 2, p_color)
+
+            # Text
+            if item.complete:
+                painter.setPen(col_completed_text)
+            elif is_today and is_all_day:
+                painter.setPen(col_highlight_text)
+            else:
+                painter.setPen(col_text)
+
+            prefix = "\u2713 " if item.complete else ""
+            text = fm.elidedText(prefix + item.reminder, Qt.TextElideMode.ElideRight, text_width)
+            painter.drawText(
+                x + 6,
+                chip_y,
+                text_width,
+                chip_height,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                text,
+            )
+
+            # Strikethrough
+            if item.complete:
+                painter.setPen(QPen(col_completed_text, 1))
+                strike_y = chip_y + chip_height // 2
+                prefix_w = fm.horizontalAdvance(prefix)
+                painter.drawLine(
+                    x + 6 + prefix_w,
+                    strike_y,
+                    x + 6 + fm.horizontalAdvance(text),
+                    strike_y,
+                )
+
+        # Overflow
+        overflow = len(items) - max_chips
+        if overflow > 0:
+            painter.setPen(QColor(c["completed_text"]))
+            painter.drawText(
+                rect.adjusted(4, 0, -4, 0).translated(0, max_chips * chip_height),
+                Qt.AlignmentFlag.AlignCenter,
+                f"+{overflow}",
+            )
+
+        painter.restore()
+
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> Any:
+        from PyQt6.QtCore import QSize
+
+        return QSize(100, 40)
+
+
+class _WeekTableView(QTableView):
+    """Week grid with day columns and hour rows."""
+
+    task_clicked = pyqtSignal(object)
+    task_double_clicked = pyqtSignal(object)
+    task_right_clicked = pyqtSignal(object, object)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+
+        h_header = self.horizontalHeader()
+        assert h_header is not None
+        h_header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        h_header.setFixedHeight(28)
+
+        v_header = self.verticalHeader()
+        assert v_header is not None
+        v_header.setDefaultSectionSize(60)
+        v_header.setMinimumSectionSize(40)
+        v_header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+
+        self.setShowGrid(False)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.setMouseTracking(True)
+        self.setStyleSheet("QTableView { border: none; background: palette(window); }")
+
+    def _hit_test(self, pos):
+        index = self.indexAt(pos)
+        if not index.isValid():
+            return None
+        items = index.data(_WEEK_ITEMS_ROLE) or []
+        cell_date = index.data(_WEEK_DATE_ROLE)
+        if not items or cell_date is None:
+            return None
+
+        rect = self.visualRect(index)
+        font = QFont()
+        font.setPixelSize(10)
+        fm = QFontMetrics(font)
+        chip_height = fm.height() + 4
+        click_y = pos.y() - rect.top() - 2
+        item_idx = int(click_y / chip_height) if chip_height > 0 else -1
+
+        if 0 <= item_idx < len(items):
+            return ("task", items[item_idx], index)
+        return None
+
+    def mousePressEvent(self, a0) -> None:  # noqa: N802
+        super().mousePressEvent(a0)
+        if a0 is None:
+            return
+        hit = self._hit_test(a0.pos())
+        if hit and hit[0] == "task":
+            self.task_clicked.emit(hit[1].id)
+
+    def mouseDoubleClickEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None:
+            return
+        hit = self._hit_test(a0.pos())
+        if hit and hit[0] == "task":
+            self.task_double_clicked.emit(hit[1].id)
+
+    def contextMenuEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None:
+            return
+        hit = self._hit_test(a0.pos())
+        if hit and hit[0] == "task":
+            self.task_clicked.emit(hit[1].id)
+            self.task_right_clicked.emit(hit[1].id, a0.globalPos())
+        else:
+            super().contextMenuEvent(a0)
+
+    def mouseMoveEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None:
+            return
+        hit = self._hit_test(a0.pos())
+        if hit and hit[0] == "task":
+            item = hit[1]
+            parts = [item.reminder]
+            if item.due_time:
+                parts.append(f"Due: {item.due_time.strftime('%I:%M %p').lstrip('0')}")
+            if item.recurrence_type:
+                from ...core.models import format_recurrence
+
+                parts.append(format_recurrence(item))
+            if item.estimated_pomodoros > 0 or item.pomodoro_count > 0:
+                pom = (
+                    f"\U0001f345 {item.pomodoro_count}/{item.estimated_pomodoros}"
+                    if item.estimated_pomodoros
+                    else f"\U0001f345 {item.pomodoro_count}"
+                )
+                parts.append(pom)
+            if item.tags:
+                parts.append(f"Tags: {', '.join(item.tags)}")
+            if item.complete:
+                parts.append("\u2713 Completed")
+            from PyQt6.QtWidgets import QToolTip
+
+            QToolTip.showText(a0.globalPosition().toPoint(), "\n".join(parts), self)
+        else:
+            from PyQt6.QtWidgets import QToolTip
+
+            QToolTip.hideText()
+
+
 class _DayHeaders(QWidget):
     """Fixed header row showing Mon-Sun labels."""
 
@@ -762,9 +1110,16 @@ class CalendarViewWidget(QWidget):
         self._day_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._sub_stack.addWidget(self._day_view)  # 0
 
-        self._week_view = QLabel("Week view — coming soon")
-        self._week_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._sub_stack.addWidget(self._week_view)  # 1
+        # Week view — QTableView with hour rows and day columns
+        self._week_model = _WeekModel()
+        self._week_delegate = _WeekDelegate()
+        self._week_table = _WeekTableView()
+        self._week_table.setModel(self._week_model)
+        self._week_table.setItemDelegate(self._week_delegate)
+        self._week_table.task_clicked.connect(self._on_task_clicked)
+        self._week_table.task_double_clicked.connect(self._on_task_double_clicked)
+        self._week_table.task_right_clicked.connect(self._on_task_right_clicked)
+        self._sub_stack.addWidget(self._week_table)  # 1
 
         # Month view — QTableView with custom model/delegate
         month_container = QWidget()
@@ -827,6 +1182,7 @@ class CalendarViewWidget(QWidget):
         self._close_popover()
         if self._todo_list is None:
             self._cal_model.set_items({})
+            self._week_model.set_items({})
             self._unscheduled.set_items([])
             return
 
@@ -856,6 +1212,26 @@ class CalendarViewWidget(QWidget):
         self._cal_model.set_month(self._current_date.year, self._current_date.month)
         self._cal_delegate._today = date.today()
         self._cal_delegate._todo_list = self._todo_list
+
+        # Week view
+        self._week_model.set_items(scheduled)
+        self._week_model.set_week(self._current_date)
+        self._week_delegate._today = date.today()
+        # Update week header labels
+        week_dates = self._week_model.week_dates()
+        h_header = self._week_table.horizontalHeader()
+        if h_header:
+            wmodel = self._week_table.model()
+            if wmodel:
+                for col in range(7):
+                    d = week_dates[col] if col < len(week_dates) else None
+                    if d:
+                        is_today = d == date.today()
+                        label = d.strftime("%a %d")
+                        if is_today:
+                            label = f"\u25cf {label}"
+                        wmodel.setHeaderData(col, Qt.Orientation.Horizontal, label)
+
         self._unscheduled.set_items(unscheduled, todo_list=self._todo_list)
 
     # --- Filter ---
@@ -950,12 +1326,24 @@ class CalendarViewWidget(QWidget):
         self._update_nav_label()
         self.refresh()
 
+        # Auto-scroll week view to current hour
+        if idx == self.SUB_WEEK:
+            from datetime import datetime as _dt
+
+            current_hour = _dt.now().hour
+            # Row 0 = All Day, row N = hour N-1, so current hour is row current_hour+1
+            target_row = current_hour + 1
+            index = self._week_model.index(target_row, 0)
+            self._week_table.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
+
     # --- Task interaction ---
 
     def _on_task_clicked(self, item_id: UUID) -> None:
         self._selected_item_id = item_id
         self._cal_delegate.set_selected(item_id)
+        self._week_delegate.set_selected(item_id)
         self._cal_table.viewport().update()  # type: ignore[union-attr]
+        self._week_table.viewport().update()  # type: ignore[union-attr]
 
     def _on_task_double_clicked(self, item_id: UUID) -> None:
         self._selected_item_id = item_id
