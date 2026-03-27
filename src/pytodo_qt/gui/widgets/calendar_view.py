@@ -1105,10 +1105,23 @@ class CalendarViewWidget(QWidget):
         # Sub-view stack
         self._sub_stack = QStackedWidget()
 
-        # Placeholder views (Day, Week, Timeline)
-        self._day_view = QLabel("Day view — coming soon")
-        self._day_view.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._sub_stack.addWidget(self._day_view)  # 0
+        # Day view — single-column version of week view with larger slots
+        self._day_model = _WeekModel()
+        self._day_delegate = _WeekDelegate()
+        self._day_table = _WeekTableView()
+        self._day_table.setModel(self._day_model)
+        self._day_table.setItemDelegate(self._day_delegate)
+        self._day_table.task_clicked.connect(self._on_task_clicked)
+        self._day_table.task_double_clicked.connect(self._on_task_double_clicked)
+        self._day_table.task_right_clicked.connect(self._on_task_right_clicked)
+        # Larger slots for day view — more room for detail
+        v_header = self._day_table.verticalHeader()
+        if v_header:
+            v_header.setDefaultSectionSize(80)
+        # Hide columns 1-6, show only column 0 (the single day)
+        for col in range(1, 7):
+            self._day_table.setColumnHidden(col, True)
+        self._sub_stack.addWidget(self._day_table)  # 0
 
         # Week view — QTableView with hour rows and day columns
         self._week_model = _WeekModel()
@@ -1183,6 +1196,7 @@ class CalendarViewWidget(QWidget):
         if self._todo_list is None:
             self._cal_model.set_items({})
             self._week_model.set_items({})
+            self._day_model.set_items({})
             self._unscheduled.set_items([])
             return
 
@@ -1231,6 +1245,22 @@ class CalendarViewWidget(QWidget):
                         if is_today:
                             label = f"\u25cf {label}"
                         wmodel.setHeaderData(col, Qt.Orientation.Horizontal, label)
+
+        # Day view — show single day using week model with 1 visible column
+        # Set the week starting from current_date so column 0 = current_date
+        self._day_model.set_items(scheduled)
+        # Create a fake "week" starting from current_date
+        self._day_model._set_week(self._current_date)
+        # Shift so column 0 is the target date
+        self._day_model._week_dates = [self._current_date] + [
+            self._current_date + timedelta(days=i) for i in range(1, 7)
+        ]
+        self._day_model.layoutChanged.emit()
+        self._day_delegate._today = date.today()
+        # Update header to show the day name
+        h_header = self._day_table.horizontalHeader()
+        if h_header:
+            h_header.hide()  # Single column doesn't need day header
 
         self._unscheduled.set_items(unscheduled, todo_list=self._todo_list)
 
@@ -1326,8 +1356,15 @@ class CalendarViewWidget(QWidget):
         self._update_nav_label()
         self.refresh()
 
-        # Auto-scroll week view to current hour
-        if idx == self.SUB_WEEK:
+        # Auto-scroll to current hour for day and week views
+        if idx == self.SUB_DAY:
+            from datetime import datetime as _dt
+
+            current_hour = _dt.now().hour
+            target_row = current_hour + 1
+            index = self._day_model.index(target_row, 0)
+            self._day_table.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
+        elif idx == self.SUB_WEEK:
             from datetime import datetime as _dt
 
             current_hour = _dt.now().hour
@@ -1342,8 +1379,10 @@ class CalendarViewWidget(QWidget):
         self._selected_item_id = item_id
         self._cal_delegate.set_selected(item_id)
         self._week_delegate.set_selected(item_id)
+        self._day_delegate.set_selected(item_id)
         self._cal_table.viewport().update()  # type: ignore[union-attr]
         self._week_table.viewport().update()  # type: ignore[union-attr]
+        self._day_table.viewport().update()  # type: ignore[union-attr]
 
     def _on_task_double_clicked(self, item_id: UUID) -> None:
         self._selected_item_id = item_id
