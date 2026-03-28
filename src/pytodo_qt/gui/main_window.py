@@ -642,13 +642,23 @@ class MainWindow(QMainWindow):
         if _board_icon_path.exists():
             self._board_view_btn.setIcon(QIcon(str(_board_icon_path)))
 
+        self._calendar_view_btn = QToolButton()
+        self._calendar_view_btn.setText("Calendar")
+        self._calendar_view_btn.setCheckable(True)
+        self._calendar_view_btn.setToolTip("Calendar view (Ctrl+Shift+B)")
+        _cal_icon_path = _icon_dir / "view-calendar.svg"
+        if _cal_icon_path.exists():
+            self._calendar_view_btn.setIcon(QIcon(str(_cal_icon_path)))
+
         self._view_btn_group = QButtonGroup(self)
         self._view_btn_group.addButton(self._list_view_btn, 0)
         self._view_btn_group.addButton(self._board_view_btn, 1)
+        self._view_btn_group.addButton(self._calendar_view_btn, 2)
         self._view_btn_group.idClicked.connect(self._on_view_toggle)
 
         top_row.addWidget(self._list_view_btn)
         top_row.addWidget(self._board_view_btn)
+        top_row.addWidget(self._calendar_view_btn)
         layout.addLayout(top_row)
 
         # Search/filter bar
@@ -686,6 +696,7 @@ class MainWindow(QMainWindow):
             self.board_view_action.setChecked(True)
         elif view_mode == "calendar":
             self._view_stack.setCurrentIndex(2)
+            self._calendar_view_btn.setChecked(True)
             self.calendar_view_action.setChecked(True)
         else:
             self._view_stack.setCurrentIndex(0)
@@ -760,6 +771,7 @@ class MainWindow(QMainWindow):
         # Sync inline toggle buttons
         self._list_view_btn.setChecked(view_id == 0)
         self._board_view_btn.setChecked(view_id == 1)
+        self._calendar_view_btn.setChecked(view_id == 2)
         # Sync toolbar actions
         self.list_view_action.setChecked(view_id == 0)
         self.board_view_action.setChecked(view_id == 1)

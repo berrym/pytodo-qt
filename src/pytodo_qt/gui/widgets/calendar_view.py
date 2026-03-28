@@ -53,6 +53,31 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
+def _format_hour(hour: int) -> str:
+    """Format an hour (0-23) using the app's time_format config."""
+    from ...core.config import get_config
+
+    fmt = get_config().appearance.time_format
+    if fmt == "12h" or (fmt == "system" and _is_system_12h()):
+        if hour == 0:
+            return "12 AM"
+        if hour < 12:
+            return f"{hour} AM"
+        if hour == 12:
+            return "12 PM"
+        return f"{hour - 12} PM"
+    return f"{hour:02d}:00"
+
+
+def _is_system_12h() -> bool:
+    """Check if the system locale uses 12-hour time."""
+    from PyQt6.QtCore import QLocale
+
+    locale = QLocale.system()
+    fmt = locale.timeFormat(QLocale.FormatType.ShortFormat)
+    return "AP" in fmt.upper() or "AM" in fmt.upper()
+
+
 class _CloseButton(QWidget):
     """QPainter-rendered close button for reliable cross-platform display."""
 
@@ -891,7 +916,7 @@ class _WeekModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DisplayRole:
             if row == 0:
                 return "All Day"
-            return f"{row - 1:02d}:00"
+            return _format_hour(row - 1)
         return None
 
     def headerData(
@@ -907,7 +932,7 @@ class _WeekModel(QAbstractTableModel):
         # Vertical: hour labels
         if section == 0:
             return "All Day"
-        return f"{section - 1:02d}:00"
+        return _format_hour(section - 1)
 
     def _set_week(self, d: date) -> None:
         start = d - timedelta(days=d.weekday())
@@ -1481,7 +1506,17 @@ class CalendarViewWidget(QWidget):
         self._selected_item_id: UUID | None = None
         self._focus_session_item_id: UUID | None = None
         self._current_date = date.today()
-        self._sub_view = self.SUB_MONTH
+        # Load saved sub-view from config, default to week
+        from ...core.config import get_config
+
+        saved = get_config().database.calendar_sub_view
+        sub_map = {
+            "day": self.SUB_DAY,
+            "week": self.SUB_WEEK,
+            "month": self.SUB_MONTH,
+            "timeline": self.SUB_TIMELINE,
+        }
+        self._sub_view = sub_map.get(saved, self.SUB_WEEK)
 
         self._setup_ui()
 
@@ -1826,6 +1861,18 @@ class CalendarViewWidget(QWidget):
             btn.setChecked(i == idx)
         self._update_nav_label()
         self.refresh()
+
+        # Persist sub-view choice
+        from ...core.config import get_config, get_config_manager
+
+        name_map = {
+            self.SUB_DAY: "day",
+            self.SUB_WEEK: "week",
+            self.SUB_MONTH: "month",
+            self.SUB_TIMELINE: "timeline",
+        }
+        get_config().database.calendar_sub_view = name_map.get(idx, "week")
+        get_config_manager().save()
 
         # Auto-scroll to current hour for day and week views
         if idx == self.SUB_DAY:
