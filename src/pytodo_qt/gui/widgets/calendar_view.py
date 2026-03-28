@@ -22,10 +22,11 @@ from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
+from PyQt6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QDrag, QFont, QFontMetrics, QPainter, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -348,6 +349,7 @@ class _CalendarTableView(QTableView):
     task_double_clicked = pyqtSignal(object)  # item_id
     task_right_clicked = pyqtSignal(object, object)  # (item_id, QPoint global pos)
     more_clicked = pyqtSignal(object, object)  # (date, list[TodoItem])
+    task_dropped = pyqtSignal(object, object)  # (item_id UUID, target_date)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -366,7 +368,11 @@ class _CalendarTableView(QTableView):
         self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.setMouseTracking(True)
+        self.setAcceptDrops(True)
         self.setStyleSheet("QTableView { border: none; background: palette(window); }")
+        self._drag_start_pos = None
+        self._drag_item_id = None
+        self._dragging = False
 
     def resizeEvent(self, a0) -> None:  # noqa: N802
         super().resizeEvent(a0)
@@ -415,7 +421,9 @@ class _CalendarTableView(QTableView):
         return None
 
     def mousePressEvent(self, a0) -> None:  # noqa: N802
-        super().mousePressEvent(a0)
+        self._drag_start_pos = None
+        self._drag_item_id = None
+        self._dragging = False
         if a0 is None:
             return
         hit = self._hit_test(a0.pos())
@@ -423,6 +431,9 @@ class _CalendarTableView(QTableView):
             return
         if hit[0] == "task":
             self.task_clicked.emit(hit[1].id)
+            if a0.button() == Qt.MouseButton.LeftButton:
+                self._drag_start_pos = a0.pos()
+                self._drag_item_id = hit[1].id
         elif hit[0] == "more":
             self.more_clicked.emit(hit[1], hit[2])
 
@@ -433,10 +444,38 @@ class _CalendarTableView(QTableView):
         if hit is not None and hit[0] == "task":
             self.task_double_clicked.emit(hit[1].id)
 
+    def mouseReleaseEvent(self, a0) -> None:  # noqa: N802
+        self._drag_start_pos = None
+        self._drag_item_id = None
+        self._dragging = False
+        super().mouseReleaseEvent(a0)
+
     def mouseMoveEvent(self, a0) -> None:  # noqa: N802
-        """Show tooltip with full task info on hover."""
         if a0 is None:
             return
+        # Drag initiation
+        if (
+            not self._dragging
+            and self._drag_start_pos is not None
+            and self._drag_item_id is not None
+            and (a0.pos() - self._drag_start_pos).manhattanLength()
+            >= QApplication.startDragDistance()
+        ):
+            self._dragging = True
+            drag = QDrag(self)
+            mime = QMimeData()
+            mime.setData(
+                "application/x-pytodo-item-id",
+                str(self._drag_item_id).encode(),
+            )
+            drag.setMimeData(mime)
+            drag.exec(Qt.DropAction.MoveAction)
+            # Reset after exec — mouseReleaseEvent won't fire
+            self._drag_start_pos = None
+            self._drag_item_id = None
+            self._dragging = False
+            return
+        # Tooltip on hover (only when not dragging)
         hit = self._hit_test(a0.pos())
         if hit is not None and hit[0] == "task":
             item = hit[1]
@@ -484,6 +523,34 @@ class _CalendarTableView(QTableView):
             self.task_right_clicked.emit(hit[1].id, a0.globalPos())
         else:
             super().contextMenuEvent(a0)
+
+    def dragEnterEvent(self, a0) -> None:  # noqa: N802
+        if a0 and a0.mimeData() and a0.mimeData().hasFormat("application/x-pytodo-item-id"):
+            a0.acceptProposedAction()
+
+    def dragMoveEvent(self, a0) -> None:  # noqa: N802
+        if a0 and a0.mimeData() and a0.mimeData().hasFormat("application/x-pytodo-item-id"):
+            a0.acceptProposedAction()
+
+    def dropEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None or a0.mimeData() is None:
+            return
+        mime = a0.mimeData()
+        if not mime.hasFormat("application/x-pytodo-item-id"):
+            return
+        item_id_str = bytes(mime.data("application/x-pytodo-item-id")).decode()
+        index = self.indexAt(a0.position().toPoint())
+        if not index.isValid():
+            return
+        target_date = index.data(_DATE_ROLE)
+        if target_date is None:
+            return
+        try:
+            item_id = UUID(item_id_str)
+        except ValueError:
+            return
+        self.task_dropped.emit(item_id, target_date)
+        a0.acceptProposedAction()
 
 
 # ---------------------------------------------------------------------------
@@ -1023,6 +1090,7 @@ class _WeekTableView(QTableView):
     task_clicked = pyqtSignal(object)
     task_double_clicked = pyqtSignal(object)
     task_right_clicked = pyqtSignal(object, object)
+    task_dropped = pyqtSignal(object, object, object)  # (item_id, target_date, target_hour or None)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1042,7 +1110,11 @@ class _WeekTableView(QTableView):
         self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.setMouseTracking(True)
+        self.setAcceptDrops(True)
         self.setStyleSheet("QTableView { border: none; background: palette(window); }")
+        self._drag_start_pos = None
+        self._drag_item_id = None
+        self._dragging = False
 
     def _hit_test(self, pos):
         index = self.indexAt(pos)
@@ -1066,33 +1138,49 @@ class _WeekTableView(QTableView):
         return None
 
     def mousePressEvent(self, a0) -> None:  # noqa: N802
-        super().mousePressEvent(a0)
+        self._drag_start_pos = None
+        self._drag_item_id = None
+        self._dragging = False
         if a0 is None:
             return
         hit = self._hit_test(a0.pos())
         if hit and hit[0] == "task":
             self.task_clicked.emit(hit[1].id)
+            if a0.button() == Qt.MouseButton.LeftButton:
+                self._drag_start_pos = a0.pos()
+                self._drag_item_id = hit[1].id
 
-    def mouseDoubleClickEvent(self, a0) -> None:  # noqa: N802
-        if a0 is None:
-            return
-        hit = self._hit_test(a0.pos())
-        if hit and hit[0] == "task":
-            self.task_double_clicked.emit(hit[1].id)
-
-    def contextMenuEvent(self, a0) -> None:  # noqa: N802
-        if a0 is None:
-            return
-        hit = self._hit_test(a0.pos())
-        if hit and hit[0] == "task":
-            self.task_clicked.emit(hit[1].id)
-            self.task_right_clicked.emit(hit[1].id, a0.globalPos())
-        else:
-            super().contextMenuEvent(a0)
+    def mouseReleaseEvent(self, a0) -> None:  # noqa: N802
+        self._drag_start_pos = None
+        self._drag_item_id = None
+        self._dragging = False
+        super().mouseReleaseEvent(a0)
 
     def mouseMoveEvent(self, a0) -> None:  # noqa: N802
         if a0 is None:
             return
+        # Drag initiation
+        if (
+            not self._dragging
+            and self._drag_start_pos is not None
+            and self._drag_item_id is not None
+            and (a0.pos() - self._drag_start_pos).manhattanLength()
+            >= QApplication.startDragDistance()
+        ):
+            self._dragging = True
+            drag = QDrag(self)
+            mime = QMimeData()
+            mime.setData(
+                "application/x-pytodo-item-id",
+                str(self._drag_item_id).encode(),
+            )
+            drag.setMimeData(mime)
+            drag.exec(Qt.DropAction.MoveAction)
+            self._drag_start_pos = None
+            self._drag_item_id = None
+            self._dragging = False
+            return
+        # Tooltip handling
         hit = self._hit_test(a0.pos())
         if hit and hit[0] == "task":
             item = hit[1]
@@ -1122,6 +1210,56 @@ class _WeekTableView(QTableView):
 
             QToolTip.hideText()
 
+    def mouseDoubleClickEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None:
+            return
+        hit = self._hit_test(a0.pos())
+        if hit and hit[0] == "task":
+            self.task_double_clicked.emit(hit[1].id)
+
+    def contextMenuEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None:
+            return
+        hit = self._hit_test(a0.pos())
+        if hit and hit[0] == "task":
+            self.task_clicked.emit(hit[1].id)
+            self.task_right_clicked.emit(hit[1].id, a0.globalPos())
+        else:
+            super().contextMenuEvent(a0)
+
+    def dragEnterEvent(self, a0) -> None:  # noqa: N802
+        if a0 and a0.mimeData() and a0.mimeData().hasFormat("application/x-pytodo-item-id"):
+            a0.acceptProposedAction()
+
+    def dragMoveEvent(self, a0) -> None:  # noqa: N802
+        if a0 and a0.mimeData() and a0.mimeData().hasFormat("application/x-pytodo-item-id"):
+            a0.acceptProposedAction()
+
+    def dropEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None or a0.mimeData() is None:
+            return
+        mime = a0.mimeData()
+        if not mime.hasFormat("application/x-pytodo-item-id"):
+            return
+        item_id_str = bytes(mime.data("application/x-pytodo-item-id")).decode()
+        index = self.indexAt(a0.position().toPoint())
+        if not index.isValid():
+            return
+        target_date = index.data(_WEEK_DATE_ROLE)
+        target_hour = index.data(_WEEK_HOUR_ROLE)
+        if target_date is None:
+            return
+        try:
+            item_id = UUID(item_id_str)
+        except ValueError:
+            return
+        # hour = -1 means all-day (no time), otherwise set due_time
+        from datetime import time as _time
+
+        target_time = _time(target_hour, 0) if target_hour >= 0 else None
+        self.task_dropped.emit(item_id, target_date, target_time)
+        a0.acceptProposedAction()
+
 
 class _DayHeaders(QWidget):
     """Fixed header row showing Mon-Sun labels."""
@@ -1146,6 +1284,40 @@ class _DayHeaders(QWidget):
 # ---------------------------------------------------------------------------
 # Unscheduled panel
 # ---------------------------------------------------------------------------
+
+
+class _DraggableTaskButton(QPushButton):
+    """A task button that supports drag-and-drop to schedule."""
+
+    def __init__(self, item_id: UUID, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._item_id = item_id
+        self._drag_start = None
+
+    def mousePressEvent(self, a0) -> None:  # noqa: N802
+        if a0 and a0.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = a0.pos()
+        super().mousePressEvent(a0)
+
+    def mouseMoveEvent(self, a0) -> None:  # noqa: N802
+        if (
+            a0
+            and self._drag_start
+            and (a0.pos() - self._drag_start).manhattanLength() >= QApplication.startDragDistance()
+        ):
+            drag = QDrag(self)
+            mime = QMimeData()
+            mime.setText(str(self._item_id))
+            mime.setData("application/x-pytodo-item-id", str(self._item_id).encode())
+            drag.setMimeData(mime)
+            drag.exec(Qt.DropAction.MoveAction)
+            self._drag_start = None
+        else:
+            super().mouseMoveEvent(a0)
+
+    def mouseReleaseEvent(self, a0) -> None:  # noqa: N802
+        self._drag_start = None
+        super().mouseReleaseEvent(a0)
 
 
 class _UnscheduledPanel(QFrame):
@@ -1200,13 +1372,13 @@ class _UnscheduledPanel(QFrame):
             text_color = c["completed_text"] if item.complete else c["text"]
             strike = "text-decoration: line-through;" if item.complete else ""
 
-            row = QPushButton()
+            row = _DraggableTaskButton(item.id)
             row.setStyleSheet(
                 f"QPushButton {{ border-left: 3px solid {c[p_key]}; border-radius: 3px;"
                 f" padding: 3px 5px; background: {bg}; text-align: left; margin: 1px 0; }}"
                 f" QPushButton:hover {{ background: {c['alternate_base']}; }}"
             )
-            row.setCursor(Qt.CursorShape.PointingHandCursor)
+            row.setCursor(Qt.CursorShape.OpenHandCursor)
             row_layout = QVBoxLayout(row)
             row_layout.setContentsMargins(4, 2, 4, 2)
             row_layout.setSpacing(1)
@@ -1398,6 +1570,7 @@ class CalendarViewWidget(QWidget):
         self._day_table.task_clicked.connect(self._on_task_clicked)
         self._day_table.task_double_clicked.connect(self._on_task_double_clicked)
         self._day_table.task_right_clicked.connect(self._on_task_right_clicked)
+        self._day_table.task_dropped.connect(self._on_week_task_dropped)
         # Larger slots for day view — more room for detail
         v_header = self._day_table.verticalHeader()
         if v_header:
@@ -1416,6 +1589,7 @@ class CalendarViewWidget(QWidget):
         self._week_table.task_clicked.connect(self._on_task_clicked)
         self._week_table.task_double_clicked.connect(self._on_task_double_clicked)
         self._week_table.task_right_clicked.connect(self._on_task_right_clicked)
+        self._week_table.task_dropped.connect(self._on_week_task_dropped)
         self._sub_stack.addWidget(self._week_table)  # 1
 
         # Month view — QTableView with custom model/delegate
@@ -1436,6 +1610,7 @@ class CalendarViewWidget(QWidget):
         self._cal_table.task_double_clicked.connect(self._on_task_double_clicked)
         self._cal_table.task_right_clicked.connect(self._on_task_right_clicked)
         self._cal_table.more_clicked.connect(self._on_more_clicked)
+        self._cal_table.task_dropped.connect(self._on_task_dropped)
         month_layout.addWidget(self._cal_table, 1)
 
         self._sub_stack.addWidget(month_container)  # 2
@@ -1919,6 +2094,16 @@ class CalendarViewWidget(QWidget):
         """Right-click on popover item — select and show context menu."""
         self._select_from_popover(item_id)
         self._show_context_menu(item_id, global_pos)
+
+    def _on_task_dropped(self, item_id: UUID, target_date: date) -> None:
+        """Handle a task being dropped onto a month calendar date."""
+        self.item_due_date_changed.emit(item_id, target_date)
+
+    def _on_week_task_dropped(self, item_id: UUID, target_date: date, target_time) -> None:
+        """Handle a task dropped on week/day view — set date and optionally time."""
+        self.item_due_date_changed.emit(item_id, target_date)
+        if target_time is not None:
+            self.item_due_time_changed.emit(item_id, target_time)
 
     def _close_popover(self) -> None:
         """Close the day popover."""
