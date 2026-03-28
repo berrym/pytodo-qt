@@ -29,21 +29,38 @@ Status of features for the 0.3.x release series. Current schema: **v15**. Test c
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| Web undo/redo | **Critical** | At minimum undo accidental delete — items gone with no recovery is unshippable |
-| Web sort parity | High | Web sometimes shows different order than desktop |
-| CalDAV interop | Designed | [caldav-interop.md](caldav-interop.md) — export/import `.ics`, deferred to post-release or 0.4.x |
-| NLP enhancements | Medium | "at 8am and 12pm", "first Monday of month", "every other week" |
+| ~~Web undo/redo~~ | ~~Critical~~ | **Done** (c583d3f + 0cdabda) — unified QUndoStack + offline undo |
+| ~~.local hostname~~ | ~~Critical~~ | **Done** (0e47342) — IP-resilient mobile access |
+| NLP enhancements | **Blocker** | Voice dictation patterns, compound times, "first Monday of month", "every other week" |
+| CalDAV interop | **Blocker** | [caldav-interop.md](caldav-interop.md) — full .ics export/import, testers need this |
+| Subtask collapsible toggle | High | Web UI parity with desktop |
+| Device name editing | High | Let users rename devices in wizard |
+| Auto-cleanup stale devices | High | Remove devices not seen in 30+ days |
+| Web sort parity | High | May already be fixed — needs verification |
 | Packaging upgrades | High | AppImage (Linux), DMG (macOS), NSIS installer (Windows) |
 
 ---
 
-## Future (0.4.x+)
+## In Scope for 0.3.x (not necessarily 0.3.11)
+
+All items below are in scope for the 0.3.x series. 0.4.0 changes the fundamental nature of the program (headless server, PySide6).
 
 | Feature | Notes |
 |---------|-------|
-| PySide6 port | LGPL licensing, server mode, enhanced web UI |
 | Pomodoro Phases D-F | Analytics, gamification, sound/focus mode |
+| Web pomodoro control | Start/stop focus timer from phone |
+| Batch operations in web | Multi-select for bulk toggle/delete/move |
+| Tablet split-view | Two-column layout for web UI |
+| Smart add quick actions | Priority/date/tag/recurrence pickers below NLP input |
+| Web dark/light theme toggle | Manual toggle (currently auto only) |
 | CalDAV server mode | Full two-way sync with calendar apps |
-| Task grouping | Visual grouping without parent/child — may be addressed by tags + kanban |
-| Tablet split-view | Two-column layout for web UI on tablets |
-| Native mobile | Evaluate after web UI matures |
+| Background sync API | Browser Background Sync where supported |
+
+---
+
+## 0.4.x Vision
+
+- PySide6 port (LGPL licensing)
+- Headless server mode (Docker, multi-user)
+- Possible rebrand / new project identity
+- Native mobile exploration

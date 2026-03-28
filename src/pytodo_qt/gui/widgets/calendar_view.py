@@ -601,7 +601,10 @@ class _TimelineWidget(QWidget):
         col_estimated = QColor("#e6a817")  # Amber: estimated effort
         col_actual = QColor("#27ae60")  # Green: actual work
 
-        config_work_mins = 25  # Default pomodoro duration
+        # Pomodoro work duration from config (stored in minutes)
+        from ...core.config import get_config
+
+        config_work_mins = get_config().pomodoro.work_duration
 
         for row, item in enumerate(self._items):
             y = self.HEADER_HEIGHT + row * self.ROW_HEIGHT
@@ -637,9 +640,10 @@ class _TimelineWidget(QWidget):
             # --- Bars ---
             bar_y = y + (self.ROW_HEIGHT - self.BAR_HEIGHT * 3 - 4) // 2
 
-            # Blue bar: creation → due date (or today if no due date)
+            # Blue bar: creation → end of due date (or today if no due date)
+            # Due date is inclusive — task is due BY end of that day
             created_date = self._ms_to_date(item.created_at)
-            end_date = item.due_date or today
+            end_date = (item.due_date + timedelta(days=1)) if item.due_date else today
             x_start = max(self._date_to_x(created_date), self.LABEL_WIDTH)
             x_end = min(self._date_to_x(end_date), self.width() - 10)
             if x_end > x_start:
@@ -647,27 +651,48 @@ class _TimelineWidget(QWidget):
                     int(x_start), bar_y, int(x_end - x_start), self.BAR_HEIGHT, col_span
                 )
 
-            # Amber bar: estimated effort (pomodoros × work duration as fraction of span)
+            # --- Effort bars: independent of time span ---
+            # Effort scales by sessions, not calendar time.
+            # pixels_per_session is a constant that makes bars readable.
+            span_width = int(x_end - x_start) if x_end > x_start else 0
+            pixels_per_session = 15
+
+            # Amber bar: estimated effort (sessions × pixels)
             bar_y += self.BAR_HEIGHT + 2
-            if item.estimated_pomodoros > 0 and x_end > x_start:
-                est_mins = item.estimated_pomodoros * config_work_mins
-                # Scale: estimate as fraction of total span
-                span_days = max(1, (end_date - created_date).days)
-                est_fraction = min(1.0, est_mins / (span_days * 8 * 60))  # vs 8hr workday
-                est_width = max(4, int((x_end - x_start) * est_fraction))
-                painter.fillRect(int(x_start), bar_y, est_width, self.BAR_HEIGHT, col_estimated)
+            est_pixel_width = 0
+            if item.estimated_pomodoros > 0 and span_width > 0:
+                est_pixel_width = min(
+                    span_width,
+                    item.estimated_pomodoros * pixels_per_session,
+                )
+                est_pixel_width = max(est_pixel_width, 20)  # minimum visibility
+                painter.fillRect(
+                    int(x_start), bar_y, est_pixel_width, self.BAR_HEIGHT, col_estimated
+                )
 
             # Green bar: actual work done
             bar_y += self.BAR_HEIGHT + 2
-            if (item.pomodoro_count > 0 or item.time_spent > 0) and x_end > x_start:
-                actual_mins = (
-                    item.time_spent / 60
-                    if item.time_spent
-                    else item.pomodoro_count * config_work_mins
-                )
-                span_days = max(1, (end_date - created_date).days)
-                actual_fraction = min(1.0, actual_mins / (span_days * 8 * 60))
-                actual_width = max(4, int((x_end - x_start) * actual_fraction))
+            if (item.pomodoro_count > 0 or item.time_spent > 0) and span_width > 0:
+                if est_pixel_width > 0 and item.estimated_pomodoros > 0:
+                    # Has estimate: green = ratio of amber
+                    actual_sessions = (
+                        item.time_spent / (config_work_mins * 60)
+                        if item.time_spent > 0
+                        else item.pomodoro_count
+                    )
+                    ratio = min(1.0, actual_sessions / item.estimated_pomodoros)
+                    actual_width = max(2, int(est_pixel_width * ratio))
+                else:
+                    # No estimate: green = sessions × pixels
+                    actual_sessions = (
+                        item.time_spent / (config_work_mins * 60)
+                        if item.time_spent > 0
+                        else item.pomodoro_count
+                    )
+                    actual_width = min(
+                        span_width,
+                        max(8, int(actual_sessions * pixels_per_session)),
+                    )
                 painter.fillRect(int(x_start), bar_y, actual_width, self.BAR_HEIGHT, col_actual)
 
         # --- Legend ---
