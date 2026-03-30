@@ -31,6 +31,7 @@ class DatabaseConfig:
     sort_tier3_reverse: bool = False
     view_mode: str = "list"  # "list", "board", or "calendar"
     calendar_sub_view: str = "week"  # "day", "week", "month", or "timeline"
+    timeline_sub_view: str = "tasks"  # "tasks", "daily", "productivity", or "accuracy"
     day_start_hour: int = 0  # Hour when the logical day starts (0-23)
 
     def sort_tiers(self) -> list[tuple[str, bool]]:
@@ -154,6 +155,7 @@ class AppConfig:
         lines.append(f"sort_tier3_reverse = {str(self.database.sort_tier3_reverse).lower()}")
         lines.append(f'view_mode = "{self.database.view_mode}"')
         lines.append(f'calendar_sub_view = "{self.database.calendar_sub_view}"')
+        lines.append(f'timeline_sub_view = "{self.database.timeline_sub_view}"')
         lines.append(f"day_start_hour = {self.database.day_start_hour}")
         lines.append("")
 
@@ -242,6 +244,7 @@ class AppConfig:
                 sort_tier3_reverse=db.get("sort_tier3_reverse", False),
                 view_mode=db.get("view_mode", "list"),
                 calendar_sub_view=db.get("calendar_sub_view", "week"),
+                timeline_sub_view=db.get("timeline_sub_view", "tasks"),
                 day_start_hour=db.get("day_start_hour", 0),
             )
 

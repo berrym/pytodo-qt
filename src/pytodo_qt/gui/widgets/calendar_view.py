@@ -2263,7 +2263,8 @@ class CalendarViewWidget(QWidget):
         # Load saved sub-view from config, default to week
         from ...core.config import get_config
 
-        saved = get_config().database.calendar_sub_view
+        config = get_config()
+        saved = config.database.calendar_sub_view
         sub_map = {
             "day": self.SUB_DAY,
             "week": self.SUB_WEEK,
@@ -2271,6 +2272,10 @@ class CalendarViewWidget(QWidget):
             "timeline": self.SUB_TIMELINE,
         }
         self._sub_view = sub_map.get(saved, self.SUB_WEEK)
+
+        # Load saved timeline sub-view
+        tl_sub_map = {"tasks": 0, "daily": 1, "productivity": 2, "accuracy": 3}
+        self._initial_tl_sub_view = tl_sub_map.get(config.database.timeline_sub_view, 0)
 
         self._setup_ui()
 
@@ -2352,12 +2357,12 @@ class CalendarViewWidget(QWidget):
         tl_pill_layout.setContentsMargins(2, 2, 2, 2)
         tl_pill_layout.setSpacing(0)
 
-        self._tl_sub_view = 0  # Default: Tasks
+        self._tl_sub_view = self._initial_tl_sub_view
         self._tl_sub_buttons: list[QPushButton] = []
         for i, label in enumerate(["Tasks", "Daily", "Productivity", "Accuracy"]):
             btn = QPushButton(label)
             btn.setCheckable(True)
-            btn.setChecked(i == 0)
+            btn.setChecked(i == self._tl_sub_view)
             btn.setStyleSheet(
                 "QPushButton { border: none; padding: 4px 10px; font-size: 10px;"
                 " border-radius: 3px; }"
@@ -2460,6 +2465,7 @@ class CalendarViewWidget(QWidget):
         self._timeline_sub_stack.addWidget(self._timeline_accuracy_widget)  # 3
 
         tl_container_layout.addWidget(self._timeline_sub_stack)
+        self._timeline_sub_stack.setCurrentIndex(self._tl_sub_view)
         self._sub_stack.addWidget(self._timeline_container)  # 3
 
         self._sub_stack.setCurrentIndex(self._sub_view)
@@ -2632,6 +2638,13 @@ class CalendarViewWidget(QWidget):
         self._update_timeline_nav_state()
         self._update_nav_label()
         self._refresh_timeline_sub_view()
+
+        # Persist timeline sub-view choice
+        from ...core.config import get_config, get_config_manager
+
+        tl_name_map = {0: "tasks", 1: "daily", 2: "productivity", 3: "accuracy"}
+        get_config().database.timeline_sub_view = tl_name_map.get(idx, "tasks")
+        get_config_manager().save()
 
     def _update_timeline_nav_state(self) -> None:
         """Enable/disable navigation buttons based on active timeline sub-view."""
