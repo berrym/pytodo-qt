@@ -1302,7 +1302,7 @@ class _TimelineProductivityWidget(QWidget):
 
         self._plot = pg.PlotWidget()
         self._plot.setBackground(self._colors.get("base", "#252526"))
-        self._plot.setMouseEnabled(x=False, y=False)
+        self._plot.setMouseEnabled(x=True, y=False)  # x-pan for long bars, y locked
         self._plot.showGrid(x=True, y=False, alpha=0.2)
         self._plot.setMenuEnabled(False)
         layout.addWidget(self._plot)
@@ -1363,7 +1363,6 @@ class _TimelineProductivityWidget(QWidget):
             pom_mins = float(row.get("pomodoro_minutes", 0))
             sw_mins = float(row.get("stopwatch_minutes", 0))
             total_mins = pom_mins + sw_mins
-            count = int(row["session_count"])
             rate = float(row["completion_rate"])
             y_ticks.append((y, label))
 
@@ -1398,14 +1397,17 @@ class _TimelineProductivityWidget(QWidget):
                     )
                     plot.addItem(sw_bar)
 
-                # Label: minutes + completion rate
-                mins_display = (
-                    f"{int(total_mins)}m"
-                    if total_mins < 60
-                    else f"{int(total_mins // 60)}h {int(total_mins % 60)}m"
-                )
+                # Label: per-mode breakdown + completion rate
+                parts = []
+                if pom_mins > 0:
+                    parts.append(f"{int(pom_mins)}m pom")
+                if sw_mins > 0:
+                    parts.append(f"{int(sw_mins)}m sw")
+                mode_str = " + ".join(parts) if len(parts) > 1 else parts[0] if parts else ""
+                rate_pct = round(rate * 100)
+                label_text = f"{mode_str} \u2014 {rate_pct}% completed"
                 rate_text = pg.TextItem(
-                    f"{mins_display} ({count} sessions, {round(rate * 100)}%)",
+                    label_text,
                     color=col_text,
                     anchor=(0, 0.5),
                 )
@@ -1424,8 +1426,8 @@ class _TimelineProductivityWidget(QWidget):
         bottom_axis.setPen(pg.mkPen(col_border))
         bottom_axis.setLabel("Minutes")
 
-        plot.setXRange(0, max_minutes * 1.5, padding=0)
-        plot.setYRange(-0.5, n - 0.5, padding=0.05)
+        plot.setXRange(0, max_minutes * 1.75, padding=0)
+        plot.setYRange(-0.7, n - 0.3, padding=0.02)
 
         # Legend
         legend_layout = self._legend_widget.layout()
@@ -1441,6 +1443,15 @@ class _TimelineProductivityWidget(QWidget):
             if legend_layout is not None:
                 legend_layout.addWidget(lbl)
             self._legend_labels.append(lbl)
+        # Completion rate explanation
+        note = QLabel(
+            f'<span style="color:{c.get("completed_text", "#8c8c8c")};">'
+            f"% = sessions finished without interruption</span>"
+        )
+        note.setStyleSheet("font-size: 10px;")
+        if legend_layout is not None:
+            legend_layout.addWidget(note)
+        self._legend_labels.append(note)
         if legend_layout is not None:
             legend_layout.addStretch()
 
