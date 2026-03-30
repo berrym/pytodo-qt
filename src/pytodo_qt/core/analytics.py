@@ -180,6 +180,12 @@ class AnalyticsService:
             count = len(block_data)
             completed = int(block_data["completed"].sum()) if count > 0 else 0
             total_mins = float(block_data["duration_minutes"].sum()) if count > 0 else 0.0
+            pom_data = block_data[block_data["is_work"]] if count > 0 else block_data
+            sw_data = (
+                block_data[block_data["session_type"] == "stopwatch"] if count > 0 else block_data
+            )
+            pom_mins = float(pom_data["duration_minutes"].sum()) if len(pom_data) > 0 else 0.0
+            sw_mins = float(sw_data["duration_minutes"].sum()) if len(sw_data) > 0 else 0.0
             rate = completed / count if count > 0 else 0.0
             avg_dur = float(block_data["duration_minutes"].mean()) if count > 0 else 0.0
             blocks.append(
@@ -189,6 +195,8 @@ class AnalyticsService:
                     "session_count": count,
                     "completed_count": completed,
                     "total_minutes": total_mins,
+                    "pomodoro_minutes": pom_mins,
+                    "stopwatch_minutes": sw_mins,
                     "completion_rate": rate,
                     "avg_duration_minutes": avg_dur,
                 }

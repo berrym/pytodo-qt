@@ -1347,7 +1347,10 @@ class _TimelineProductivityWidget(QWidget):
             return
 
         max_minutes = max(float(blocks["total_minutes"].max()), 0.1)
-        col_base = QColor(c.get("chart_pomodoro", "#D55E00"))
+        col_pom = QColor(c.get("chart_pomodoro", "#D55E00"))
+        col_pom.setAlpha(200)
+        col_sw = QColor(c.get("chart_stopwatch", "#0072B2"))
+        col_sw.setAlpha(200)
         col_text = QColor(text_color)
         col_border = QColor(c.get("border", "#3c3c3c"))
 
@@ -1357,26 +1360,43 @@ class _TimelineProductivityWidget(QWidget):
         for i, (_, row) in enumerate(blocks.iterrows()):
             y = float(n - 1 - i)
             label = str(row["block_label"])
-            total_mins = float(row["total_minutes"])
+            pom_mins = float(row.get("pomodoro_minutes", 0))
+            sw_mins = float(row.get("stopwatch_minutes", 0))
+            total_mins = pom_mins + sw_mins
             count = int(row["session_count"])
             rate = float(row["completion_rate"])
             y_ticks.append((y, label))
 
             if total_mins > 0:
-                # Color intensity by minutes
-                alpha = int(80 + (175 * total_mins / max_minutes))
-                bar_color = QColor(col_base)
-                bar_color.setAlpha(alpha)
+                # Pomodoro segment (left)
+                if pom_mins > 0:
+                    pom_alpha = int(80 + (175 * total_mins / max_minutes))
+                    pom_color = QColor(col_pom)
+                    pom_color.setAlpha(pom_alpha)
+                    pom_bar = pg.BarGraphItem(
+                        x0=[0],
+                        y0=[y - 0.35],
+                        width=[pom_mins],
+                        height=[0.7],
+                        brush=pg.mkBrush(pom_color),
+                        pen=pg.mkPen(None),
+                    )
+                    plot.addItem(pom_bar)
 
-                bar = pg.BarGraphItem(
-                    x0=[0],
-                    y0=[y - 0.35],
-                    width=[total_mins],
-                    height=[0.7],
-                    brush=pg.mkBrush(bar_color),
-                    pen=pg.mkPen(None),
-                )
-                plot.addItem(bar)
+                # Stopwatch segment (stacked right of pomodoro)
+                if sw_mins > 0:
+                    sw_alpha = int(80 + (175 * total_mins / max_minutes))
+                    sw_color = QColor(col_sw)
+                    sw_color.setAlpha(sw_alpha)
+                    sw_bar = pg.BarGraphItem(
+                        x0=[pom_mins],
+                        y0=[y - 0.35],
+                        width=[sw_mins],
+                        height=[0.7],
+                        brush=pg.mkBrush(sw_color),
+                        pen=pg.mkPen(None),
+                    )
+                    plot.addItem(sw_bar)
 
                 # Label: minutes + completion rate
                 mins_display = (
@@ -1404,19 +1424,23 @@ class _TimelineProductivityWidget(QWidget):
         bottom_axis.setPen(pg.mkPen(col_border))
         bottom_axis.setLabel("Minutes")
 
-        plot.setXRange(0, max_minutes * 1.4, padding=0)
+        plot.setXRange(0, max_minutes * 1.5, padding=0)
         plot.setYRange(-0.5, n - 0.5, padding=0.05)
 
         # Legend
         legend_layout = self._legend_widget.layout()
-        lbl = QLabel(
-            f'<span style="color:{text_color};">Bars show total minutes worked per time block '
-            f"(pomodoro + stopwatch). Brighter = more time. Percentage = completion rate.</span>"
-        )
-        lbl.setStyleSheet("font-size: 11px;")
-        if legend_layout is not None:
-            legend_layout.addWidget(lbl)
-        self._legend_labels.append(lbl)
+        for hex_c, name in [
+            (c.get("chart_pomodoro", "#D55E00"), "Pomodoro"),
+            (c.get("chart_stopwatch", "#0072B2"), "Stopwatch"),
+        ]:
+            lbl = QLabel(
+                f'<span style="color:{hex_c};">\u25a0</span> '
+                f'<span style="color:{text_color};">{name}</span>'
+            )
+            lbl.setStyleSheet("font-size: 11px;")
+            if legend_layout is not None:
+                legend_layout.addWidget(lbl)
+            self._legend_labels.append(lbl)
         if legend_layout is not None:
             legend_layout.addStretch()
 
