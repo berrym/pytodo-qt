@@ -268,9 +268,9 @@ class AnalyticsService:
 
         result["interrupted_sessions"] = result["total_sessions"] - result["completed_sessions"]
         result["completion_rate"] = result.apply(
-            lambda r: r["completed_sessions"] / r["total_sessions"]
-            if r["total_sessions"] > 0
-            else 0.0,
+            lambda r: (
+                r["completed_sessions"] / r["total_sessions"] if r["total_sessions"] > 0 else 0.0
+            ),
             axis=1,
         )
 
@@ -434,10 +434,11 @@ class AnalyticsService:
         total = grouped.size()
         result["interrupted_sessions"] = total - result["completed_sessions"]
         result["completion_rate"] = result.apply(
-            lambda r: r["completed_sessions"]
-            / (r["completed_sessions"] + r["interrupted_sessions"])
-            if (r["completed_sessions"] + r["interrupted_sessions"]) > 0
-            else 0.0,
+            lambda r: (
+                r["completed_sessions"] / (r["completed_sessions"] + r["interrupted_sessions"])
+                if (r["completed_sessions"] + r["interrupted_sessions"]) > 0
+                else 0.0
+            ),
             axis=1,
         )
         result["avg_session_minutes"] = result.apply(
@@ -522,9 +523,9 @@ class AnalyticsService:
         )
 
         result["accuracy_ratio"] = result.apply(
-            lambda r: r["actual_minutes"] / r["estimated_minutes"]
-            if r["estimated_minutes"] > 0
-            else 0.0,
+            lambda r: (
+                r["actual_minutes"] / r["estimated_minutes"] if r["estimated_minutes"] > 0 else 0.0
+            ),
             axis=1,
         )
         result["variance_minutes"] = result["actual_minutes"] - result["estimated_minutes"]
