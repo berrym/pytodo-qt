@@ -3421,7 +3421,7 @@ class MainWindow(QMainWindow):
         """Show the Focus Statistics dialog."""
         from .dialogs.focus_stats import FocusStatsDialog
 
-        dialog = FocusStatsDialog(self._database, self._storage, self._config.pomodoro, self)
+        dialog = FocusStatsDialog(self._analytics, self._database, self._config.pomodoro, self)
         dialog.exec()
 
     def _on_web_connect(self) -> None:

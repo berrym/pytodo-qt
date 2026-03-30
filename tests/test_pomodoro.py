@@ -1614,29 +1614,33 @@ class TestDatabaseAggregateQueries:
 
 class TestFocusStatsDialog:
     def test_dialog_creation(self, qtbot, tmp_path):
+        from pytodo_qt.core.analytics import AnalyticsService
         from pytodo_qt.core.models import Database
         from pytodo_qt.gui.dialogs.focus_stats import FocusStatsDialog
 
         db = Database()
         storage = DatabaseStorage(tmp_path / "test.db")
+        analytics = AnalyticsService(storage.connection)
         config = PomodoroConfig()
-        dialog = FocusStatsDialog(db, storage, config)
+        dialog = FocusStatsDialog(analytics, db, config)
         qtbot.addWidget(dialog)
         assert dialog.windowTitle() == "Focus Statistics"
 
     def test_dialog_with_daily_goal(self, qtbot, tmp_path):
+        from pytodo_qt.core.analytics import AnalyticsService
         from pytodo_qt.core.models import Database
         from pytodo_qt.gui.dialogs.focus_stats import FocusStatsDialog
 
         db = Database()
         storage = DatabaseStorage(tmp_path / "test.db")
+        analytics = AnalyticsService(storage.connection)
         config = PomodoroConfig(daily_goal=8)
-        dialog = FocusStatsDialog(db, storage, config)
+        dialog = FocusStatsDialog(analytics, db, config)
         qtbot.addWidget(dialog)
-        # Should have a goal label somewhere
         assert dialog.windowTitle() == "Focus Statistics"
 
     def test_dialog_with_sessions(self, qtbot, tmp_path):
+        from pytodo_qt.core.analytics import AnalyticsService
         from pytodo_qt.core.models import Database, FocusSession
         from pytodo_qt.gui.dialogs.focus_stats import FocusStatsDialog
 
@@ -1660,8 +1664,9 @@ class TestFocusStatsDialog:
                     date=today,
                 )
             )
+        analytics = AnalyticsService(storage.connection)
         config = PomodoroConfig()
-        dialog = FocusStatsDialog(db, storage, config)
+        dialog = FocusStatsDialog(analytics, db, config)
         qtbot.addWidget(dialog)
         assert dialog.windowTitle() == "Focus Statistics"
 
@@ -1799,25 +1804,24 @@ class TestItemProgress:
 
 
 class TestStreakComputation:
+    """Streak tests now use AnalyticsService directly.
+    Full streak coverage in tests/test_analytics.py::TestStreak."""
+
     def test_empty_data(self, tmp_path):
-        from pytodo_qt.gui.dialogs.focus_stats import FocusStatsDialog
+        from pytodo_qt.core.analytics import AnalyticsService
 
         storage = DatabaseStorage(tmp_path / "test.db")
-        config = PomodoroConfig()
-        dialog = FocusStatsDialog.__new__(FocusStatsDialog)
-        dialog._storage = storage
-        dialog._config = config
-        assert dialog._compute_streak() == 0
+        analytics = AnalyticsService(storage.connection)
+        assert analytics.streak() == 0
 
     def test_consecutive_days(self, tmp_path):
         from datetime import date, timedelta
 
+        from pytodo_qt.core.analytics import AnalyticsService
         from pytodo_qt.core.models import FocusSession
-        from pytodo_qt.gui.dialogs.focus_stats import FocusStatsDialog
 
         storage = DatabaseStorage(tmp_path / "test.db")
         today = date.today()
-        # Add sessions for today and 4 prior days
         for i in range(5):
             d = today - timedelta(days=i)
             storage.save_focus_session(
@@ -1832,21 +1836,17 @@ class TestStreakComputation:
                     date=d.isoformat(),
                 )
             )
-        config = PomodoroConfig()
-        dialog = FocusStatsDialog.__new__(FocusStatsDialog)
-        dialog._storage = storage
-        dialog._config = config
-        assert dialog._compute_streak() == 5
+        analytics = AnalyticsService(storage.connection)
+        assert analytics.streak() == 5
 
     def test_gap_breaks_streak(self, tmp_path):
         from datetime import date, timedelta
 
+        from pytodo_qt.core.analytics import AnalyticsService
         from pytodo_qt.core.models import FocusSession
-        from pytodo_qt.gui.dialogs.focus_stats import FocusStatsDialog
 
         storage = DatabaseStorage(tmp_path / "test.db")
         today = date.today()
-        # Today and yesterday
         for i in range(2):
             d = today - timedelta(days=i)
             storage.save_focus_session(
@@ -1875,21 +1875,17 @@ class TestStreakComputation:
                 date=d.isoformat(),
             )
         )
-        config = PomodoroConfig()
-        dialog = FocusStatsDialog.__new__(FocusStatsDialog)
-        dialog._storage = storage
-        dialog._config = config
-        assert dialog._compute_streak() == 2
+        analytics = AnalyticsService(storage.connection)
+        assert analytics.streak() == 2
 
     def test_streak_with_daily_goal(self, tmp_path):
         from datetime import date, timedelta
 
+        from pytodo_qt.core.analytics import AnalyticsService
         from pytodo_qt.core.models import FocusSession
-        from pytodo_qt.gui.dialogs.focus_stats import FocusStatsDialog
 
         storage = DatabaseStorage(tmp_path / "test.db")
         today = date.today()
-        # Today: 3 sessions (meets goal of 3)
         for j in range(3):
             storage.save_focus_session(
                 FocusSession(
@@ -1903,7 +1899,6 @@ class TestStreakComputation:
                     date=today.isoformat(),
                 )
             )
-        # Yesterday: only 1 session (doesn't meet goal of 3)
         d = today - timedelta(days=1)
         storage.save_focus_session(
             FocusSession(
@@ -1917,21 +1912,16 @@ class TestStreakComputation:
                 date=d.isoformat(),
             )
         )
-        config = PomodoroConfig(daily_goal=3)
-        dialog = FocusStatsDialog.__new__(FocusStatsDialog)
-        dialog._storage = storage
-        dialog._config = config
-        # Only today meets the goal
-        assert dialog._compute_streak() == 1
+        analytics = AnalyticsService(storage.connection)
+        assert analytics.streak(daily_goal=3) == 1
 
     def test_no_sessions_today(self, tmp_path):
         from datetime import date, timedelta
 
+        from pytodo_qt.core.analytics import AnalyticsService
         from pytodo_qt.core.models import FocusSession
-        from pytodo_qt.gui.dialogs.focus_stats import FocusStatsDialog
 
         storage = DatabaseStorage(tmp_path / "test.db")
-        # Only yesterday has sessions
         d = date.today() - timedelta(days=1)
         storage.save_focus_session(
             FocusSession(
@@ -1945,11 +1935,8 @@ class TestStreakComputation:
                 date=d.isoformat(),
             )
         )
-        config = PomodoroConfig()
-        dialog = FocusStatsDialog.__new__(FocusStatsDialog)
-        dialog._storage = storage
-        dialog._config = config
-        assert dialog._compute_streak() == 0
+        analytics = AnalyticsService(storage.connection)
+        assert analytics.streak() == 0
 
 
 # ===========================================================================
@@ -2370,320 +2357,14 @@ class TestMilestoneConfig:
 
 
 class TestInterruptionInsights:
-    """Tests for FocusStatsDialog interruption insight methods."""
+    """Insight computation logic moved to AnalyticsService.
 
-    def _make_dialog(self, sessions):
-        """Create a mock with FocusStatsDialog methods and pre-populated sessions."""
-        from types import MethodType
-        from unittest.mock import MagicMock
+    Full coverage in tests/test_analytics.py:
+    - TestTimeBlockAnalysis (3 tests): block counts, completion rates
+    - TestItemSummary (5 tests): per-item grouping, completion rates
+    - TestRollingAverages (3 tests): trend data
+    - TestFocusScore (4 tests): score components
+    - TestDailySummary (5 tests): daily aggregation
+    """
 
-        from pytodo_qt.core.models import Database
-        from pytodo_qt.gui.dialogs.focus_stats import FocusStatsDialog
-
-        dialog = MagicMock()
-        db = Database()
-        dialog._database = db
-        dialog._storage = MagicMock()
-        dialog._storage.get_all_focus_sessions.return_value = list(sessions)
-        dialog._config = PomodoroConfig()
-
-        for name in (
-            "_get_work_sessions",
-            "_build_insights_section",
-            "_compute_best_focus_time",
-            "_compute_worst_focus_time",
-            "_compute_most_active_time",
-            "_compute_completion_rate_trend",
-            "_compute_most_interrupted_tasks",
-            "_compute_interruption_duration_comparison",
-            "_compute_interruption_rate",
-            "_resolve_item_name",
-        ):
-            setattr(dialog, name, MethodType(getattr(FocusStatsDialog, name), dialog))
-        return dialog
-
-    def _session(self, **kwargs):
-        """Create a FocusSession dict with sensible defaults."""
-        from pytodo_qt.core.models import FocusSession
-
-        defaults = {
-            "session_type": "work",
-            "completed": True,
-            "duration_seconds": 1500,
-            "start_time": "2026-03-08T10:00:00",
-            "date": "2026-03-08",
-            "item_id": uuid4(),
-        }
-        defaults.update(kwargs)
-        return FocusSession(**defaults)
-
-    def test_insights_hidden_no_data(self):
-        dialog = self._make_dialog([])
-        assert dialog._build_insights_section() is None
-
-    def test_insights_always_shown_with_data(self):
-        """Even 1 completed session with no interruptions should show the section."""
-        sessions = [self._session()]
-        dialog = self._make_dialog(sessions)
-        result = dialog._build_insights_section()
-        assert result is not None
-
-    def test_most_active_time(self):
-        item = uuid4()
-        sessions = [
-            self._session(start_time="2026-03-08T14:00:00", item_id=item),
-            self._session(start_time="2026-03-08T15:30:00", item_id=item),
-            self._session(start_time="2026-03-08T14:45:00", item_id=item),
-        ]
-        dialog = self._make_dialog(sessions)
-        work = dialog._get_work_sessions()
-        result = dialog._compute_most_active_time(work)
-        assert result is not None
-        assert "2 – 4 PM" in result
-        assert "3 sessions" in result
-
-    def test_most_active_time_insufficient(self):
-        """Only 1 session per block — no most active time."""
-        sessions = [
-            self._session(start_time="2026-03-08T09:00:00"),
-            self._session(start_time="2026-03-08T14:00:00"),
-        ]
-        dialog = self._make_dialog(sessions)
-        work = dialog._get_work_sessions()
-        assert dialog._compute_most_active_time(work) is None
-
-    def test_best_focus_time(self):
-        item = uuid4()
-        sessions = [
-            self._session(start_time=f"2026-03-08T09:{i:02d}:00", item_id=item) for i in range(6)
-        ]
-        dialog = self._make_dialog(sessions)
-        work = dialog._get_work_sessions()
-        result = dialog._compute_best_focus_time(work)
-        assert result is not None
-        assert "8 – 10 AM" in result
-        assert "100%" in result
-        assert "6 sessions" in result
-
-    def test_best_focus_time_insufficient(self):
-        item = uuid4()
-        # Only 2 sessions in one block — below threshold of 3
-        sessions = [
-            self._session(start_time=f"2026-03-08T09:{i:02d}:00", item_id=item) for i in range(2)
-        ]
-        dialog = self._make_dialog(sessions)
-        work = dialog._get_work_sessions()
-        assert dialog._compute_best_focus_time(work) is None
-
-    def test_completion_trend_improving(self):
-        from datetime import date as date_cls
-        from datetime import timedelta
-
-        today = date_cls.today()
-        week_start = today - timedelta(days=today.weekday())
-        last_week_start = week_start - timedelta(days=7)
-
-        sessions = []
-        item = uuid4()
-        # Last week: 1/4 completed (25%) — all on last week's Monday
-        for i in range(4):
-            d = last_week_start
-            sessions.append(
-                self._session(
-                    date=d.isoformat(),
-                    start_time=f"{d.isoformat()}T{10 + i}:00:00",
-                    completed=(i == 0),
-                    item_id=item,
-                )
-            )
-        # This week: 3/3 completed (100%) — all on today (always in this week)
-        for i in range(3):
-            d = today
-            sessions.append(
-                self._session(
-                    date=d.isoformat(),
-                    start_time=f"{d.isoformat()}T{10 + i}:00:00",
-                    completed=True,
-                    item_id=item,
-                )
-            )
-
-        dialog = self._make_dialog(sessions)
-        work = dialog._get_work_sessions()
-        result = dialog._compute_completion_rate_trend(work)
-        assert result is not None
-        assert "\u2191" in result
-
-    def test_completion_trend_declining(self):
-        from datetime import date as date_cls
-        from datetime import timedelta
-
-        today = date_cls.today()
-        week_start = today - timedelta(days=today.weekday())
-        last_week_start = week_start - timedelta(days=7)
-
-        sessions = []
-        item = uuid4()
-        # Last week: 3/3 completed (100%) — all on last week's Monday
-        for i in range(3):
-            d = last_week_start
-            sessions.append(
-                self._session(
-                    date=d.isoformat(),
-                    start_time=f"{d.isoformat()}T{10 + i}:00:00",
-                    completed=True,
-                    item_id=item,
-                )
-            )
-        # This week: 1/4 completed (25%) — all on today (always in this week)
-        for i in range(4):
-            d = today
-            sessions.append(
-                self._session(
-                    date=d.isoformat(),
-                    start_time=f"{d.isoformat()}T{10 + i}:00:00",
-                    completed=(i == 0),
-                    item_id=item,
-                )
-            )
-
-        dialog = self._make_dialog(sessions)
-        work = dialog._get_work_sessions()
-        result = dialog._compute_completion_rate_trend(work)
-        assert result is not None
-        assert "\u2193" in result
-
-    def test_completion_trend_insufficient(self):
-        from datetime import date as date_cls
-        from datetime import timedelta
-
-        today = date_cls.today()
-        week_start = today - timedelta(days=today.weekday())
-
-        sessions = []
-        item = uuid4()
-        # This week only: 1 session (below threshold of 2), no last week
-        d = week_start
-        sessions.append(
-            self._session(
-                date=d.isoformat(),
-                start_time=f"{d.isoformat()}T10:00:00",
-                item_id=item,
-            )
-        )
-
-        dialog = self._make_dialog(sessions)
-        work = dialog._get_work_sessions()
-        assert dialog._compute_completion_rate_trend(work) is None
-
-    def test_most_interrupted_tasks(self):
-        from pytodo_qt.core.models import TodoList, create_todo_item
-
-        item_id = uuid4()
-        # 4 sessions, 1 completed = 25% rate
-        sessions = [self._session(item_id=item_id, completed=(i == 0)) for i in range(4)]
-
-        dialog = self._make_dialog(sessions)
-        # Add the item to the database so name resolution works
-        lst = TodoList(name="Test")
-        item = create_todo_item(reminder="Write report")
-        object.__setattr__(item, "id", item_id)
-        lst.items[item_id] = item
-        dialog._database.lists[lst.id] = lst
-
-        work = dialog._get_work_sessions()
-        result = dialog._compute_most_interrupted_tasks(work)
-        assert result is not None
-        assert len(result) == 1
-        assert result[0][0] == "Write report"
-        assert result[0][1] == 4  # total
-        assert result[0][2] == 1  # completed
-
-    def test_most_interrupted_all_complete(self):
-        item_id = uuid4()
-        sessions = [self._session(item_id=item_id, completed=True) for _ in range(5)]
-        dialog = self._make_dialog(sessions)
-        work = dialog._get_work_sessions()
-        assert dialog._compute_most_interrupted_tasks(work) is None
-
-    def test_duration_comparison_early(self):
-        sessions = []
-        item = uuid4()
-        # 2 completed sessions at 25 min
-        for _ in range(2):
-            sessions.append(self._session(completed=True, duration_seconds=1500, item_id=item))
-        # 2 interrupted sessions at 5 min (early interruption)
-        for _ in range(2):
-            sessions.append(self._session(completed=False, duration_seconds=300, item_id=item))
-
-        dialog = self._make_dialog(sessions)
-        work = dialog._get_work_sessions()
-        result = dialog._compute_interruption_duration_comparison(work)
-        assert result is not None
-        assert "early" in result
-
-    def test_duration_comparison_near_end(self):
-        sessions = []
-        item = uuid4()
-        # 3 completed at 25 min
-        for _ in range(3):
-            sessions.append(self._session(completed=True, duration_seconds=1500, item_id=item))
-        # 3 interrupted at 20 min (near the end)
-        for _ in range(3):
-            sessions.append(self._session(completed=False, duration_seconds=1200, item_id=item))
-
-        dialog = self._make_dialog(sessions)
-        work = dialog._get_work_sessions()
-        result = dialog._compute_interruption_duration_comparison(work)
-        assert result is not None
-        assert "near the end" in result
-
-    def test_worst_focus_time(self):
-        item = uuid4()
-        # 4 sessions at 20:xx (8-10 PM block), only 1 completed
-        sessions = [
-            self._session(
-                start_time=f"2026-03-08T20:{i:02d}:00",
-                item_id=item,
-                completed=(i == 0),
-            )
-            for i in range(4)
-        ]
-        dialog = self._make_dialog(sessions)
-        work = dialog._get_work_sessions()
-        result = dialog._compute_worst_focus_time(work)
-        assert result is not None
-        assert "8 – 10 PM" in result
-        assert "Worst" in result
-
-    def test_worst_focus_time_all_complete(self):
-        item = uuid4()
-        # All completed — no worst block
-        sessions = [
-            self._session(start_time=f"2026-03-08T10:{i:02d}:00", item_id=item) for i in range(5)
-        ]
-        dialog = self._make_dialog(sessions)
-        work = dialog._get_work_sessions()
-        assert dialog._compute_worst_focus_time(work) is None
-
-    def test_interruption_rate(self):
-        item = uuid4()
-        sessions = [
-            self._session(item_id=item, completed=True),
-            self._session(item_id=item, completed=False),
-            self._session(item_id=item, completed=True),
-            self._session(item_id=item, completed=False),
-        ]
-        dialog = self._make_dialog(sessions)
-        work = dialog._get_work_sessions()
-        result = dialog._compute_interruption_rate(work)
-        assert result is not None
-        assert "50%" in result
-        assert "2/4" in result
-
-    def test_interruption_rate_none_interrupted(self):
-        item = uuid4()
-        sessions = [self._session(item_id=item, completed=True) for _ in range(3)]
-        dialog = self._make_dialog(sessions)
-        work = dialog._get_work_sessions()
-        assert dialog._compute_interruption_rate(work) is None
+    pass
