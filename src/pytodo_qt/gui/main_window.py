@@ -1654,6 +1654,8 @@ class MainWindow(QMainWindow):
         self._analytics = AnalyticsService(
             self._storage.connection, self._config.pomodoro.work_duration
         )
+        if hasattr(self, "calendar_view"):
+            self.calendar_view.set_analytics(self._analytics)
         goal = self._config.pomodoro.daily_goal
         self._best_streak = self._analytics.streak(goal if goal > 0 else 1)
 

@@ -583,7 +583,7 @@ class _CalendarTableView(QTableView):
 # ---------------------------------------------------------------------------
 
 
-class _TimelineWidget(QWidget):
+class _TimelineTasksWidget(QWidget):
     """pyqtgraph-based horizontal timeline with task bars.
 
     3-lane layout per task:
@@ -1072,6 +1072,507 @@ class _TimelineWidget(QWidget):
                 self.task_right_clicked.emit(
                     item.id, QPoint(int(screen_pos.x()), int(screen_pos.y()))
                 )
+
+
+# ---------------------------------------------------------------------------
+# Timeline Daily Chart — stacked vertical bars + trend line
+# ---------------------------------------------------------------------------
+
+
+class _TimelineDailyWidget(QWidget):
+    """pyqtgraph stacked bar chart: sessions per day, pomodoro + stopwatch."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        import pyqtgraph as pg
+
+        self._analytics = None
+        self._current_date: date = date.today()
+        self._colors: dict[str, str] = {}
+        self._refresh_colors()
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._plot = pg.PlotWidget()
+        self._plot.setBackground(self._colors.get("base", "#252526"))
+        self._plot.setMouseEnabled(x=False, y=False)
+        self._plot.showGrid(x=False, y=True, alpha=0.25)
+        self._plot.setMenuEnabled(False)
+        layout.addWidget(self._plot)
+
+        # Legend
+        self._legend_widget = QWidget()
+        self._legend_widget.setFixedHeight(28)
+        legend_layout = QHBoxLayout(self._legend_widget)
+        legend_layout.setContentsMargins(10, 4, 10, 4)
+        legend_layout.setSpacing(16)
+        self._legend_labels: list[QLabel] = []
+        layout.addWidget(self._legend_widget)
+
+    def _refresh_colors(self) -> None:
+        from ...gui.styles.themes import get_colors
+
+        self._colors = get_colors()
+
+    def set_analytics(self, analytics) -> None:
+        self._analytics = analytics
+
+    def set_current_date(self, d: date) -> None:
+        self._current_date = d
+        self.rebuild()
+
+    def rebuild(self) -> None:
+        import numpy as np
+        import pyqtgraph as pg
+
+        self._refresh_colors()
+        c = self._colors
+        plot = self._plot
+        plot.clear()
+        plot.setBackground(c.get("base", "#252526"))
+
+        # Build legend
+        for lbl in self._legend_labels:
+            lbl.deleteLater()
+        self._legend_labels.clear()
+        text_color = c.get("text", "#e0e0e0")
+
+        if self._analytics is None:
+            self._show_empty("Analytics service not available")
+            return
+
+        # Week range
+        week_start = self._current_date - timedelta(days=self._current_date.weekday())
+        week_end = week_start + timedelta(days=6)
+        start_str = week_start.isoformat()
+        end_str = week_end.isoformat()
+
+        summary = self._analytics.daily_summary(start_date=start_str, end_date=end_str)
+
+        col_pom = QColor(c.get("chart_pomodoro", "#D55E00"))
+        col_pom.setAlpha(200)
+        col_sw = QColor(c.get("chart_stopwatch", "#0072B2"))
+        col_sw.setAlpha(200)
+        col_trend = QColor(c.get("highlight", "#0078d4"))
+        col_text = QColor(text_color)
+        col_border = QColor(c.get("border", "#3c3c3c"))
+
+        day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        x_pos = np.arange(7, dtype=float)
+
+        pom_mins = np.zeros(7)
+        sw_mins = np.zeros(7)
+
+        if not summary.empty:
+            import pandas as pd
+
+            for _, row in summary.iterrows():
+                d = row["date"]
+                if isinstance(d, pd.Timestamp):
+                    d = d.date()
+                idx = (d - week_start).days if hasattr(d, "__sub__") else -1
+                if 0 <= idx < 7:
+                    pom_mins[idx] = float(row.get("work_minutes", 0))
+                    sw_mins[idx] = float(row.get("stopwatch_minutes", 0))
+
+        # Pomodoro bars (bottom)
+        if pom_mins.sum() > 0:
+            pom_bars = pg.BarGraphItem(
+                x=x_pos,
+                width=0.6,
+                height=pom_mins,
+                y0=np.zeros(7),
+                brush=pg.mkBrush(col_pom),
+                pen=pg.mkPen(None),
+            )
+            plot.addItem(pom_bars)
+
+        # Stopwatch bars (stacked on top)
+        if sw_mins.sum() > 0:
+            sw_bars = pg.BarGraphItem(
+                x=x_pos,
+                width=0.6,
+                height=sw_mins,
+                y0=pom_mins,
+                brush=pg.mkBrush(col_sw),
+                pen=pg.mkPen(None),
+            )
+            plot.addItem(sw_bars)
+
+        # Trend line (7-day rolling average)
+        rolling = self._analytics.rolling_averages(window_7=True, window_30=False)
+        if not rolling.empty and len(rolling) >= 2:
+            # Map rolling data to x positions where dates overlap
+            import pandas as pd
+
+            trend_x = []
+            trend_y = []
+            for _, row in rolling.iterrows():
+                rd = row["date"]
+                if isinstance(rd, pd.Timestamp):
+                    rd = rd.date()
+                idx = (rd - week_start).days if hasattr(rd, "__sub__") else -1
+                if 0 <= idx < 7:
+                    trend_x.append(float(idx))
+                    trend_y.append(float(row.get("rolling_7d_minutes", 0)))
+            if len(trend_x) >= 2:
+                trend_line = pg.PlotDataItem(
+                    trend_x,
+                    trend_y,
+                    pen=pg.mkPen(col_trend, width=2, style=Qt.PenStyle.DashLine),
+                    symbol=None,
+                )
+                plot.addItem(trend_line)
+
+        # Legend (always visible)
+        self._build_legend(c, text_color)
+
+        # Axes (always set up for visual consistency)
+        left_axis = plot.getAxis("left")
+        left_axis.setTextPen(col_text)
+        left_axis.setPen(pg.mkPen(col_border))
+        left_axis.setLabel("Minutes")
+
+        bottom_axis = plot.getAxis("bottom")
+        bottom_axis.setTicks([[(float(i), day_labels[i]) for i in range(7)]])
+        bottom_axis.setTextPen(col_text)
+        bottom_axis.setPen(pg.mkPen(col_border))
+
+        # Empty state check
+        total = pom_mins.sum() + sw_mins.sum()
+        if total == 0:
+            self._show_empty("No sessions this week \u2014 use \u25c0 \u25b6 to navigate")
+            plot.setXRange(-0.5, 6.5, padding=0)
+            plot.setYRange(0, 10, padding=0)
+            return
+
+        max_y = max(float((pom_mins + sw_mins).max()), 1)
+        plot.setXRange(-0.5, 6.5, padding=0)
+        plot.setYRange(0, max_y * 1.15, padding=0)
+
+    def _build_legend(self, c: dict, text_color: str) -> None:
+        legend_layout = self._legend_widget.layout()
+        for hex_c, name in [
+            (c.get("chart_pomodoro", "#D55E00"), "Pomodoro"),
+            (c.get("chart_stopwatch", "#0072B2"), "Stopwatch"),
+            (c.get("highlight", "#0078d4"), "7-day avg"),
+        ]:
+            lbl = QLabel(
+                f'<span style="color:{hex_c};">\u25a0</span> '
+                f'<span style="color:{text_color};">{name}</span>'
+            )
+            lbl.setStyleSheet("font-size: 11px;")
+            if legend_layout is not None:
+                legend_layout.addWidget(lbl)
+            self._legend_labels.append(lbl)
+        if legend_layout is not None:
+            legend_layout.addStretch()
+
+    def _show_empty(self, message: str) -> None:
+        import pyqtgraph as pg
+
+        c = self._colors
+        col_text = QColor(c.get("completed_text", "#8c8c8c"))
+        text = pg.TextItem(message, color=col_text, anchor=(0.5, 0.5))
+        text.setPos(3.0, 5.0)
+        self._plot.addItem(text)
+
+
+# ---------------------------------------------------------------------------
+# Timeline Productivity Chart — time block heatmap
+# ---------------------------------------------------------------------------
+
+
+class _TimelineProductivityWidget(QWidget):
+    """pyqtgraph horizontal bars: 12 two-hour blocks colored by activity intensity."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        import pyqtgraph as pg
+
+        self._analytics = None
+        self._colors: dict[str, str] = {}
+        self._refresh_colors()
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._plot = pg.PlotWidget()
+        self._plot.setBackground(self._colors.get("base", "#252526"))
+        self._plot.setMouseEnabled(x=False, y=False)
+        self._plot.showGrid(x=True, y=False, alpha=0.2)
+        self._plot.setMenuEnabled(False)
+        layout.addWidget(self._plot)
+
+        self._legend_widget = QWidget()
+        self._legend_widget.setFixedHeight(28)
+        legend_layout = QHBoxLayout(self._legend_widget)
+        legend_layout.setContentsMargins(10, 4, 10, 4)
+        legend_layout.setSpacing(16)
+        self._legend_labels: list[QLabel] = []
+        layout.addWidget(self._legend_widget)
+
+    def _refresh_colors(self) -> None:
+        from ...gui.styles.themes import get_colors
+
+        self._colors = get_colors()
+
+    def set_analytics(self, analytics) -> None:
+        self._analytics = analytics
+
+    def rebuild(self) -> None:
+        import pyqtgraph as pg
+
+        self._refresh_colors()
+        c = self._colors
+        plot = self._plot
+        plot.clear()
+        plot.setBackground(c.get("base", "#252526"))
+
+        for lbl in self._legend_labels:
+            lbl.deleteLater()
+        self._legend_labels.clear()
+        text_color = c.get("text", "#e0e0e0")
+
+        if self._analytics is None:
+            self._show_empty("Analytics service not available")
+            return
+
+        blocks = self._analytics.time_block_analysis()
+        if blocks.empty or blocks["session_count"].sum() == 0:
+            self._show_empty("Complete some focus sessions to see productivity patterns")
+            return
+
+        max_count = max(int(blocks["session_count"].max()), 1)
+        col_base = QColor(c.get("chart_pomodoro", "#D55E00"))
+        col_text = QColor(text_color)
+        col_border = QColor(c.get("border", "#3c3c3c"))
+
+        n = len(blocks)
+        y_ticks = []
+
+        for i, (_, row) in enumerate(blocks.iterrows()):
+            y = float(n - 1 - i)
+            label = str(row["block_label"])
+            count = int(row["session_count"])
+            rate = float(row["completion_rate"])
+            y_ticks.append((y, label))
+
+            if count > 0:
+                # Color intensity by count
+                alpha = int(80 + (175 * count / max_count))
+                bar_color = QColor(col_base)
+                bar_color.setAlpha(alpha)
+
+                bar = pg.BarGraphItem(
+                    x0=[0],
+                    y0=[y - 0.35],
+                    width=[count],
+                    height=[0.7],
+                    brush=pg.mkBrush(bar_color),
+                    pen=pg.mkPen(None),
+                )
+                plot.addItem(bar)
+
+                # Completion rate text
+                rate_text = pg.TextItem(
+                    f"{count} sessions ({round(rate * 100)}%)",
+                    color=col_text,
+                    anchor=(0, 0.5),
+                )
+                rate_text.setPos(count + 0.3, y)
+                plot.addItem(rate_text)
+
+        # Axes
+        left_axis = plot.getAxis("left")
+        left_axis.setTicks([y_ticks])
+        left_axis.setTextPen(col_text)
+        left_axis.setPen(pg.mkPen(col_border))
+        left_axis.setWidth(100)
+
+        bottom_axis = plot.getAxis("bottom")
+        bottom_axis.setTextPen(col_text)
+        bottom_axis.setPen(pg.mkPen(col_border))
+        bottom_axis.setLabel("Sessions")
+
+        plot.setXRange(0, max_count * 1.5, padding=0)
+        plot.setYRange(-0.5, n - 0.5, padding=0.05)
+
+        # Legend
+        legend_layout = self._legend_widget.layout()
+        lbl = QLabel(
+            f'<span style="color:{text_color};">Bars show session count per time block. '
+            f"Brighter = more sessions. Percentage = completion rate.</span>"
+        )
+        lbl.setStyleSheet("font-size: 11px;")
+        if legend_layout is not None:
+            legend_layout.addWidget(lbl)
+        self._legend_labels.append(lbl)
+        if legend_layout is not None:
+            legend_layout.addStretch()
+
+    def _show_empty(self, message: str) -> None:
+        import pyqtgraph as pg
+
+        c = self._colors
+        col_text = QColor(c.get("completed_text", "#8c8c8c"))
+        text = pg.TextItem(message, color=col_text, anchor=(0.5, 0.5))
+        text.setPos(5.0, 5.5)
+        self._plot.addItem(text)
+
+
+# ---------------------------------------------------------------------------
+# Timeline Accuracy Chart — estimate vs actual scatter plot
+# ---------------------------------------------------------------------------
+
+
+class _TimelineAccuracyWidget(QWidget):
+    """pyqtgraph scatter plot: estimated vs actual minutes per item."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        import pyqtgraph as pg
+
+        self._analytics = None
+        self._list_id: str | None = None
+        self._colors: dict[str, str] = {}
+        self._refresh_colors()
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._plot = pg.PlotWidget()
+        self._plot.setBackground(self._colors.get("base", "#252526"))
+        self._plot.setMouseEnabled(x=True, y=True)
+        self._plot.showGrid(x=True, y=True, alpha=0.25)
+        self._plot.setMenuEnabled(False)
+        layout.addWidget(self._plot)
+
+        self._legend_widget = QWidget()
+        self._legend_widget.setFixedHeight(28)
+        legend_layout = QHBoxLayout(self._legend_widget)
+        legend_layout.setContentsMargins(10, 4, 10, 4)
+        legend_layout.setSpacing(16)
+        self._legend_labels: list[QLabel] = []
+        layout.addWidget(self._legend_widget)
+
+    def _refresh_colors(self) -> None:
+        from ...gui.styles.themes import get_colors
+
+        self._colors = get_colors()
+
+    def set_analytics(self, analytics) -> None:
+        self._analytics = analytics
+
+    def set_list_id(self, list_id: str | None) -> None:
+        self._list_id = list_id
+
+    def rebuild(self) -> None:
+        import pyqtgraph as pg
+
+        self._refresh_colors()
+        c = self._colors
+        plot = self._plot
+        plot.clear()
+        plot.setBackground(c.get("base", "#252526"))
+
+        for lbl in self._legend_labels:
+            lbl.deleteLater()
+        self._legend_labels.clear()
+        text_color = c.get("text", "#e0e0e0")
+
+        col_text = QColor(text_color)
+        col_border = QColor(c.get("border", "#3c3c3c"))
+
+        # Legend (always visible)
+        legend_layout = self._legend_widget.layout()
+        for hex_c, name in [
+            (c.get("chart_overdue", "#b12f25"), "Under-estimated"),
+            (c.get("chart_span", "#4a90d2"), "Accurate"),
+            (c.get("chart_stopwatch", "#0072B2"), "Over-estimated"),
+        ]:
+            lbl = QLabel(
+                f'<span style="color:{hex_c};">\u25cf</span> '
+                f'<span style="color:{text_color};">{name}</span>'
+            )
+            lbl.setStyleSheet("font-size: 11px;")
+            if legend_layout is not None:
+                legend_layout.addWidget(lbl)
+            self._legend_labels.append(lbl)
+        if legend_layout is not None:
+            legend_layout.addStretch()
+
+        # Axes (always set up)
+        left_axis = plot.getAxis("left")
+        left_axis.setTextPen(col_text)
+        left_axis.setPen(pg.mkPen(col_border))
+        left_axis.setLabel("Actual (min)")
+
+        bottom_axis = plot.getAxis("bottom")
+        bottom_axis.setTextPen(col_text)
+        bottom_axis.setPen(pg.mkPen(col_border))
+        bottom_axis.setLabel("Estimated (min)")
+
+        if self._analytics is None:
+            self._show_empty("Analytics service not available")
+            return
+
+        accuracy = self._analytics.estimate_accuracy(list_id=self._list_id)
+        if accuracy.empty:
+            self._show_empty("Add estimates and complete sessions to track accuracy")
+            return
+
+        col_over = QColor(c.get("chart_overdue", "#b12f25"))  # Under-estimated
+        col_under = QColor(c.get("chart_stopwatch", "#0072B2"))  # Over-estimated
+        col_accurate = QColor(c.get("chart_span", "#4a90d2"))  # Close to estimate
+
+        estimated = accuracy["estimated_minutes"].values.astype(float)
+        actual = accuracy["actual_minutes"].values.astype(float)
+
+        # Color by variance
+        brushes = []
+        for _, row in accuracy.iterrows():
+            ratio = float(row["accuracy_ratio"])
+            if ratio > 1.2:
+                brushes.append(pg.mkBrush(col_over))
+            elif ratio < 0.8:
+                brushes.append(pg.mkBrush(col_under))
+            else:
+                brushes.append(pg.mkBrush(col_accurate))
+
+        scatter = pg.ScatterPlotItem(
+            x=estimated,
+            y=actual,
+            size=12,
+            brush=brushes,
+            pen=pg.mkPen("w", width=0.5),
+        )
+        plot.addItem(scatter)
+
+        # Reference line (y = x)
+        max_val = max(float(estimated.max()), float(actual.max()), 10)
+        ref_line = pg.InfiniteLine(
+            pos=0,
+            angle=45,
+            pen=pg.mkPen(col_text, width=1, style=Qt.PenStyle.DashLine),
+        )
+        plot.addItem(ref_line)
+
+        plot.setXRange(0, max_val * 1.1, padding=0)
+        plot.setYRange(0, max_val * 1.1, padding=0)
+
+    def _show_empty(self, message: str) -> None:
+        import pyqtgraph as pg
+
+        c = self._colors
+        col_text = QColor(c.get("completed_text", "#8c8c8c"))
+        text = pg.TextItem(message, color=col_text, anchor=(0.5, 0.5))
+        text.setPos(50.0, 50.0)
+        self._plot.addItem(text)
 
 
 # ---------------------------------------------------------------------------
@@ -1773,32 +2274,61 @@ class CalendarViewWidget(QWidget):
         top_layout.addStretch()
 
         # Navigation
-        prev_btn = QToolButton()
-        prev_btn.setText("\u25c0")
-        prev_btn.setStyleSheet("border: none; font-size: 14px; padding: 4px;")
-        prev_btn.clicked.connect(self._navigate_prev)
-        top_layout.addWidget(prev_btn)
+        self._prev_btn = QToolButton()
+        self._prev_btn.setText("\u25c0")
+        self._prev_btn.setStyleSheet("border: none; font-size: 14px; padding: 4px;")
+        self._prev_btn.clicked.connect(self._navigate_prev)
+        top_layout.addWidget(self._prev_btn)
 
         self._nav_label = QLabel()
         self._nav_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._nav_label.setStyleSheet("font-size: 13px; font-weight: bold; min-width: 140px;")
         top_layout.addWidget(self._nav_label)
 
-        next_btn = QToolButton()
-        next_btn.setText("\u25b6")
-        next_btn.setStyleSheet("border: none; font-size: 14px; padding: 4px;")
-        next_btn.clicked.connect(self._navigate_next)
-        top_layout.addWidget(next_btn)
+        self._next_btn = QToolButton()
+        self._next_btn.setText("\u25b6")
+        self._next_btn.setStyleSheet("border: none; font-size: 14px; padding: 4px;")
+        self._next_btn.clicked.connect(self._navigate_next)
+        top_layout.addWidget(self._next_btn)
 
-        today_btn = QPushButton("Today")
-        today_btn.setStyleSheet(
+        self._today_btn = QPushButton("Today")
+        self._today_btn.setStyleSheet(
             "QPushButton { border: 1px solid palette(mid); border-radius: 3px;"
             " padding: 3px 10px; font-size: 11px; }"
         )
-        today_btn.clicked.connect(self._navigate_today)
-        top_layout.addWidget(today_btn)
+        self._today_btn.clicked.connect(self._navigate_today)
+        top_layout.addWidget(self._today_btn)
 
         layout.addWidget(top_bar)
+
+        # Secondary pill row for timeline sub-views (hidden unless Timeline selected)
+        self._timeline_pill_frame = QFrame()
+        self._timeline_pill_frame.setStyleSheet(
+            "QFrame { background: palette(window); border: 1px solid palette(mid);"
+            " border-radius: 4px; padding: 0; }"
+        )
+        tl_pill_layout = QHBoxLayout(self._timeline_pill_frame)
+        tl_pill_layout.setContentsMargins(2, 2, 2, 2)
+        tl_pill_layout.setSpacing(0)
+
+        self._tl_sub_view = 0  # Default: Tasks
+        self._tl_sub_buttons: list[QPushButton] = []
+        for i, label in enumerate(["Tasks", "Daily", "Productivity", "Accuracy"]):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(i == 0)
+            btn.setStyleSheet(
+                "QPushButton { border: none; padding: 4px 10px; font-size: 10px;"
+                " border-radius: 3px; }"
+                " QPushButton:checked { background: palette(highlight); color: white;"
+                " font-weight: bold; }"
+            )
+            btn.clicked.connect(lambda checked, idx=i: self._set_timeline_sub_view(idx))
+            tl_pill_layout.addWidget(btn)
+            self._tl_sub_buttons.append(btn)
+
+        self._timeline_pill_frame.setVisible(self._sub_view == self.SUB_TIMELINE)
+        layout.addWidget(self._timeline_pill_frame)
 
         # Content area: sub-view stack + unscheduled panel
         content = QHBoxLayout()
@@ -1862,11 +2392,34 @@ class CalendarViewWidget(QWidget):
 
         self._sub_stack.addWidget(month_container)  # 2
 
-        # Timeline view — horizontal bars
-        self._timeline_widget = _TimelineWidget()
-        self._timeline_widget.task_clicked.connect(self._on_task_clicked)
-        self._timeline_widget.task_right_clicked.connect(self._on_task_right_clicked)
-        self._sub_stack.addWidget(self._timeline_widget)  # 3
+        # Timeline container with sub-stack for multiple chart types
+        self._timeline_container = QWidget()
+        tl_container_layout = QVBoxLayout(self._timeline_container)
+        tl_container_layout.setContentsMargins(0, 0, 0, 0)
+        tl_container_layout.setSpacing(0)
+
+        self._timeline_sub_stack = QStackedWidget()
+
+        # [0] Tasks — existing Gantt chart
+        self._timeline_tasks_widget = _TimelineTasksWidget()
+        self._timeline_tasks_widget.task_clicked.connect(self._on_task_clicked)
+        self._timeline_tasks_widget.task_right_clicked.connect(self._on_task_right_clicked)
+        self._timeline_sub_stack.addWidget(self._timeline_tasks_widget)  # 0
+
+        # [1] Daily — stacked bar chart
+        self._timeline_daily_widget = _TimelineDailyWidget()
+        self._timeline_sub_stack.addWidget(self._timeline_daily_widget)  # 1
+
+        # [2] Productivity — time block heatmap
+        self._timeline_productivity_widget = _TimelineProductivityWidget()
+        self._timeline_sub_stack.addWidget(self._timeline_productivity_widget)  # 2
+
+        # [3] Accuracy — estimate scatter plot
+        self._timeline_accuracy_widget = _TimelineAccuracyWidget()
+        self._timeline_sub_stack.addWidget(self._timeline_accuracy_widget)  # 3
+
+        tl_container_layout.addWidget(self._timeline_sub_stack)
+        self._sub_stack.addWidget(self._timeline_container)  # 3
 
         self._sub_stack.setCurrentIndex(self._sub_view)
         content.addWidget(self._sub_stack, 1)
@@ -1899,11 +2452,18 @@ class CalendarViewWidget(QWidget):
             self._focus_session_item_id = item_id
             self.refresh()
 
+    def set_analytics(self, analytics) -> None:
+        """Set the AnalyticsService for timeline chart sub-views."""
+        self._analytics = analytics
+        self._timeline_daily_widget.set_analytics(analytics)
+        self._timeline_productivity_widget.set_analytics(analytics)
+        self._timeline_accuracy_widget.set_analytics(analytics)
+
     def set_active_session(
         self, item_id: UUID | None, elapsed: int = 0, session_type: str = ""
     ) -> None:
         """Pass active focus session to timeline for pseudo-real-time bar updates."""
-        self._timeline_widget.set_active_session(item_id, elapsed, session_type)
+        self._timeline_tasks_widget.set_active_session(item_id, elapsed, session_type)
 
     def refresh(self) -> None:
         self._close_popover()
@@ -1980,7 +2540,11 @@ class CalendarViewWidget(QWidget):
         all_items = list(self._todo_list.active_items())
         all_items = [i for i in all_items if i.parent_id is None]
         all_items = self._apply_filter(all_items)
-        self._timeline_widget.set_data(all_items, self._current_date, self._todo_list)
+        self._timeline_tasks_widget.set_data(all_items, self._current_date, self._todo_list)
+
+        # Refresh active timeline sub-view (Daily/Productivity/Accuracy)
+        if self._sub_view == self.SUB_TIMELINE and self._tl_sub_view > 0:
+            self._refresh_timeline_sub_view()
 
         self._unscheduled.set_items(unscheduled, todo_list=self._todo_list)
 
@@ -2018,6 +2582,35 @@ class CalendarViewWidget(QWidget):
 
     # --- Navigation ---
 
+    def _set_timeline_sub_view(self, idx: int) -> None:
+        """Switch between timeline chart sub-views (Tasks/Daily/Productivity/Accuracy)."""
+        self._tl_sub_view = idx
+        self._timeline_sub_stack.setCurrentIndex(idx)
+        for i, btn in enumerate(self._tl_sub_buttons):
+            btn.setChecked(i == idx)
+        self._update_timeline_nav_state()
+        self._update_nav_label()
+        self._refresh_timeline_sub_view()
+
+    def _update_timeline_nav_state(self) -> None:
+        """Enable/disable navigation buttons based on active timeline sub-view."""
+        # Tasks and Daily support navigation; Productivity and Accuracy don't
+        nav_enabled = self._tl_sub_view <= 1  # 0=Tasks, 1=Daily
+        self._prev_btn.setEnabled(nav_enabled)
+        self._next_btn.setEnabled(nav_enabled)
+        self._today_btn.setEnabled(nav_enabled)
+
+    def _refresh_timeline_sub_view(self) -> None:
+        """Refresh the active timeline sub-view chart."""
+        if self._tl_sub_view == 1:  # Daily
+            self._timeline_daily_widget.set_current_date(self._current_date)
+        elif self._tl_sub_view == 2:  # Productivity
+            self._timeline_productivity_widget.rebuild()
+        elif self._tl_sub_view == 3:  # Accuracy
+            list_id = str(self._todo_list.id) if self._todo_list else None
+            self._timeline_accuracy_widget.set_list_id(list_id)
+            self._timeline_accuracy_widget.rebuild()
+
     def _navigate_prev(self) -> None:
         if self._sub_view == self.SUB_MONTH:
             if self._current_date.month == 1:
@@ -2027,6 +2620,9 @@ class CalendarViewWidget(QWidget):
             else:
                 self._current_date = self._current_date.replace(month=self._current_date.month - 1)
         elif self._sub_view == self.SUB_WEEK:
+            self._current_date -= timedelta(weeks=1)
+        elif self._sub_view == self.SUB_TIMELINE and self._tl_sub_view == 1:
+            # Daily: shift by week
             self._current_date -= timedelta(weeks=1)
         else:
             self._current_date -= timedelta(days=1)
@@ -2042,6 +2638,9 @@ class CalendarViewWidget(QWidget):
             else:
                 self._current_date = self._current_date.replace(month=self._current_date.month + 1)
         elif self._sub_view == self.SUB_WEEK:
+            self._current_date += timedelta(weeks=1)
+        elif self._sub_view == self.SUB_TIMELINE and self._tl_sub_view == 1:
+            # Daily: shift by week
             self._current_date += timedelta(weeks=1)
         else:
             self._current_date += timedelta(days=1)
@@ -2063,8 +2662,19 @@ class CalendarViewWidget(QWidget):
             self._nav_label.setText(f"{start.strftime('%b %d')} \u2014 {end.strftime('%b %d, %Y')}")
         elif self._sub_view == self.SUB_DAY:
             self._nav_label.setText(d.strftime("%A, %B %d, %Y"))
-        else:
-            self._nav_label.setText(f"Timeline \u2014 {d.strftime('%B %Y')}")
+        elif self._sub_view == self.SUB_TIMELINE:
+            if self._tl_sub_view == 1:  # Daily
+                start = d - timedelta(days=d.weekday())
+                end = start + timedelta(days=6)
+                self._nav_label.setText(
+                    f"{start.strftime('%b %d')} \u2014 {end.strftime('%b %d, %Y')}"
+                )
+            elif self._tl_sub_view == 2:  # Productivity
+                self._nav_label.setText("Productivity \u2014 All Time")
+            elif self._tl_sub_view == 3:  # Accuracy
+                self._nav_label.setText("Accuracy \u2014 All Time")
+            else:  # Tasks
+                self._nav_label.setText(f"Timeline \u2014 {d.strftime('%B %Y')}")
 
     # --- Sub-view switching ---
 
@@ -2073,6 +2683,16 @@ class CalendarViewWidget(QWidget):
         self._sub_stack.setCurrentIndex(idx)
         for i, btn in enumerate(self._sub_buttons):
             btn.setChecked(i == idx)
+
+        # Show/hide timeline secondary pills and unscheduled panel
+        is_timeline = idx == self.SUB_TIMELINE
+        self._timeline_pill_frame.setVisible(is_timeline)
+        self._unscheduled.setVisible(not is_timeline)
+
+        # Nav button state for timeline sub-views
+        if is_timeline:
+            self._update_timeline_nav_state()
+
         self._update_nav_label()
         self.refresh()
 
@@ -2112,7 +2732,7 @@ class CalendarViewWidget(QWidget):
         self._cal_delegate.set_selected(item_id)
         self._week_delegate.set_selected(item_id)
         self._day_delegate.set_selected(item_id)
-        self._timeline_widget.set_selected(item_id)
+        self._timeline_tasks_widget.set_selected(item_id)
         self._cal_table.viewport().update()  # type: ignore[union-attr]
         self._week_table.viewport().update()  # type: ignore[union-attr]
         self._day_table.viewport().update()  # type: ignore[union-attr]
