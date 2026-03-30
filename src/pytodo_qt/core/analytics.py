@@ -156,11 +156,12 @@ class AnalyticsService:
         return self._set_cached(key, df)
 
     def time_block_analysis(self) -> pd.DataFrame:
-        """Session counts and completion rates by 2-hour time blocks.
+        """Session counts, total minutes, and completion rates by 2-hour time blocks.
 
         Returns:
             DataFrame with 12 rows: block_start_hour, block_label,
-            session_count, completed_count, completion_rate, avg_duration_minutes
+            session_count, completed_count, total_minutes,
+            completion_rate, avg_duration_minutes
         """
         key = self._cache_key("time_block_analysis")
         cached = self._get_cached(key)
@@ -178,6 +179,7 @@ class AnalyticsService:
             block_data = work[mask]
             count = len(block_data)
             completed = int(block_data["completed"].sum()) if count > 0 else 0
+            total_mins = float(block_data["duration_minutes"].sum()) if count > 0 else 0.0
             rate = completed / count if count > 0 else 0.0
             avg_dur = float(block_data["duration_minutes"].mean()) if count > 0 else 0.0
             blocks.append(
@@ -186,6 +188,7 @@ class AnalyticsService:
                     "block_label": label,
                     "session_count": count,
                     "completed_count": completed,
+                    "total_minutes": total_mins,
                     "completion_rate": rate,
                     "avg_duration_minutes": avg_dur,
                 }

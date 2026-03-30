@@ -1346,7 +1346,7 @@ class _TimelineProductivityWidget(QWidget):
             self._show_empty("Complete some focus sessions to see productivity patterns")
             return
 
-        max_count = max(int(blocks["session_count"].max()), 1)
+        max_minutes = max(float(blocks["total_minutes"].max()), 0.1)
         col_base = QColor(c.get("chart_pomodoro", "#D55E00"))
         col_text = QColor(text_color)
         col_border = QColor(c.get("border", "#3c3c3c"))
@@ -1357,33 +1357,39 @@ class _TimelineProductivityWidget(QWidget):
         for i, (_, row) in enumerate(blocks.iterrows()):
             y = float(n - 1 - i)
             label = str(row["block_label"])
+            total_mins = float(row["total_minutes"])
             count = int(row["session_count"])
             rate = float(row["completion_rate"])
             y_ticks.append((y, label))
 
-            if count > 0:
-                # Color intensity by count
-                alpha = int(80 + (175 * count / max_count))
+            if total_mins > 0:
+                # Color intensity by minutes
+                alpha = int(80 + (175 * total_mins / max_minutes))
                 bar_color = QColor(col_base)
                 bar_color.setAlpha(alpha)
 
                 bar = pg.BarGraphItem(
                     x0=[0],
                     y0=[y - 0.35],
-                    width=[count],
+                    width=[total_mins],
                     height=[0.7],
                     brush=pg.mkBrush(bar_color),
                     pen=pg.mkPen(None),
                 )
                 plot.addItem(bar)
 
-                # Completion rate text
+                # Label: minutes + completion rate
+                mins_display = (
+                    f"{int(total_mins)}m"
+                    if total_mins < 60
+                    else f"{int(total_mins // 60)}h {int(total_mins % 60)}m"
+                )
                 rate_text = pg.TextItem(
-                    f"{count} sessions ({round(rate * 100)}%)",
+                    f"{mins_display} ({count} sessions, {round(rate * 100)}%)",
                     color=col_text,
                     anchor=(0, 0.5),
                 )
-                rate_text.setPos(count + 0.3, y)
+                rate_text.setPos(total_mins + max_minutes * 0.02, y)
                 plot.addItem(rate_text)
 
         # Axes
@@ -1396,16 +1402,16 @@ class _TimelineProductivityWidget(QWidget):
         bottom_axis = plot.getAxis("bottom")
         bottom_axis.setTextPen(col_text)
         bottom_axis.setPen(pg.mkPen(col_border))
-        bottom_axis.setLabel("Sessions")
+        bottom_axis.setLabel("Minutes")
 
-        plot.setXRange(0, max_count * 1.5, padding=0)
+        plot.setXRange(0, max_minutes * 1.4, padding=0)
         plot.setYRange(-0.5, n - 0.5, padding=0.05)
 
         # Legend
         legend_layout = self._legend_widget.layout()
         lbl = QLabel(
-            f'<span style="color:{text_color};">Bars show session count per time block. '
-            f"Brighter = more sessions. Percentage = completion rate.</span>"
+            f'<span style="color:{text_color};">Bars show total minutes worked per time block '
+            f"(pomodoro + stopwatch). Brighter = more time. Percentage = completion rate.</span>"
         )
         lbl.setStyleSheet("font-size: 11px;")
         if legend_layout is not None:
