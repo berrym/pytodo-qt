@@ -667,15 +667,17 @@ class EditTimeSpentCommand(QUndoCommand):
         old_time_spent: int,
         seconds_to_add: int,
         old_pomodoro_count: int = 0,
+        increment_pomodoro: bool = True,
     ) -> None:
-        super().__init__("Focus session")
+        label = "Focus session" if increment_pomodoro else "Stopwatch session"
+        super().__init__(label)
         self._window = window
         self._list_id = list_id
         self._item_id = item_id
         self._old_time_spent = old_time_spent
         self._new_time_spent = old_time_spent + seconds_to_add
         self._old_pomodoro_count = old_pomodoro_count
-        self._new_pomodoro_count = old_pomodoro_count + 1
+        self._new_pomodoro_count = old_pomodoro_count + (1 if increment_pomodoro else 0)
 
     def redo(self) -> None:
         todo_list = self._window._database.lists.get(self._list_id)

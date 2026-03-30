@@ -443,6 +443,38 @@ class SettingsDialog(QDialog):
         goal_form.addRow("", self.milestone_check)
 
         layout.addWidget(goal_group)
+
+        # Stopwatch group
+        sw_group = QGroupBox("Stopwatch")
+        sw_form = QFormLayout(sw_group)
+
+        self.sw_min_session_spin = QSpinBox()
+        self.sw_min_session_spin.setRange(0, 300)
+        self.sw_min_session_spin.setSingleStep(10)
+        self.sw_min_session_spin.setSuffix(" seconds")
+        self.sw_min_session_spin.setSpecialValueText("Record all")
+        self.sw_min_session_spin.setToolTip(
+            "Sessions shorter than this are discarded (0 = record everything)"
+        )
+        sw_form.addRow("Minimum session:", self.sw_min_session_spin)
+
+        self.sw_idle_timeout_spin = QSpinBox()
+        self.sw_idle_timeout_spin.setRange(0, 120)
+        self.sw_idle_timeout_spin.setSingleStep(5)
+        self.sw_idle_timeout_spin.setSuffix(" minutes")
+        self.sw_idle_timeout_spin.setSpecialValueText("Disabled")
+        self.sw_idle_timeout_spin.setToolTip(
+            "Auto-pause stopwatch after no keyboard/mouse activity (0 = disabled)"
+        )
+        sw_form.addRow("Auto-pause after idle:", self.sw_idle_timeout_spin)
+
+        self.sw_status_bar_check = QCheckBox("Show elapsed time in status bar")
+        sw_form.addRow("", self.sw_status_bar_check)
+
+        self.sw_sound_check = QCheckBox("Play sound when session is recorded")
+        sw_form.addRow("", self.sw_sound_check)
+
+        layout.addWidget(sw_group)
         layout.addStretch()
 
         return widget
@@ -646,6 +678,12 @@ class SettingsDialog(QDialog):
         self.daily_goal_spin.setValue(config.pomodoro.daily_goal)
         self.milestone_check.setChecked(config.pomodoro.milestone_notifications)
 
+        # Stopwatch
+        self.sw_min_session_spin.setValue(config.stopwatch.minimum_session)
+        self.sw_idle_timeout_spin.setValue(config.stopwatch.idle_timeout)
+        self.sw_status_bar_check.setChecked(config.stopwatch.show_in_status_bar)
+        self.sw_sound_check.setChecked(config.stopwatch.sound_on_stop)
+
         # Web
         self.web_enabled_check.setChecked(config.web.enabled)
         self.web_port_spin.setValue(config.web.port)
@@ -729,6 +767,12 @@ class SettingsDialog(QDialog):
         config.pomodoro.sound_volume = self.sound_volume_slider.value()
         config.pomodoro.daily_goal = self.daily_goal_spin.value()
         config.pomodoro.milestone_notifications = self.milestone_check.isChecked()
+
+        # Stopwatch
+        config.stopwatch.minimum_session = self.sw_min_session_spin.value()
+        config.stopwatch.idle_timeout = self.sw_idle_timeout_spin.value()
+        config.stopwatch.show_in_status_bar = self.sw_status_bar_check.isChecked()
+        config.stopwatch.sound_on_stop = self.sw_sound_check.isChecked()
 
         # Web
         config.web.enabled = self.web_enabled_check.isChecked()

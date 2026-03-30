@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- Button/crown at top -->
+  <line x1="12" y1="2" x2="12" y2="4.5" stroke="#4A90D9" stroke-width="2" stroke-linecap="round"/>
+  <!-- Small side button -->
+  <line x1="18.5" y1="5.5" x2="20" y2="4" stroke="#4A90D9" stroke-width="1.5" stroke-linecap="round"/>
+  <!-- Clock face -->
+  <circle cx="12" cy="13.5" r="8.5" stroke="#4A90D9" stroke-width="2" fill="none"/>
+  <!-- Clock hand pointing up-right (running position) -->
+  <path d="M12 13.5V8" stroke="#4A90D9" stroke-width="2" stroke-linecap="round"/>
+  <path d="M12 13.5l3.5 3.5" stroke="#4A90D9" stroke-width="2" stroke-linecap="round"/>
+</svg>

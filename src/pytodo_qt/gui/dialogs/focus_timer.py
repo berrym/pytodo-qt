@@ -47,6 +47,7 @@ class FocusTimerDialog(QDialog):
         self.setMinimumWidth(300)
         self._sessions_expanded = False
         self._session_total_count = 0
+        self._mode = "pomodoro"  # "pomodoro" or "stopwatch"
         self._setup_ui()
         self.adjustSize()
 
@@ -170,6 +171,83 @@ class FocusTimerDialog(QDialog):
         arrow = "\u25bc" if self._sessions_expanded else "\u25b6"
         self._sessions_toggle.setText(f"{arrow} Today's Sessions ({self._session_total_count})")
         self.adjustSize()
+
+    def set_mode(self, mode: str) -> None:
+        """Set the dialog mode: 'pomodoro' or 'stopwatch'.
+
+        In stopwatch mode, hides progress bar, skip button, session counter,
+        and tomato progress. Shows elapsed time counting up.
+        """
+        self._mode = mode
+        is_stopwatch = mode == "stopwatch"
+        self.setWindowTitle("Stopwatch" if is_stopwatch else "Focus Timer")
+        self._progress_bar.setVisible(not is_stopwatch)
+        self._session_label.setVisible(not is_stopwatch)
+        self._skip_btn.setVisible(False)
+        self._item_progress_container.setVisible(not is_stopwatch)
+        self._daily_goal_label.setVisible(False)
+        self._streak_label.setVisible(False)
+        self._focus_score_label.setVisible(False)
+
+    def update_stopwatch_display(
+        self,
+        state: str,
+        elapsed: int,
+        item_name: str,
+        estimated_minutes: int = 0,
+    ) -> None:
+        """Update display for stopwatch mode.
+
+        Args:
+            state: "stopwatch_running", "stopwatch_paused", or "idle"
+            elapsed: Elapsed seconds
+            item_name: Name of the tracked item
+            estimated_minutes: Estimated minutes (0 = no estimate)
+        """
+        if state == "idle":
+            self.hide()
+            return
+
+        # Time display — count up, HH:MM:SS for 1h+
+        h, remainder = divmod(max(0, elapsed), 3600)
+        m, s = divmod(remainder, 60)
+        if h > 0:
+            self._time_label.setText(f"{h}:{m:02d}:{s:02d}")
+        else:
+            self._time_label.setText(f"{m:02d}:{s:02d}")
+
+        # Color
+        if state == "stopwatch_running":
+            self._time_label.setStyleSheet("color: #3498DB;")
+        elif state == "stopwatch_paused":
+            self._time_label.setStyleSheet("color: #F39C12;")
+
+        # Progress bar — show if estimate exists
+        if estimated_minutes > 0:
+            total_seconds = estimated_minutes * 60
+            self._progress_bar.setMaximum(total_seconds)
+            self._progress_bar.setValue(min(elapsed, total_seconds))
+            self._progress_bar.setVisible(True)
+            elapsed_m = elapsed // 60
+            self._session_label.setText(f"{elapsed_m} of {estimated_minutes} min")
+            self._session_label.setVisible(True)
+        else:
+            self._progress_bar.setVisible(False)
+            self._session_label.setVisible(False)
+
+        # Item name
+        display_name = self._elide_item_name(item_name)
+        self._item_label.setText(display_name)
+        self._item_label.setToolTip(item_name if display_name != item_name else "")
+
+        # Pause button text
+        if state == "stopwatch_paused":
+            self._pause_btn.setText("\u25b6 Resume")
+        else:
+            self._pause_btn.setText("\u23f8 Pause")
+
+        self._pause_btn.setEnabled(True)
+        self._skip_btn.setVisible(False)
 
     def update_sessions(self, sessions: list[dict[str, Any]]) -> None:
         """Update the Today's Sessions display.

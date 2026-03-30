@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS items (
     time_spent INTEGER NOT NULL DEFAULT 0,
     pomodoro_count INTEGER NOT NULL DEFAULT 0,
     estimated_pomodoros INTEGER NOT NULL DEFAULT 0,
+    estimated_minutes INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     deleted INTEGER NOT NULL DEFAULT 0,
@@ -289,6 +290,7 @@ class DatabaseStorage:
         self._migrate_schema_12_to_13()
         self._migrate_schema_13_to_14()
         self._migrate_schema_14_to_15()
+        self._migrate_schema_15_to_16()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -537,6 +539,21 @@ class DatabaseStorage:
 
         self.set_schema_version(15)
 
+    def _migrate_schema_15_to_16(self) -> None:
+        """Migrate schema from version 15 to 16 (add estimated_minutes column)."""
+        current_version = self.get_schema_version()
+        if current_version >= 16:
+            return
+
+        columns = [row[1] for row in self.connection.execute("PRAGMA table_info(items)")]
+        if "estimated_minutes" not in columns:
+            self.connection.execute(
+                "ALTER TABLE items ADD COLUMN estimated_minutes INTEGER NOT NULL DEFAULT 0"
+            )
+            logger.log.info("Migrated schema 15->16: added estimated_minutes to items")
+
+        self.set_schema_version(16)
+
     def get_schema_version(self) -> int:
         """Get current schema version."""
         cursor = self.connection.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
@@ -749,9 +766,9 @@ class DatabaseStorage:
             (id, list_id, reminder, priority, complete, due_date, due_time, tags,
              recurrence_type, recurrence_interval, recurrence_end_date,
              recurrence_end_count, recurrence_count, missed_recurrences,
-             time_spent, pomodoro_count, estimated_pomodoros,
+             time_spent, pomodoro_count, estimated_pomodoros, estimated_minutes,
              created_at, updated_at, deleted, parent_id, board_column)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(item.id),
@@ -771,6 +788,7 @@ class DatabaseStorage:
                 item.time_spent,
                 item.pomodoro_count,
                 item.estimated_pomodoros,
+                item.estimated_minutes,
                 item.created_at,
                 item.updated_at,
                 1 if item.deleted else 0,
@@ -857,6 +875,12 @@ class DatabaseStorage:
         except (KeyError, IndexError):
             estimated_pomodoros = 0
 
+        # Handle estimated_minutes column (v16+)
+        try:
+            estimated_minutes = row["estimated_minutes"] or 0
+        except (KeyError, IndexError):
+            estimated_minutes = 0
+
         # Handle parent_id column (v11+)
         try:
             parent_id_str = row["parent_id"]
@@ -887,6 +911,7 @@ class DatabaseStorage:
             time_spent=time_spent,
             pomodoro_count=pomodoro_count,
             estimated_pomodoros=estimated_pomodoros,
+            estimated_minutes=estimated_minutes,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             deleted=bool(row["deleted"]),

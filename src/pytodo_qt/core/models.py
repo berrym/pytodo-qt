@@ -49,6 +49,7 @@ class TodoItem:
     time_spent: int = 0  # Total seconds of completed focus sessions
     pomodoro_count: int = 0  # Completed focus sessions
     estimated_pomodoros: int = 0  # User estimate (0 = no estimate)
+    estimated_minutes: int = 0  # Stopwatch time estimate in minutes (0 = no estimate)
     created_at: int = field(default_factory=_now_timestamp)
     updated_at: int = field(default_factory=_now_timestamp)
     deleted: bool = False  # Tombstone for sync
@@ -100,6 +101,7 @@ class TodoItem:
             "time_spent": self.time_spent,
             "pomodoro_count": self.pomodoro_count,
             "estimated_pomodoros": self.estimated_pomodoros,
+            "estimated_minutes": self.estimated_minutes,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "deleted": self.deleted,
@@ -135,6 +137,7 @@ class TodoItem:
             time_spent=data.get("time_spent", 0),
             pomodoro_count=data.get("pomodoro_count", 0),
             estimated_pomodoros=data.get("estimated_pomodoros", 0),
+            estimated_minutes=data.get("estimated_minutes", 0),
             created_at=data.get("created_at", _now_timestamp()),
             updated_at=data.get("updated_at", _now_timestamp()),
             deleted=data.get("deleted", False),

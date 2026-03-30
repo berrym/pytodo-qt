@@ -5,6 +5,7 @@ from .list_selector import ListSelectorWidget
 from .pomodoro import PomodoroWidget
 from .search_filter import SearchFilterWidget
 from .status_bar import StatusBarWidget
+from .stopwatch import StopwatchWidget
 from .todo_table import TodoTableWidget
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "ListSelectorWidget",
     "PomodoroWidget",
     "SearchFilterWidget",
+    "StopwatchWidget",
 ]

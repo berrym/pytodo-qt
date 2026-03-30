@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 from ...core.logger import Logger
 
 _POMODORO_EMOJI = {"work": "\U0001f345", "break": "\u2615", "pause": "\u23f8\ufe0f"}
+_STOPWATCH_EMOJI = {"running": "\u23f1\ufe0f", "paused": "\u23f8\ufe0f"}
 
 if TYPE_CHECKING:
     pass
@@ -336,11 +337,12 @@ class StatusBarWidget(QStatusBar):
             self.sync_status_label.setText("Not synced")
 
     def update_pomodoro_display(self, state: str, time_str: str = "") -> None:
-        """Update the Pomodoro timer display in the status bar.
+        """Update the Pomodoro/stopwatch timer display in the status bar.
 
         Args:
-            state: One of "idle", "working", "break", "paused"
-            time_str: Formatted remaining time (e.g., "23:41")
+            state: One of "idle", "working", "break", "paused",
+                   "stopwatch_running", "stopwatch_paused"
+            time_str: Formatted time (e.g., "23:41")
         """
         if state == "idle" or not time_str:
             self._pomodoro_icon_label.setVisible(False)
@@ -362,6 +364,20 @@ class StatusBarWidget(QStatusBar):
             self._pomodoro_separator.setVisible(True)
         elif state == "paused":
             self._set_pomodoro_icon("pause")
+            self.pomodoro_label.setText(time_str)
+            self.pomodoro_label.setStyleSheet("color: #F39C12; font-weight: bold;")
+            self._pomodoro_icon_label.setVisible(True)
+            self.pomodoro_label.setVisible(True)
+            self._pomodoro_separator.setVisible(True)
+        elif state == "stopwatch_running":
+            self._pomodoro_icon_label.setText(_STOPWATCH_EMOJI.get("running", "\u23f1\ufe0f"))
+            self.pomodoro_label.setText(time_str)
+            self.pomodoro_label.setStyleSheet("color: #3498DB; font-weight: bold;")
+            self._pomodoro_icon_label.setVisible(True)
+            self.pomodoro_label.setVisible(True)
+            self._pomodoro_separator.setVisible(True)
+        elif state == "stopwatch_paused":
+            self._pomodoro_icon_label.setText(_STOPWATCH_EMOJI.get("paused", "\u23f8\ufe0f"))
             self.pomodoro_label.setText(time_str)
             self.pomodoro_label.setStyleSheet("color: #F39C12; font-weight: bold;")
             self._pomodoro_icon_label.setVisible(True)

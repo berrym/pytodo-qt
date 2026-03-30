@@ -166,6 +166,17 @@ class AddTodoDialog(QDialog):
         self.estimated_pomodoros_spin.setToolTip("Estimated number of focus sessions to complete")
         form.addRow("Estimated Sessions:", self.estimated_pomodoros_spin)
 
+        # Estimated time (minutes) for stopwatch users
+        self.estimated_minutes_spin = QSpinBox()
+        self.estimated_minutes_spin.setRange(0, 9999)
+        self.estimated_minutes_spin.setValue(0)
+        self.estimated_minutes_spin.setSuffix(" min")
+        self.estimated_minutes_spin.setSpecialValueText("None")
+        self.estimated_minutes_spin.setToolTip(
+            "Estimated time to complete (for stopwatch tracking)"
+        )
+        form.addRow("Estimated Time:", self.estimated_minutes_spin)
+
         # Recurrence section
         self.recurrence_checkbox = QCheckBox("Repeat")
         # Recurrence always available — auto-sets due_date=today if needed
@@ -480,6 +491,7 @@ class AddTodoDialog(QDialog):
                             tags.append(tag)
 
             estimated_pomodoros = self.estimated_pomodoros_spin.value()
+            estimated_minutes = self.estimated_minutes_spin.value()
 
             self._item = TodoItem(
                 reminder=reminder,
@@ -492,6 +504,7 @@ class AddTodoDialog(QDialog):
                 recurrence_end_date=recurrence_end_date,
                 recurrence_end_count=recurrence_end_count,
                 estimated_pomodoros=estimated_pomodoros,
+                estimated_minutes=estimated_minutes,
             )
         logger.log.info("Created new todo item: %s", reminder[:50])
         self.accept()

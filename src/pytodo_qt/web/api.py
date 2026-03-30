@@ -154,6 +154,7 @@ def _item_to_json(item: TodoItem) -> dict[str, Any]:
         "board_column": item.board_column,
         "pomodoro_count": item.pomodoro_count,
         "estimated_pomodoros": item.estimated_pomodoros,
+        "estimated_minutes": item.estimated_minutes,
         "is_recurring": item.is_recurring,
         "recurrence_type": item.recurrence_type,
         "recurrence_interval": item.recurrence_interval,
@@ -619,6 +620,8 @@ def _apply_item_fields(item: TodoItem, body: dict[str, Any], lst: TodoList | Non
         item.parent_id = UUID(val) if val else None
     if "estimated_pomodoros" in body:
         item.estimated_pomodoros = max(0, int(body["estimated_pomodoros"]))
+    if "estimated_minutes" in body:
+        item.estimated_minutes = max(0, int(body["estimated_minutes"]))
     if "recurrence_type" in body:
         val = body["recurrence_type"]
         if val in ("minutely", "daily", "weekly", "monthly", "yearly", None):

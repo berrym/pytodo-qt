@@ -68,6 +68,8 @@ dependencies = [
     "icalendar>=6.0",
     "aiohttp>=3.9",
     "qrcode>=7.0",
+    "pyqtgraph>=0.13",
+    "pandas>=2.0",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

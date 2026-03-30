@@ -71,6 +71,7 @@ from .widgets import (
     PomodoroWidget,
     SearchFilterWidget,
     StatusBarWidget,
+    StopwatchWidget,
     TodoTableWidget,
 )
 
@@ -123,6 +124,12 @@ class MainWindow(QMainWindow):
         self._pomodoro.break_completed.connect(self._on_pomodoro_break_completed)
         self._pomodoro.stopped.connect(self._on_pomodoro_stopped)
         self._pomodoro.state_changed.connect(self._on_pomodoro_state_changed)
+
+        # Stopwatch timer
+        self._stopwatch = StopwatchWidget(self._config.stopwatch, self)
+        self._stopwatch.session_completed.connect(self._on_stopwatch_completed)
+        self._stopwatch.stopped.connect(self._on_stopwatch_stopped)
+        self._stopwatch.state_changed.connect(self._on_stopwatch_state_changed)
 
         # Sound notifications
         from .widgets.sound_player import SoundPlayer
@@ -415,6 +422,15 @@ class MainWindow(QMainWindow):
         self.stop_focus_action.setToolTip(self._tip("Stop focus timer", "Ctrl+."))
         self.stop_focus_action.triggered.connect(self._on_stop_focus)
 
+        self.start_stopwatch_action = QAction(
+            self._get_icon("stopwatch.svg"), "Start &Stopwatch", self
+        )
+        self.start_stopwatch_action.setShortcut("Ctrl+Shift+T")
+        self.start_stopwatch_action.setToolTip(
+            self._tip("Start stopwatch on selected item", "Ctrl+Shift+T")
+        )
+        self.start_stopwatch_action.triggered.connect(self._on_start_stopwatch)
+
         # View toggle actions
         self.list_view_action = QAction(self._get_icon("view-list.svg"), "&List View", self)
         self.list_view_action.setCheckable(True)
@@ -515,6 +531,7 @@ class MainWindow(QMainWindow):
             todo_menu.addAction(self.edit_recurrence_action)
             todo_menu.addSeparator()
             todo_menu.addAction(self.start_focus_action)
+            todo_menu.addAction(self.start_stopwatch_action)
             todo_menu.addAction(self.pause_focus_action)
             todo_menu.addAction(self.stop_focus_action)
 
@@ -593,6 +610,7 @@ class MainWindow(QMainWindow):
             toolbar.addAction(self.edit_due_date_action)
             toolbar.addSeparator()
             toolbar.addAction(self.start_focus_action)
+            toolbar.addAction(self.start_stopwatch_action)
             toolbar.addAction(self.pause_focus_action)
             toolbar.addAction(self.stop_focus_action)
             toolbar.addSeparator()
@@ -2297,6 +2315,57 @@ class MainWindow(QMainWindow):
         if isinstance(item_id, _UUID):
             self._start_focus_on_item(item_id)
 
+    def _is_any_timer_active(self) -> bool:
+        """Check if either pomodoro or stopwatch is active."""
+        from .widgets.pomodoro import TimerState
+        from .widgets.stopwatch import StopwatchState
+
+        return (
+            self._pomodoro.state != TimerState.IDLE or self._stopwatch.state != StopwatchState.IDLE
+        )
+
+    def _get_active_timer_name(self) -> str:
+        """Get human-readable name of the active timer, or empty string."""
+        from .widgets.pomodoro import TimerState
+        from .widgets.stopwatch import StopwatchState
+
+        if self._pomodoro.state != TimerState.IDLE:
+            return self._pomodoro.item_name or "another item"
+        if self._stopwatch.state != StopwatchState.IDLE:
+            return self._stopwatch.item_name or "another item"
+        return ""
+
+    def _stop_all_timers(self) -> None:
+        """Stop both pomodoro and stopwatch timers."""
+        from .widgets.pomodoro import TimerState
+        from .widgets.stopwatch import StopwatchState
+
+        if self._pomodoro.state != TimerState.IDLE:
+            self._pomodoro.stop()
+        if self._stopwatch.state != StopwatchState.IDLE:
+            self._stopwatch.stop()
+
+    def _prompt_stop_active_timer(self, new_mode: str) -> bool:
+        """Prompt user to stop active timer. Returns True if OK to proceed."""
+        active_name = self._get_active_timer_name()
+        if not active_name:
+            return True
+        result = QMessageBox.question(
+            self,
+            "Timer Active",
+            f'A session is active on "{active_name}".\nStop it and start {new_mode}?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if result != QMessageBox.StandardButton.Yes:
+            return False
+        self._stop_all_timers()
+        self._pomodoro_display_timer.stop()
+        self.status_bar_widget.update_pomodoro_display("idle")
+        self.kanban_board.set_focus_session_item(None)
+        if self._focus_timer_dialog is not None:
+            self._focus_timer_dialog.hide()
+        return True
+
     def _start_focus_on_item(self, item_id: UUID) -> None:
         """Start a focus timer on the given item, prompting if one is already active."""
         from .widgets.pomodoro import TimerState
@@ -2308,42 +2377,53 @@ class MainWindow(QMainWindow):
         if item is None:
             return
 
-        # If a session is running on a different item, prompt
+        # If any timer is running on a different item, prompt
         if (
-            self._pomodoro.state in (TimerState.WORKING, TimerState.BREAK, TimerState.PAUSED)
-            and self._pomodoro.item_id is not None
-            and self._pomodoro.item_id != item_id
+            self._is_any_timer_active()
+            and (self._pomodoro.item_id != item_id or self._pomodoro.state == TimerState.IDLE)
+            and not self._prompt_stop_active_timer("a focus session")
         ):
-            current_name = self._pomodoro.item_name or "another item"
-            result = QMessageBox.question(
-                self,
-                "Focus Session Active",
-                f'A focus session is active on "{current_name}".\nStop it and start a new one?',
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if result != QMessageBox.StandardButton.Yes:
-                return
+            return
 
         self._pomodoro.start(item.id, item.reminder)
         self._pomodoro_display_timer.start()
         self.kanban_board.set_focus_session_item(item.id)
 
     def _on_pause_focus(self) -> None:
-        """Toggle pause/resume on the focus timer."""
+        """Toggle pause/resume on whichever timer is active."""
         from .widgets.pomodoro import TimerState
+        from .widgets.stopwatch import StopwatchState
 
-        state = self._pomodoro.state
-        if state in (TimerState.WORKING, TimerState.BREAK):
+        # Check pomodoro first
+        pom_state = self._pomodoro.state
+        if pom_state in (TimerState.WORKING, TimerState.BREAK):
             self._pomodoro.pause()
-        elif state == TimerState.PAUSED:
+            return
+        if pom_state == TimerState.PAUSED:
             self._pomodoro.resume()
+            return
+
+        # Check stopwatch
+        sw_state = self._stopwatch.state
+        if sw_state == StopwatchState.RUNNING:
+            self._stopwatch.pause()
+        elif sw_state == StopwatchState.PAUSED:
+            self._stopwatch.resume()
 
     def _on_stop_focus(self) -> None:
-        """Stop the focus timer."""
-        self._pomodoro.stop()
+        """Stop whichever timer is active."""
+        from .widgets.pomodoro import TimerState
+        from .widgets.stopwatch import StopwatchState
+
+        if self._pomodoro.state != TimerState.IDLE:
+            self._pomodoro.stop()
+        if self._stopwatch.state != StopwatchState.IDLE:
+            self._stopwatch.stop()
         self._pomodoro_display_timer.stop()
         self.status_bar_widget.update_pomodoro_display("idle")
         self.kanban_board.set_focus_session_item(None)
+        if hasattr(self, "calendar_view"):
+            self.calendar_view.set_active_session(None)
         if self._focus_timer_dialog is not None:
             self._focus_timer_dialog.hide()
 
@@ -2485,6 +2565,103 @@ class MainWindow(QMainWindow):
         self._record_focus_session(
             item_id, active_list.id, start_iso, elapsed, completed=False, session_type=session_type
         )
+
+    # --- Stopwatch handlers ---
+
+    def _on_start_stopwatch(self) -> None:
+        """Start a stopwatch on the selected item."""
+        item_ids = self._active_view_widget().get_selected_item_ids()
+        if not item_ids:
+            self.status_bar_widget.show_message("Select an item to start stopwatch")
+            return
+        self._start_stopwatch_on_item(item_ids[0])
+
+    def _start_stopwatch_on_item(self, item_id: UUID) -> None:
+        """Start stopwatch on the given item, prompting if another timer is active."""
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        item = active_list.get_item(item_id)
+        if item is None:
+            return
+
+        if self._is_any_timer_active() and not self._prompt_stop_active_timer("stopwatch tracking"):
+            return
+
+        self._stopwatch.start(item.id, item.reminder)
+        self._pomodoro_display_timer.start()
+        self.kanban_board.set_focus_session_item(item.id)
+
+    def _on_stopwatch_completed(self, item_id: object, seconds: int, start_iso: str = "") -> None:
+        """Handle completed stopwatch session — add time without incrementing pomodoro count."""
+        from uuid import UUID as _UUID
+
+        if not isinstance(item_id, _UUID):
+            return
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        item = active_list.get_item(item_id)
+        if item is None:
+            return
+        from .commands import EditTimeSpentCommand
+
+        cmd = EditTimeSpentCommand(
+            self,
+            active_list.id,
+            item_id,
+            item.time_spent,
+            seconds,
+            item.pomodoro_count,
+            increment_pomodoro=False,
+        )
+        self._undo_stack.push(cmd)
+
+        # Record focus session
+        self._record_focus_session(
+            item_id, active_list.id, start_iso, seconds, completed=True, session_type="stopwatch"
+        )
+
+        from .widgets.stopwatch import StopwatchWidget
+
+        spent_str = StopwatchWidget.format_time_spent(item.time_spent)
+        elapsed_str = StopwatchWidget.format_elapsed(seconds)
+        self.status_bar_widget.show_message(f"Tracked {elapsed_str} \u2014 Total: {spent_str}")
+
+    def _on_stopwatch_stopped(
+        self, item_id: object, elapsed: int, start_iso: str, session_type: str
+    ) -> None:
+        """Handle stopwatch stopped below minimum_session threshold."""
+        from uuid import UUID as _UUID
+
+        if not isinstance(item_id, _UUID):
+            return
+        min_s = self._config.stopwatch.minimum_session
+        if elapsed < min_s:
+            if elapsed > 0:
+                self.status_bar_widget.show_message(
+                    f"Session too short ({elapsed}s < {min_s}s minimum) \u2014 not recorded"
+                )
+            return
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        self._record_focus_session(
+            item_id, active_list.id, start_iso, elapsed, completed=False, session_type="stopwatch"
+        )
+
+    def _on_stopwatch_state_changed(self, state: str) -> None:
+        """Handle stopwatch state transition."""
+        if state == "idle":
+            self._pomodoro_display_timer.stop()
+            self.status_bar_widget.update_pomodoro_display("idle")
+            self.kanban_board.set_focus_session_item(None)
+            if self._focus_timer_dialog is not None:
+                self._focus_timer_dialog.hide()
+        else:
+            if not self._pomodoro_display_timer.isActive():
+                self._pomodoro_display_timer.start()
+            self._update_pomodoro_display()
 
     def _record_focus_session(
         self,
@@ -2648,6 +2825,17 @@ class MainWindow(QMainWindow):
                 return item.pomodoro_count, item.estimated_pomodoros
         return 0, 0
 
+    def _get_focused_item_estimated_minutes(self) -> int:
+        """Get the focused item's estimated_minutes for stopwatch display."""
+        item_id = self._stopwatch.item_id
+        if item_id is None:
+            return 0
+        for todo_list in self._database.lists.values():
+            item = todo_list.get_item(item_id)
+            if item is not None:
+                return item.estimated_minutes
+        return 0
+
     def _update_focus_item_progress(self) -> None:
         """Push the focused item's pomodoro stats to the floating dialog."""
         if self._focus_timer_dialog is None:
@@ -2657,6 +2845,42 @@ class MainWindow(QMainWindow):
 
     def _update_pomodoro_display(self) -> None:
         """Update status bar and floating dialog with current timer state."""
+        from .widgets.pomodoro import TimerState
+        from .widgets.stopwatch import StopwatchState, StopwatchWidget
+
+        # Pseudo-real-time timeline update
+        if hasattr(self, "calendar_view"):
+            if self._stopwatch.state != StopwatchState.IDLE and self._stopwatch.item_id:
+                self.calendar_view.set_active_session(
+                    self._stopwatch.item_id, self._stopwatch.elapsed_seconds, "stopwatch"
+                )
+            elif self._pomodoro.state != TimerState.IDLE and self._pomodoro.item_id:
+                elapsed = self._pomodoro_total_duration() - self._pomodoro.remaining_seconds
+                self.calendar_view.set_active_session(
+                    self._pomodoro.item_id, max(0, elapsed), "work"
+                )
+            else:
+                self.calendar_view.set_active_session(None)
+
+        # Check if stopwatch is active
+        if self._stopwatch.state != StopwatchState.IDLE:
+            sw_state = self._stopwatch.state.value
+            time_str = StopwatchWidget.format_elapsed(self._stopwatch.elapsed_seconds)
+            self.status_bar_widget.update_pomodoro_display(sw_state, time_str)
+
+            if self._focus_timer_dialog is not None and self._focus_timer_dialog.isVisible():
+                estimated_min = self._get_focused_item_estimated_minutes()
+                self._focus_timer_dialog.update_stopwatch_display(
+                    sw_state,
+                    self._stopwatch.elapsed_seconds,
+                    self._stopwatch.item_name,
+                    estimated_minutes=estimated_min,
+                )
+            return
+
+        # Pomodoro display
+        if self._pomodoro.state == TimerState.IDLE:
+            return
         from .widgets.pomodoro import PomodoroWidget
 
         state = self._pomodoro.state.value
@@ -2694,9 +2918,9 @@ class MainWindow(QMainWindow):
     def _show_focus_timer_dialog(self) -> None:
         """Show the floating focus timer window."""
         from .dialogs.focus_timer import FocusTimerDialog
-        from .widgets.pomodoro import TimerState
+        from .widgets.stopwatch import StopwatchState
 
-        if self._pomodoro.state == TimerState.IDLE:
+        if not self._is_any_timer_active():
             self.status_bar_widget.show_message("No focus session active")
             return
 
@@ -2706,17 +2930,29 @@ class MainWindow(QMainWindow):
             self._focus_timer_dialog.stop_requested.connect(self._on_stop_focus)
             self._focus_timer_dialog.skip_break_requested.connect(self._on_skip_break)
 
-        count, estimated = self._get_focused_item_stats()
-        self._focus_timer_dialog.update_display(
-            self._pomodoro.state.value,
-            self._pomodoro.remaining_seconds,
-            self._pomodoro.item_name,
-            self._pomodoro.session_count,
-            self._pomodoro.sessions_before_long_break,
-            self._pomodoro_total_duration(),
-            item_pomodoro_count=count,
-            item_estimated=estimated,
-        )
+        # Set mode and populate based on active timer
+        if self._stopwatch.state != StopwatchState.IDLE:
+            self._focus_timer_dialog.set_mode("stopwatch")
+            estimated_min = self._get_focused_item_estimated_minutes()
+            self._focus_timer_dialog.update_stopwatch_display(
+                self._stopwatch.state.value,
+                self._stopwatch.elapsed_seconds,
+                self._stopwatch.item_name,
+                estimated_minutes=estimated_min,
+            )
+        else:
+            self._focus_timer_dialog.set_mode("pomodoro")
+            count, estimated = self._get_focused_item_stats()
+            self._focus_timer_dialog.update_display(
+                self._pomodoro.state.value,
+                self._pomodoro.remaining_seconds,
+                self._pomodoro.item_name,
+                self._pomodoro.session_count,
+                self._pomodoro.sessions_before_long_break,
+                self._pomodoro_total_duration(),
+                item_pomodoro_count=count,
+                item_estimated=estimated,
+            )
         self._focus_timer_dialog.show()
         self._focus_timer_dialog.raise_()
         self._focus_timer_dialog.activateWindow()
@@ -3190,6 +3426,7 @@ class MainWindow(QMainWindow):
                 interval_minutes=self._config.discovery.auto_sync_interval,
             )
             self._pomodoro.update_config(self._config.pomodoro)
+            self._stopwatch.update_config(self._config.stopwatch)
             self._sound_player.update_config(self._config.pomodoro)
             self._update_daily_goal()
             # Restart web server if config changed

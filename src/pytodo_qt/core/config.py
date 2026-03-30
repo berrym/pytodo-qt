@@ -107,6 +107,16 @@ class WebConfig:
 
 
 @dataclass
+class StopwatchConfig:
+    """Stopwatch time tracking settings."""
+
+    minimum_session: int = 60  # seconds — below this, session is discarded (0 = record all)
+    idle_timeout: int = 0  # minutes — auto-pause after no interaction (0 = disabled)
+    show_in_status_bar: bool = True  # show elapsed time in status bar
+    sound_on_stop: bool = False  # play sound when session recorded
+
+
+@dataclass
 class AppearanceConfig:
     """UI appearance settings."""
 
@@ -126,6 +136,7 @@ class AppConfig:
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     appearance: AppearanceConfig = field(default_factory=AppearanceConfig)
     pomodoro: PomodoroConfig = field(default_factory=PomodoroConfig)
+    stopwatch: StopwatchConfig = field(default_factory=StopwatchConfig)
     web: WebConfig = field(default_factory=WebConfig)
 
     def to_toml(self) -> str:
@@ -190,6 +201,14 @@ class AppConfig:
         lines.append(
             f"milestone_notifications = {str(self.pomodoro.milestone_notifications).lower()}"
         )
+        lines.append("")
+
+        # Stopwatch section
+        lines.append("[stopwatch]")
+        lines.append(f"minimum_session = {self.stopwatch.minimum_session}")
+        lines.append(f"idle_timeout = {self.stopwatch.idle_timeout}")
+        lines.append(f"show_in_status_bar = {str(self.stopwatch.show_in_status_bar).lower()}")
+        lines.append(f"sound_on_stop = {str(self.stopwatch.sound_on_stop).lower()}")
         lines.append("")
 
         # Web section
@@ -273,6 +292,15 @@ class AppConfig:
                 sound_volume=pom.get("sound_volume", 50),
                 daily_goal=pom.get("daily_goal", 0),
                 milestone_notifications=pom.get("milestone_notifications", True),
+            )
+
+        if "stopwatch" in data:
+            sw = data["stopwatch"]
+            config.stopwatch = StopwatchConfig(
+                minimum_session=sw.get("minimum_session", 60),
+                idle_timeout=sw.get("idle_timeout", 0),
+                show_in_status_bar=sw.get("show_in_status_bar", True),
+                sound_on_stop=sw.get("sound_on_stop", False),
             )
 
         if "web" in data:

@@ -584,282 +584,494 @@ class _CalendarTableView(QTableView):
 
 
 class _TimelineWidget(QWidget):
-    """Custom-painted horizontal timeline with task bars.
+    """pyqtgraph-based horizontal timeline with task bars.
 
-    Three bar types per task (layered):
-    - Blue: time span (creation → due date)
-    - Amber: estimated effort (estimated_pomodoros)
-    - Green: actual work done (pomodoro_count / time_spent)
+    3-lane layout per task:
+    - Blue: time span (creation -> due date)
+    - Gray: estimated effort (baseline bar)
+    - Split red+cyan: actual work (pomodoro + stopwatch segments)
+
+    Uses pyqtgraph for professional rendering with anti-aliasing,
+    hover tooltips, zoom/pan, and real-time updates.
     """
 
     task_clicked = pyqtSignal(object)  # item_id
     task_right_clicked = pyqtSignal(object, object)  # item_id, global_pos
 
-    ROW_HEIGHT = 32
-    HEADER_HEIGHT = 30
-    LABEL_WIDTH = 160
-    BAR_HEIGHT = 8
-
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        import pyqtgraph as pg
+
         self._items: list = []
         self._range_start: date = date.today() - timedelta(days=3)
         self._range_end: date = date.today() + timedelta(days=11)
         self._selected_item_id: UUID | None = None
         self._colors: dict[str, str] = {}
         self._todo_list = None
-        self.setMouseTracking(True)
-        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self._active_item_id: UUID | None = None
+        self._active_elapsed: int = 0
+        self._active_session_type: str = ""
+
         self._refresh_colors()
+
+        # Layout: plot + legend
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # pyqtgraph PlotWidget
+        self._plot = pg.PlotWidget()
+        self._plot.setBackground(self._colors.get("base", "#252526"))
+        self._plot.setMouseEnabled(x=True, y=False)
+        self._plot.showGrid(x=True, y=True, alpha=0.35)
+        self._plot.setMenuEnabled(False)
+
+        # Configure axes
+        self._plot.getAxis("left").setWidth(160)
+        self._plot.getAxis("bottom").setHeight(30)
+        self._plot.setLabel("bottom", "")
+
+        # Click handling
+        self._plot.scene().sigMouseClicked.connect(self._on_plot_clicked)
+
+        # Hover tooltip via proxy
+        import pyqtgraph as pg
+
+        self._hover_proxy = pg.SignalProxy(
+            self._plot.scene().sigMouseMoved, rateLimit=30, slot=self._on_mouse_moved
+        )
+        self._last_hover_row = -1
+
+        # Persistent tooltip label (stays until mouse moves to different row)
+        self._tooltip_label = QLabel(self)
+        self._tooltip_label.setWindowFlags(
+            Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
+        )
+        self._tooltip_label.setStyleSheet(
+            "QLabel { background: palette(toolTipBase); color: palette(toolTipText); "
+            "border: 1px solid palette(mid); padding: 6px 8px; font-size: 12px; }"
+        )
+        self._tooltip_label.hide()
+
+        layout.addWidget(self._plot)
+
+        # Legend bar at bottom (always visible)
+        self._legend_widget = QWidget()
+        self._legend_widget.setFixedHeight(28)
+        legend_layout = QHBoxLayout(self._legend_widget)
+        legend_layout.setContentsMargins(160, 4, 10, 4)
+        legend_layout.setSpacing(16)
+        self._legend_labels: list[QLabel] = []
+        layout.addWidget(self._legend_widget)
 
     def _refresh_colors(self) -> None:
         from ...gui.styles.themes import get_colors
 
         self._colors = get_colors()
 
+    def _build_legend(self) -> None:
+        """Build the legend bar with color swatches."""
+        for lbl in self._legend_labels:
+            lbl.deleteLater()
+        self._legend_labels.clear()
+
+        c = self._colors
+        entries = [
+            (c.get("chart_span", "#4a90d2"), "Time Span"),
+            (c.get("chart_estimate", "#D4E9F3"), "Estimated"),
+            (c.get("chart_pomodoro", "#D55E00"), "Pomodoro"),
+            (c.get("chart_stopwatch", "#0072B2"), "Stopwatch"),
+            (c.get("chart_overdue", "#b12f25"), "Overdue"),
+        ]
+        text_color = c.get("text", "#e0e0e0")
+        legend_layout = self._legend_widget.layout()
+        for hex_color, name in entries:
+            lbl = QLabel(
+                f'<span style="color:{hex_color};">\u25a0</span> '
+                f'<span style="color:{text_color};">{name}</span>'
+            )
+            lbl.setStyleSheet("font-size: 11px;")
+            if legend_layout is not None:
+                legend_layout.addWidget(lbl)
+            self._legend_labels.append(lbl)
+        if legend_layout is not None:
+            legend_layout.addStretch()
+
     def set_data(self, items: list, current_date: date, todo_list=None) -> None:
+        from ...core.config import ConfigManager
+
         self._items = [i for i in items if i.parent_id is None]
+
+        # Apply 3-tier sort (same as list/board views) with reminder tiebreaker
+        try:
+            sort_tiers = ConfigManager().load().database.sort_tiers()
+        except Exception:
+            sort_tiers = [("completion", False), ("due_date", False), ("priority", False)]
+
+        from .todo_table import _sort_fragment
+
+        def sort_key(item):
+            key: list = []
+            for dimension, reverse in sort_tiers:
+                key.extend(_sort_fragment(item, dimension, reverse))
+            key.append(item.reminder.lower())
+            return tuple(key)
+
+        self._items.sort(key=sort_key)
+
         self._range_start = current_date - timedelta(days=3)
         self._range_end = current_date + timedelta(days=11)
         self._todo_list = todo_list
-        self.setMinimumHeight(self.HEADER_HEIGHT + len(self._items) * self.ROW_HEIGHT + 20)
-        self.update()
+        self._rebuild_plot()
+
+    def set_active_session(
+        self, item_id: UUID | None, elapsed: int = 0, session_type: str = ""
+    ) -> None:
+        """Set the active focus session for pseudo-real-time bar projection."""
+        self._active_item_id = item_id
+        self._active_elapsed = elapsed
+        self._active_session_type = session_type
+        self._rebuild_plot()
 
     def set_selected(self, item_id: UUID | None) -> None:
         self._selected_item_id = item_id
-        self.update()
 
-    def _date_to_x(self, d: date) -> float:
-        """Map a date to x coordinate in the timeline area."""
-        total_days = (self._range_end - self._range_start).days
-        if total_days <= 0:
-            return float(self.LABEL_WIDTH)
-        day_offset = (d - self._range_start).days
-        timeline_width = self.width() - self.LABEL_WIDTH - 10
-        return self.LABEL_WIDTH + (day_offset / total_days) * timeline_width
+    def _date_to_days(self, d: date) -> float:
+        """Convert a date to days offset from range_start."""
+        return float((d - self._range_start).days)
 
     def _ms_to_date(self, ms: int) -> date:
         from datetime import datetime as _dt
 
         return _dt.fromtimestamp(ms / 1000).date()
 
-    def paintEvent(self, a0) -> None:  # noqa: N802
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    def _rebuild_plot(self) -> None:
+        """Rebuild the pyqtgraph plot from current data."""
+        import pyqtgraph as pg
 
+        self._refresh_colors()
         c = self._colors
-        col_base = QColor(c["base"])
-        col_text = QColor(c["text"])
-        col_border = QColor(c["border"])
-        col_completed_text = QColor(c["completed_text"])
-        col_completed_bg = QColor(c["completed_bg"])
-        col_highlight = QColor(c["highlight"])
-        today = date.today()
 
-        # Background
-        painter.fillRect(self.rect(), col_base)
+        plot = self._plot
+        plot.clear()
+        plot.setBackground(c.get("base", "#252526"))
 
-        # --- Header: date labels ---
-        painter.setPen(col_text)
-        header_font = QFont(painter.font())
-        header_font.setPixelSize(10)
-        painter.setFont(header_font)
+        if not self._items:
+            self._build_legend()
+            return
 
-        total_days = (self._range_end - self._range_start).days
-        for i in range(total_days + 1):
-            d = self._range_start + timedelta(days=i)
-            x = self._date_to_x(d)
-            # Vertical grid line
-            line_color = col_highlight if d == today else col_border
-            painter.setPen(QPen(line_color, 1 if d != today else 2))
-            painter.drawLine(int(x), self.HEADER_HEIGHT, int(x), self.height())
-            # Date label (show every other day to avoid crowding)
-            if i % 2 == 0 or d == today:
-                painter.setPen(col_highlight if d == today else col_text)
-                label = d.strftime("%b %d")
-                painter.drawText(
-                    int(x) - 20, 2, 50, self.HEADER_HEIGHT - 4, Qt.AlignmentFlag.AlignCenter, label
-                )
-
-        # --- Task rows ---
-        item_font = QFont(painter.font())
-        item_font.setPixelSize(11)
-        painter.setFont(item_font)
-        fm = QFontMetrics(item_font)
-
-        # Bar colors
-        col_span = QColor("#4a90d2")  # Blue: time span
-        col_span.setAlpha(120)
-        col_estimated = QColor("#e6a817")  # Amber: estimated effort
-        col_actual = QColor("#27ae60")  # Green: actual work
-
-        # Pomodoro work duration from config (stored in minutes)
         from ...core.config import get_config
 
         config_work_mins = get_config().pomodoro.work_duration
+        today = date.today()
+        n = len(self._items)
 
-        for row, item in enumerate(self._items):
-            y = self.HEADER_HEIGHT + row * self.ROW_HEIGHT
-            is_selected = bool(self._selected_item_id and item.id == self._selected_item_id)
+        # Colors
+        col_span = QColor(c.get("chart_span", "#4a90d2"))
+        col_span.setAlpha(int(c.get("chart_span_alpha", "100")))
+        col_estimate = QColor(c.get("chart_estimate", "#D4E9F3"))
+        col_est_border = QColor(c.get("chart_estimate_border", "#B0C4D8"))
+        col_pomodoro = QColor(c.get("chart_pomodoro", "#D55E00"))
+        col_pomodoro.setAlpha(int(c.get("chart_pomodoro_alpha", "200")))
+        col_stopwatch = QColor(c.get("chart_stopwatch", "#0072B2"))
+        col_stopwatch.setAlpha(int(c.get("chart_stopwatch_alpha", "200")))
+        col_overdue = QColor(c.get("chart_overdue", "#b12f25"))
+        col_overdue.setAlpha(int(c.get("chart_overdue_alpha", "80")))
+        col_overflow = QColor(c.get("chart_overflow_actual", "#8B0000"))
+        col_overflow.setAlpha(int(c.get("chart_overflow_actual_alpha", "100")))
+        col_text = QColor(c.get("text", "#e0e0e0"))
+        col_border = QColor(c.get("border", "#3c3c3c"))
 
-            # Row background
-            if is_selected:
-                sel_bg = QColor(c["alternate_base"])
-                sel_bg.setAlpha(200)
-                painter.fillRect(0, y, self.width(), self.ROW_HEIGHT, sel_bg)
-            elif item.complete:
-                painter.fillRect(0, y, self.width(), self.ROW_HEIGHT, col_completed_bg)
+        # Effort scaling: map minutes to x-axis (days).
+        # 1 day width = 8 hours of effort (480 minutes).
+        minutes_per_day = 480.0
 
-            # Row separator
-            painter.setPen(QPen(col_border, 1))
-            painter.drawLine(0, y + self.ROW_HEIGHT - 1, self.width(), y + self.ROW_HEIGHT - 1)
+        # Bar height constants (in y-axis units, 1.0 = full row)
+        span_h = 0.06
+        bar_h = 0.25
+        # Vertical positions within each row (centered at y_base):
+        #   span:    y_base + 0.30 to +0.36
+        #   estimate: y_base + 0.00 to +0.25
+        #   actual:  y_base - 0.30 to -0.05
 
-            # Task label (left side)
-            painter.setPen(col_completed_text if item.complete else col_text)
-            prefix = "\u2713 " if item.complete else ""
-            label = fm.elidedText(
-                prefix + item.reminder, Qt.TextElideMode.ElideRight, self.LABEL_WIDTH - 10
-            )
-            painter.drawText(
-                4,
-                y,
-                self.LABEL_WIDTH - 8,
-                self.ROW_HEIGHT,
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                label,
-            )
+        y_ticks = []
 
-            # --- Bars ---
-            bar_y = y + (self.ROW_HEIGHT - self.BAR_HEIGHT * 3 - 4) // 2
+        for i, item in enumerate(self._items):
+            y_base = float(n - 1 - i)  # Invert: first item at top
+            label_text = item.reminder
+            if len(label_text) > 28:
+                label_text = label_text[:26] + "\u2026"
+            if item.complete:
+                label_text = "\u2713 " + label_text
+            y_ticks.append((y_base, label_text))
 
-            # Blue bar: creation → end of due date (or today if no due date)
-            # Due date is inclusive — task is due BY end of that day
             created_date = self._ms_to_date(item.created_at)
             end_date = (item.due_date + timedelta(days=1)) if item.due_date else today
-            x_start = max(self._date_to_x(created_date), self.LABEL_WIDTH)
-            x_end = min(self._date_to_x(end_date), self.width() - 10)
-            if x_end > x_start:
-                painter.fillRect(
-                    int(x_start), bar_y, int(x_end - x_start), self.BAR_HEIGHT, col_span
-                )
 
-            # --- Effort bars: independent of time span ---
-            # Effort scales by sessions, not calendar time.
-            # pixels_per_session is a constant that makes bars readable.
-            span_width = int(x_end - x_start) if x_end > x_start else 0
-            pixels_per_session = 15
+            # --- Time span bar ---
+            span_start = self._date_to_days(created_date)
+            span_end = self._date_to_days(end_date)
+            span_width = max(0.1, span_end - span_start)
 
-            # Amber bar: estimated effort (sessions × pixels)
-            bar_y += self.BAR_HEIGHT + 2
-            est_pixel_width = 0
-            if item.estimated_pomodoros > 0 and span_width > 0:
-                est_pixel_width = min(
-                    span_width,
-                    item.estimated_pomodoros * pixels_per_session,
-                )
-                est_pixel_width = max(est_pixel_width, 20)  # minimum visibility
-                painter.fillRect(
-                    int(x_start), bar_y, est_pixel_width, self.BAR_HEIGHT, col_estimated
-                )
+            span_bar = pg.BarGraphItem(
+                x0=[span_start],
+                y0=[y_base + 0.30],
+                width=[span_width],
+                height=[span_h],
+                brush=pg.mkBrush(col_span),
+                pen=pg.mkPen(None),
+            )
+            plot.addItem(span_bar)
 
-            # Green bar: actual work done
-            bar_y += self.BAR_HEIGHT + 2
-            if (item.pomodoro_count > 0 or item.time_spent > 0) and span_width > 0:
-                if est_pixel_width > 0 and item.estimated_pomodoros > 0:
-                    # Has estimate: green = ratio of amber
-                    actual_sessions = (
-                        item.time_spent / (config_work_mins * 60)
-                        if item.time_spent > 0
-                        else item.pomodoro_count
+            # Overdue indicator
+            if item.due_date and today > item.due_date and not item.complete:
+                od_start = self._date_to_days(item.due_date + timedelta(days=1))
+                od_end = self._date_to_days(today + timedelta(days=1))
+                if od_end > od_start:
+                    od_bar = pg.BarGraphItem(
+                        x0=[od_start],
+                        y0=[y_base + 0.30],
+                        width=[od_end - od_start],
+                        height=[span_h],
+                        brush=pg.mkBrush(col_overdue),
+                        pen=pg.mkPen(None),
                     )
-                    ratio = min(1.0, actual_sessions / item.estimated_pomodoros)
-                    actual_width = max(2, int(est_pixel_width * ratio))
+                    plot.addItem(od_bar)
+
+            # --- Estimate bar (gray baseline) ---
+            est_minutes = 0.0
+            if item.estimated_minutes > 0 and item.estimated_pomodoros > 0:
+                est_minutes = item.estimated_minutes + (item.estimated_pomodoros * config_work_mins)
+            elif item.estimated_minutes > 0:
+                est_minutes = float(item.estimated_minutes)
+            elif item.estimated_pomodoros > 0:
+                est_minutes = float(item.estimated_pomodoros * config_work_mins)
+
+            if est_minutes > 0:
+                est_days = est_minutes / minutes_per_day
+                est_bar = pg.BarGraphItem(
+                    x0=[span_start],
+                    y0=[y_base],
+                    width=[est_days],
+                    height=[bar_h],
+                    brush=pg.mkBrush(col_estimate),
+                    pen=pg.mkPen(col_est_border, width=1),
+                )
+                plot.addItem(est_bar)
+
+            # --- Actual work bar (split: pomodoro + stopwatch) ---
+            pomodoro_seconds = item.pomodoro_count * config_work_mins * 60
+            total_time = item.time_spent
+
+            # Pseudo-real-time projection
+            active_pom_extra = 0
+            active_sw_extra = 0
+            if (
+                self._active_item_id
+                and item.id == self._active_item_id
+                and self._active_elapsed > 0
+            ):
+                if self._active_session_type == "work":
+                    active_pom_extra = self._active_elapsed
                 else:
-                    # No estimate: green = sessions × pixels
-                    actual_sessions = (
-                        item.time_spent / (config_work_mins * 60)
-                        if item.time_spent > 0
-                        else item.pomodoro_count
+                    active_sw_extra = self._active_elapsed
+                total_time += self._active_elapsed
+
+            pomodoro_seconds = min(pomodoro_seconds + active_pom_extra, total_time)
+            stopwatch_seconds = max(0, total_time - pomodoro_seconds) + active_sw_extra
+            if pomodoro_seconds + stopwatch_seconds > total_time:
+                stopwatch_seconds = max(0, total_time - pomodoro_seconds)
+
+            if total_time > 0:
+                pom_days = (pomodoro_seconds / 60.0) / minutes_per_day
+                sw_days = (stopwatch_seconds / 60.0) / minutes_per_day
+                actual_y0 = y_base - 0.30
+
+                if pom_days > 0:
+                    pom_bar = pg.BarGraphItem(
+                        x0=[span_start],
+                        y0=[actual_y0],
+                        width=[pom_days],
+                        height=[bar_h],
+                        brush=pg.mkBrush(col_pomodoro),
+                        pen=pg.mkPen(None),
                     )
-                    actual_width = min(
-                        span_width,
-                        max(8, int(actual_sessions * pixels_per_session)),
+                    plot.addItem(pom_bar)
+
+                if sw_days > 0:
+                    sw_bar = pg.BarGraphItem(
+                        x0=[span_start + pom_days],
+                        y0=[actual_y0],
+                        width=[sw_days],
+                        height=[bar_h],
+                        brush=pg.mkBrush(col_stopwatch),
+                        pen=pg.mkPen(None),
                     )
-                painter.fillRect(int(x_start), bar_y, actual_width, self.BAR_HEIGHT, col_actual)
+                    plot.addItem(sw_bar)
 
-        # --- Legend ---
-        legend_y = self.height() - 16
-        painter.setPen(col_text)
-        legend_font = QFont(painter.font())
-        legend_font.setPixelSize(9)
-        painter.setFont(legend_font)
-        lx = self.LABEL_WIDTH
-        for color, label in [
-            (col_span, "Time Span"),
-            (col_estimated, "Estimated"),
-            (col_actual, "Actual Work"),
-        ]:
-            color_full = QColor(color)
-            color_full.setAlpha(255)
-            painter.fillRect(lx, legend_y, 10, 10, color_full)
-            painter.drawText(lx + 14, legend_y - 1, 70, 12, Qt.AlignmentFlag.AlignLeft, label)
-            lx += 90
+                # Overflow: actual exceeds estimate
+                total_actual_days = pom_days + sw_days
+                if est_minutes > 0:
+                    est_days_val = est_minutes / minutes_per_day
+                    if total_actual_days > est_days_val:
+                        of_bar = pg.BarGraphItem(
+                            x0=[span_start + est_days_val],
+                            y0=[actual_y0],
+                            width=[total_actual_days - est_days_val],
+                            height=[bar_h],
+                            brush=pg.mkBrush(col_overflow),
+                            pen=pg.mkPen(None),
+                        )
+                        plot.addItem(of_bar)
 
-        painter.end()
+        # --- Configure axes ---
+        left_axis = plot.getAxis("left")
+        left_axis.setTicks([y_ticks])
+        left_axis.setTextPen(col_text)
+        left_axis.setPen(pg.mkPen(col_border))
 
-    def _hit_test_row(self, pos) -> int:
-        """Return item index at pos, or -1."""
-        y = pos.y() - self.HEADER_HEIGHT
-        if y < 0:
-            return -1
-        row = int(y / self.ROW_HEIGHT)
-        if 0 <= row < len(self._items):
-            return row
+        bottom_axis = plot.getAxis("bottom")
+        bottom_axis.setTextPen(col_text)
+        bottom_axis.setPen(pg.mkPen(col_border))
+
+        # Date tick labels
+        total_days = (self._range_end - self._range_start).days
+        date_ticks = []
+        for i in range(total_days + 1):
+            d = self._range_start + timedelta(days=i)
+            if i % 2 == 0 or d == today:
+                label = d.strftime("%b %d")
+                if d == today:
+                    label = f"\u25b6 {label}"
+                date_ticks.append((float(i), label))
+        bottom_axis.setTicks([date_ticks])
+
+        # Today line
+        today_x = self._date_to_days(today)
+        today_line = pg.InfiniteLine(
+            pos=today_x,
+            angle=90,
+            pen=pg.mkPen(
+                QColor(c.get("highlight", "#0078d4")),
+                width=2,
+                style=Qt.PenStyle.DashLine,
+            ),
+        )
+        plot.addItem(today_line)
+
+        # Set view range
+        plot.setXRange(-0.5, total_days + 0.5, padding=0)
+        plot.setYRange(-0.8, n - 0.2, padding=0.02)
+
+        self._build_legend()
+
+    def _row_from_y(self, y_val: float) -> int:
+        """Convert a y-axis value to an item row index, or -1."""
+        n = len(self._items)
+        row_idx = n - 1 - round(y_val)
+        if 0 <= row_idx < n:
+            return row_idx
         return -1
 
-    def mousePressEvent(self, a0) -> None:  # noqa: N802
-        if a0 is None:
+    def _build_tooltip(self, item) -> str:
+        """Build rich tooltip text for a task item."""
+        from ...core.config import get_config
+
+        config_work_mins = get_config().pomodoro.work_duration
+        parts = [f"<b>{item.reminder}</b>"]
+
+        if item.due_date:
+            overdue = ""
+            if date.today() > item.due_date and not item.complete:
+                days_over = (date.today() - item.due_date).days
+                overdue = f" <span style='color:#ff6e76;'>({days_over}d overdue)</span>"
+            parts.append(f"Due: {item.due_date.strftime('%b %d, %Y')}{overdue}")
+        if item.due_time:
+            parts.append(f"Time: {item.due_time.strftime('%I:%M %p').lstrip('0')}")
+
+        # Estimates
+        est_parts = []
+        if item.estimated_pomodoros > 0:
+            est_parts.append(f"{item.estimated_pomodoros} sessions")
+        if item.estimated_minutes > 0:
+            est_parts.append(f"{item.estimated_minutes} min")
+        if est_parts:
+            parts.append(f"Estimated: {', '.join(est_parts)}")
+
+        # Actual work
+        if item.pomodoro_count > 0:
+            pom_mins = item.pomodoro_count * config_work_mins
+            parts.append(f"Pomodoro: {item.pomodoro_count} sessions ({pom_mins} min)")
+
+        sw_seconds = max(0, item.time_spent - (item.pomodoro_count * config_work_mins * 60))
+        if sw_seconds > 0:
+            sw_mins = sw_seconds // 60
+            parts.append(f"Stopwatch: {sw_mins} min")
+
+        if item.time_spent > 0:
+            total_mins = item.time_spent // 60
+            hours, mins = divmod(total_mins, 60)
+            if hours > 0:
+                parts.append(f"<b>Total: {hours}h {mins}m</b>")
+            else:
+                parts.append(f"<b>Total: {mins}m</b>")
+
+        if item.tags:
+            parts.append(f"Tags: {', '.join(item.tags)}")
+
+        if item.complete:
+            parts.insert(1, "<i>Completed</i>")
+
+        return "<br>".join(parts)
+
+    def _on_mouse_moved(self, event_args) -> None:
+        """Handle mouse movement for persistent hover tooltips."""
+        pos = event_args[0]
+        vb = self._plot.plotItem.vb
+        if vb is None:
             return
-        row = self._hit_test_row(a0.pos())
-        if row >= 0:
-            self.task_clicked.emit(self._items[row].id)
+        mouse_point = vb.mapSceneToView(pos)
+        row_idx = self._row_from_y(mouse_point.y())
 
-    def contextMenuEvent(self, a0) -> None:  # noqa: N802
-        if a0 is None:
+        if row_idx != self._last_hover_row:
+            self._last_hover_row = row_idx
+            if row_idx >= 0:
+                item = self._items[row_idx]
+                tooltip_text = self._build_tooltip(item)
+                self._tooltip_label.setText(tooltip_text)
+                self._tooltip_label.adjustSize()
+
+                from PyQt6.QtCore import QPoint
+
+                mapped = self._plot.mapFromScene(pos)
+                qpoint = mapped if isinstance(mapped, QPoint) else mapped.toPoint()
+                cursor_pos = self.mapToGlobal(qpoint)
+                # Position tooltip to the right and slightly below cursor
+                self._tooltip_label.move(cursor_pos.x() + 16, cursor_pos.y() + 8)
+                self._tooltip_label.show()
+            else:
+                self._tooltip_label.hide()
+
+    def _on_plot_clicked(self, event) -> None:
+        """Handle click on the plot to find which item row was clicked."""
+        pos = event.scenePos()
+        vb = self._plot.plotItem.vb
+        if vb is None:
             return
-        row = self._hit_test_row(a0.pos())
-        if row >= 0:
-            item = self._items[row]
-            self.task_clicked.emit(item.id)
-            self.task_right_clicked.emit(item.id, a0.globalPos())
+        mouse_point = vb.mapSceneToView(pos)
+        row_idx = self._row_from_y(mouse_point.y())
 
-    def mouseMoveEvent(self, a0) -> None:  # noqa: N802
-        if a0 is None:
-            return
-        row = self._hit_test_row(a0.pos())
-        if row >= 0:
-            item = self._items[row]
-            parts = [item.reminder]
-            if item.due_date:
-                parts.append(f"Due: {item.due_date.strftime('%b %d')}")
-            if item.due_time:
-                parts.append(f"Time: {item.due_time.strftime('%I:%M %p').lstrip('0')}")
-            if item.estimated_pomodoros:
-                parts.append(f"Estimated: {item.estimated_pomodoros} pomodoros")
-            if item.pomodoro_count:
-                parts.append(f"Completed: {item.pomodoro_count} pomodoros")
-            if item.time_spent:
-                mins = item.time_spent // 60
-                parts.append(f"Time spent: {mins}m")
-            if item.tags:
-                parts.append(f"Tags: {', '.join(item.tags)}")
-            from PyQt6.QtWidgets import QToolTip
+        if 0 <= row_idx < len(self._items):
+            item = self._items[row_idx]
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.task_clicked.emit(item.id)
+            elif event.button() == Qt.MouseButton.RightButton:
+                screen_pos = event.screenPos()
+                from PyQt6.QtCore import QPoint
 
-            QToolTip.showText(a0.globalPosition().toPoint(), "\n".join(parts), self)
-        else:
-            from PyQt6.QtWidgets import QToolTip
-
-            QToolTip.hideText()
+                self.task_right_clicked.emit(
+                    item.id, QPoint(int(screen_pos.x()), int(screen_pos.y()))
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -1654,11 +1866,7 @@ class CalendarViewWidget(QWidget):
         self._timeline_widget = _TimelineWidget()
         self._timeline_widget.task_clicked.connect(self._on_task_clicked)
         self._timeline_widget.task_right_clicked.connect(self._on_task_right_clicked)
-        timeline_scroll = QScrollArea()
-        timeline_scroll.setWidgetResizable(True)
-        timeline_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        timeline_scroll.setWidget(self._timeline_widget)
-        self._sub_stack.addWidget(timeline_scroll)  # 3
+        self._sub_stack.addWidget(self._timeline_widget)  # 3
 
         self._sub_stack.setCurrentIndex(self._sub_view)
         content.addWidget(self._sub_stack, 1)
@@ -1690,6 +1898,12 @@ class CalendarViewWidget(QWidget):
         if self._focus_session_item_id != item_id:
             self._focus_session_item_id = item_id
             self.refresh()
+
+    def set_active_session(
+        self, item_id: UUID | None, elapsed: int = 0, session_type: str = ""
+    ) -> None:
+        """Pass active focus session to timeline for pseudo-real-time bar updates."""
+        self._timeline_widget.set_active_session(item_id, elapsed, session_type)
 
     def refresh(self) -> None:
         self._close_popover()

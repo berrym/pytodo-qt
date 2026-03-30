@@ -66,6 +66,20 @@ LIGHT_COLORS = {
     "due_overdue": "#b12f25",
     "due_today": "#ae6e13",
     "due_soon": "#2a7e4d",
+    # Chart/timeline colors (Okabe-Ito + industry standards for light backgrounds)
+    "chart_span": "#5470c6",  # ECharts blue — time span bar
+    "chart_span_alpha": "100",  # Opacity 0-255
+    "chart_estimate": "#D4E9F3",  # Light gray-blue — estimate baseline (recedes)
+    "chart_estimate_border": "#B0C4D8",
+    "chart_pomodoro": "#D55E00",  # Okabe-Ito vermillion — pomodoro actual
+    "chart_pomodoro_alpha": "200",
+    "chart_stopwatch": "#0072B2",  # Okabe-Ito blue — stopwatch actual
+    "chart_stopwatch_alpha": "200",
+    "chart_overdue": "#b12f25",  # Matches due_overdue
+    "chart_overdue_alpha": "80",
+    "chart_overflow_stripe": "#C0CCD8",
+    "chart_overflow_actual": "#8B0000",
+    "chart_overflow_actual_alpha": "100",
 }
 
 DARK_COLORS = {
@@ -88,6 +102,20 @@ DARK_COLORS = {
     "due_overdue": "#e77c74",
     "due_today": "#ddad5f",
     "due_soon": "#6bc791",
+    # Chart/timeline colors (ECharts dark + desaturated for dark backgrounds)
+    "chart_span": "#4992ff",  # ECharts dark blue — time span bar
+    "chart_span_alpha": "90",  # Subtle, recedes
+    "chart_estimate": "#3D4147",  # Dark gray — estimate baseline (recedes on dark bg)
+    "chart_estimate_border": "#555B63",
+    "chart_pomodoro": "#ff6e76",  # ECharts dark red — pomodoro actual (desaturated)
+    "chart_pomodoro_alpha": "200",
+    "chart_stopwatch": "#58d9f9",  # ECharts dark cyan — stopwatch actual (distinct from span)
+    "chart_stopwatch_alpha": "200",
+    "chart_overdue": "#ff6e76",  # Matches pomodoro red family
+    "chart_overdue_alpha": "60",
+    "chart_overflow_stripe": "#555B63",
+    "chart_overflow_actual": "#ff6e76",
+    "chart_overflow_actual_alpha": "80",
 }
 
 
