@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen
+from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 
 class WeeklyChartWidget(QWidget):
-    """Custom widget that draws a horizontal bar chart of daily session counts."""
+    """pyqtgraph horizontal bar chart of daily session counts."""
 
     def __init__(self, day_counts: list[tuple[str, int]], parent: QWidget | None = None):
         """Initialize the chart.
@@ -39,53 +39,68 @@ class WeeklyChartWidget(QWidget):
             parent: Parent widget.
         """
         super().__init__(parent)
-        self._day_counts = day_counts
-        self._max_count = max((c for _, c in day_counts), default=1) or 1
-        self.setMinimumHeight(len(day_counts) * 28 + 16)
+        import numpy as np
+        import pyqtgraph as pg
 
-    def paintEvent(self, a0) -> None:  # noqa: N802
-        """Draw the horizontal bar chart."""
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        from ...gui.styles.themes import get_colors
 
-        w = self.width()
-        bar_height = 20
-        row_height = 28
-        label_width = 40
-        count_width = 40
-        bar_area = w - label_width - count_width - 16
-        y = 8
+        c = get_colors()
 
-        bar_color = QColor("#4A90D9")
-        text_color = self.palette().text().color()
-        painter.setPen(QPen(text_color))
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
 
-        font = QFont()
-        font.setPointSize(11)
-        painter.setFont(font)
+        plot = pg.PlotWidget()
+        plot.setBackground(c.get("base", "#252526"))
+        plot.setMouseEnabled(x=False, y=False)
+        plot.setMenuEnabled(False)
+        plot.showGrid(x=True, y=False, alpha=0.2)
+        plot.setFixedHeight(len(day_counts) * 32 + 20)
 
-        for label, count in self._day_counts:
-            # Day label
-            painter.drawText(0, y, label_width, bar_height, Qt.AlignmentFlag.AlignVCenter, label)
+        labels = [label for label, _ in day_counts]
+        counts = [count for _, count in day_counts]
+        n = len(day_counts)
 
-            # Bar
-            if count > 0 and bar_area > 0:
-                bar_width = max(4, int(bar_area * count / self._max_count))
-                painter.fillRect(label_width, y + 2, bar_width, bar_height - 4, bar_color)
+        # Y positions (inverted so Mon is at top)
+        y_pos = np.arange(n - 1, -1, -1, dtype=float)
 
-            # Count
-            painter.drawText(
-                label_width + bar_area + 4,
-                y,
-                count_width,
-                bar_height,
-                Qt.AlignmentFlag.AlignVCenter,
-                str(count),
-            )
+        # Bar color from theme
+        bar_color = QColor(c.get("chart_pomodoro", "#D55E00"))
+        bar_color.setAlpha(200)
 
-            y += row_height
+        bar_item = pg.BarGraphItem(
+            x0=np.zeros(n),
+            y0=y_pos - 0.3,
+            width=np.array(counts, dtype=float),
+            height=0.6,
+            brush=pg.mkBrush(bar_color),
+            pen=pg.mkPen(None),
+        )
+        plot.addItem(bar_item)
 
-        painter.end()
+        # Add count labels as text items
+        col_text = QColor(c.get("text", "#e0e0e0"))
+        for i, count in enumerate(counts):
+            if count > 0:
+                text = pg.TextItem(str(count), color=col_text, anchor=(0, 0.5))
+                text.setPos(count + 0.1, y_pos[i])
+                plot.addItem(text)
+
+        # Configure axes
+        left_axis = plot.getAxis("left")
+        left_axis.setTicks([[(y_pos[i], labels[i]) for i in range(n)]])
+        left_axis.setTextPen(col_text)
+        left_axis.setPen(pg.mkPen(QColor(c.get("border", "#3c3c3c"))))
+        left_axis.setWidth(40)
+
+        bottom_axis = plot.getAxis("bottom")
+        bottom_axis.setTextPen(col_text)
+        bottom_axis.setPen(pg.mkPen(QColor(c.get("border", "#3c3c3c"))))
+
+        max_count = max(counts) if counts else 1
+        plot.setXRange(0, max(max_count * 1.2, 1), padding=0)
+        plot.setYRange(-0.5, n - 0.5, padding=0.05)
+
+        layout.addWidget(plot)
 
 
 def _format_duration(seconds: int) -> str:
