@@ -1,10 +1,40 @@
 # Timeline Bar Redesign — Multi-Mode Visualization
 
-## Context
+## Implementation Status (2026-03-30)
 
-The stopwatch feature introduces a second time tracking mode alongside pomodoro. The timeline view needs to visualize data from both modes meaningfully. This exposed several fundamental design problems with the current bar rendering that need to be addressed together.
+### Completed
+- QPainter timeline fully replaced with pyqtgraph PlotWidget (commit 13d71b2)
+- QPainter WeeklyChartWidget replaced with pyqtgraph (commit 5998d0c)
+- 4 timeline sub-views implemented (commit 12a9429):
+  - **Tasks**: Gantt horizontal bars (time span, gray estimate baseline, split red+cyan actual)
+  - **Daily**: Stacked vertical bars (pomodoro+stopwatch per day) + 7-day rolling average trend line
+  - **Productivity**: Time block heatmap (12 two-hour blocks, intensity-scaled, completion rate overlays)
+  - **Accuracy**: Scatter plot (estimated vs actual minutes, y=x reference line, variance coloring)
+- Secondary pill toggle: Tasks / Daily / Productivity / Accuracy (visible only in Timeline mode)
+- Theme-aware colors: Okabe-Ito (light) + ECharts dark palettes in semantic theme system
+- Persistent hover tooltips on Tasks view
+- Pseudo-real-time bar projection during active focus sessions
+- Unscheduled panel hidden in timeline mode (passive analytical view)
+- Navigation: daily shift (Tasks), weekly shift (Daily), disabled (Productivity/Accuracy)
+- All charts fed by AnalyticsService DataFrames (pandas pipeline)
+- Always-visible legends on all sub-views
+- Empty state messages with user guidance
 
-## Current State (as of stopwatch implementation)
+### Not Yet Implemented
+- Pomodoro/stopwatch filter toggles on existing filter dropdowns (additive, low effort)
+- Stopwatch idle timeout auto-pause (StopwatchConfig has the field, not wired)
+- PDF/PNG chart export (matplotlib planned for this, not yet added)
+- Timeline sub-view persistence in config (defaults to Tasks on load)
+
+---
+
+## Design History
+
+### Context
+
+The stopwatch feature introduces a second time tracking mode alongside pomodoro. The timeline view needs to visualize data from both modes meaningfully. This exposed several fundamental design problems with the original QPainter bar rendering.
+
+## Original QPainter State (historical, replaced)
 
 ### Dimensions
 - `ROW_HEIGHT = 32px` — total height per task row

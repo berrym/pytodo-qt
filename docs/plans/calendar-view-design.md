@@ -22,7 +22,14 @@ Must appear in both desktop app (PyQt6) and web UI (vanilla JS) with feature par
 Traditional grid of days. Tasks shown as compact items on their due date. Best for overview.
 
 ### Timeline
-Horizontal time axis with tasks as bars spanning their scheduled duration. Shows workload density, focus sessions overlaid when available. Configurable time range (day/week/month). Foundation for future productivity analytics (pomodoro phases D-F: bottleneck detection, focus pattern analysis, time tracking visualization).
+Passive analytical view (read-only, no drag-and-drop). Rendered with pyqtgraph (not QPainter). Has its own secondary pill toggle with 4 chart sub-views:
+
+- **Tasks**: Gantt horizontal bars per task — time span (blue), estimate baseline (gray), split actual work (pomodoro red + stopwatch cyan). Pseudo-real-time bar projection during active sessions. Persistent hover tooltips with full task details. 14-day range with daily navigation.
+- **Daily**: Stacked vertical bars showing pomodoro + stopwatch minutes per day, with 7-day rolling average trend line overlay. Weekly navigation.
+- **Productivity**: Time block heatmap — 12 two-hour blocks with intensity-scaled color by session count and completion rate text overlays. All-time view, no navigation.
+- **Accuracy**: Scatter plot of estimated vs actual minutes per item, with diagonal y=x reference line. Points colored by variance (under-estimated/accurate/over-estimated). All-time view, no navigation.
+
+All chart data comes from `AnalyticsService` (pandas DataFrames via `pd.read_sql_query()`). Unscheduled panel hidden in timeline mode. See `docs/plans/analytics-service.md` and `docs/plans/timeline-bar-redesign.md` for full architecture.
 
 **Default:** Week view (most actionable granularity for task management).
 

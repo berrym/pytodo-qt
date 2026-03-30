@@ -1,5 +1,14 @@
 # Analytics Service — Pandas Data Pipeline
 
+## Implementation Status (2026-03-30)
+
+**Fully implemented and integrated.** `core/analytics.py` is live with 12 public methods, version-counter cache, 56 tests. Consumers:
+- **MainWindow**: daily goal, streak, focus score, milestones (replaced manual loops)
+- **FocusStatsDialog**: summary cards, weekly chart, top tasks, insights (replaced 300+ lines of manual aggregation)
+- **Timeline sub-views**: Daily chart uses `daily_summary()` + `rolling_averages()`, Productivity uses `time_block_analysis()`, Accuracy uses `estimate_accuracy()`
+
+---
+
 ## Why This Exists
 
 The app tracks rich time data across two modes (pomodoro and stopwatch) with per-session granularity in a SQLite database. Until now, all analytics were computed ad-hoc — manual Python loops in MainWindow, FocusStatsDialog, and the timeline widget, each duplicating similar aggregation logic with raw SQL queries.
