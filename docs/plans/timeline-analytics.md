@@ -66,10 +66,10 @@ Green bar shows total sessions completed, not when they were done. A task where 
 ### 5. Per-Task Pomodoro Duration
 All tasks use the global `config.pomodoro.work_duration`. There is no per-task override. A coding task might need 50-minute deep work sessions while a quick email check is 5 minutes — both use the same global setting.
 
-**Needed:** `work_duration` field on `TodoItem` (optional, falls back to config default).
+**Planned (schema v17):** `work_duration: int | None` on `TodoItem` (minutes, None = use config default). Required for honest analytics — "1 session" is meaningless when sessions can be 5 or 50 minutes. All analytics paths that currently read `config.pomodoro.work_duration` must be updated to check item-level override first. See `docs/plans/pomodoro-evolution.md` for implementation details.
 
 ### 6. Non-Pomodoro Work
-The only way to log work time is through the pomodoro timer. If a user works on a task for 2 hours without starting a pomodoro session, that work is invisible to the timeline.
+The only way to log work time is through the pomodoro timer or stopwatch. If a user works on a task without starting either timer, that work is invisible to the timeline.
 
 **Needed:** Manual time logging (start/stop timer or after-the-fact entry).
 

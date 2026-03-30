@@ -143,6 +143,51 @@ When a task's `pomodoro_count` reaches its `estimated_pomodoros` and the task is
 
 ---
 
+### Phase B2: Per-Task Work Duration (Schema v17)
+
+**Goal:** Allow each task to have its own pomodoro session length, overriding the global config default.
+
+**Status:** Planned. Required for honest analytics — "1 session" is meaningless when sessions can be 5 or 50 minutes.
+
+#### B2.1. Schema Change
+
+Add to `TodoItem` in `models.py`:
+```python
+work_duration: int | None = None  # minutes, None = use config default
+```
+
+Migration v16→v17:
+```sql
+ALTER TABLE items ADD COLUMN work_duration INTEGER;
+```
+
+#### B2.2. PomodoroWidget Integration
+
+`PomodoroWidget.start()` already accepts `item_id`. The flow:
+1. Look up item's `work_duration`
+2. If set, use it; if None, fall back to `config.pomodoro.work_duration`
+3. Pass the resolved duration to `_start_work_session()`
+
+#### B2.3. AddTodoDialog
+
+Optional "Session length" spinner in advanced mode (1-120 min, 0/None = use default). Placed near estimated pomodoros/minutes fields.
+
+#### B2.4. Analytics Updates
+
+All code paths that currently read `config.pomodoro.work_duration` for conversion must be updated:
+- `AnalyticsService`: session-to-minutes conversion in `estimate_accuracy()`, `item_summary()`
+- `_TimelineTasksWidget._rebuild_plot()`: `pomodoro_seconds = pomodoro_count * work_duration * 60`
+- `FocusTimerDialog.update_display()`: session counter
+- `MainWindow._on_pomodoro_session_completed()`: session duration calculation
+
+The `FocusSession.duration_seconds` field already records actual elapsed time, so session-level analytics using `duration_minutes` are already correct. The issue is only in the item-level conversions (`estimated_pomodoros × work_duration`).
+
+#### B2.5. Stopwatch Idle Timeout Per-Task
+
+Same pattern: `idle_timeout: int | None = None` on TodoItem (minutes, None = use StopwatchConfig default). Deferred until after work_duration is implemented.
+
+---
+
 ### Phase C: Session Logging (Moderate effort, new table)
 
 **Goal:** Record individual focus sessions for analytics and history.
@@ -334,18 +379,17 @@ The `focus_sessions` table syncs via append-only merge (no conflicts possible). 
 
 ## Priority and Sequencing
 
-| Phase | Effort | Value | Dependency |
-|-------|--------|-------|------------|
-| **A: Foundation Fixes** | Low | High | None — correctness |
-| **B: Per-Task Tracking** | Moderate | High | Phase A |
-| **C: Session Logging** | Moderate | Moderate | Phase B (for pomodoro_count) |
-| **D: Analytics** | Moderate-high | High | Phase C (needs session data) |
-| **E: Gamification** | Moderate | Moderate | Phase C-D (needs data to gamify) |
-| **F: Sound & Focus** | Low-moderate | Moderate | None — independent |
+| Phase | Effort | Value | Dependency | Status |
+|-------|--------|-------|------------|--------|
+| **A: Foundation Fixes** | Low | High | None | Done |
+| **B: Per-Task Tracking** | Moderate | High | Phase A | Done (schema v12) |
+| **B2: Per-Task Duration** | Low-moderate | High | Phase B | Planned (schema v17) |
+| **C: Session Logging** | Moderate | Moderate | Phase B | Done (focus_sessions table) |
+| **D: Analytics** | Moderate-high | High | Phase C | Done (AnalyticsService + pyqtgraph) |
+| **E: Gamification** | Moderate | Moderate | Phase C-D | Partially done (streaks, milestones, focus score) |
+| **F: Sound & Focus** | Low-moderate | Moderate | None | Partially done (sound notifications) |
 
-**Recommended order:** A → B → F → C → D → E
-
-Phase F (sound) is independent and can slot in anywhere — it's a quick win for perceived completeness. Gamification (E) comes last because it requires the data infrastructure from C and D to be meaningful.
+**Current focus:** Phase B2 (per-task work duration) is the next critical analytics improvement. Phases A-D are implemented. E and F have partial implementations.
 
 ---
 

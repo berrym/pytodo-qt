@@ -187,6 +187,7 @@ The service imports only `sqlite3`, `pandas`, and standard library modules. This
 - Undo/redo — analytics never writes to the database
 
 ### What it enables (future)
+- **Per-task work_duration (schema v17)**: `work_duration: int | None` on TodoItem. When implemented, `estimate_accuracy()` and item-level conversions (`estimated_pomodoros × work_duration`) must use per-item duration instead of global config. Session-level analytics (`duration_minutes`) are already correct since `FocusSession.duration_seconds` records actual elapsed time. See `docs/plans/pomodoro-evolution.md` Phase B2.
 - **Burndown charts**: `daily_summary()` with cumulative task completion
 - **Heatmaps**: `time_block_analysis()` across weeks/months
 - **Trend lines**: `rolling_averages()` in pyqtgraph line plots
