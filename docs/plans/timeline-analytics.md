@@ -78,25 +78,39 @@ If the user changes `work_duration` between sessions (e.g., 25 min → 45 min), 
 
 ---
 
+## Analytics Data Layer
+
+**As of 2026-03-30:** The analytics foundation is being built using pandas DataFrames via `AnalyticsService` (`core/analytics.py`). See `docs/plans/analytics-service.md` for the full architecture.
+
+The timeline view uses pyqtgraph for visualization (`docs/plans/charting-library-decision.md`). The data pipeline is:
+
+```
+SQLite → pandas (AnalyticsService) → pyqtgraph (timeline) / matplotlib (reports)
+```
+
+All future analytics features (phases D-F below) will be built on this foundation.
+
 ## Future Improvements (Pomodoro Phases D-F)
 
+All phases below consume DataFrames from `AnalyticsService`:
+
 ### Phase D: Productivity Analytics
-- Use `focus_sessions` table timestamps for Gantt-chart work distribution
-- Daily/weekly work summaries overlaid on timeline
-- Overdue and overcommit visual indicators
-- Heatmap density overlay (busy vs free periods)
+- `daily_summary()` for daily/weekly work summaries
+- `time_block_analysis()` for heatmap density overlays
+- `item_summary()` for overcommit indicators
+- Session-level data from `sessions()` for Gantt-chart work distribution
 
 ### Phase E: Bottleneck Detection
-- Identify tasks where actual work consistently exceeds estimates
-- Flag tasks with work concentrated in deadline crunch (all sessions near due date)
-- Show idle periods where no work happened on active tasks
-- Suggest task breakdown when estimates exceed reasonable thresholds
+- `estimate_accuracy()` to identify tasks where actual consistently exceeds estimated
+- `sessions(item_id=...)` to flag deadline-crunch work patterns
+- `item_summary()` for idle period detection
+- `estimate_accuracy()` variance for breakdown suggestions
 
 ### Phase F: Trends and Reporting
-- Moving average of sessions per day/week
-- Estimate accuracy tracking (actual/estimated ratio over time)
-- Focus time distribution by tag/list/priority
-- Exportable reports (PDF, CSV)
+- `rolling_averages()` for moving averages
+- `estimate_accuracy()` over time for calibration tracking
+- `sessions()` filtered by tag/list/priority for distribution analysis
+- DataFrames → matplotlib for PDF/CSV export
 
 ---
 
@@ -115,3 +129,6 @@ If the user changes `work_duration` between sessions (e.g., 25 min → 45 min), 
 | `FocusSession.duration_seconds` | Session length | No |
 | `FocusSession.completed` | Was session finished | No |
 | `config.pomodoro.work_duration` | Session length setting | Yes — conversion factor |
+| `TodoItem.estimated_minutes` | Stopwatch time estimate | Yes — amber bar (v16+) |
+| `AnalyticsService.sessions()` | Session-level DataFrame | Planned — Gantt bars |
+| `AnalyticsService.item_summary()` | Per-item aggregates | Planned — bar proportions |

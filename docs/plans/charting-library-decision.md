@@ -119,11 +119,18 @@ The existing QPainter-based `_TimelineWidget.paintEvent()` will be replaced with
 - Adaptive display based on available time data
 - Overflow indicators (overcommitted, over-estimate, overdue)
 
-## Dependencies to Add
+## Dependencies
 
+Already added to `pyproject.toml` (commit 13d71b2):
 ```toml
-[project.dependencies]
-pyqtgraph = ">=0.13"
-pandas = ">=2.0"
-# matplotlib added when report generation is implemented (phases D-F)
+"pyqtgraph>=0.13",
+"pandas>=2.0",
 ```
+
+matplotlib will be added when report generation is implemented (phases D-F).
+
+## Implementation Status
+
+- **pyqtgraph**: Integrated. Timeline view uses `PlotWidget` with `BarGraphItem` (commit 13d71b2).
+- **pandas**: Being implemented. `AnalyticsService` (`core/analytics.py`) is the data pipeline. See `docs/plans/analytics-service.md` for full architecture.
+- **matplotlib**: Not yet integrated. Planned for PDF report generation in phases D-F.

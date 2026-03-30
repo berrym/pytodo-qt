@@ -257,7 +257,11 @@ The task's total `time_spent` is ground truth. Estimates from either mode set ex
 
 ---
 
-## Analytics Architecture — Future Foundation
+## Analytics Architecture
+
+**The analytics data layer is now being implemented as `AnalyticsService` (`core/analytics.py`).** See `docs/plans/analytics-service.md` for the full architecture, DataFrame schemas, and integration plan.
+
+The timeline widget will consume DataFrames from the analytics service rather than computing metrics inline. This replaces the current approach of reading TodoItem fields directly with proper analytical views.
 
 ### Timeline Sub-Views and Filters
 The timeline should support sub-views or filter modes:

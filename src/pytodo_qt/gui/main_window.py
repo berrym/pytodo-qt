@@ -138,7 +138,7 @@ class MainWindow(QMainWindow):
         self._pomodoro_display_timer = QTimer(self)
         self._pomodoro_display_timer.setInterval(1000)
         self._pomodoro_display_timer.timeout.connect(self._update_pomodoro_display)
-        self._best_streak = self._storage.compute_current_streak(self._config.pomodoro.daily_goal)
+        self._best_streak = 0  # Updated after analytics service is created
 
         # Floating focus timer dialog (lazy-created)
         self._focus_timer_dialog = None
@@ -1648,6 +1648,15 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Load Error", f"Failed to load database: {e}")
             self._database = Database()
 
+        # Analytics service (pandas data pipeline)
+        from ..core.analytics import AnalyticsService
+
+        self._analytics = AnalyticsService(
+            self._storage.connection, self._config.pomodoro.work_duration
+        )
+        goal = self._config.pomodoro.daily_goal
+        self._best_streak = self._analytics.streak(goal if goal > 0 else 1)
+
         # Set active list from config (overrides stored active_list_id)
         active_list_name = self._config.database.active_list
         if active_list_name:
@@ -2062,6 +2071,7 @@ class MainWindow(QMainWindow):
     @pyqtSlot(object)
     def _on_list_changed(self, todo_list: TodoList | None) -> None:
         """Handle list selection change."""
+        self._analytics.invalidate()
         if self._view_stack.currentIndex() == 0:
             self.todo_table.set_list(todo_list)
         else:
@@ -2693,6 +2703,9 @@ class MainWindow(QMainWindow):
         with contextlib.suppress(Exception):
             self._storage.save_focus_session(session)
 
+        # Invalidate analytics cache
+        self._analytics.invalidate()
+
         # Update floating dialog if visible
         self._update_focus_timer_sessions()
 
@@ -2717,15 +2730,13 @@ class MainWindow(QMainWindow):
         self._focus_timer_dialog.update_sessions(sessions)
 
     def _get_today_session_count(self) -> int:
-        """Count today's completed work sessions from in-memory focus_sessions."""
+        """Count today's completed work/stopwatch sessions via analytics."""
         from datetime import date
 
         today = date.today().isoformat()
-        return sum(
-            1
-            for s in self._database.focus_sessions
-            if s.date == today and s.session_type == "work" and s.completed
-        )
+        df = self._analytics.sessions(start_date=today, end_date=today)
+        work_sw = df[df["session_type"] != "break"]
+        return int(work_sw["completed"].sum()) if not work_sw.empty else 0
 
     def _update_daily_goal(self) -> None:
         """Update daily goal display in status bar and floating dialog."""
@@ -2734,42 +2745,10 @@ class MainWindow(QMainWindow):
         self.status_bar_widget.update_daily_goal(completed, goal)
         if self._focus_timer_dialog is not None:
             self._focus_timer_dialog.update_daily_goal(completed, goal)
-            streak = self._storage.compute_current_streak(goal)
+            streak = self._analytics.streak(goal if goal > 0 else 1)
             self._focus_timer_dialog.update_streak(streak)
-            score = self._compute_focus_score(completed, goal, streak)
+            score = self._analytics.focus_score(goal)
             self._focus_timer_dialog.update_focus_score(score)
-
-    def _compute_focus_score(self, today_completed: int, goal: int, streak: int) -> int:
-        """Compute today's focus score (0-100).
-
-        Components:
-        - Goal ratio (0-40): completed / goal
-        - Completion rate (0-40): completed / (completed + interrupted)
-        - Streak bonus (0-20): 4 points per day
-        """
-        if today_completed <= 0:
-            return -1  # No sessions, hide score
-
-        from datetime import date
-
-        score = 0
-
-        # Goal component (0-40 points)
-        if goal > 0:
-            score += min(40, int(40 * today_completed / goal))
-        else:
-            score += min(40, today_completed * 10)
-
-        # Completion rate (0-40 points)
-        interrupted = self._storage.get_interrupted_session_count_for_date(date.today().isoformat())
-        total = today_completed + interrupted
-        if total > 0:
-            score += int(40 * today_completed / total)
-
-        # Streak bonus (0-20 points)
-        score += min(20, streak * 4)
-
-        return min(100, score)
 
     def _check_milestones(self) -> None:
         """Check for and celebrate focus session milestones."""
@@ -2790,14 +2769,15 @@ class MainWindow(QMainWindow):
             return
 
         # Lifetime milestones
-        lifetime = self._storage.get_lifetime_work_session_count()
+        lifetime_df = self._analytics.sessions(session_type="work")
+        lifetime = int(lifetime_df["completed"].sum()) if not lifetime_df.empty else 0
         milestones = {10, 25, 50, 100, 250, 500, 1000}
         if lifetime in milestones:
             self._notify_milestone(f"Milestone: {lifetime}!", f"{lifetime} lifetime focus sessions")
             return
 
         # Streak record
-        streak = self._storage.compute_current_streak(goal)
+        streak = self._analytics.streak(goal if goal > 0 else 1)
         if streak > self._best_streak:
             self._best_streak = streak
             if streak >= 3:
@@ -3427,6 +3407,7 @@ class MainWindow(QMainWindow):
             )
             self._pomodoro.update_config(self._config.pomodoro)
             self._stopwatch.update_config(self._config.stopwatch)
+            self._analytics.set_work_duration(self._config.pomodoro.work_duration)
             self._sound_player.update_config(self._config.pomodoro)
             self._update_daily_goal()
             # Restart web server if config changed

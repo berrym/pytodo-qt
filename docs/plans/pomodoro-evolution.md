@@ -244,7 +244,9 @@ New dialog accessible from Tools → Focus Stats (or a tab in the floating timer
 └─────────────────────────────────────────────┘
 ```
 
-Implementation: Query `focus_sessions` table grouped by date. Use Qt's QPainter or simple styled QProgressBars for the bar chart (no external charting dependency).
+Implementation: Data comes from `AnalyticsService` (`core/analytics.py`) — `daily_summary()`, `weekly_chart()`, `top_items()`, `streak()`, `focus_score()`. Visualization via pyqtgraph (interactive charts) or matplotlib (static reports/export). See `docs/plans/analytics-service.md` for the full data pipeline architecture.
+
+**Note (2026-03-30):** Much of Phase D is already implemented — daily goal, streak tracking, focus score, FocusStatsDialog with weekly chart and top tasks all exist. The AnalyticsService refactors these from ad-hoc computation to a proper pandas DataFrame pipeline.
 
 #### D3. Streak Tracking
 
