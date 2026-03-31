@@ -1092,7 +1092,11 @@ class _TimelineTasksWidget(QWidget):
 
 
 class _TimelineDailyWidget(QWidget):
-    """pyqtgraph stacked bar chart: sessions per day, pomodoro + stopwatch."""
+    """Stacked vertical bar chart: pomodoro + stopwatch minutes per day.
+
+    All items persistent — created once in rebuild(), updated in-place
+    via setOpts()/setData() during real-time active session projection.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1100,8 +1104,19 @@ class _TimelineDailyWidget(QWidget):
 
         self._analytics = None
         self._current_date: date = date.today()
-        self._colors: dict[str, str] = {}
-        self._refresh_colors()
+        self._active_elapsed: int = 0
+        self._active_session_type: str = ""
+
+        # Persistent item references
+        self._pom_bar: pg.BarGraphItem | None = None
+        self._sw_bar: pg.BarGraphItem | None = None
+        self._trend_line: pg.PlotDataItem | None = None
+        self._base_pom_mins = None
+        self._base_sw_mins = None
+        self._trend_x = None
+        self._trend_y = None
+
+        self._create_styles()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1109,12 +1124,13 @@ class _TimelineDailyWidget(QWidget):
 
         self._plot = pg.PlotWidget()
         self._plot.setBackground(self._colors.get("base", "#252526"))
-        self._plot.setMouseEnabled(x=False, y=False)
+        self._plot.setMouseEnabled(x=False, y=True)
         self._plot.showGrid(x=False, y=True, alpha=0.25)
         self._plot.setMenuEnabled(False)
+        self._plot.enableAutoRange(axis="y")
         layout.addWidget(self._plot)
 
-        # Legend
+        # Legend (always visible)
         self._legend_widget = QWidget()
         self._legend_widget.setFixedHeight(28)
         legend_layout = QHBoxLayout(self._legend_widget)
@@ -1123,57 +1139,121 @@ class _TimelineDailyWidget(QWidget):
         self._legend_labels: list[QLabel] = []
         layout.addWidget(self._legend_widget)
 
-    def _refresh_colors(self) -> None:
+    def _create_styles(self) -> None:
+        from PyQt6.QtGui import QBrush, QGradient, QLinearGradient, QPen
+
         from ...gui.styles.themes import get_colors
 
-        self._colors = get_colors()
+        c = get_colors()
+        self._colors = c
+
+        # Pomodoro: vertical gradient (bottom→top = dark→light)
+        pom_base = QColor(c.get("chart_pomodoro", "#D55E00"))
+        pom_grad = QLinearGradient(0, 1, 0, 0)
+        pom_grad.setCoordinateMode(QGradient.CoordinateMode.ObjectMode)
+        pom_grad.setColorAt(0.0, pom_base)
+        pom_grad.setColorAt(1.0, pom_base.lighter(115))
+        self._pom_brush = QBrush(pom_grad)
+        self._pom_pen = QPen(pom_base.darker(130), 1)
+
+        # Stopwatch: vertical gradient
+        sw_base = QColor(c.get("chart_stopwatch", "#0072B2"))
+        sw_grad = QLinearGradient(0, 1, 0, 0)
+        sw_grad.setCoordinateMode(QGradient.CoordinateMode.ObjectMode)
+        sw_grad.setColorAt(0.0, sw_base)
+        sw_grad.setColorAt(1.0, sw_base.lighter(115))
+        self._sw_brush = QBrush(sw_grad)
+        self._sw_pen = QPen(sw_base.darker(130), 1)
+
+        # Trend line
+        self._trend_pen = QPen(QColor(c.get("highlight", "#0078d4")), 2)
+        self._trend_pen.setStyle(Qt.PenStyle.DashLine)
+
+        # Text/border
+        self._col_text = QColor(c.get("text", "#e0e0e0"))
+        self._col_border = QColor(c.get("border", "#3c3c3c"))
 
     def set_analytics(self, analytics) -> None:
         self._analytics = analytics
+
+    def set_active_session(self, elapsed: int = 0, session_type: str = "") -> None:
+        self._active_elapsed = elapsed
+        self._active_session_type = session_type
+        self._update_realtime()
 
     def set_current_date(self, d: date) -> None:
         self._current_date = d
         self.rebuild()
 
+    def _update_realtime(self) -> None:
+        """In-place update: setOpts on bars, setData on trend. Zero item creation."""
+        if self._pom_bar is None or self._base_pom_mins is None:
+            return
+
+        pom = self._base_pom_mins.copy()
+        sw = self._base_sw_mins.copy()
+
+        if self._active_elapsed > 0:
+            week_start = self._current_date - timedelta(days=self._current_date.weekday())
+            today_idx = (date.today() - week_start).days
+            if 0 <= today_idx < 7:
+                extra = self._active_elapsed / 60.0
+                if self._active_session_type == "work":
+                    pom[today_idx] += extra
+                else:
+                    sw[today_idx] += extra
+
+        self._pom_bar.setOpts(height=pom)
+        self._sw_bar.setOpts(height=sw, y0=pom)
+
+        # Update trend line with projected today value
+        if self._trend_line is not None and self._trend_x is not None and len(self._trend_x) > 0:
+            trend_y = self._trend_y.copy()
+            # Adjust the last trend point if it falls on today
+            week_start = self._current_date - timedelta(days=self._current_date.weekday())
+            today_idx = (date.today() - week_start).days
+            if 0 <= today_idx < 7:
+                for j, tx in enumerate(self._trend_x):
+                    if int(tx) == today_idx:
+                        trend_y[j] += self._active_elapsed / 60.0
+            self._trend_line.setData(self._trend_x, trend_y)
+
     def rebuild(self) -> None:
         import numpy as np
         import pyqtgraph as pg
 
-        self._refresh_colors()
-        c = self._colors
+        self._create_styles()
         plot = self._plot
         plot.clear()
-        plot.setBackground(c.get("base", "#252526"))
+        plot.setBackground(self._colors.get("base", "#252526"))
 
-        # Build legend
+        # Clear legend
         for lbl in self._legend_labels:
             lbl.deleteLater()
         self._legend_labels.clear()
-        text_color = c.get("text", "#e0e0e0")
+
+        # Reset item references
+        self._pom_bar = None
+        self._sw_bar = None
+        self._trend_line = None
+        self._base_pom_mins = None
+        self._base_sw_mins = None
+        self._trend_x = None
+        self._trend_y = None
 
         if self._analytics is None:
             self._show_empty("Analytics service not available")
+            self._build_legend()
             return
 
-        # Week range
         week_start = self._current_date - timedelta(days=self._current_date.weekday())
         week_end = week_start + timedelta(days=6)
-        start_str = week_start.isoformat()
-        end_str = week_end.isoformat()
-
-        summary = self._analytics.daily_summary(start_date=start_str, end_date=end_str)
-
-        col_pom = QColor(c.get("chart_pomodoro", "#D55E00"))
-        col_pom.setAlpha(200)
-        col_sw = QColor(c.get("chart_stopwatch", "#0072B2"))
-        col_sw.setAlpha(200)
-        col_trend = QColor(c.get("highlight", "#0078d4"))
-        col_text = QColor(text_color)
-        col_border = QColor(c.get("border", "#3c3c3c"))
+        summary = self._analytics.daily_summary(
+            start_date=week_start.isoformat(), end_date=week_end.isoformat()
+        )
 
         day_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         x_pos = np.arange(7, dtype=float)
-
         pom_mins = np.zeros(7)
         sw_mins = np.zeros(7)
 
@@ -1189,82 +1269,88 @@ class _TimelineDailyWidget(QWidget):
                     pom_mins[idx] = float(row.get("work_minutes", 0))
                     sw_mins[idx] = float(row.get("stopwatch_minutes", 0))
 
-        # Pomodoro bars (bottom)
-        if pom_mins.sum() > 0:
-            pom_bars = pg.BarGraphItem(
-                x=x_pos,
-                width=0.6,
-                height=pom_mins,
-                y0=np.zeros(7),
-                brush=pg.mkBrush(col_pom),
-                pen=pg.mkPen(None),
-            )
-            plot.addItem(pom_bars)
+        # Store base data for real-time updates
+        self._base_pom_mins = pom_mins.copy()
+        self._base_sw_mins = sw_mins.copy()
 
-        # Stopwatch bars (stacked on top)
-        if sw_mins.sum() > 0:
-            sw_bars = pg.BarGraphItem(
-                x=x_pos,
-                width=0.6,
-                height=sw_mins,
-                y0=pom_mins,
-                brush=pg.mkBrush(col_sw),
-                pen=pg.mkPen(None),
-            )
-            plot.addItem(sw_bars)
+        # Create persistent bar items (always, even if zero — for real-time growth)
+        self._pom_bar = pg.BarGraphItem(
+            x=x_pos,
+            width=0.6,
+            height=pom_mins,
+            y0=np.zeros(7),
+            brush=self._pom_brush,
+            pen=self._pom_pen,
+        )
+        plot.addItem(self._pom_bar)
 
-        # Trend line (7-day rolling average)
+        self._sw_bar = pg.BarGraphItem(
+            x=x_pos,
+            width=0.6,
+            height=sw_mins,
+            y0=pom_mins,
+            brush=self._sw_brush,
+            pen=self._sw_pen,
+        )
+        plot.addItem(self._sw_bar)
+
+        # Trend line (persistent — updated via setData in _update_realtime)
         rolling = self._analytics.rolling_averages(window_7=True, window_30=False)
+        trend_x_list: list[float] = []
+        trend_y_list: list[float] = []
         if not rolling.empty and len(rolling) >= 2:
-            # Map rolling data to x positions where dates overlap
             import pandas as pd
 
-            trend_x = []
-            trend_y = []
             for _, row in rolling.iterrows():
                 rd = row["date"]
                 if isinstance(rd, pd.Timestamp):
                     rd = rd.date()
                 idx = (rd - week_start).days if hasattr(rd, "__sub__") else -1
                 if 0 <= idx < 7:
-                    trend_x.append(float(idx))
-                    trend_y.append(float(row.get("rolling_7d_minutes", 0)))
-            if len(trend_x) >= 2:
-                trend_line = pg.PlotDataItem(
-                    trend_x,
-                    trend_y,
-                    pen=pg.mkPen(col_trend, width=2, style=Qt.PenStyle.DashLine),
-                    symbol=None,
-                )
-                plot.addItem(trend_line)
+                    trend_x_list.append(float(idx))
+                    trend_y_list.append(float(row.get("rolling_7d_minutes", 0)))
 
-        # Legend (always visible)
-        self._build_legend(c, text_color)
+        self._trend_x = (
+            np.array(trend_x_list, dtype=float) if trend_x_list else np.array([], dtype=float)
+        )
+        self._trend_y = (
+            np.array(trend_y_list, dtype=float) if trend_y_list else np.array([], dtype=float)
+        )
 
-        # Axes (always set up for visual consistency)
+        self._trend_line = pg.PlotDataItem(
+            self._trend_x,
+            self._trend_y,
+            pen=self._trend_pen,
+            symbol=None,
+        )
+        plot.addItem(self._trend_line)
+
+        # Empty state
+        total = pom_mins.sum() + sw_mins.sum()
+        if total == 0:
+            self._show_empty("No sessions this week \u2014 use \u25c0 \u25b6 to navigate")
+
+        # Legend
+        self._build_legend()
+
+        # Axes
         left_axis = plot.getAxis("left")
-        left_axis.setTextPen(col_text)
-        left_axis.setPen(pg.mkPen(col_border))
+        left_axis.setTextPen(self._col_text)
+        left_axis.setPen(pg.mkPen(self._col_border))
         left_axis.setLabel("Minutes")
 
         bottom_axis = plot.getAxis("bottom")
         bottom_axis.setTicks([[(float(i), day_labels[i]) for i in range(7)]])
-        bottom_axis.setTextPen(col_text)
-        bottom_axis.setPen(pg.mkPen(col_border))
+        bottom_axis.setTextPen(self._col_text)
+        bottom_axis.setPen(pg.mkPen(self._col_border))
 
-        # Empty state check
-        total = pom_mins.sum() + sw_mins.sum()
-        if total == 0:
-            self._show_empty("No sessions this week \u2014 use \u25c0 \u25b6 to navigate")
-            plot.setXRange(-0.5, 6.5, padding=0)
-            plot.setYRange(0, 10, padding=0)
-            return
-
-        max_y = max(float((pom_mins + sw_mins).max()), 1)
         plot.setXRange(-0.5, 6.5, padding=0)
+        max_y = max(float((pom_mins + sw_mins).max()), 1)
         plot.setYRange(0, max_y * 1.15, padding=0)
 
-    def _build_legend(self, c: dict, text_color: str) -> None:
+    def _build_legend(self) -> None:
+        c = self._colors
+        text_color = c.get("text", "#e0e0e0")
         legend_layout = self._legend_widget.layout()
         for hex_c, name in [
             (c.get("chart_pomodoro", "#D55E00"), "Pomodoro"),
@@ -1285,8 +1371,7 @@ class _TimelineDailyWidget(QWidget):
     def _show_empty(self, message: str) -> None:
         import pyqtgraph as pg
 
-        c = self._colors
-        col_text = QColor(c.get("completed_text", "#8c8c8c"))
+        col_text = QColor(self._colors.get("completed_text", "#8c8c8c"))
         text = pg.TextItem(message, color=col_text, anchor=(0.5, 0.5))
         text.setPos(3.0, 5.0)
         self._plot.addItem(text)
@@ -1298,15 +1383,27 @@ class _TimelineDailyWidget(QWidget):
 
 
 class _TimelineProductivityWidget(QWidget):
-    """pyqtgraph horizontal bars: 12 two-hour blocks colored by activity intensity."""
+    """Time block heatmap: 12 two-hour blocks with split pomodoro/stopwatch bars.
+
+    All 12x2 bars + 12 labels persistent — created in rebuild(),
+    updated in-place via setOpts()/setText()/setPos() during real-time.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         import pyqtgraph as pg
 
         self._analytics = None
-        self._colors: dict[str, str] = {}
-        self._refresh_colors()
+        self._active_elapsed: int = 0
+        self._active_session_type: str = ""
+
+        # Persistent item references (12 of each)
+        self._block_pom_bars: list = []
+        self._block_sw_bars: list = []
+        self._block_labels: list = []
+        self._base_blocks = None
+
+        self._create_styles()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1314,7 +1411,7 @@ class _TimelineProductivityWidget(QWidget):
 
         self._plot = pg.PlotWidget()
         self._plot.setBackground(self._colors.get("base", "#252526"))
-        self._plot.setMouseEnabled(x=True, y=False)  # x-pan for long bars, y locked
+        self._plot.setMouseEnabled(x=True, y=False)
         self._plot.showGrid(x=True, y=False, alpha=0.2)
         self._plot.setMenuEnabled(False)
         layout.addWidget(self._plot)
@@ -1327,48 +1424,165 @@ class _TimelineProductivityWidget(QWidget):
         self._legend_labels: list[QLabel] = []
         layout.addWidget(self._legend_widget)
 
-    def _refresh_colors(self) -> None:
+    def _create_styles(self) -> None:
+        from PyQt6.QtGui import QBrush, QGradient, QLinearGradient, QPen
+
         from ...gui.styles.themes import get_colors
 
-        self._colors = get_colors()
+        c = get_colors()
+        self._colors = c
+
+        # Pomodoro: horizontal gradient (left→right = dark→light)
+        pom_base = QColor(c.get("chart_pomodoro", "#D55E00"))
+        pom_grad = QLinearGradient(0, 0, 1, 0)
+        pom_grad.setCoordinateMode(QGradient.CoordinateMode.ObjectMode)
+        pom_grad.setColorAt(0.0, pom_base)
+        pom_grad.setColorAt(1.0, pom_base.lighter(115))
+        self._pom_pen = QPen(pom_base.darker(130), 1)
+
+        # Stopwatch: horizontal gradient
+        sw_base = QColor(c.get("chart_stopwatch", "#0072B2"))
+        sw_grad = QLinearGradient(0, 0, 1, 0)
+        sw_grad.setCoordinateMode(QGradient.CoordinateMode.ObjectMode)
+        sw_grad.setColorAt(0.0, sw_base)
+        sw_grad.setColorAt(1.0, sw_base.lighter(115))
+        self._sw_pen = QPen(sw_base.darker(130), 1)
+
+        # Pre-compute alpha-bucketed brushes (9 levels: alpha 80,100,...,255)
+        self._pom_brushes: list[QBrush] = []
+        self._sw_brushes: list[QBrush] = []
+        for alpha in range(80, 260, 20):
+            alpha = min(alpha, 255)
+            pg = QLinearGradient(0, 0, 1, 0)
+            pg.setCoordinateMode(QGradient.CoordinateMode.ObjectMode)
+            pc = QColor(pom_base)
+            pc.setAlpha(alpha)
+            pl = QColor(pom_base.lighter(115))
+            pl.setAlpha(alpha)
+            pg.setColorAt(0.0, pc)
+            pg.setColorAt(1.0, pl)
+            self._pom_brushes.append(QBrush(pg))
+
+            sg = QLinearGradient(0, 0, 1, 0)
+            sg.setCoordinateMode(QGradient.CoordinateMode.ObjectMode)
+            sc = QColor(sw_base)
+            sc.setAlpha(alpha)
+            sl = QColor(sw_base.lighter(115))
+            sl.setAlpha(alpha)
+            sg.setColorAt(0.0, sc)
+            sg.setColorAt(1.0, sl)
+            self._sw_brushes.append(QBrush(sg))
+
+        self._col_text = QColor(c.get("text", "#e0e0e0"))
+        self._col_border = QColor(c.get("border", "#3c3c3c"))
+
+    def _alpha_brush_index(self, total_mins: float, max_minutes: float) -> int:
+        """Get the index into pre-computed alpha-bucketed brushes."""
+        if max_minutes <= 0 or total_mins <= 0:
+            return 0
+        alpha = int(80 + (175 * total_mins / max_minutes))
+        return min((alpha - 80) // 20, len(self._pom_brushes) - 1)
 
     def set_analytics(self, analytics) -> None:
         self._analytics = analytics
 
+    def set_active_session(self, elapsed: int = 0, session_type: str = "") -> None:
+        self._active_elapsed = elapsed
+        self._active_session_type = session_type
+        self._update_realtime()
+
+    def _update_realtime(self) -> None:
+        """In-place update: setOpts on bars, setText/setPos on labels."""
+        if not self._block_pom_bars or self._base_blocks is None:
+            return
+        from datetime import datetime as _dt
+
+        current_block = (_dt.now().hour // 2) * 2
+        n = len(self._base_blocks)
+
+        # Compute max for scaling
+        max_minutes = 0.1
+        for _, row in self._base_blocks.iterrows():
+            pom = float(row.get("pomodoro_minutes", 0))
+            sw = float(row.get("stopwatch_minutes", 0))
+            if self._active_elapsed > 0 and int(row["block_start_hour"]) == current_block:
+                extra = self._active_elapsed / 60.0
+                if self._active_session_type == "work":
+                    pom += extra
+                else:
+                    sw += extra
+            max_minutes = max(max_minutes, pom + sw)
+
+        # Update all persistent items in-place
+        for i, (_, row) in enumerate(self._base_blocks.iterrows()):
+            y = float(n - 1 - i)
+            pom_mins = float(row.get("pomodoro_minutes", 0))
+            sw_mins = float(row.get("stopwatch_minutes", 0))
+            block_hour = int(row["block_start_hour"])
+
+            if self._active_elapsed > 0 and block_hour == current_block:
+                extra_mins = self._active_elapsed / 60.0
+                if self._active_session_type == "work":
+                    pom_mins += extra_mins
+                else:
+                    sw_mins += extra_mins
+
+            total_mins = pom_mins + sw_mins
+            bi = self._alpha_brush_index(total_mins, max_minutes)
+
+            self._block_pom_bars[i].setOpts(width=[pom_mins], brush=self._pom_brushes[bi])
+            self._block_sw_bars[i].setOpts(
+                x0=[pom_mins], width=[sw_mins], brush=self._sw_brushes[bi]
+            )
+
+            # Update label
+            parts = []
+            if pom_mins > 0:
+                parts.append(f"{int(pom_mins)}m pom")
+            if sw_mins > 0:
+                parts.append(f"{int(sw_mins)}m sw")
+            rate = float(row["completion_rate"])
+            label_text = (
+                f"{' + '.join(parts)} \u2014 {round(rate * 100)}% completed" if parts else ""
+            )
+            self._block_labels[i].setText(label_text)
+            self._block_labels[i].setPos(total_mins + max_minutes * 0.02, y)
+
+        self._plot.setXRange(0, max_minutes * 1.75, padding=0)
+
     def rebuild(self) -> None:
         import pyqtgraph as pg
 
-        self._refresh_colors()
-        c = self._colors
+        self._create_styles()
         plot = self._plot
         plot.clear()
-        plot.setBackground(c.get("base", "#252526"))
+        plot.setBackground(self._colors.get("base", "#252526"))
+        self._block_pom_bars = []
+        self._block_sw_bars = []
+        self._block_labels = []
+        self._base_blocks = None
 
         for lbl in self._legend_labels:
             lbl.deleteLater()
         self._legend_labels.clear()
-        text_color = c.get("text", "#e0e0e0")
 
         if self._analytics is None:
             self._show_empty("Analytics service not available")
+            self._build_legend()
             return
 
         blocks = self._analytics.time_block_analysis()
         if blocks.empty or blocks["session_count"].sum() == 0:
             self._show_empty("Complete some focus sessions to see productivity patterns")
+            self._build_legend()
             return
 
+        self._base_blocks = blocks.copy()
         max_minutes = max(float(blocks["total_minutes"].max()), 0.1)
-        col_pom = QColor(c.get("chart_pomodoro", "#D55E00"))
-        col_pom.setAlpha(200)
-        col_sw = QColor(c.get("chart_stopwatch", "#0072B2"))
-        col_sw.setAlpha(200)
-        col_text = QColor(text_color)
-        col_border = QColor(c.get("border", "#3c3c3c"))
-
         n = len(blocks)
         y_ticks = []
 
+        # Create persistent items for all 12 blocks
         for i, (_, row) in enumerate(blocks.iterrows()):
             y = float(n - 1 - i)
             label = str(row["block_label"])
@@ -1376,72 +1590,67 @@ class _TimelineProductivityWidget(QWidget):
             sw_mins = float(row.get("stopwatch_minutes", 0))
             total_mins = pom_mins + sw_mins
             rate = float(row["completion_rate"])
+            bi = self._alpha_brush_index(total_mins, max_minutes)
             y_ticks.append((y, label))
 
-            if total_mins > 0:
-                # Pomodoro segment (left)
-                if pom_mins > 0:
-                    pom_alpha = int(80 + (175 * total_mins / max_minutes))
-                    pom_color = QColor(col_pom)
-                    pom_color.setAlpha(pom_alpha)
-                    pom_bar = pg.BarGraphItem(
-                        x0=[0],
-                        y0=[y - 0.35],
-                        width=[pom_mins],
-                        height=[0.7],
-                        brush=pg.mkBrush(pom_color),
-                        pen=pg.mkPen(None),
-                    )
-                    plot.addItem(pom_bar)
+            # Pomodoro bar (persistent)
+            pom_bar = pg.BarGraphItem(
+                x0=[0],
+                y0=[y - 0.35],
+                width=[pom_mins],
+                height=[0.7],
+                brush=self._pom_brushes[bi],
+                pen=self._pom_pen,
+            )
+            plot.addItem(pom_bar)
+            self._block_pom_bars.append(pom_bar)
 
-                # Stopwatch segment (stacked right of pomodoro)
-                if sw_mins > 0:
-                    sw_alpha = int(80 + (175 * total_mins / max_minutes))
-                    sw_color = QColor(col_sw)
-                    sw_color.setAlpha(sw_alpha)
-                    sw_bar = pg.BarGraphItem(
-                        x0=[pom_mins],
-                        y0=[y - 0.35],
-                        width=[sw_mins],
-                        height=[0.7],
-                        brush=pg.mkBrush(sw_color),
-                        pen=pg.mkPen(None),
-                    )
-                    plot.addItem(sw_bar)
+            # Stopwatch bar (persistent)
+            sw_bar = pg.BarGraphItem(
+                x0=[pom_mins],
+                y0=[y - 0.35],
+                width=[sw_mins],
+                height=[0.7],
+                brush=self._sw_brushes[bi],
+                pen=self._sw_pen,
+            )
+            plot.addItem(sw_bar)
+            self._block_sw_bars.append(sw_bar)
 
-                # Label: per-mode breakdown + completion rate
-                parts = []
-                if pom_mins > 0:
-                    parts.append(f"{int(pom_mins)}m pom")
-                if sw_mins > 0:
-                    parts.append(f"{int(sw_mins)}m sw")
-                mode_str = " + ".join(parts) if len(parts) > 1 else parts[0] if parts else ""
-                rate_pct = round(rate * 100)
-                label_text = f"{mode_str} \u2014 {rate_pct}% completed"
-                rate_text = pg.TextItem(
-                    label_text,
-                    color=col_text,
-                    anchor=(0, 0.5),
-                )
-                rate_text.setPos(total_mins + max_minutes * 0.02, y)
-                plot.addItem(rate_text)
+            # Label (persistent)
+            parts = []
+            if pom_mins > 0:
+                parts.append(f"{int(pom_mins)}m pom")
+            if sw_mins > 0:
+                parts.append(f"{int(sw_mins)}m sw")
+            label_text = (
+                f"{' + '.join(parts)} \u2014 {round(rate * 100)}% completed" if parts else ""
+            )
+            text_item = pg.TextItem(label_text, color=self._col_text, anchor=(0, 0.5))
+            text_item.setPos(total_mins + max_minutes * 0.02, y)
+            plot.addItem(text_item)
+            self._block_labels.append(text_item)
 
         # Axes
         left_axis = plot.getAxis("left")
         left_axis.setTicks([y_ticks])
-        left_axis.setTextPen(col_text)
-        left_axis.setPen(pg.mkPen(col_border))
+        left_axis.setTextPen(self._col_text)
+        left_axis.setPen(pg.mkPen(self._col_border))
         left_axis.setWidth(100)
 
         bottom_axis = plot.getAxis("bottom")
-        bottom_axis.setTextPen(col_text)
-        bottom_axis.setPen(pg.mkPen(col_border))
+        bottom_axis.setTextPen(self._col_text)
+        bottom_axis.setPen(pg.mkPen(self._col_border))
         bottom_axis.setLabel("Minutes")
 
         plot.setXRange(0, max_minutes * 1.75, padding=0)
         plot.setYRange(-0.7, n - 0.3, padding=0.02)
 
-        # Legend
+        self._build_legend()
+
+    def _build_legend(self) -> None:
+        c = self._colors
+        text_color = c.get("text", "#e0e0e0")
         legend_layout = self._legend_widget.layout()
         for hex_c, name in [
             (c.get("chart_pomodoro", "#D55E00"), "Pomodoro"),
@@ -1455,7 +1664,6 @@ class _TimelineProductivityWidget(QWidget):
             if legend_layout is not None:
                 legend_layout.addWidget(lbl)
             self._legend_labels.append(lbl)
-        # Completion rate explanation
         note = QLabel(
             f'<span style="color:{c.get("completed_text", "#8c8c8c")};">'
             f"% = sessions finished without interruption</span>"
@@ -1470,8 +1678,7 @@ class _TimelineProductivityWidget(QWidget):
     def _show_empty(self, message: str) -> None:
         import pyqtgraph as pg
 
-        c = self._colors
-        col_text = QColor(c.get("completed_text", "#8c8c8c"))
+        col_text = QColor(self._colors.get("completed_text", "#8c8c8c"))
         text = pg.TextItem(message, color=col_text, anchor=(0.5, 0.5))
         text.setPos(5.0, 5.5)
         self._plot.addItem(text)
@@ -1483,7 +1690,11 @@ class _TimelineProductivityWidget(QWidget):
 
 
 class _TimelineAccuracyWidget(QWidget):
-    """pyqtgraph scatter plot: estimated vs actual minutes per item."""
+    """Scatter plot: estimated vs actual minutes per item.
+
+    Persistent ScatterPlotItem + InfiniteLine. Real-time: active item's
+    dot moves upward as actual_minutes grows during a session.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1491,8 +1702,17 @@ class _TimelineAccuracyWidget(QWidget):
 
         self._analytics = None
         self._list_id: str | None = None
-        self._colors: dict[str, str] = {}
-        self._refresh_colors()
+        self._active_item_id: UUID | None = None
+        self._active_elapsed: int = 0
+
+        # Persistent item references
+        self._scatter: pg.ScatterPlotItem | None = None
+        self._ref_line: pg.InfiniteLine | None = None
+        self._base_estimated = None
+        self._base_actual = None
+        self._base_brushes = None
+
+        self._create_styles()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1513,10 +1733,25 @@ class _TimelineAccuracyWidget(QWidget):
         self._legend_labels: list[QLabel] = []
         layout.addWidget(self._legend_widget)
 
-    def _refresh_colors(self) -> None:
+    def _create_styles(self) -> None:
+        from PyQt6.QtGui import QPen
+
         from ...gui.styles.themes import get_colors
 
-        self._colors = get_colors()
+        c = get_colors()
+        self._colors = c
+
+        # Pre-create category brushes
+        import pyqtgraph as pg
+
+        self._brush_over = pg.mkBrush(QColor(c.get("chart_overdue", "#b12f25")))
+        self._brush_under = pg.mkBrush(QColor(c.get("chart_stopwatch", "#0072B2")))
+        self._brush_accurate = pg.mkBrush(QColor(c.get("chart_span", "#4a90d2")))
+        self._scatter_pen = pg.mkPen("w", width=0.5)
+        self._col_text = QColor(c.get("text", "#e0e0e0"))
+        self._col_border = QColor(c.get("border", "#3c3c3c"))
+        self._ref_pen = QPen(self._col_text, 1)
+        self._ref_pen.setStyle(Qt.PenStyle.DashLine)
 
     def set_analytics(self, analytics) -> None:
         self._analytics = analytics
@@ -1524,24 +1759,136 @@ class _TimelineAccuracyWidget(QWidget):
     def set_list_id(self, list_id: str | None) -> None:
         self._list_id = list_id
 
+    def set_active_session(
+        self, item_id: UUID | None = None, elapsed: int = 0, session_type: str = ""
+    ) -> None:
+        self._active_item_id = item_id
+        self._active_elapsed = elapsed
+        self._update_realtime()
+
+    def _update_realtime(self) -> None:
+        """In-place scatter update: active item's actual_minutes grows."""
+        if self._scatter is None or self._base_actual is None:
+            return
+
+        actual = self._base_actual.copy()
+
+        # Add elapsed to active item if it has an estimate
+        if (
+            self._active_item_id is not None
+            and self._active_elapsed > 0
+            and hasattr(self, "_item_ids")
+        ):
+            item_id_str = str(self._active_item_id)
+            for i, iid in enumerate(self._item_ids):
+                if iid == item_id_str:
+                    actual[i] += self._active_elapsed / 60.0
+                    break
+
+        # Recompute brushes based on new ratios
+        brushes = []
+        for i in range(len(self._base_estimated)):
+            est = float(self._base_estimated[i])
+            act = float(actual[i])
+            ratio = act / est if est > 0 else 0.0
+            if ratio > 1.2:
+                brushes.append(self._brush_over)
+            elif ratio < 0.8:
+                brushes.append(self._brush_under)
+            else:
+                brushes.append(self._brush_accurate)
+
+        self._scatter.setData(
+            x=self._base_estimated,
+            y=actual,
+            brush=brushes,
+            pen=self._scatter_pen,
+        )
+
     def rebuild(self) -> None:
         import pyqtgraph as pg
 
-        self._refresh_colors()
-        c = self._colors
+        self._create_styles()
         plot = self._plot
         plot.clear()
-        plot.setBackground(c.get("base", "#252526"))
+        plot.setBackground(self._colors.get("base", "#252526"))
+
+        self._scatter = None
+        self._ref_line = None
+        self._base_estimated = None
+        self._base_actual = None
+        self._item_ids = []
 
         for lbl in self._legend_labels:
             lbl.deleteLater()
         self._legend_labels.clear()
-        text_color = c.get("text", "#e0e0e0")
-
-        col_text = QColor(text_color)
-        col_border = QColor(c.get("border", "#3c3c3c"))
 
         # Legend (always visible)
+        self._build_legend()
+
+        # Axes (always set up)
+        left_axis = plot.getAxis("left")
+        left_axis.setTextPen(self._col_text)
+        left_axis.setPen(pg.mkPen(self._col_border))
+        left_axis.setLabel("Actual (min)")
+
+        bottom_axis = plot.getAxis("bottom")
+        bottom_axis.setTextPen(self._col_text)
+        bottom_axis.setPen(pg.mkPen(self._col_border))
+        bottom_axis.setLabel("Estimated (min)")
+
+        if self._analytics is None:
+            self._show_empty("Analytics service not available")
+            return
+
+        accuracy = self._analytics.estimate_accuracy(list_id=self._list_id)
+        if accuracy.empty:
+            self._show_empty("Add estimates and complete sessions to track accuracy")
+            return
+
+        estimated = accuracy["estimated_minutes"].values.astype(float)
+        actual = accuracy["actual_minutes"].values.astype(float)
+        self._item_ids = list(accuracy["item_id"].values)
+        self._base_estimated = estimated.copy()
+        self._base_actual = actual.copy()
+
+        # Compute brushes
+        brushes = []
+        for _, row in accuracy.iterrows():
+            ratio = float(row["accuracy_ratio"])
+            if ratio > 1.2:
+                brushes.append(self._brush_over)
+            elif ratio < 0.8:
+                brushes.append(self._brush_under)
+            else:
+                brushes.append(self._brush_accurate)
+        self._base_brushes = brushes
+
+        # Persistent scatter
+        self._scatter = pg.ScatterPlotItem(
+            x=estimated,
+            y=actual,
+            size=12,
+            brush=brushes,
+            pen=self._scatter_pen,
+        )
+        plot.addItem(self._scatter)
+
+        # Persistent reference line (y=x)
+        self._ref_line = pg.InfiniteLine(
+            pos=0,
+            angle=45,
+            pen=self._ref_pen,
+        )
+        plot.addItem(self._ref_line)
+
+        max_val = max(float(estimated.max()), float(actual.max()), 10)
+        plot.setXRange(0, max_val * 1.1, padding=0)
+        plot.setYRange(0, max_val * 1.1, padding=0)
+
+    def _build_legend(self) -> None:
+        c = self._colors
+        text_color = c.get("text", "#e0e0e0")
         legend_layout = self._legend_widget.layout()
         for hex_c, name in [
             (c.get("chart_overdue", "#b12f25"), "Under-estimated"),
@@ -1559,70 +1906,10 @@ class _TimelineAccuracyWidget(QWidget):
         if legend_layout is not None:
             legend_layout.addStretch()
 
-        # Axes (always set up)
-        left_axis = plot.getAxis("left")
-        left_axis.setTextPen(col_text)
-        left_axis.setPen(pg.mkPen(col_border))
-        left_axis.setLabel("Actual (min)")
-
-        bottom_axis = plot.getAxis("bottom")
-        bottom_axis.setTextPen(col_text)
-        bottom_axis.setPen(pg.mkPen(col_border))
-        bottom_axis.setLabel("Estimated (min)")
-
-        if self._analytics is None:
-            self._show_empty("Analytics service not available")
-            return
-
-        accuracy = self._analytics.estimate_accuracy(list_id=self._list_id)
-        if accuracy.empty:
-            self._show_empty("Add estimates and complete sessions to track accuracy")
-            return
-
-        col_over = QColor(c.get("chart_overdue", "#b12f25"))  # Under-estimated
-        col_under = QColor(c.get("chart_stopwatch", "#0072B2"))  # Over-estimated
-        col_accurate = QColor(c.get("chart_span", "#4a90d2"))  # Close to estimate
-
-        estimated = accuracy["estimated_minutes"].values.astype(float)
-        actual = accuracy["actual_minutes"].values.astype(float)
-
-        # Color by variance
-        brushes = []
-        for _, row in accuracy.iterrows():
-            ratio = float(row["accuracy_ratio"])
-            if ratio > 1.2:
-                brushes.append(pg.mkBrush(col_over))
-            elif ratio < 0.8:
-                brushes.append(pg.mkBrush(col_under))
-            else:
-                brushes.append(pg.mkBrush(col_accurate))
-
-        scatter = pg.ScatterPlotItem(
-            x=estimated,
-            y=actual,
-            size=12,
-            brush=brushes,
-            pen=pg.mkPen("w", width=0.5),
-        )
-        plot.addItem(scatter)
-
-        # Reference line (y = x)
-        max_val = max(float(estimated.max()), float(actual.max()), 10)
-        ref_line = pg.InfiniteLine(
-            pos=0,
-            angle=45,
-            pen=pg.mkPen(col_text, width=1, style=Qt.PenStyle.DashLine),
-        )
-        plot.addItem(ref_line)
-
-        plot.setXRange(0, max_val * 1.1, padding=0)
-        plot.setYRange(0, max_val * 1.1, padding=0)
-
     def _show_empty(self, message: str) -> None:
         import pyqtgraph as pg
 
-        c = self._colors
-        col_text = QColor(c.get("completed_text", "#8c8c8c"))
+        col_text = QColor(self._colors.get("completed_text", "#8c8c8c"))
         text = pg.TextItem(message, color=col_text, anchor=(0.5, 0.5))
         text.setPos(50.0, 50.0)
         self._plot.addItem(text)
@@ -2560,8 +2847,16 @@ class CalendarViewWidget(QWidget):
     def set_active_session(
         self, item_id: UUID | None, elapsed: int = 0, session_type: str = ""
     ) -> None:
-        """Pass active focus session to timeline for pseudo-real-time bar updates."""
+        """Pass active focus session to all timeline sub-views for pseudo-real-time updates."""
         self._timeline_tasks_widget.set_active_session(item_id, elapsed, session_type)
+        # Only update the visible sub-view to avoid unnecessary rebuilds
+        if self._sub_view == self.SUB_TIMELINE:
+            if self._tl_sub_view == 1:  # Daily
+                self._timeline_daily_widget.set_active_session(elapsed, session_type)
+            elif self._tl_sub_view == 2:  # Productivity
+                self._timeline_productivity_widget.set_active_session(elapsed, session_type)
+            elif self._tl_sub_view == 3:  # Accuracy
+                self._timeline_accuracy_widget.set_active_session(item_id, elapsed, session_type)
 
     def refresh(self) -> None:
         self._close_popover()
