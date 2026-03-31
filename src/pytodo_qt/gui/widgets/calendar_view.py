@@ -2322,6 +2322,12 @@ class CalendarViewWidget(QWidget):
 
         self._setup_ui()
 
+        # Apply initial visibility for timeline mode
+        if self._sub_view == self.SUB_TIMELINE:
+            self._unscheduled.setVisible(False)
+            self._timeline_pill_frame.setVisible(True)
+            self._update_timeline_nav_state()
+
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
