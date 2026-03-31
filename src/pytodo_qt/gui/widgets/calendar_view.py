@@ -22,6 +22,7 @@ from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+import pyqtgraph as pg
 from PyQt6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QDrag, QFont, QFontMetrics, QPainter, QPen
 from PyQt6.QtWidgets import (
@@ -46,6 +47,9 @@ from PyQt6.QtWidgets import (
 if TYPE_CHECKING:
     from ...core.models import TodoList
     from ..widgets.search_filter import FilterState
+
+# Enable anti-aliasing for all pyqtgraph chart rendering
+pg.setConfigOptions(antialias=True)
 
 
 # ---------------------------------------------------------------------------
