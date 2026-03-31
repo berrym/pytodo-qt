@@ -131,6 +131,11 @@ class MainWindow(QMainWindow):
         self._stopwatch.stopped.connect(self._on_stopwatch_stopped)
         self._stopwatch.state_changed.connect(self._on_stopwatch_state_changed)
 
+        # Idle timeout for stopwatch auto-pause
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setSingleShot(True)
+        self._idle_timer.timeout.connect(self._on_idle_timeout)
+
         # Sound notifications
         from .widgets.sound_player import SoundPlayer
 
@@ -2701,10 +2706,70 @@ class MainWindow(QMainWindow):
             self.kanban_board.set_focus_session_item(None)
             if self._focus_timer_dialog is not None:
                 self._focus_timer_dialog.hide()
-        else:
+            self._stop_idle_timer()
+        elif state == "stopwatch_running":
             if not self._pomodoro_display_timer.isActive():
                 self._pomodoro_display_timer.start()
             self._update_pomodoro_display()
+            self._start_idle_timer()
+        elif state == "stopwatch_paused":
+            if not self._pomodoro_display_timer.isActive():
+                self._pomodoro_display_timer.start()
+            self._update_pomodoro_display()
+            self._stop_idle_timer()
+
+    def _start_idle_timer(self) -> None:
+        """Start the idle timeout timer if configured."""
+        timeout_mins = self._config.stopwatch.idle_timeout
+        if timeout_mins > 0:
+            from PyQt6.QtWidgets import QApplication
+
+            app = QApplication.instance()
+            if app is not None:
+                app.installEventFilter(self)
+            self._idle_timer.start(timeout_mins * 60 * 1000)
+
+    def _stop_idle_timer(self) -> None:
+        """Stop the idle timeout timer."""
+        self._idle_timer.stop()
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is not None:
+            app.removeEventFilter(self)
+
+    def _on_idle_timeout(self) -> None:
+        """Auto-pause stopwatch after idle timeout."""
+        from .widgets.stopwatch import StopwatchState
+
+        if self._stopwatch.state == StopwatchState.RUNNING:
+            self._stopwatch.pause()
+            timeout_mins = self._config.stopwatch.idle_timeout
+            self.status_bar_widget.show_message(
+                f"Stopwatch paused \u2014 no activity for {timeout_mins}m"
+            )
+            if self.tray_icon is not None:
+                self.tray_icon.showMessage(
+                    "Stopwatch Paused",
+                    f"No activity detected for {timeout_mins} minutes",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    5000,
+                )
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        """Reset idle timer on any user input (keyboard/mouse)."""
+        from PyQt6.QtCore import QEvent
+
+        if event is not None and event.type() in (
+            QEvent.Type.MouseMove,
+            QEvent.Type.MouseButtonPress,
+            QEvent.Type.KeyPress,
+            QEvent.Type.Wheel,
+        ):
+            timeout_mins = self._config.stopwatch.idle_timeout
+            if timeout_mins > 0 and self._idle_timer.isActive():
+                self._idle_timer.start(timeout_mins * 60 * 1000)
+        return super().eventFilter(obj, event)
 
     def _record_focus_session(
         self,
