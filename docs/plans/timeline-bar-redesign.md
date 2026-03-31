@@ -1,12 +1,22 @@
 # Timeline Bar Redesign — Multi-Mode Visualization
 
-## Implementation Status (2026-03-30)
+## Implementation Status (2026-03-31)
 
 ### Completed
-- QPainter timeline fully replaced with pyqtgraph PlotWidget (commit 13d71b2)
-- QPainter WeeklyChartWidget replaced with pyqtgraph (commit 5998d0c)
+- All 5 pyqtgraph chart widgets rewritten from ground up (commit d4de807):
+  - Correct pyqtgraph patterns: persistent items, setOpts/setData/setText for real-time updates
+  - Gradient brushes (QLinearGradient with ObjectMode) on all data bars
+  - 1px pen outlines on all data bars
+  - Pre-created and cached QPen/QBrush objects — zero Qt object creation during updates
+  - All data as numpy arrays
+  - Zero plot.clear()/addItem()/removeItem() during real-time updates
+- Tasks: 6 batched BarGraphItems with N-element numpy arrays, real-time via setOpts on active index
+- Daily: persistent bars + trend PlotDataItem, real-time via setOpts(height) + setData(x,y)
+- Productivity: 12×2 persistent bars + 12 TextItems, alpha-bucketed brush cache, real-time via setOpts
+- Accuracy: persistent ScatterPlotItem, real-time via setData — active item's dot moves during session
+- WeeklyChartWidget: gradient brush, pen outline, static
 - 4 timeline sub-views implemented (commit 12a9429):
-  - **Tasks**: Gantt horizontal bars (time span, gray estimate baseline, split red+cyan actual)
+  - **Tasks**: Gantt horizontal bars (time span, estimate baseline, split pomodoro+stopwatch actual)
   - **Daily**: Stacked vertical bars (pomodoro+stopwatch per day) + 7-day rolling average trend line
   - **Productivity**: Time block heatmap (12 two-hour blocks, intensity-scaled, completion rate overlays)
   - **Accuracy**: Scatter plot (estimated vs actual minutes, y=x reference line, variance coloring)

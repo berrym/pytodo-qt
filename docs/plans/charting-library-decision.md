@@ -131,6 +131,6 @@ matplotlib will be added when report generation is implemented (phases D-F).
 
 ## Implementation Status
 
-- **pyqtgraph**: Integrated. Timeline view uses `PlotWidget` with `BarGraphItem` (commit 13d71b2).
-- **pandas**: Being implemented. `AnalyticsService` (`core/analytics.py`) is the data pipeline. See `docs/plans/analytics-service.md` for full architecture.
+- **pyqtgraph**: Fully integrated. All 5 chart widgets rewritten with correct patterns (d4de807): persistent items, gradient brushes, setOpts/setData real-time updates, batched numpy arrays. 4 timeline sub-views (Tasks/Daily/Productivity/Accuracy) + WeeklyChartWidget.
+- **pandas**: Fully integrated. `AnalyticsService` (`core/analytics.py`) with 12 methods, 56 tests, feeding all chart widgets. See `docs/plans/analytics-service.md`.
 - **matplotlib**: Not yet integrated. Planned for PDF report generation in phases D-F.
