@@ -29,23 +29,34 @@ if TYPE_CHECKING:
 
 
 class WeeklyChartWidget(QWidget):
-    """pyqtgraph horizontal bar chart of daily session counts."""
+    """pyqtgraph horizontal bar chart of daily session counts.
+
+    Uses gradient brushes, 1px pen outlines, persistent items.
+    Static chart — no real-time updates needed.
+    """
 
     def __init__(self, day_counts: list[tuple[str, int]], parent: QWidget | None = None):
-        """Initialize the chart.
-
-        Args:
-            day_counts: List of (day_label, count) tuples for 7 days (Mon-Sun).
-            parent: Parent widget.
-        """
         super().__init__(parent)
         import numpy as np
         import pyqtgraph as pg
+        from PyQt6.QtGui import QBrush, QGradient, QLinearGradient, QPen
 
         from ...gui.styles.themes import get_colors
 
         c = get_colors()
 
+        # --- Pre-create styles ---
+        bar_base = QColor(c.get("chart_pomodoro", "#D55E00"))
+        grad = QLinearGradient(0, 0, 1, 0)  # horizontal: left→right
+        grad.setCoordinateMode(QGradient.CoordinateMode.ObjectMode)
+        grad.setColorAt(0.0, bar_base)
+        grad.setColorAt(1.0, bar_base.lighter(115))
+        bar_brush = QBrush(grad)
+        bar_pen = QPen(bar_base.darker(130), 1)
+        col_text = QColor(c.get("text", "#e0e0e0"))
+        col_border = QColor(c.get("border", "#3c3c3c"))
+
+        # --- Layout ---
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -57,46 +68,40 @@ class WeeklyChartWidget(QWidget):
         plot.setFixedHeight(len(day_counts) * 32 + 20)
 
         labels = [label for label, _ in day_counts]
-        counts = [count for _, count in day_counts]
+        counts = np.array([count for _, count in day_counts], dtype=float)
         n = len(day_counts)
-
-        # Y positions (inverted so Mon is at top)
         y_pos = np.arange(n - 1, -1, -1, dtype=float)
 
-        # Bar color from theme
-        bar_color = QColor(c.get("chart_pomodoro", "#D55E00"))
-        bar_color.setAlpha(200)
-
+        # --- Persistent bar item ---
         bar_item = pg.BarGraphItem(
             x0=np.zeros(n),
             y0=y_pos - 0.3,
-            width=np.array(counts, dtype=float),
+            width=counts,
             height=0.6,
-            brush=pg.mkBrush(bar_color),
-            pen=pg.mkPen(None),
+            brush=bar_brush,
+            pen=bar_pen,
         )
         plot.addItem(bar_item)
 
-        # Add count labels as text items
-        col_text = QColor(c.get("text", "#e0e0e0"))
-        for i, count in enumerate(counts):
-            if count > 0:
-                text = pg.TextItem(str(count), color=col_text, anchor=(0, 0.5))
-                text.setPos(count + 0.1, y_pos[i])
+        # --- Persistent text labels ---
+        for i in range(n):
+            if counts[i] > 0:
+                text = pg.TextItem(str(int(counts[i])), color=col_text, anchor=(0, 0.5))
+                text.setPos(float(counts[i]) + 0.1, float(y_pos[i]))
                 plot.addItem(text)
 
-        # Configure axes
+        # --- Axes ---
         left_axis = plot.getAxis("left")
-        left_axis.setTicks([[(y_pos[i], labels[i]) for i in range(n)]])
+        left_axis.setTicks([[(float(y_pos[i]), labels[i]) for i in range(n)]])
         left_axis.setTextPen(col_text)
-        left_axis.setPen(pg.mkPen(QColor(c.get("border", "#3c3c3c"))))
+        left_axis.setPen(pg.mkPen(col_border))
         left_axis.setWidth(40)
 
         bottom_axis = plot.getAxis("bottom")
         bottom_axis.setTextPen(col_text)
-        bottom_axis.setPen(pg.mkPen(QColor(c.get("border", "#3c3c3c"))))
+        bottom_axis.setPen(pg.mkPen(col_border))
 
-        max_count = max(counts) if counts else 1
+        max_count = float(counts.max()) if n > 0 else 1.0
         plot.setXRange(0, max(max_count * 1.2, 1), padding=0)
         plot.setYRange(-0.5, n - 0.5, padding=0.05)
 
