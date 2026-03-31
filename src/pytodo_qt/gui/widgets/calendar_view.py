@@ -1617,6 +1617,8 @@ class _TimelineAccuracyWidget(QWidget):
 
         plot.setXRange(0, max_val * 1.1, padding=0)
         plot.setYRange(0, max_val * 1.1, padding=0)
+        # Lock 1:1 aspect ratio so reference line appears at true 45 degrees
+        plot.setAspectLocked(True)
 
     def _show_empty(self, message: str) -> None:
         import pyqtgraph as pg
@@ -2253,6 +2255,7 @@ class CalendarViewWidget(QWidget):
     item_reminder_changed = pyqtSignal(object, str)
     item_due_date_changed = pyqtSignal(object, object)
     item_due_time_changed = pyqtSignal(object, object)
+    date_and_time_dropped = pyqtSignal(object, object, object)  # item_id, date, time
     edit_tags_requested = pyqtSignal(object)
     focus_requested = pyqtSignal(object)
     add_subtask_requested = pyqtSignal(object)
@@ -3047,10 +3050,15 @@ class CalendarViewWidget(QWidget):
         self.item_due_date_changed.emit(item_id, target_date)
 
     def _on_week_task_dropped(self, item_id: UUID, target_date: date, target_time) -> None:
-        """Handle a task dropped on week/day view — set date and optionally time."""
-        self.item_due_date_changed.emit(item_id, target_date)
+        """Handle a task dropped on week/day view — set date and optionally time.
+
+        Emits date_and_time_dropped signal when both date and time are set,
+        so MainWindow can group them as a single undo macro.
+        """
         if target_time is not None:
-            self.item_due_time_changed.emit(item_id, target_time)
+            self.date_and_time_dropped.emit(item_id, target_date, target_time)
+        else:
+            self.item_due_date_changed.emit(item_id, target_date)
 
     def _close_popover(self) -> None:
         """Close the day popover."""

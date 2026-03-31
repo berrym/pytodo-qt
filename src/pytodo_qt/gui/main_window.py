@@ -766,6 +766,7 @@ class MainWindow(QMainWindow):
         self.calendar_view.item_reminder_changed.connect(self._on_item_reminder_changed)
         self.calendar_view.item_due_date_changed.connect(self._on_item_due_date_changed)
         self.calendar_view.item_due_time_changed.connect(self._on_item_due_time_changed)
+        self.calendar_view.date_and_time_dropped.connect(self._on_date_and_time_dropped)
         self.calendar_view.edit_tags_requested.connect(self._on_edit_tags_for_item)
         self.calendar_view.toggle_requested.connect(self._on_toggle_todo)
         self.calendar_view.delete_requested.connect(self._on_delete_todo)
@@ -2150,6 +2151,27 @@ class MainWindow(QMainWindow):
                 cmd = EditDueTimeCommand(self, active_list.id, item_id, item.due_time, due_time)
                 self._undo_stack.push(cmd)
 
+    def _on_date_and_time_dropped(self, item_id: UUID, due_date, due_time) -> None:
+        """Handle task dropped with both date and time — single undo macro."""
+        if self._refreshing:
+            return
+        active_list = self._database.active_list
+        if not active_list:
+            return
+        item = active_list.get_item(item_id)
+        if not item:
+            return
+        from .commands import EditDueDateCommand, EditDueTimeCommand
+
+        self._undo_stack.beginMacro("Set due date and time")
+        cmd_date = EditDueDateCommand(
+            self, active_list.id, item_id, item.due_date, due_date, old_due_time=item.due_time
+        )
+        self._undo_stack.push(cmd_date)
+        cmd_time = EditDueTimeCommand(self, active_list.id, item_id, item.due_time, due_time)
+        self._undo_stack.push(cmd_time)
+        self._undo_stack.endMacro()
+
     def _on_edit_recurrence(self) -> None:
         """Handle edit recurrence action."""
         item_ids = self._active_view_widget().get_selected_item_ids()
@@ -2403,6 +2425,7 @@ class MainWindow(QMainWindow):
             work_duration=item.work_duration,
             break_duration=item.break_duration,
             long_break_duration=item.long_break_duration,
+            pomodoro_count=item.pomodoro_count,
         )
         self._pomodoro_display_timer.start()
         self.kanban_board.set_focus_session_item(item.id)
@@ -2473,6 +2496,7 @@ class MainWindow(QMainWindow):
 
         self._update_daily_goal()
         self._update_focus_item_progress()
+        self._update_pomodoro_display()  # Refresh session counter immediately
         self._check_milestones()
 
         from .widgets.pomodoro import PomodoroWidget

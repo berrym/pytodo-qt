@@ -131,6 +131,7 @@ class PomodoroWidget(QWidget):
         work_duration: int = 0,
         break_duration: int = 0,
         long_break_duration: int = 0,
+        pomodoro_count: int = 0,
     ) -> None:
         """Start a work session for the given item.
 
@@ -149,7 +150,8 @@ class PomodoroWidget(QWidget):
         self._item_work_duration = work_duration
         self._item_break_duration = break_duration
         self._item_long_break_duration = long_break_duration
-        self._session_count = 0
+        # Derive cycle position from item's completed pomodoro count
+        self._session_count = pomodoro_count % self._config.sessions_before_long_break
         self._start_work_session()
 
     def stop(self) -> None:
