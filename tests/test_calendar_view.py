@@ -409,7 +409,7 @@ class TestTimelineProductivityWidget:
         prod_widget.set_analytics(analytics)
         prod_widget.rebuild()
         assert len(prod_widget._block_pom_bars) == 12
-        assert len(prod_widget._block_labels) == 12
+        assert len(prod_widget._block_sw_bars) == 12
         storage.close()
 
     def test_set_active_session(self, prod_widget, tmp_path):

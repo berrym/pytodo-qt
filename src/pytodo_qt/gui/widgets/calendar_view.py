@@ -1635,7 +1635,6 @@ class _TimelineProductivityWidget(QWidget):
         # Persistent item references (12 of each)
         self._block_pom_bars: list = []
         self._block_sw_bars: list = []
-        self._block_labels: list = []
         self._base_blocks = None
 
         self._create_styles()
@@ -1815,7 +1814,6 @@ class _TimelineProductivityWidget(QWidget):
         from datetime import datetime as _dt
 
         current_block = (_dt.now().hour // 2) * 2
-        n = len(self._base_blocks)
 
         # Compute max for scaling
         max_minutes = 0.1
@@ -1832,7 +1830,6 @@ class _TimelineProductivityWidget(QWidget):
 
         # Update all persistent items in-place
         for i, (_, row) in enumerate(self._base_blocks.iterrows()):
-            y = float(n - 1 - i)
             pom_mins = float(row.get("pomodoro_minutes", 0))
             sw_mins = float(row.get("stopwatch_minutes", 0))
             block_hour = int(row["block_start_hour"])
@@ -1852,19 +1849,6 @@ class _TimelineProductivityWidget(QWidget):
                 x0=[pom_mins], width=[sw_mins], brush=self._sw_brushes[bi]
             )
 
-            # Update label
-            parts = []
-            if pom_mins > 0:
-                parts.append(f"{int(pom_mins)}m pom")
-            if sw_mins > 0:
-                parts.append(f"{int(sw_mins)}m sw")
-            rate = float(row["completion_rate"])
-            label_text = (
-                f"{' + '.join(parts)} \u2014 {round(rate * 100)}% completed" if parts else ""
-            )
-            self._block_labels[i].setText(label_text)
-            self._block_labels[i].setPos(total_mins + max_minutes * 0.02, y)
-
         self._plot.setXRange(0, max_minutes * 1.75, padding=0)
 
     def rebuild(self) -> None:
@@ -1876,7 +1860,6 @@ class _TimelineProductivityWidget(QWidget):
         plot.setBackground(self._colors.get("base", "#252526"))
         self._block_pom_bars = []
         self._block_sw_bars = []
-        self._block_labels = []
         self._base_blocks = None
 
         for lbl in self._legend_labels:
@@ -1906,7 +1889,6 @@ class _TimelineProductivityWidget(QWidget):
             pom_mins = float(row.get("pomodoro_minutes", 0))
             sw_mins = float(row.get("stopwatch_minutes", 0))
             total_mins = pom_mins + sw_mins
-            rate = float(row["completion_rate"])
             bi = self._alpha_brush_index(total_mins, max_minutes)
             y_ticks.append((y, label))
 
@@ -1933,20 +1915,6 @@ class _TimelineProductivityWidget(QWidget):
             )
             plot.addItem(sw_bar)
             self._block_sw_bars.append(sw_bar)
-
-            # Label (persistent)
-            parts = []
-            if pom_mins > 0:
-                parts.append(f"{int(pom_mins)}m pom")
-            if sw_mins > 0:
-                parts.append(f"{int(sw_mins)}m sw")
-            label_text = (
-                f"{' + '.join(parts)} \u2014 {round(rate * 100)}% completed" if parts else ""
-            )
-            text_item = pg.TextItem(label_text, color=self._col_text, anchor=(0, 0.5))
-            text_item.setPos(total_mins + max_minutes * 0.02, y)
-            plot.addItem(text_item)
-            self._block_labels.append(text_item)
 
         # Axes
         left_axis = plot.getAxis("left")
