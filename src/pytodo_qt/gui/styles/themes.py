@@ -155,29 +155,47 @@ def load_bundled_fonts() -> bool:
             families = QFontDatabase.applicationFontFamilies(font_id)
             logger.log.info("Registered font: %s -> %s", name, families)
 
-    # Register emoji font (best-effort — may fail in offscreen/headless)
-    emoji_path = _FONTS_DIR / _BUNDLED_EMOJI_FONT
-    if emoji_path.exists():
-        font_id = QFontDatabase.addApplicationFont(str(emoji_path))
-        if font_id >= 0:
-            families = QFontDatabase.applicationFontFamilies(font_id)
-            logger.log.info("Registered emoji font: %s -> %s", _BUNDLED_EMOJI_FONT, families)
-            if families and hasattr(QFontDatabase, "addApplicationEmojiFontFamily"):
-                QFontDatabase.addApplicationEmojiFontFamily(families[0])
-                logger.log.info("Set application emoji font family: %s", families[0])
-        else:
-            logger.log.warning("Failed to register emoji font: %s", _BUNDLED_EMOJI_FONT)
+    # Register emoji font (best-effort)
+    # macOS: use system Apple Color Emoji (Qt can't register CBDT fonts on macOS)
+    # Windows: use system Segoe UI Emoji
+    # Linux: register bundled Noto Color Emoji
+    if sys.platform in ("darwin", "win32"):
+        system_emoji = _emoji_family()
+        if hasattr(QFontDatabase, "addApplicationEmojiFontFamily"):
+            QFontDatabase.addApplicationEmojiFontFamily(system_emoji)
+        logger.log.info("Using system emoji font: %s", system_emoji)
     else:
-        logger.log.warning("Bundled emoji font not found: %s", emoji_path)
+        emoji_path = _FONTS_DIR / _BUNDLED_EMOJI_FONT
+        if emoji_path.exists():
+            font_id = QFontDatabase.addApplicationFont(str(emoji_path))
+            if font_id >= 0:
+                families = QFontDatabase.applicationFontFamilies(font_id)
+                logger.log.info("Registered emoji font: %s -> %s", _BUNDLED_EMOJI_FONT, families)
+                if families and hasattr(QFontDatabase, "addApplicationEmojiFontFamily"):
+                    QFontDatabase.addApplicationEmojiFontFamily(families[0])
+                    logger.log.info("Set application emoji font family: %s", families[0])
+            else:
+                logger.log.warning("Failed to register emoji font: %s", _BUNDLED_EMOJI_FONT)
+        else:
+            logger.log.warning("Bundled emoji font not found: %s", emoji_path)
 
     _bundled_fonts_loaded = text_ok
     return text_ok
 
 
+def _emoji_family() -> str:
+    """Get the emoji font family for the current platform."""
+    if sys.platform == "darwin":
+        return "Apple Color Emoji"
+    if sys.platform == "win32":
+        return "Segoe UI Emoji"
+    return "Noto Color Emoji"
+
+
 def apply_bundled_font(app: QApplication) -> None:
     """Set bundled Noto Sans as the application-wide font."""
     font = QFont("Noto Sans", DEFAULT_FONT_SIZE)
-    font.setFamilies(["Noto Sans", "Noto Color Emoji"])
+    font.setFamilies(["Noto Sans", _emoji_family()])
     app.setFont(font)
     logger.log.info("Applied bundled font: Noto Sans %dpt", DEFAULT_FONT_SIZE)
 
@@ -200,7 +218,7 @@ def make_font(size: int = DEFAULT_FONT_SIZE, *, mono: bool = False) -> QFont:
         font_setting = config.appearance.font
         if font_setting == "bundled" and _bundled_fonts_loaded:
             font = QFont("Noto Sans", size)
-            font.setFamilies(["Noto Sans", "Noto Color Emoji"])
+            font.setFamilies(["Noto Sans", _emoji_family()])
         elif font_setting not in ("system", "bundled"):
             # Custom font family
             font = QFont(font_setting, size)
