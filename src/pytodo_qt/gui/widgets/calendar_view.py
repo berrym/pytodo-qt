@@ -1788,10 +1788,18 @@ class _WeekDelegate(QStyledItemDelegate):
         fm = QFontMetrics(item_font)
 
         chip_height = fm.height() + 4
+        overflow_height = fm.height() + 2
         y = rect.top() + 2
         x = rect.left() + 2
         text_width = rect.width() - 8
-        max_chips = max(1, (rect.height() - 4) // chip_height)
+        available = rect.height() - 4
+
+        # Same logic as month view _calc_cell_layout:
+        # if all fit, show all; if overflow, reserve space for "+N" text
+        if len(items) * chip_height <= available:
+            max_chips = len(items)
+        else:
+            max_chips = max(1, (available - overflow_height) // chip_height)
 
         col_priority = {
             1: QColor(c["priority_high"]),
@@ -1857,14 +1865,18 @@ class _WeekDelegate(QStyledItemDelegate):
                     strike_y,
                 )
 
-        # Overflow
+        # Overflow indicator
         overflow = len(items) - max_chips
         if overflow > 0:
+            overflow_y = y + max_chips * chip_height
+            overflow_rect = rect.adjusted(4, 0, -4, 0)
+            overflow_rect.setTop(overflow_y)
+            overflow_rect.setHeight(overflow_height)
             painter.setPen(QColor(c["completed_text"]))
             painter.drawText(
-                rect.adjusted(4, 0, -4, 0).translated(0, max_chips * chip_height),
-                Qt.AlignmentFlag.AlignCenter,
-                f"+{overflow}",
+                overflow_rect,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                f"+{overflow} more",
             )
 
         painter.restore()
@@ -1882,6 +1894,7 @@ class _WeekTableView(QTableView):
     task_double_clicked = pyqtSignal(object)
     task_right_clicked = pyqtSignal(object, object)
     task_dropped = pyqtSignal(object, object, object)  # (item_id, target_date, target_hour or None)
+    more_clicked = pyqtSignal(object, object)  # (date, list[TodoItem])
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1921,10 +1934,23 @@ class _WeekTableView(QTableView):
         font.setPixelSize(10)
         fm = QFontMetrics(font)
         chip_height = fm.height() + 4
+        overflow_height = fm.height() + 2
+        available = rect.height() - 4
+
+        # Same overflow calculation as delegate paint
+        if len(items) * chip_height <= available:
+            max_chips = len(items)
+        else:
+            max_chips = max(1, (available - overflow_height) // chip_height)
+
         click_y = pos.y() - rect.top() - 2
         item_idx = int(click_y / chip_height) if chip_height > 0 else -1
 
-        if 0 <= item_idx < len(items):
+        # Check overflow area
+        if len(items) > max_chips and item_idx >= max_chips:
+            return ("more", cell_date, items)
+
+        if 0 <= item_idx < min(max_chips, len(items)):
             return ("task", items[item_idx], index)
         return None
 
@@ -1935,11 +1961,15 @@ class _WeekTableView(QTableView):
         if a0 is None:
             return
         hit = self._hit_test(a0.pos())
-        if hit and hit[0] == "task":
+        if not hit:
+            return
+        if hit[0] == "task":
             self.task_clicked.emit(hit[1].id)
             if a0.button() == Qt.MouseButton.LeftButton:
                 self._drag_start_pos = a0.pos()
                 self._drag_item_id = hit[1].id
+        elif hit[0] == "more":
+            self.more_clicked.emit(hit[1], hit[2])
 
     def mouseReleaseEvent(self, a0) -> None:  # noqa: N802
         self._drag_start_pos = None
@@ -2407,6 +2437,7 @@ class CalendarViewWidget(QWidget):
         self._day_table.task_double_clicked.connect(self._on_task_double_clicked)
         self._day_table.task_right_clicked.connect(self._on_task_right_clicked)
         self._day_table.task_dropped.connect(self._on_week_task_dropped)
+        self._day_table.more_clicked.connect(self._on_more_clicked)
         # Larger slots for day view — more room for detail
         v_header = self._day_table.verticalHeader()
         if v_header:
@@ -2426,6 +2457,7 @@ class CalendarViewWidget(QWidget):
         self._week_table.task_double_clicked.connect(self._on_task_double_clicked)
         self._week_table.task_right_clicked.connect(self._on_task_right_clicked)
         self._week_table.task_dropped.connect(self._on_week_task_dropped)
+        self._week_table.more_clicked.connect(self._on_more_clicked)
         self._sub_stack.addWidget(self._week_table)  # 1
 
         # Month view — QTableView with custom model/delegate
@@ -3003,11 +3035,29 @@ class CalendarViewWidget(QWidget):
         scroll.setWidget(content)
         pop_layout.addWidget(scroll)
 
-        # Position near the mouse
+        # Position near the mouse, clamped to screen bounds
         from PyQt6.QtGui import QCursor
 
+        popover.adjustSize()
         pos = QCursor.pos()
-        popover.move(pos.x() - 125, pos.y() + 10)
+        target_x = pos.x() - 125
+        target_y = pos.y() + 10
+
+        screen = self.screen()
+        if screen:
+            screen_rect = screen.availableGeometry()
+            pw = popover.width()
+            ph = popover.height()
+            if target_x + pw > screen_rect.right():
+                target_x = screen_rect.right() - pw
+            if target_x < screen_rect.left():
+                target_x = screen_rect.left()
+            if target_y + ph > screen_rect.bottom():
+                target_y = pos.y() - ph - 10  # flip above cursor
+            if target_y < screen_rect.top():
+                target_y = screen_rect.top()
+
+        popover.move(target_x, target_y)
         popover.show()
         self._popover = popover
 

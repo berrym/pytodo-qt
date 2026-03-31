@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -47,12 +48,13 @@ class AddTodoDialog(QDialog):
     def __init__(self, parent=None, *, known_tags: list[str] | None = None):
         super().__init__(parent)
         self.setWindowTitle("Add To-Do")
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(720)
 
         self._item: TodoItem | None = None
         self._advanced_shown = False
         self._syncing = False
         self._setup_ui()
+        self._clamp_to_screen()
 
         if known_tags:
             self._smart_input.set_known_tags(known_tags)
@@ -101,9 +103,15 @@ class AddTodoDialog(QDialog):
         self._advanced_toggle.linkActivated.connect(self._on_toggle_advanced)
         layout.addWidget(self._advanced_toggle)
 
-        # Advanced container (hidden by default)
+        # Advanced container (hidden by default, scrollable)
+        self._advanced_scroll = QScrollArea()
+        self._advanced_scroll.setWidgetResizable(True)
+        self._advanced_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._advanced_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._advanced_scroll.setVisible(False)
+
         self._advanced_container = QWidget()
-        self._advanced_container.setVisible(False)
+        self._advanced_scroll.setWidget(self._advanced_container)
 
         # Form layout (inside advanced container)
         form = QFormLayout(self._advanced_container)
@@ -274,7 +282,7 @@ class AddTodoDialog(QDialog):
         self.end_widget.setEnabled(False)
         form.addRow("Ends:", self.end_widget)
 
-        layout.addWidget(self._advanced_container)
+        layout.addWidget(self._advanced_scroll, 1)  # stretch factor for scroll area
 
         # Button box
         button_box = QDialogButtonBox(
@@ -310,7 +318,7 @@ class AddTodoDialog(QDialog):
     def _on_toggle_advanced(self) -> None:
         """Toggle advanced fields visibility."""
         self._advanced_shown = not self._advanced_shown
-        self._advanced_container.setVisible(self._advanced_shown)
+        self._advanced_scroll.setVisible(self._advanced_shown)
         arrow = "\u25bc" if self._advanced_shown else "\u25b6"
         self._advanced_toggle.setText(f'<a href="#">Advanced {arrow}</a>')
         # Populate fields from current parse result when opening advanced
@@ -322,6 +330,33 @@ class AddTodoDialog(QDialog):
                 self._on_smart_parse_changed(result)
                 self._advanced_shown = True
         self.adjustSize()
+        self._clamp_to_screen()
+
+    def _clamp_to_screen(self) -> None:
+        """Resize dialog to fit screen, then center on parent window."""
+        screen = self.screen()
+        if not screen:
+            return
+        avail = screen.availableGeometry()
+        # Fit within screen bounds
+        max_h = int(avail.height() * 0.85)
+        max_w = int(avail.width() * 0.6)
+        w = max(self.minimumWidth(), min(self.sizeHint().width(), max_w))
+        h = min(self.sizeHint().height(), max_h)
+        self.resize(w, h)
+        # Center on parent window
+        parent = self.parentWidget()
+        if parent:
+            parent_geo = parent.geometry()
+            cx = parent_geo.center().x() - w // 2
+            cy = parent_geo.center().y() - h // 2
+        else:
+            cx = avail.center().x() - w // 2
+            cy = avail.center().y() - h // 2
+        # Clamp to screen edges
+        cx = max(avail.left(), min(cx, avail.right() - w))
+        cy = max(avail.top(), min(cy, avail.bottom() - h))
+        self.move(cx, cy)
 
     def _on_smart_parse_changed(self, result: ParseResult) -> None:
         """Sync smart input parse result to discrete fields.
