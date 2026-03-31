@@ -1395,8 +1395,12 @@ class _TimelineDailyWidget(QWidget):
         self._sw_pen = QPen(sw_base.darker(130), 1)
 
         # Trend line
-        self._trend_pen = QPen(QColor(c.get("highlight", "#0078d4")), 2)
+        trend_color = QColor(c.get("highlight", "#0078d4"))
+        self._trend_pen = QPen(trend_color, 2)
         self._trend_pen.setStyle(Qt.PenStyle.DashLine)
+        fill_color = QColor(trend_color)
+        fill_color.setAlpha(40)
+        self._trend_fill_brush = QBrush(fill_color)
 
         # Text/border
         self._col_text = QColor(c.get("text", "#e0e0e0"))
@@ -1551,6 +1555,8 @@ class _TimelineDailyWidget(QWidget):
             self._trend_y,
             pen=self._trend_pen,
             symbol=None,
+            fillLevel=0,
+            fillBrush=self._trend_fill_brush,
         )
         plot.addItem(self._trend_line)
 
