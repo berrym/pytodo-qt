@@ -44,6 +44,9 @@ def db():
             pomodoro_count INTEGER NOT NULL DEFAULT 0,
             estimated_pomodoros INTEGER NOT NULL DEFAULT 0,
             estimated_minutes INTEGER NOT NULL DEFAULT 0,
+            work_duration INTEGER NOT NULL DEFAULT 0,
+            break_duration INTEGER NOT NULL DEFAULT 0,
+            long_break_duration INTEGER NOT NULL DEFAULT 0,
             complete INTEGER NOT NULL DEFAULT 0,
             deleted INTEGER NOT NULL DEFAULT 0
         )"""
@@ -92,7 +95,7 @@ def _insert_item(
     item_id = item_id or str(uuid4())
     list_id = list_id or str(uuid4())
     db.execute(
-        "INSERT INTO items VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)",
+        "INSERT INTO items VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0)",
         (
             item_id,
             list_id,

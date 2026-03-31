@@ -155,6 +155,9 @@ def _item_to_json(item: TodoItem) -> dict[str, Any]:
         "pomodoro_count": item.pomodoro_count,
         "estimated_pomodoros": item.estimated_pomodoros,
         "estimated_minutes": item.estimated_minutes,
+        "work_duration": item.work_duration,
+        "break_duration": item.break_duration,
+        "long_break_duration": item.long_break_duration,
         "is_recurring": item.is_recurring,
         "recurrence_type": item.recurrence_type,
         "recurrence_interval": item.recurrence_interval,
@@ -622,6 +625,12 @@ def _apply_item_fields(item: TodoItem, body: dict[str, Any], lst: TodoList | Non
         item.estimated_pomodoros = max(0, int(body["estimated_pomodoros"]))
     if "estimated_minutes" in body:
         item.estimated_minutes = max(0, int(body["estimated_minutes"]))
+    if "work_duration" in body:
+        item.work_duration = max(0, min(120, int(body["work_duration"])))
+    if "break_duration" in body:
+        item.break_duration = max(0, min(60, int(body["break_duration"])))
+    if "long_break_duration" in body:
+        item.long_break_duration = max(0, min(60, int(body["long_break_duration"])))
     if "recurrence_type" in body:
         val = body["recurrence_type"]
         if val in ("minutely", "daily", "weekly", "monthly", "yearly", None):

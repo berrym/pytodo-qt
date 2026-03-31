@@ -379,7 +379,7 @@ class TestTimeSpentField:
 
 class TestSchemaV10:
     def test_current_version_is_13(self):
-        assert SCHEMA_VERSION == 16
+        assert SCHEMA_VERSION == 17
 
     def test_fresh_database_has_time_spent_column(self, tmp_path):
         db_path = tmp_path / "test.db"
@@ -672,7 +672,7 @@ class TestEditTimeSpentCommand:
         cmd = EditTimeSpentCommand(window, lst.id, item.id, 100, 1500)
         cmd.redo()
 
-        assert item.time_spent == 1600
+        assert item.time_spent == 1600  # 100 + 1500
 
     def test_undo_restores_time(self):
         from pytodo_qt.core.models import Database, create_todo_item, create_todo_list

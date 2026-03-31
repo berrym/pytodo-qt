@@ -483,7 +483,7 @@ class AnalyticsService:
             params.append(list_id)
 
         where = f" WHERE {' AND '.join(conditions)}"
-        sql = f"SELECT id, estimated_pomodoros, estimated_minutes, time_spent FROM items{where}"  # noqa: S608
+        sql = f"SELECT id, estimated_pomodoros, estimated_minutes, time_spent, work_duration FROM items{where}"  # noqa: S608
 
         items_df = pd.read_sql_query(sql, self._conn, params=params)
 
@@ -501,10 +501,12 @@ class AnalyticsService:
                 ),
             )
 
-        # Compute combined estimate
+        # Compute combined estimate — use per-item work_duration if set, else global default
+        effective_work = items_df["work_duration"].where(
+            items_df["work_duration"] > 0, self._work_duration_minutes
+        )
         items_df["estimated_total"] = (
-            items_df["estimated_pomodoros"] * self._work_duration_minutes
-            + items_df["estimated_minutes"]
+            items_df["estimated_pomodoros"] * effective_work + items_df["estimated_minutes"]
         )
         items_df["actual_minutes"] = items_df["time_spent"] / 60.0
 

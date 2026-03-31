@@ -2622,7 +2622,7 @@
     if (item.pomodoro_count > 0 || item.estimated_pomodoros > 0) {
       var pomInfo = document.createElement("div");
       pomInfo.className = "detail-meta";
-      var total = item.pomodoro_count * 25;
+      var total = item.pomodoro_count * (item.work_duration || 25);
       pomInfo.textContent = item.pomodoro_count + " sessions completed (" + total + " min focused)";
       detailBody.appendChild(pomInfo);
     }

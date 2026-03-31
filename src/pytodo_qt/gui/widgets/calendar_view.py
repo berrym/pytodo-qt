@@ -583,6 +583,11 @@ class _CalendarTableView(QTableView):
 # ---------------------------------------------------------------------------
 
 
+def _item_work_mins(item, config_default: int) -> int:
+    """Per-item work_duration or global config fallback."""
+    return item.work_duration if item.work_duration > 0 else config_default
+
+
 class _TimelineTasksWidget(QWidget):
     """pyqtgraph-based horizontal timeline with task bars.
 
@@ -841,11 +846,15 @@ class _TimelineTasksWidget(QWidget):
             # --- Estimate bar (gray baseline) ---
             est_minutes = 0.0
             if item.estimated_minutes > 0 and item.estimated_pomodoros > 0:
-                est_minutes = item.estimated_minutes + (item.estimated_pomodoros * config_work_mins)
+                est_minutes = item.estimated_minutes + (
+                    item.estimated_pomodoros * _item_work_mins(item, config_work_mins)
+                )
             elif item.estimated_minutes > 0:
                 est_minutes = float(item.estimated_minutes)
             elif item.estimated_pomodoros > 0:
-                est_minutes = float(item.estimated_pomodoros * config_work_mins)
+                est_minutes = float(
+                    item.estimated_pomodoros * _item_work_mins(item, config_work_mins)
+                )
 
             if est_minutes > 0:
                 est_days = est_minutes / minutes_per_day
@@ -860,7 +869,7 @@ class _TimelineTasksWidget(QWidget):
                 plot.addItem(est_bar)
 
             # --- Actual work bar (split: pomodoro + stopwatch) ---
-            pomodoro_seconds = item.pomodoro_count * config_work_mins * 60
+            pomodoro_seconds = item.pomodoro_count * _item_work_mins(item, config_work_mins) * 60
             total_time = item.time_spent
 
             # Pseudo-real-time projection
@@ -1000,10 +1009,13 @@ class _TimelineTasksWidget(QWidget):
 
         # Actual work
         if item.pomodoro_count > 0:
-            pom_mins = item.pomodoro_count * config_work_mins
+            pom_mins = item.pomodoro_count * _item_work_mins(item, config_work_mins)
             parts.append(f"Pomodoro: {item.pomodoro_count} sessions ({pom_mins} min)")
 
-        sw_seconds = max(0, item.time_spent - (item.pomodoro_count * config_work_mins * 60))
+        sw_seconds = max(
+            0,
+            item.time_spent - (item.pomodoro_count * _item_work_mins(item, config_work_mins) * 60),
+        )
         if sw_seconds > 0:
             sw_mins = sw_seconds // 60
             parts.append(f"Stopwatch: {sw_mins} min")

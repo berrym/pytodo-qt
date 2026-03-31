@@ -63,12 +63,12 @@ class TestStopwatchConfig:
 
 class TestSchemaV16:
     def test_current_version(self):
-        assert SCHEMA_VERSION == 16
+        assert SCHEMA_VERSION == 17
 
     def test_fresh_database_has_estimated_minutes(self, tmp_path: Path):
         storage = DatabaseStorage(tmp_path / "test.db")
         storage.open()
-        assert storage.get_schema_version() == 16
+        assert storage.get_schema_version() == 17
 
         columns = [row[1] for row in storage.connection.execute("PRAGMA table_info(items)")]
         assert "estimated_minutes" in columns
@@ -113,7 +113,7 @@ class TestSchemaV16:
 
         storage = DatabaseStorage(db_path)
         storage.open()
-        assert storage.get_schema_version() == 16
+        assert storage.get_schema_version() == 17
 
         columns = [row[1] for row in storage.connection.execute("PRAGMA table_info(items)")]
         assert "estimated_minutes" in columns
@@ -380,7 +380,7 @@ class TestEditTimeSpentCommandIncrementPomodoro:
             increment_pomodoro=False,
         )
         cmd.redo()
-        assert item.time_spent == 160
+        assert item.time_spent == 160  # 100 + 60
         assert item.pomodoro_count == 3  # NOT incremented
 
         cmd.undo()
@@ -411,7 +411,7 @@ class TestEditTimeSpentCommandIncrementPomodoro:
             old_pomodoro_count=3,
         )
         cmd.redo()
-        assert item.time_spent == 1600
+        assert item.time_spent == 1600  # 100 + 1500
         assert item.pomodoro_count == 4  # Incremented
 
         cmd.undo()

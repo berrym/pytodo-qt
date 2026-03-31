@@ -1,6 +1,7 @@
 """pomodoro.py
 
 Focus timer widget implementing the Pomodoro Technique.
+Supports per-task work/break duration overrides.
 """
 
 from __future__ import annotations
@@ -29,6 +30,10 @@ class TimerState(Enum):
 class PomodoroWidget(QWidget):
     """Focus timer with work/break cycles.
 
+    Supports per-task duration overrides: if work_duration, break_duration,
+    or long_break_duration are passed to start(), they override the global
+    config for that session. 0 = use config default.
+
     Signals:
         session_completed(UUID, int): item_id and seconds when a work session ends
         state_changed(str): emitted on every state transition with state name
@@ -49,9 +54,16 @@ class PomodoroWidget(QWidget):
         self._session_count: int = 0  # completed sessions in current cycle
         self._session_start_time: datetime | None = None
 
+        # Per-item duration overrides (0 = use config default)
+        self._item_work_duration: int = 0
+        self._item_break_duration: int = 0
+        self._item_long_break_duration: int = 0
+
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self._tick)
+
+    # --- Properties ---
 
     @property
     def state(self) -> TimerState:
@@ -81,17 +93,62 @@ class PomodoroWidget(QWidget):
     def sessions_before_long_break(self) -> int:
         return self._config.sessions_before_long_break
 
+    @property
+    def effective_work_duration(self) -> int:
+        """Effective work duration in minutes (per-item override or config default)."""
+        return (
+            self._item_work_duration if self._item_work_duration > 0 else self._config.work_duration
+        )
+
+    @property
+    def effective_break_duration(self) -> int:
+        """Effective short break duration in minutes."""
+        return (
+            self._item_break_duration
+            if self._item_break_duration > 0
+            else self._config.break_duration
+        )
+
+    @property
+    def effective_long_break_duration(self) -> int:
+        """Effective long break duration in minutes."""
+        return (
+            self._item_long_break_duration
+            if self._item_long_break_duration > 0
+            else self._config.long_break_duration
+        )
+
+    # --- Public methods ---
+
     def update_config(self, config: PomodoroConfig) -> None:
         """Update config (takes effect on next session, not mid-timer)."""
         self._config = config
 
-    def start(self, item_id: UUID, item_name: str = "") -> None:
-        """Start a work session for the given item."""
+    def start(
+        self,
+        item_id: UUID,
+        item_name: str = "",
+        work_duration: int = 0,
+        break_duration: int = 0,
+        long_break_duration: int = 0,
+    ) -> None:
+        """Start a work session for the given item.
+
+        Args:
+            item_id: UUID of the task
+            item_name: Display name
+            work_duration: Per-task work session minutes (0 = use config default)
+            break_duration: Per-task short break minutes (0 = use config default)
+            long_break_duration: Per-task long break minutes (0 = use config default)
+        """
         if self._state == TimerState.WORKING or self._state == TimerState.BREAK:
             self.stop()
 
         self._item_id = item_id
         self._item_name = item_name
+        self._item_work_duration = work_duration
+        self._item_break_duration = break_duration
+        self._item_long_break_duration = long_break_duration
         self._session_count = 0
         self._start_work_session()
 
@@ -106,14 +163,11 @@ class PomodoroWidget(QWidget):
         # Calculate elapsed time for partial session
         if was_state in (TimerState.WORKING, TimerState.BREAK) and item_id is not None:
             if was_state == TimerState.WORKING:
-                total = self._config.work_duration * 60
-            elif (
-                self._session_count > 0
-                and self._session_count % self._config.sessions_before_long_break == 0
-            ):
-                total = self._config.long_break_duration * 60
+                total = self.effective_work_duration * 60
+            elif self._is_long_break_due():
+                total = self.effective_long_break_duration * 60
             else:
-                total = self._config.break_duration * 60
+                total = self.effective_break_duration * 60
             elapsed = total - self._remaining_seconds
             start_iso = start_time.isoformat() if start_time else ""
             session_type = "work" if was_state == TimerState.WORKING else "break"
@@ -125,6 +179,9 @@ class PomodoroWidget(QWidget):
         self._item_id = None
         self._item_name = ""
         self._session_start_time = None
+        self._item_work_duration = 0
+        self._item_break_duration = 0
+        self._item_long_break_duration = 0
         self.state_changed.emit(self._state.value)
 
     def pause(self) -> None:
@@ -142,21 +199,27 @@ class PomodoroWidget(QWidget):
             self._timer.start()
             self.state_changed.emit(self._state.value)
 
+    # --- Internal timer logic ---
+
+    def _is_long_break_due(self) -> bool:
+        """Check if the next break should be a long break."""
+        return (
+            self._session_count > 0
+            and self._session_count % self._config.sessions_before_long_break == 0
+        )
+
     def _start_work_session(self) -> None:
-        self._remaining_seconds = self._config.work_duration * 60
+        self._remaining_seconds = self.effective_work_duration * 60
         self._session_start_time = datetime.now()
         self._state = TimerState.WORKING
         self._timer.start()
         self.state_changed.emit(self._state.value)
 
     def _start_break(self) -> None:
-        if (
-            self._session_count > 0
-            and self._session_count % self._config.sessions_before_long_break == 0
-        ):
-            self._remaining_seconds = self._config.long_break_duration * 60
+        if self._is_long_break_due():
+            self._remaining_seconds = self.effective_long_break_duration * 60
         else:
-            self._remaining_seconds = self._config.break_duration * 60
+            self._remaining_seconds = self.effective_break_duration * 60
         self._session_start_time = datetime.now()
         self._state = TimerState.BREAK
         self._timer.start()
@@ -173,7 +236,7 @@ class PomodoroWidget(QWidget):
                 self._on_break_complete()
 
     def _on_work_complete(self) -> None:
-        duration_seconds = self._config.work_duration * 60
+        duration_seconds = self.effective_work_duration * 60
         self._session_count += 1
         start_iso = self._session_start_time.isoformat() if self._session_start_time else ""
         if self._item_id is not None:
@@ -187,20 +250,18 @@ class PomodoroWidget(QWidget):
     def _on_break_complete(self) -> None:
         start_iso = self._session_start_time.isoformat() if self._session_start_time else ""
         if self._item_id is not None:
-            break_duration = self._remaining_seconds  # already 0 at completion
-            if (
-                self._session_count > 0
-                and self._session_count % self._config.sessions_before_long_break == 0
-            ):
-                break_duration = self._config.long_break_duration * 60
+            if self._is_long_break_due():
+                break_seconds = self.effective_long_break_duration * 60
             else:
-                break_duration = self._config.break_duration * 60
-            self.break_completed.emit(self._item_id, break_duration, start_iso)
+                break_seconds = self.effective_break_duration * 60
+            self.break_completed.emit(self._item_id, break_seconds, start_iso)
         if self._config.auto_start_break and self._item_id is not None:
             self._start_work_session()
         else:
             self._state = TimerState.IDLE
             self.state_changed.emit(self._state.value)
+
+    # --- Formatting utilities ---
 
     @staticmethod
     def format_time(seconds: int) -> str:

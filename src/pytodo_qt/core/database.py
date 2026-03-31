@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -72,6 +72,9 @@ CREATE TABLE IF NOT EXISTS items (
     pomodoro_count INTEGER NOT NULL DEFAULT 0,
     estimated_pomodoros INTEGER NOT NULL DEFAULT 0,
     estimated_minutes INTEGER NOT NULL DEFAULT 0,
+    work_duration INTEGER NOT NULL DEFAULT 0,
+    break_duration INTEGER NOT NULL DEFAULT 0,
+    long_break_duration INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     deleted INTEGER NOT NULL DEFAULT 0,
@@ -291,6 +294,7 @@ class DatabaseStorage:
         self._migrate_schema_13_to_14()
         self._migrate_schema_14_to_15()
         self._migrate_schema_15_to_16()
+        self._migrate_schema_16_to_17()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -554,6 +558,22 @@ class DatabaseStorage:
 
         self.set_schema_version(16)
 
+    def _migrate_schema_16_to_17(self) -> None:
+        """Migrate schema from version 16 to 17 (add per-task duration columns)."""
+        current_version = self.get_schema_version()
+        if current_version >= 17:
+            return
+
+        columns = [row[1] for row in self.connection.execute("PRAGMA table_info(items)")]
+        for col in ("work_duration", "break_duration", "long_break_duration"):
+            if col not in columns:
+                self.connection.execute(
+                    f"ALTER TABLE items ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0"
+                )
+        logger.log.info("Migrated schema 16->17: added per-task duration columns to items")
+
+        self.set_schema_version(17)
+
     def get_schema_version(self) -> int:
         """Get current schema version."""
         cursor = self.connection.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
@@ -767,8 +787,9 @@ class DatabaseStorage:
              recurrence_type, recurrence_interval, recurrence_end_date,
              recurrence_end_count, recurrence_count, missed_recurrences,
              time_spent, pomodoro_count, estimated_pomodoros, estimated_minutes,
+             work_duration, break_duration, long_break_duration,
              created_at, updated_at, deleted, parent_id, board_column)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(item.id),
@@ -789,6 +810,9 @@ class DatabaseStorage:
                 item.pomodoro_count,
                 item.estimated_pomodoros,
                 item.estimated_minutes,
+                item.work_duration,
+                item.break_duration,
+                item.long_break_duration,
                 item.created_at,
                 item.updated_at,
                 1 if item.deleted else 0,
@@ -881,6 +905,20 @@ class DatabaseStorage:
         except (KeyError, IndexError):
             estimated_minutes = 0
 
+        # Handle per-task duration columns (v17+)
+        try:
+            work_duration = row["work_duration"] or 0
+        except (KeyError, IndexError):
+            work_duration = 0
+        try:
+            item_break_duration = row["break_duration"] or 0
+        except (KeyError, IndexError):
+            item_break_duration = 0
+        try:
+            item_long_break_duration = row["long_break_duration"] or 0
+        except (KeyError, IndexError):
+            item_long_break_duration = 0
+
         # Handle parent_id column (v11+)
         try:
             parent_id_str = row["parent_id"]
@@ -912,6 +950,9 @@ class DatabaseStorage:
             pomodoro_count=pomodoro_count,
             estimated_pomodoros=estimated_pomodoros,
             estimated_minutes=estimated_minutes,
+            work_duration=work_duration,
+            break_duration=item_break_duration,
+            long_break_duration=item_long_break_duration,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             deleted=bool(row["deleted"]),

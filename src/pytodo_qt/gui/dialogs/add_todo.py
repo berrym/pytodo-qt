@@ -177,6 +177,35 @@ class AddTodoDialog(QDialog):
         )
         form.addRow("Estimated Time:", self.estimated_minutes_spin)
 
+        # Per-task pomodoro durations (optional overrides)
+        self.task_work_duration_spin = QSpinBox()
+        self.task_work_duration_spin.setRange(0, 120)
+        self.task_work_duration_spin.setValue(0)
+        self.task_work_duration_spin.setSuffix(" min")
+        self.task_work_duration_spin.setSpecialValueText("Default")
+        self.task_work_duration_spin.setToolTip(
+            "Override work session length (0 = use global setting)"
+        )
+        form.addRow("Session Length:", self.task_work_duration_spin)
+
+        self.task_break_duration_spin = QSpinBox()
+        self.task_break_duration_spin.setRange(0, 30)
+        self.task_break_duration_spin.setValue(0)
+        self.task_break_duration_spin.setSuffix(" min")
+        self.task_break_duration_spin.setSpecialValueText("Default")
+        self.task_break_duration_spin.setToolTip(
+            "Override short break length (0 = use global setting)"
+        )
+        form.addRow("Break Length:", self.task_break_duration_spin)
+
+        self.task_long_break_spin = QSpinBox()
+        self.task_long_break_spin.setRange(0, 60)
+        self.task_long_break_spin.setValue(0)
+        self.task_long_break_spin.setSuffix(" min")
+        self.task_long_break_spin.setSpecialValueText("Default")
+        self.task_long_break_spin.setToolTip("Override long break length (0 = use global setting)")
+        form.addRow("Long Break:", self.task_long_break_spin)
+
         # Recurrence section
         self.recurrence_checkbox = QCheckBox("Repeat")
         # Recurrence always available — auto-sets due_date=today if needed
@@ -505,6 +534,9 @@ class AddTodoDialog(QDialog):
                 recurrence_end_count=recurrence_end_count,
                 estimated_pomodoros=estimated_pomodoros,
                 estimated_minutes=estimated_minutes,
+                work_duration=self.task_work_duration_spin.value(),
+                break_duration=self.task_break_duration_spin.value(),
+                long_break_duration=self.task_long_break_spin.value(),
             )
         logger.log.info("Created new todo item: %s", reminder[:50])
         self.accept()

@@ -2397,7 +2397,13 @@ class MainWindow(QMainWindow):
         ):
             return
 
-        self._pomodoro.start(item.id, item.reminder)
+        self._pomodoro.start(
+            item.id,
+            item.reminder,
+            work_duration=item.work_duration,
+            break_duration=item.break_duration,
+            long_break_duration=item.long_break_duration,
+        )
         self._pomodoro_display_timer.start()
         self.kanban_board.set_focus_session_item(item.id)
 
@@ -2455,15 +2461,16 @@ class MainWindow(QMainWindow):
             return
         from .commands import EditTimeSpentCommand
 
+        # Record focus session FIRST (invalidates analytics cache before UI refresh)
+        self._record_focus_session(
+            item_id, active_list.id, start_iso, seconds, completed=True, session_type="work"
+        )
+
         cmd = EditTimeSpentCommand(
             self, active_list.id, item_id, item.time_spent, seconds, item.pomodoro_count
         )
         self._undo_stack.push(cmd)
 
-        # Record focus session
-        self._record_focus_session(
-            item_id, active_list.id, start_iso, seconds, completed=True, session_type="work"
-        )
         self._update_daily_goal()
         self._update_focus_item_progress()
         self._check_milestones()
@@ -2618,6 +2625,11 @@ class MainWindow(QMainWindow):
             return
         from .commands import EditTimeSpentCommand
 
+        # Record focus session FIRST (invalidates analytics cache before UI refresh)
+        self._record_focus_session(
+            item_id, active_list.id, start_iso, seconds, completed=True, session_type="stopwatch"
+        )
+
         cmd = EditTimeSpentCommand(
             self,
             active_list.id,
@@ -2628,11 +2640,6 @@ class MainWindow(QMainWindow):
             increment_pomodoro=False,
         )
         self._undo_stack.push(cmd)
-
-        # Record focus session
-        self._record_focus_session(
-            item_id, active_list.id, start_iso, seconds, completed=True, session_type="stopwatch"
-        )
 
         from .widgets.stopwatch import StopwatchWidget
 
@@ -2886,15 +2893,14 @@ class MainWindow(QMainWindow):
         """Get the total duration in seconds for the current pomodoro phase."""
         from .widgets.pomodoro import TimerState
 
-        pom = self._config.pomodoro
         state = self._pomodoro.state
         if state in (TimerState.WORKING, TimerState.PAUSED):
-            return pom.work_duration * 60
+            return self._pomodoro.effective_work_duration * 60
         if state == TimerState.BREAK:
             sc = self._pomodoro.session_count
-            if sc > 0 and sc % pom.sessions_before_long_break == 0:
-                return pom.long_break_duration * 60
-            return pom.break_duration * 60
+            if sc > 0 and sc % self._pomodoro.sessions_before_long_break == 0:
+                return self._pomodoro.effective_long_break_duration * 60
+            return self._pomodoro.effective_break_duration * 60
         return 0
 
     def _show_focus_timer_dialog(self) -> None:
