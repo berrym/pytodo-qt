@@ -1617,8 +1617,6 @@ class _TimelineAccuracyWidget(QWidget):
 
         plot.setXRange(0, max_val * 1.1, padding=0)
         plot.setYRange(0, max_val * 1.1, padding=0)
-        # Lock 1:1 aspect ratio so reference line appears at true 45 degrees
-        plot.setAspectLocked(True)
 
     def _show_empty(self, message: str) -> None:
         import pyqtgraph as pg
