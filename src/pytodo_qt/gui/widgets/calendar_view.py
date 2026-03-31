@@ -1274,6 +1274,22 @@ class _TimelineDailyWidget(QWidget):
         self._plot.showGrid(x=False, y=True, alpha=0.25)
         self._plot.setMenuEnabled(False)
         self._plot.enableAutoRange(axis="y")
+
+        # Hover tooltip
+        self._hover_proxy = pg.SignalProxy(
+            self._plot.scene().sigMouseMoved, rateLimit=30, slot=self._on_mouse_moved
+        )
+        self._last_hover_idx = -1
+        self._tooltip_label = QLabel(self)
+        self._tooltip_label.setWindowFlags(
+            Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
+        )
+        self._tooltip_label.setStyleSheet(
+            "QLabel { background: palette(toolTipBase); color: palette(toolTipText); "
+            "border: 1px solid palette(mid); padding: 6px 8px; font-size: 12px; }"
+        )
+        self._tooltip_label.hide()
+
         layout.addWidget(self._plot)
 
         # Legend (always visible)
@@ -1284,6 +1300,69 @@ class _TimelineDailyWidget(QWidget):
         legend_layout.setSpacing(16)
         self._legend_labels: list[QLabel] = []
         layout.addWidget(self._legend_widget)
+
+    def _on_mouse_moved(self, event_args) -> None:
+        """Show tooltip for hovered day bar."""
+        pos = event_args[0]
+        vb = self._plot.plotItem.vb
+        if vb is None:
+            return
+        mouse_point = vb.mapSceneToView(pos)
+        day_idx = round(mouse_point.x())
+
+        if day_idx != self._last_hover_idx:
+            self._last_hover_idx = day_idx
+            if 0 <= day_idx < 7 and self._base_pom_mins is not None:
+                pom = float(self._base_pom_mins[day_idx])
+                sw = float(self._base_sw_mins[day_idx])
+                # Add active projection
+                if self._active_elapsed > 0:
+                    week_start = self._current_date - timedelta(days=self._current_date.weekday())
+                    today_idx = (date.today() - week_start).days
+                    if day_idx == today_idx:
+                        extra = self._active_elapsed / 60.0
+                        if self._active_session_type == "work":
+                            pom += extra
+                        else:
+                            sw += extra
+                total = pom + sw
+                day_names = [
+                    "Monday",
+                    "Tuesday",
+                    "Wednesday",
+                    "Thursday",
+                    "Friday",
+                    "Saturday",
+                    "Sunday",
+                ]
+                week_start = self._current_date - timedelta(days=self._current_date.weekday())
+                d = week_start + timedelta(days=day_idx)
+                parts = [f"<b>{day_names[day_idx]}, {d.strftime('%b %d')}</b>"]
+                if pom > 0:
+                    parts.append(f"Pomodoro: {int(pom)}m")
+                if sw > 0:
+                    parts.append(f"Stopwatch: {int(sw)}m")
+                parts.append(f"<b>Total: {int(total)}m</b>")
+
+                self._tooltip_label.setText("<br>".join(parts))
+                self._tooltip_label.adjustSize()
+                from PyQt6.QtCore import QPoint
+
+                mapped = self._plot.mapFromScene(pos)
+                qpoint = mapped if isinstance(mapped, QPoint) else mapped.toPoint()
+                cursor_pos = self.mapToGlobal(qpoint)
+                self._tooltip_label.move(cursor_pos.x() + 16, cursor_pos.y() + 8)
+                self._tooltip_label.show()
+            else:
+                self._tooltip_label.hide()
+
+    def leaveEvent(self, a0) -> None:  # noqa: N802
+        self._tooltip_label.hide()
+        self._last_hover_idx = -1
+
+    def hideEvent(self, a0) -> None:  # noqa: N802
+        self._tooltip_label.hide()
+        self._last_hover_idx = -1
 
     def _create_styles(self) -> None:
         from PyQt6.QtGui import QBrush, QGradient, QLinearGradient, QPen
@@ -1560,6 +1639,22 @@ class _TimelineProductivityWidget(QWidget):
         self._plot.setMouseEnabled(x=True, y=False)
         self._plot.showGrid(x=True, y=False, alpha=0.2)
         self._plot.setMenuEnabled(False)
+
+        # Hover tooltip
+        self._hover_proxy = pg.SignalProxy(
+            self._plot.scene().sigMouseMoved, rateLimit=30, slot=self._on_mouse_moved
+        )
+        self._last_hover_idx = -1
+        self._tooltip_label = QLabel(self)
+        self._tooltip_label.setWindowFlags(
+            Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
+        )
+        self._tooltip_label.setStyleSheet(
+            "QLabel { background: palette(toolTipBase); color: palette(toolTipText); "
+            "border: 1px solid palette(mid); padding: 6px 8px; font-size: 12px; }"
+        )
+        self._tooltip_label.hide()
+
         layout.addWidget(self._plot)
 
         self._legend_widget = QWidget()
@@ -1569,6 +1664,72 @@ class _TimelineProductivityWidget(QWidget):
         legend_layout.setSpacing(16)
         self._legend_labels: list[QLabel] = []
         layout.addWidget(self._legend_widget)
+
+    def _on_mouse_moved(self, event_args) -> None:
+        """Show tooltip for hovered time block."""
+        if self._base_blocks is None:
+            return
+        pos = event_args[0]
+        vb = self._plot.plotItem.vb
+        if vb is None:
+            return
+        mouse_point = vb.mapSceneToView(pos)
+        n = len(self._base_blocks)
+        block_idx = n - 1 - round(mouse_point.y())
+
+        if block_idx != self._last_hover_idx:
+            self._last_hover_idx = block_idx
+            if 0 <= block_idx < n:
+                row = self._base_blocks.iloc[block_idx]
+                label = str(row["block_label"])
+                pom = float(row.get("pomodoro_minutes", 0))
+                sw = float(row.get("stopwatch_minutes", 0))
+                count = int(row["session_count"])
+                rate = float(row["completion_rate"])
+                avg = float(row["avg_duration_minutes"])
+
+                from datetime import datetime as _dt
+
+                current_block = (_dt.now().hour // 2) * 2
+                block_hour = int(row["block_start_hour"])
+                if self._active_elapsed > 0 and block_hour == current_block:
+                    extra = self._active_elapsed / 60.0
+                    if self._active_session_type == "work":
+                        pom += extra
+                    else:
+                        sw += extra
+
+                total = pom + sw
+                parts = [f"<b>{label}</b>"]
+                parts.append(f"Sessions: {count}")
+                if pom > 0:
+                    parts.append(f"Pomodoro: {int(pom)}m")
+                if sw > 0:
+                    parts.append(f"Stopwatch: {int(sw)}m")
+                parts.append(f"<b>Total: {int(total)}m</b>")
+                parts.append(f"Completion: {round(rate * 100)}%")
+                if avg > 0:
+                    parts.append(f"Avg session: {int(avg)}m")
+
+                self._tooltip_label.setText("<br>".join(parts))
+                self._tooltip_label.adjustSize()
+                from PyQt6.QtCore import QPoint
+
+                mapped = self._plot.mapFromScene(pos)
+                qpoint = mapped if isinstance(mapped, QPoint) else mapped.toPoint()
+                cursor_pos = self.mapToGlobal(qpoint)
+                self._tooltip_label.move(cursor_pos.x() + 16, cursor_pos.y() + 8)
+                self._tooltip_label.show()
+            else:
+                self._tooltip_label.hide()
+
+    def leaveEvent(self, a0) -> None:  # noqa: N802
+        self._tooltip_label.hide()
+        self._last_hover_idx = -1
+
+    def hideEvent(self, a0) -> None:  # noqa: N802
+        self._tooltip_label.hide()
+        self._last_hover_idx = -1
 
     def _create_styles(self) -> None:
         from PyQt6.QtGui import QBrush, QGradient, QLinearGradient, QPen
@@ -1869,6 +2030,22 @@ class _TimelineAccuracyWidget(QWidget):
         self._plot.setMouseEnabled(x=True, y=True)
         self._plot.showGrid(x=True, y=True, alpha=0.25)
         self._plot.setMenuEnabled(False)
+
+        # Hover tooltip
+        self._hover_proxy = pg.SignalProxy(
+            self._plot.scene().sigMouseMoved, rateLimit=30, slot=self._on_mouse_moved
+        )
+        self._last_hover_idx = -1
+        self._tooltip_label = QLabel(self)
+        self._tooltip_label.setWindowFlags(
+            Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
+        )
+        self._tooltip_label.setStyleSheet(
+            "QLabel { background: palette(toolTipBase); color: palette(toolTipText); "
+            "border: 1px solid palette(mid); padding: 6px 8px; font-size: 12px; }"
+        )
+        self._tooltip_label.hide()
+
         layout.addWidget(self._plot)
 
         self._legend_widget = QWidget()
@@ -1878,6 +2055,85 @@ class _TimelineAccuracyWidget(QWidget):
         legend_layout.setSpacing(16)
         self._legend_labels: list[QLabel] = []
         layout.addWidget(self._legend_widget)
+
+    def _on_mouse_moved(self, event_args) -> None:
+        """Show tooltip for nearest scatter point."""
+        if self._base_estimated is None or len(self._base_estimated) == 0:
+            return
+        import numpy as np
+
+        pos = event_args[0]
+        vb = self._plot.plotItem.vb
+        if vb is None:
+            return
+        mouse_point = vb.mapSceneToView(pos)
+        mx, my = mouse_point.x(), mouse_point.y()
+
+        # Find nearest point
+        dx = self._base_estimated - mx
+        dy = self._base_actual - my
+        # Account for active session projection
+        actual = self._base_actual.copy()
+        if (
+            self._active_item_id is not None
+            and self._active_elapsed > 0
+            and hasattr(self, "_item_ids")
+        ):
+            for j, iid in enumerate(self._item_ids):
+                if iid == str(self._active_item_id):
+                    actual[j] += self._active_elapsed / 60.0
+                    break
+            dy = actual - my
+
+        dist = np.sqrt(dx * dx + dy * dy)
+        nearest = int(np.argmin(dist))
+        min_dist = float(dist[nearest])
+
+        # Only show if reasonably close (within 20% of axis range)
+        max_val = max(float(self._base_estimated.max()), float(actual.max()), 10)
+        threshold = max_val * 0.15
+
+        if min_dist < threshold and nearest != self._last_hover_idx:
+            self._last_hover_idx = nearest
+            est = float(self._base_estimated[nearest])
+            act = float(actual[nearest])
+            ratio = act / est if est > 0 else 0.0
+            status = (
+                "Under-estimated"
+                if ratio > 1.2
+                else "Over-estimated"
+                if ratio < 0.8
+                else "Accurate"
+            )
+
+            parts = [f"<b>{status}</b>"]
+            parts.append(f"Estimated: {int(est)}m")
+            parts.append(f"Actual: {int(act)}m")
+            if est > 0:
+                parts.append(f"Ratio: {ratio:.1%}")
+            variance = act - est
+            parts.append(f"Variance: {'+' if variance >= 0 else ''}{int(variance)}m")
+
+            self._tooltip_label.setText("<br>".join(parts))
+            self._tooltip_label.adjustSize()
+            from PyQt6.QtCore import QPoint
+
+            mapped = self._plot.mapFromScene(pos)
+            qpoint = mapped if isinstance(mapped, QPoint) else mapped.toPoint()
+            cursor_pos = self.mapToGlobal(qpoint)
+            self._tooltip_label.move(cursor_pos.x() + 16, cursor_pos.y() + 8)
+            self._tooltip_label.show()
+        elif min_dist >= threshold:
+            self._tooltip_label.hide()
+            self._last_hover_idx = -1
+
+    def leaveEvent(self, a0) -> None:  # noqa: N802
+        self._tooltip_label.hide()
+        self._last_hover_idx = -1
+
+    def hideEvent(self, a0) -> None:  # noqa: N802
+        self._tooltip_label.hide()
+        self._last_hover_idx = -1
 
     def _create_styles(self) -> None:
         from PyQt6.QtGui import QPen
