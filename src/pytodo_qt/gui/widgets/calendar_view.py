@@ -2022,7 +2022,7 @@ class _TimelineAccuracyWidget(QWidget):
 
         # Persistent reference line (y=x)
         self._ref_line = pg.InfiniteLine(
-            pos=0,
+            pos=(0, 0),
             angle=45,
             pen=self._ref_pen,
         )
