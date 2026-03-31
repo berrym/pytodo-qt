@@ -1201,6 +1201,16 @@ class _TimelineTasksWidget(QWidget):
             else:
                 self._tooltip_label.hide()
 
+    def leaveEvent(self, a0) -> None:  # noqa: N802
+        """Hide tooltip when mouse leaves the widget."""
+        self._tooltip_label.hide()
+        self._last_hover_row = -1
+
+    def hideEvent(self, a0) -> None:  # noqa: N802
+        """Hide tooltip when widget is hidden (view switch)."""
+        self._tooltip_label.hide()
+        self._last_hover_row = -1
+
     def _on_plot_clicked(self, event) -> None:
         pos = event.scenePos()
         vb = self._plot.plotItem.vb
