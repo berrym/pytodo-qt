@@ -70,6 +70,8 @@ dependencies = [
     "qrcode>=7.0",
     "pyqtgraph>=0.13",
     "pandas>=2.0",
+    "dateparser>=1.2",
+    "rapidfuzz>=3.0",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",

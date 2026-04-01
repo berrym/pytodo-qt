@@ -1,21 +1,25 @@
 """nlp_parser.py
 
-Natural language task input parser.
+Intent-based natural language task input parser.
 
-Extracts dates, times, priority, tags, recurrence, and pomodoro estimates
-from free-form English text.  Pure Python — no Qt dependency, no external
-packages.  All patterns are compiled once at module level.
+Extracts dates, times, priority, tags, recurrence, pomodoro estimates,
+estimated minutes, and work duration from free-form text using:
+- Token-based intent dictionaries (no regex for NLP patterns)
+- rapidfuzz for fuzzy matching (typos, abbreviations, voice dictation)
+- dateparser for date/time extraction (200+ languages)
+
+Pure Python — no Qt dependency. The only regex is for @/# tag syntax detection.
 """
 
 from __future__ import annotations
 
-import calendar
 import re
-from collections.abc import Callable
+import unicodedata
 from dataclasses import dataclass, field
-from datetime import date, time, timedelta
+from datetime import date, time
 from datetime import datetime as _datetime
 from enum import Enum
+from typing import Any
 
 from .logger import Logger
 
@@ -23,83 +27,19 @@ logger = Logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Number word preprocessing
-# ---------------------------------------------------------------------------
-
-_NUMBER_WORDS: dict[str, str] = {
-    "one": "1",
-    "two": "2",
-    "three": "3",
-    "four": "4",
-    "five": "5",
-    "six": "6",
-    "seven": "7",
-    "eight": "8",
-    "nine": "9",
-    "ten": "10",
-    "eleven": "11",
-    "twelve": "12",
-    "fifteen": "15",
-    "twenty": "20",
-    "thirty": "30",
-}
-
-# Contexts where number words should be converted to digits
-_NUMBER_CONTEXT_RE = re.compile(
-    r"\b(?:in|every|for|priority)\s+("
-    + "|".join(re.escape(w) for w in sorted(_NUMBER_WORDS, key=len, reverse=True))
-    + r")\b"
-    r"|"
-    r"\b("
-    + "|".join(re.escape(w) for w in sorted(_NUMBER_WORDS, key=len, reverse=True))
-    + r")\s+(?:minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?"
-    r"|times?|pomodoros?|poms?|sessions?)\b",
-    re.IGNORECASE,
-)
-
-# Multi-word number phrases
-_COUPLE_FEW_RE = re.compile(
-    r"\b(?:a\s+couple\s+(?:of\s+)?|a\s+few\s+)(days?|weeks?|months?|hours?|minutes?)\b",
-    re.IGNORECASE,
-)
-
-
-def _normalize_number_words(text: str) -> str:
-    """Convert number words to digits in pattern-relevant contexts only."""
-
-    # Handle "a couple of days" / "a few days"
-    def _couple_few_replace(m: re.Match[str]) -> str:
-        full = m.group(0).lower()
-        unit = m.group(1)
-        if "couple" in full:
-            return f"2 {unit}"
-        return f"3 {unit}"
-
-    text = _COUPLE_FEW_RE.sub(_couple_few_replace, text)
-
-    # Handle contextual number words
-    def _number_replace(m: re.Match[str]) -> str:
-        word = (m.group(1) or m.group(2)).lower()
-        digit = _NUMBER_WORDS.get(word, word)
-        return m.group(0).replace(m.group(1) or m.group(2), digit, 1)
-
-    return _NUMBER_CONTEXT_RE.sub(_number_replace, text)
-
-
-# ---------------------------------------------------------------------------
-# Data structures
+# Public data structures (API preserved from previous parser)
 # ---------------------------------------------------------------------------
 
 
 class EntityKind(Enum):
-    """Types of entities the parser can extract."""
-
     DATE = "date"
     TIME = "time"
     PRIORITY = "priority"
     TAG = "tag"
     RECURRENCE = "recurrence"
     POMODORO = "pomodoro"
+    ESTIMATE = "estimate"
+    WORK_DURATION = "work_duration"
 
 
 @dataclass
@@ -110,6 +50,7 @@ class EntitySpan:
     end: int
     kind: EntityKind
     display: str
+    confidence: float = 1.0
 
 
 @dataclass
@@ -126,36 +67,48 @@ class ParseResult:
     recurrence_end_date: date | None = None
     recurrence_end_count: int | None = None
     pomodoro_estimate: int | None = None
+    estimated_minutes: int | None = None
+    work_duration: int | None = None
     spans: list[EntitySpan] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
-# Calendar constants
+# Tokenizer
 # ---------------------------------------------------------------------------
 
-_DAYS_MAP: dict[str, int] = {}
-for _i, _name in enumerate(calendar.day_name):
-    _DAYS_MAP[_name.lower()] = _i
-for _i, _name in enumerate(calendar.day_abbr):
-    _DAYS_MAP[_name.lower()] = _i
 
-_MONTHS_MAP: dict[str, int] = {}
-for _i in range(1, 13):
-    _MONTHS_MAP[calendar.month_name[_i].lower()] = _i
-    _MONTHS_MAP[calendar.month_abbr[_i].lower()] = _i
+@dataclass(frozen=True, slots=True)
+class _Token:
+    """A word token with character span from the original text."""
 
-_DAYS_RE = (
-    r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday"
-    r"|mon|tue|wed|thu|fri|sat|sun)"
-)
-_MONTHS_RE = (
-    r"(?:january|february|march|april|may|june|july|august|september"
-    r"|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
-)
+    text: str  # Lowercase
+    original: str  # Original case
+    start: int  # Character offset
+    end: int  # Character offset (exclusive)
+
+
+def _tokenize(text: str) -> list[_Token]:
+    """Split text on whitespace, preserving character spans."""
+    tokens: list[_Token] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        # Skip whitespace
+        while i < n and text[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        # Collect non-whitespace
+        start = i
+        while i < n and not text[i].isspace():
+            i += 1
+        word = text[start:i]
+        tokens.append(_Token(text=word.lower(), original=word, start=start, end=i))
+    return tokens
 
 
 # ---------------------------------------------------------------------------
-# Span tracking
+# Span tracking (preserved from previous parser)
 # ---------------------------------------------------------------------------
 
 
@@ -172,105 +125,274 @@ class _SpanTracker:
     def reserve(self, span: EntitySpan) -> None:
         self._spans.append(span)
 
+    def unreserve_kind(self, kind: EntityKind) -> None:
+        """Remove all spans of a given kind (for last-match-wins)."""
+        self._spans = [s for s in self._spans if s.kind != kind]
+
     @property
     def spans(self) -> list[EntitySpan]:
         return sorted(self._spans, key=lambda s: s.start)
 
 
 # ---------------------------------------------------------------------------
-# Helper functions
+# Intent dictionaries (English)
+# ---------------------------------------------------------------------------
+
+_PRIORITY_DISPLAY = {1: "High", 2: "Normal", 3: "Low"}
+
+_INTENTS: dict[str, dict[str, Any]] = {
+    "en": {
+        "priority_tokens": {
+            "p1": 1,
+            "p2": 2,
+            "p3": 3,
+            "urgent": 1,
+            "important": 1,
+            "critical": 1,
+            "asap": 1,
+            "high": 1,
+            "normal": 2,
+            "low": 3,
+        },
+        "priority_phrases": {
+            "high priority": 1,
+            "highest priority": 1,
+            "top priority": 1,
+            "high prio": 1,
+            "high importance": 1,
+            "really important": 1,
+            "very important": 1,
+            "most important": 1,
+            "priority one": 1,
+            "priority two": 2,
+            "priority three": 3,
+            "priority 1": 1,
+            "priority 2": 2,
+            "priority 3": 3,
+            "low priority": 3,
+            "low prio": 3,
+            "lowest priority": 3,
+            "not important": 3,
+            "not urgent": 3,
+        },
+        "recurrence_tokens": {
+            "daily": ("daily", 1),
+            "weekly": ("weekly", 1),
+            "monthly": ("monthly", 1),
+            "yearly": ("yearly", 1),
+            "annually": ("yearly", 1),
+            "minutely": ("minutely", 1),
+            "hourly": ("minutely", 60),
+            "biweekly": ("weekly", 2),
+            "bimonthly": ("monthly", 2),
+        },
+        "recurrence_every": {
+            "day": ("daily", 1),
+            "days": ("daily", 1),
+            "week": ("weekly", 1),
+            "weeks": ("weekly", 1),
+            "month": ("monthly", 1),
+            "months": ("monthly", 1),
+            "year": ("yearly", 1),
+            "years": ("yearly", 1),
+            "minute": ("minutely", 1),
+            "minutes": ("minutely", 1),
+            "hour": ("minutely", 60),
+            "hours": ("minutely", 60),
+            "weekday": ("daily", 1),
+            "morning": ("daily", 1),
+            "night": ("daily", 1),
+            "evening": ("daily", 1),
+            "other": None,  # "every other" prefix — needs next token
+        },
+        "recurrence_time_hints": {
+            "morning": time(9, 0),
+            "night": time(21, 0),
+            "evening": time(18, 0),
+        },
+        "pomodoro_units": {
+            "pomodoro",
+            "pomodoros",
+            "pom",
+            "poms",
+            "session",
+            "sessions",
+            "p",
+        },
+        "time_estimate_units": {
+            "m": 1,
+            "min": 1,
+            "mins": 1,
+            "minute": 1,
+            "minutes": 1,
+            "h": 60,
+            "hr": 60,
+            "hrs": 60,
+            "hour": 60,
+            "hours": 60,
+        },
+        "time_of_day": {
+            "noon": time(12, 0),
+            "midnight": time(0, 0),
+            "morning": time(9, 0),
+            "afternoon": time(14, 0),
+            "evening": time(18, 0),
+            "tonight": time(20, 0),
+            "eod": time(17, 0),
+        },
+        "time_of_day_phrases": {
+            "end of day": time(17, 0),
+            "this morning": time(9, 0),
+            "this afternoon": time(14, 0),
+            "this evening": time(18, 0),
+        },
+        "tag_voice_prefixes": ["hashtag", "with tag", "at tag", "at sign", "with group"],
+        "number_words": {
+            "one": 1,
+            "two": 2,
+            "three": 3,
+            "four": 4,
+            "five": 5,
+            "six": 6,
+            "seven": 7,
+            "eight": 8,
+            "nine": 9,
+            "ten": 10,
+            "eleven": 11,
+            "twelve": 12,
+            "fifteen": 15,
+            "twenty": 20,
+            "thirty": 30,
+            "a": 1,
+            "an": 1,
+        },
+        "couple_few": {
+            "couple": 2,
+            "few": 3,
+        },
+        "date_prefixes": {"due", "by", "on", "before"},
+        "fuzzy_threshold": 80,
+    },
+}
+
+_LANG = "en"  # Current language — future: detect or configure
+
+
+def _get_intents() -> dict[str, Any]:
+    return _INTENTS[_LANG]
+
+
+# ---------------------------------------------------------------------------
+# Fuzzy matching wrapper
 # ---------------------------------------------------------------------------
 
 
-def _resolve_day_name(name: str, today: date) -> date:
-    """Resolve a day name to the next occurrence (never today)."""
-    target = _DAYS_MAP[name.lower()]
-    current = today.weekday()
-    days_ahead = (target - current) % 7
-    if days_ahead == 0:
-        days_ahead = 7
-    return today + timedelta(days=days_ahead)
+def _fuzzy_match_token(
+    query: str, choices: list[str] | set[str], threshold: int = 80
+) -> tuple[str, float] | None:
+    """Fuzzy match a single token against choices. Returns (match, confidence) or None."""
+    from rapidfuzz import fuzz, process
+
+    if not choices:
+        return None
+    choice_list = list(choices) if isinstance(choices, set) else choices
+    result = process.extractOne(query, choice_list, scorer=fuzz.ratio, score_cutoff=threshold)
+    if result is None:
+        return None
+    match, score, _idx = result
+    return (match, score / 100.0)
 
 
-def _resolve_next_day_name(name: str, today: date) -> date:
-    """Resolve 'next <day>' — the occurrence after the upcoming one."""
-    target = _DAYS_MAP[name.lower()]
-    current = today.weekday()
-    days_ahead = (target - current) % 7
-    if days_ahead == 0:
-        days_ahead = 7
-    return today + timedelta(days=days_ahead + 7)
+def _fuzzy_match_phrase(
+    query: str, choices: list[str] | dict[str, Any], threshold: int = 80
+) -> tuple[str, float] | None:
+    """Fuzzy match a phrase against choices using token_sort_ratio (word-order independent)."""
+    from rapidfuzz import fuzz, process
+
+    choice_list = list(choices) if isinstance(choices, dict) else choices
+    if not choice_list:
+        return None
+    result = process.extractOne(
+        query, choice_list, scorer=fuzz.token_sort_ratio, score_cutoff=threshold
+    )
+    if result is None:
+        return None
+    match, score, _idx = result
+    return (match, score / 100.0)
 
 
-def _resolve_month_name(name: str) -> int | None:
-    """Resolve month name/abbreviation to month number 1-12."""
-    return _MONTHS_MAP.get(name.lower())
-
-
-def _add_months(d: date, months: int) -> date:
-    """Add N months to a date, clamping day to valid range."""
-    month = d.month - 1 + months
-    year = d.year + month // 12
-    month = month % 12 + 1
-    import calendar as _cal
-
-    max_day = _cal.monthrange(year, month)[1]
-    return date(year, month, min(d.day, max_day))
-
-
-def _unit_to_recurrence_type(unit: str) -> tuple[str, int | None]:
-    """Map 'minute'/'hour'/'day'/... to (recurrence_type, interval_multiplier).
-
-    For minute/hour units, returns ("minutely", multiplier) where multiplier
-    converts the user's number into minutes. For day+ units, returns the
-    standard type with no multiplier.
-    """
-    u = unit.lower().rstrip("s")
-    # Normalize shortened forms
-    if u in ("min", "minute"):
-        return ("minutely", 1)  # interval is already in minutes
-    if u in ("hr", "hour"):
-        return ("minutely", 60)  # multiply user's number by 60
-    mapping = {"day": "daily", "week": "weekly", "month": "monthly", "year": "yearly"}
-    return (mapping[u], None)
-
-
-def _freq_word_to_type(word: str) -> tuple[str, int]:
-    """Map 'minutely'/'hourly'/'daily'/... to (recurrence_type, interval)."""
-    w = word.lower().replace("-", "")
-    if w == "annually":
-        return ("yearly", 1)
-    if w == "minutely":
-        return ("minutely", 1)
-    if w == "hourly":
-        return ("minutely", 60)
-    if w == "biweekly":
-        return ("weekly", 2)
-    if w == "bimonthly":
-        return ("monthly", 2)
-    return (w, 1)
+def _token_to_number(token_text: str) -> int | None:
+    """Convert a token to a number (digit string or number word)."""
+    if token_text.isdigit():
+        return int(token_text)
+    intents = _get_intents()
+    return intents["number_words"].get(token_text)
 
 
 # ---------------------------------------------------------------------------
-# Tag extraction
+# Input sanitization
 # ---------------------------------------------------------------------------
 
-_TAG_RE = re.compile(r"(?<!\S)[@#]([\w-]+)", re.IGNORECASE)
+
+def _sanitize(text: str) -> str:
+    """Normalize input text before tokenization."""
+    # Unicode NFC normalization
+    text = unicodedata.normalize("NFC", text)
+    # Collapse whitespace
+    text = " ".join(text.split())
+    return text.strip()
 
 
-def _extract_tags(text: str, tracker: _SpanTracker) -> list[str]:
-    """Extract @tag and #tag tokens."""
+# ---------------------------------------------------------------------------
+# Tag extraction (keeps @/# detection — syntactic marker, not NLP)
+# ---------------------------------------------------------------------------
+
+_TAG_RE = re.compile(r"(?<!\S)[@#]([\w-]+)")
+
+
+def _extract_tags(text: str, tokens: list[_Token], tracker: _SpanTracker) -> list[str]:
+    """Extract @tags and #tags, plus voice patterns like 'hashtag X'."""
     tags: list[str] = []
-    seen: set[str] = set()
+    seen_lower: set[str] = set()
+    intents = _get_intents()
+
+    # 1. Standard @/# syntax
     for m in _TAG_RE.finditer(text):
-        if not tracker.is_free(m.start(), m.end()):
+        start, end = m.start(), m.end()
+        if not tracker.is_free(start, end):
             continue
         raw = m.group(1)
-        tag = f"@{raw}"
-        if tag.lower() not in seen:
-            tags.append(tag)
-            seen.add(tag.lower())
-        tracker.reserve(EntitySpan(m.start(), m.end(), EntityKind.TAG, tag))
+        normalized = f"@{raw}" if not raw.startswith("@") else raw
+        key = normalized.lower()
+        if key not in seen_lower:
+            tags.append(normalized)
+            seen_lower.add(key)
+        tracker.reserve(EntitySpan(start, end, EntityKind.TAG, normalized))
+
+    # 2. Voice tag patterns: "hashtag X", "with tag X", etc.
+    for prefix_phrase in intents.get("tag_voice_prefixes", []):
+        prefix_tokens = prefix_phrase.split()
+        prefix_len = len(prefix_tokens)
+        for i in range(len(tokens) - prefix_len):
+            # Check if consecutive tokens match the prefix
+            match = True
+            for j, pt in enumerate(prefix_tokens):
+                if tokens[i + j].text != pt:
+                    match = False
+                    break
+            if match and i + prefix_len < len(tokens):
+                tag_token = tokens[i + prefix_len]
+                # Don't match if tag token is already claimed
+                start = tokens[i].start
+                end = tag_token.end
+                if tracker.is_free(start, end):
+                    tag_text = f"@{tag_token.original}"
+                    key = tag_text.lower()
+                    if key not in seen_lower:
+                        tags.append(tag_text)
+                        seen_lower.add(key)
+                    tracker.reserve(EntitySpan(start, end, EntityKind.TAG, tag_text))
+
     return tags
 
 
@@ -278,633 +400,561 @@ def _extract_tags(text: str, tracker: _SpanTracker) -> list[str]:
 # Priority extraction
 # ---------------------------------------------------------------------------
 
-_PRIORITY_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3}
 
-_PRIORITY_PATTERNS: list[tuple[re.Pattern[str], int | None]] = [
-    (re.compile(r"\bp([1-3])\b", re.IGNORECASE), None),  # group capture
-    (re.compile(r"(!{1,3})\s*$"), 1),
-    (re.compile(r"\bhigh\s+(?:prio(?:rity)?|importance)\b", re.IGNORECASE), 1),
-    (re.compile(r"\blow\s+prio(?:rity)?\b", re.IGNORECASE), 3),
-    (re.compile(r"\bnot\s+important\b", re.IGNORECASE), 3),  # must be before "important"
-    (re.compile(r"\bimportant\b", re.IGNORECASE), 1),
-    (re.compile(r"\burgent\b", re.IGNORECASE), 1),
-    (re.compile(r"\basap\b", re.IGNORECASE), 1),
-    (re.compile(r"\bpriority\s+(one|two|three|[1-3])\b", re.IGNORECASE), None),
-]
+def _extract_priority(text: str, tokens: list[_Token], tracker: _SpanTracker) -> int | None:
+    """Extract priority from tokens using intent dictionary + fuzzy matching."""
+    intents = _get_intents()
+    priority_tokens = intents["priority_tokens"]
+    priority_phrases = intents["priority_phrases"]
+    threshold = intents["fuzzy_threshold"]
+    result_priority: int | None = None
 
-_PRIORITY_DISPLAY = {1: "High", 2: "Normal", 3: "Low"}
+    # Check exclamation marks at end of text
+    stripped = text.rstrip()
+    if stripped.endswith("!!!") or stripped.endswith("!!") or stripped.endswith("!"):
+        # Find the exclamation span
+        exc_start = len(stripped.rstrip("!"))
+        exc_end = len(stripped)
+        if tracker.is_free(exc_start, exc_end):
+            tracker.unreserve_kind(EntityKind.PRIORITY)
+            tracker.reserve(EntitySpan(exc_start, exc_end, EntityKind.PRIORITY, "High"))
+            result_priority = 1
 
-
-def _extract_priority(text: str, tracker: _SpanTracker) -> int | None:
-    """Extract priority (last match wins)."""
-    result: int | None = None
-    result_span: EntitySpan | None = None
-
-    for pattern, fixed_value in _PRIORITY_PATTERNS:
-        for m in pattern.finditer(text):
-            if not tracker.is_free(m.start(), m.end()):
-                continue
-            if fixed_value is not None:
-                value = fixed_value
-            else:
-                raw = m.group(1).lower()
-                value = _PRIORITY_NUMBER_WORDS.get(raw, int(raw) if raw.isdigit() else 2)
-            # Last match wins — overwrite previous
-            result = value
-            if result_span is not None:
-                # Un-reserve the previous span by removing it
-                tracker._spans = [s for s in tracker._spans if s is not result_span]
-            result_span = EntitySpan(
-                m.start(), m.end(), EntityKind.PRIORITY, _PRIORITY_DISPLAY.get(value, "")
+    # Single-token exact matches
+    for tok in tokens:
+        if not tracker.is_free(tok.start, tok.end):
+            continue
+        if tok.text in priority_tokens:
+            tracker.unreserve_kind(EntityKind.PRIORITY)
+            val = priority_tokens[tok.text]
+            tracker.reserve(
+                EntitySpan(tok.start, tok.end, EntityKind.PRIORITY, _PRIORITY_DISPLAY[val])
             )
-            tracker.reserve(result_span)
+            result_priority = val
 
-    return result
+    # Multi-token phrase matching (2-3 token windows)
+    for window_size in (2, 3):
+        for i in range(len(tokens) - window_size + 1):
+            phrase_tokens = tokens[i : i + window_size]
+            start = phrase_tokens[0].start
+            end = phrase_tokens[-1].end
+            if not tracker.is_free(start, end):
+                continue
+            phrase = " ".join(t.text for t in phrase_tokens)
+
+            # Exact phrase match
+            if phrase in priority_phrases:
+                tracker.unreserve_kind(EntityKind.PRIORITY)
+                val = priority_phrases[phrase]
+                tracker.reserve(EntitySpan(start, end, EntityKind.PRIORITY, _PRIORITY_DISPLAY[val]))
+                result_priority = val
+                continue
+
+            # Fuzzy phrase match
+            match = _fuzzy_match_phrase(phrase, priority_phrases, threshold)
+            if match is not None:
+                matched_phrase, confidence = match
+                val = priority_phrases[matched_phrase]
+                tracker.unreserve_kind(EntityKind.PRIORITY)
+                tracker.reserve(
+                    EntitySpan(start, end, EntityKind.PRIORITY, _PRIORITY_DISPLAY[val], confidence)
+                )
+                result_priority = val
+
+    # Single-token fuzzy match (for typos like "importnt", "urgnt")
+    for tok in tokens:
+        if not tracker.is_free(tok.start, tok.end):
+            continue
+        if len(tok.text) < 3:
+            continue  # Skip very short tokens to avoid false positives
+        match = _fuzzy_match_token(tok.text, list(priority_tokens.keys()), threshold)
+        if match is not None:
+            matched_word, confidence = match
+            if matched_word == tok.text:
+                continue  # Already handled as exact match
+            val = priority_tokens[matched_word]
+            tracker.unreserve_kind(EntityKind.PRIORITY)
+            tracker.reserve(
+                EntitySpan(
+                    tok.start, tok.end, EntityKind.PRIORITY, _PRIORITY_DISPLAY[val], confidence
+                )
+            )
+            result_priority = val
+
+    return result_priority
 
 
 # ---------------------------------------------------------------------------
 # Recurrence extraction
 # ---------------------------------------------------------------------------
 
-_RECURRENCE_EVERY_N_RE = re.compile(
-    r"\bevery\s+(\d+)\s+(minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b", re.IGNORECASE
-)
-_RECURRENCE_EVERY_OTHER_RE = re.compile(r"\bevery\s+other\s+(day|week|month|year)\b", re.IGNORECASE)
-_RECURRENCE_EVERY_UNIT_RE = re.compile(
-    r"\bevery\s+(minute|hour|day|week|month|year)\b", re.IGNORECASE
-)
-_RECURRENCE_EVERY_TIME_OF_DAY_RE = re.compile(r"\bevery\s+(morning|night|evening)\b", re.IGNORECASE)
-_RECURRENCE_EVERY_WEEKDAY_RE = re.compile(r"\bevery\s+weekday\b", re.IGNORECASE)
-_RECURRENCE_FREQ_WORD_RE = re.compile(
-    r"\b(minutely|hourly|daily|weekly|monthly|yearly|annually"
-    r"|biweekly|bi-weekly|bimonthly|bi-monthly)\b",
-    re.IGNORECASE,
-)
-_RECURRENCE_TIMES_RE = re.compile(
-    r"\b(?:(\d+)\s+times?|twice)\s+a\s+(day|week|month)\b", re.IGNORECASE
-)
-_RECURRENCE_FOR_RE = re.compile(r"\bfor\s+(\d+)\s+(days?|weeks?|months?|years?)\b", re.IGNORECASE)
-_RECURRENCE_UNTIL_RE = re.compile(
-    r"\buntil\s+(.+?)(?:\s+(?:at|by|p[1-3]|[@#~])|\s*$)", re.IGNORECASE
-)
+_UNIT_MAP = {
+    "day": "daily",
+    "days": "daily",
+    "week": "weekly",
+    "weeks": "weekly",
+    "month": "monthly",
+    "months": "monthly",
+    "year": "yearly",
+    "years": "yearly",
+    "minute": "minutely",
+    "minutes": "minutely",
+    "hour": "minutely",
+    "hours": "minutely",
+}
 
-_TIME_OF_DAY_MAP = {"morning": time(9, 0), "night": time(21, 0), "evening": time(18, 0)}
+_UNIT_MULTIPLIER = {
+    "hour": 60,
+    "hours": 60,
+    "minute": 1,
+    "minutes": 1,
+}
 
 
 def _extract_recurrence(
-    text: str, tracker: _SpanTracker, today: date
-) -> tuple[str | None, int, date | None, int | None, str | None]:
-    """Extract recurrence pattern.
-
-    Returns (type, interval, end_date, end_count, times_annotation).
-    times_annotation is e.g. "(3x/day)" for "3 times a day".
-    """
+    text: str, tokens: list[_Token], tracker: _SpanTracker, today: date
+) -> tuple[str | None, int, date | None, int | None, str | None, time | None]:
+    """Extract recurrence pattern. Returns (type, interval, end_date, end_count, times_anno, time_hint)."""
+    intents = _get_intents()
+    rec_tokens = intents["recurrence_tokens"]
+    threshold = intents["fuzzy_threshold"]
     rec_type: str | None = None
-    interval: int = 1
-    end_date: date | None = None
-    end_count: int | None = None
-    times_annotation: str | None = None
-    main_span_start: int | None = None
-    main_span_end: int | None = None
-    display_base: str = ""
+    rec_interval: int = 1
+    rec_end_date: date | None = None
+    rec_end_count: int | None = None
+    times_anno: str | None = None
+    time_hint: time | None = None
+    rec_span_start: int | None = None
+    rec_span_end: int | None = None
 
-    # Track time-of-day hint from recurrence (e.g., "every morning" → daily + 9:00)
-    rec_time_hint: time | None = None
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if not tracker.is_free(tok.start, tok.end):
+            i += 1
+            continue
 
-    # Try "every N minutes/hours/days/weeks/months/years"
-    m = _RECURRENCE_EVERY_N_RE.search(text)
-    if m and tracker.is_free(m.start(), m.end()):
-        user_interval = int(m.group(1))
-        rec_type, multiplier = _unit_to_recurrence_type(m.group(2))
-        interval = user_interval * multiplier if multiplier else user_interval
-        display_base = f"every {m.group(1)} {m.group(2).lower()}"
-        main_span_start = m.start()
-        main_span_end = m.end()
+        # "every ..." patterns
+        if tok.text == "every" and i + 1 < len(tokens):
+            next_tok = tokens[i + 1]
 
-    # Try "every other day/week/month/year"
-    if rec_type is None:
-        m = _RECURRENCE_EVERY_OTHER_RE.search(text)
-        if m and tracker.is_free(m.start(), m.end()):
-            unit = m.group(1).lower()
-            rec_type, _ = _unit_to_recurrence_type(unit)
-            interval = 2
-            display_base = f"every other {unit}"
-            main_span_start = m.start()
-            main_span_end = m.end()
+            # "every other <unit>"
+            if next_tok.text == "other" and i + 2 < len(tokens):
+                unit_tok = tokens[i + 2]
+                unit_text = unit_tok.text
+                if unit_text in _UNIT_MAP:
+                    rec_type = _UNIT_MAP[unit_text]
+                    rec_interval = 2
+                    if unit_text in _UNIT_MULTIPLIER:
+                        rec_interval = _UNIT_MULTIPLIER[unit_text] * 2
+                    rec_span_start = tok.start
+                    rec_span_end = unit_tok.end
+                    i += 3
+                    continue
 
-    # Try "every morning/night/evening" → daily + time hint
-    if rec_type is None:
-        m = _RECURRENCE_EVERY_TIME_OF_DAY_RE.search(text)
-        if m and tracker.is_free(m.start(), m.end()):
-            tod = m.group(1).lower()
-            rec_type = "daily"
-            rec_time_hint = _TIME_OF_DAY_MAP.get(tod)
-            display_base = f"every {tod}"
-            main_span_start = m.start()
-            main_span_end = m.end()
+            # "every N <unit>" or "every <number_word> <unit>"
+            num = _token_to_number(next_tok.text)
+            if num is not None and i + 2 < len(tokens):
+                unit_tok = tokens[i + 2]
+                unit_match = _fuzzy_match_token(unit_tok.text, list(_UNIT_MAP.keys()), threshold)
+                if unit_match:
+                    matched_unit, _ = unit_match
+                    rec_type = _UNIT_MAP[matched_unit]
+                    rec_interval = num
+                    if matched_unit in _UNIT_MULTIPLIER:
+                        rec_interval = _UNIT_MULTIPLIER[matched_unit] * num
+                    rec_span_start = tok.start
+                    rec_span_end = unit_tok.end
+                    i += 3
+                    continue
 
-    # Try "every weekday"
-    if rec_type is None:
-        m = _RECURRENCE_EVERY_WEEKDAY_RE.search(text)
-        if m and tracker.is_free(m.start(), m.end()):
-            rec_type = "daily"
-            display_base = "every weekday"
-            main_span_start = m.start()
-            main_span_end = m.end()
+            # "every <unit>" (including morning/night/evening/weekday)
+            unit_text = next_tok.text
+            every_map = intents["recurrence_every"]
+            if unit_text in every_map and every_map[unit_text] is not None:
+                entry = every_map[unit_text]
+                rec_type, rec_interval = entry[0], entry[1]
+                if unit_text in _UNIT_MULTIPLIER:
+                    rec_interval = _UNIT_MULTIPLIER[unit_text]
+                rec_span_start = tok.start
+                rec_span_end = next_tok.end
+                # Time hint for morning/night/evening
+                time_hints = intents["recurrence_time_hints"]
+                if unit_text in time_hints:
+                    time_hint = time_hints[unit_text]
+                i += 2
+                continue
 
-    # Try "every minute/hour/day/week/month/year"
-    if rec_type is None:
-        m = _RECURRENCE_EVERY_UNIT_RE.search(text)
-        if m and tracker.is_free(m.start(), m.end()):
-            rec_type, multiplier = _unit_to_recurrence_type(m.group(1))
-            if multiplier:
-                interval = multiplier
-            display_base = f"every {m.group(1).lower()}"
-            main_span_start = m.start()
-            main_span_end = m.end()
+            # "every <day_name>" (e.g., "every Monday")
+            import calendar as _cal
 
-    # Try "minutely/hourly/daily/weekly/monthly/yearly/annually/biweekly/bimonthly"
-    if rec_type is None:
-        m = _RECURRENCE_FREQ_WORD_RE.search(text)
-        if m and tracker.is_free(m.start(), m.end()):
-            rec_type, interval = _freq_word_to_type(m.group(1))
-            display_base = m.group(1).lower()
-            main_span_start = m.start()
-            main_span_end = m.end()
+            day_names = {d.lower() for d in _cal.day_name} | {d.lower() for d in _cal.day_abbr}
+            day_match = _fuzzy_match_token(next_tok.text, list(day_names), threshold)
+            if day_match:
+                rec_type = "weekly"
+                rec_interval = 1
+                rec_span_start = tok.start
+                rec_span_end = next_tok.end
+                i += 2
+                continue
 
-    # Try "N times a day/week/month" or "twice a day/week/month"
-    if rec_type is None:
-        m = _RECURRENCE_TIMES_RE.search(text)
-        if m and tracker.is_free(m.start(), m.end()):
-            n = int(m.group(1)) if m.group(1) else 2  # "twice" has no group(1)
-            unit = m.group(2).lower()
-            rec_type, _ = _unit_to_recurrence_type(unit)
-            times_annotation = f"({n}x/{unit})"
-            display_base = m.group(0).lower()
-            main_span_start = m.start()
-            main_span_end = m.end()
+        # Single-token frequency words: "daily", "weekly", etc.
+        if tok.text in rec_tokens:
+            entry = rec_tokens[tok.text]
+            rec_type, rec_interval = entry[0], entry[1]
+            rec_span_start = tok.start
+            rec_span_end = tok.end
+            i += 1
+            continue
 
-    if rec_type is None:
-        return None, 1, None, None, None, None
+        # Fuzzy single-token frequency match
+        match = _fuzzy_match_token(tok.text, list(rec_tokens.keys()), threshold)
+        if match and len(tok.text) >= 4:
+            matched_word, confidence = match
+            if matched_word != tok.text:
+                entry = rec_tokens[matched_word]
+                rec_type, rec_interval = entry[0], entry[1]
+                rec_span_start = tok.start
+                rec_span_end = tok.end
+                i += 1
+                continue
 
-    # Display text preserves the user's original phrasing
-    display_parts = [display_base]
+        # "N times a <unit>" or "twice a <unit>"
+        num = _token_to_number(tok.text)
+        if num is not None or tok.text == "twice":
+            if tok.text == "twice":
+                num = 2
+            if (
+                i + 2 < len(tokens)
+                and tokens[i + 1].text in ("times", "time")
+                and i + 3 < len(tokens)
+                and tokens[i + 2].text == "a"
+            ):
+                unit_tok = tokens[i + 3]
+                unit_text = unit_tok.text
+                if unit_text in _UNIT_MAP:
+                    rec_type = _UNIT_MAP[unit_text]
+                    rec_interval = 1
+                    unit_label = unit_text.rstrip("s") if unit_text.endswith("s") else unit_text
+                    times_anno = f"({num}x/{unit_label})"
+                    rec_span_start = tok.start
+                    rec_span_end = unit_tok.end
+                    i += 4
+                    continue
 
-    # Reserve main span
-    assert main_span_start is not None and main_span_end is not None
+        i += 1
 
-    # Look for "for N days/weeks" suffix after the main match
-    suffix_text = text[main_span_end:]
-    m_for = _RECURRENCE_FOR_RE.search(suffix_text)
-    if m_for:
-        abs_start = main_span_end + m_for.start()
-        abs_end = main_span_end + m_for.end()
-        if tracker.is_free(abs_start, abs_end):
-            end_count = int(m_for.group(1))
-            main_span_end = abs_end
-            display_parts.append(f"for {end_count}")
+    # Reserve the recurrence span
+    if (
+        rec_type is not None
+        and rec_span_start is not None
+        and rec_span_end is not None
+        and tracker.is_free(rec_span_start, rec_span_end)
+    ):
+        # Check for prefix word before recurrence
+        for ptok in tokens:
+            if (
+                ptok.end == rec_span_start
+                or (ptok.end <= rec_span_start and rec_span_start - ptok.end <= 1)
+            ) and ptok.text in intents["date_prefixes"]:
+                rec_span_start = ptok.start
+                break
+
+            display_parts = []
+            if rec_type == "minutely":
+                display_parts.append(f"Every {rec_interval}m")
+            else:
+                if rec_interval > 1:
+                    display_parts.append(f"Every {rec_interval} {rec_type.replace('ly', '')}s")
+                else:
+                    display_parts.append(rec_type.capitalize())
+            display = display_parts[0]
+
+            tracker.reserve(
+                EntitySpan(rec_span_start, rec_span_end, EntityKind.RECURRENCE, display)
+            )
+
+    # Look for "for N <unit>" suffix
+    for i in range(len(tokens) - 2):
+        if tokens[i].text == "for" and not tracker.is_free(tokens[i].start, tokens[i].end):
+            continue
+        if tokens[i].text != "for":
+            continue
+        num = _token_to_number(tokens[i + 1].text)
+        if num is not None and i + 2 < len(tokens):
+            unit_tok = tokens[i + 2]
+            if unit_tok.text in _UNIT_MAP:
+                start = tokens[i].start
+                end = unit_tok.end
+                if tracker.is_free(start, end):
+                    rec_end_count = num
+                    tracker.reserve(EntitySpan(start, end, EntityKind.RECURRENCE, f"for {num}"))
+                    break
 
     # Look for "until <date>" suffix
-    if end_count is None:
-        m_until = _RECURRENCE_UNTIL_RE.search(suffix_text)
-        if m_until:
-            abs_start = main_span_end + m_until.start()
-            abs_end = main_span_end + m_until.end()
-            if tracker.is_free(abs_start, abs_end):
-                date_text = m_until.group(1).strip()
-                parsed_end = _parse_date_text(date_text, today)
-                if parsed_end is not None:
-                    end_date = parsed_end
-                    main_span_end = abs_end
-                    display_parts.append(f"until {end_date}")
+    for i in range(len(tokens) - 1):
+        if tokens[i].text != "until":
+            continue
+        start = tokens[i].start
+        if not tracker.is_free(start, tokens[i].end):
+            continue
+        # Remaining text after "until"
+        remaining = text[tokens[i + 1].start :]
+        try:
+            import dateparser as _dp
 
-    tracker.reserve(
-        EntitySpan(main_span_start, main_span_end, EntityKind.RECURRENCE, " ".join(display_parts))
-    )
+            dt = _dp.parse(
+                remaining,
+                languages=["en"],
+                settings={
+                    "RELATIVE_BASE": _datetime(today.year, today.month, today.day),
+                    "PREFER_DATES_FROM": "future",
+                },
+            )
+            if dt is not None:
+                rec_end_date = dt.date()
+                end = len(text)  # Consume rest of text
+                tracker.reserve(
+                    EntitySpan(start, end, EntityKind.RECURRENCE, f"until {rec_end_date}")
+                )
+        except Exception:
+            pass
+        break
 
-    return rec_type, interval, end_date, end_count, times_annotation, rec_time_hint
+    return rec_type, rec_interval, rec_end_date, rec_end_count, times_anno, time_hint
 
 
 # ---------------------------------------------------------------------------
 # Pomodoro extraction
 # ---------------------------------------------------------------------------
 
-_POMODORO_RE = re.compile(r"~(\d+)\s*(?:p(?:omodoros?|oms?)?|sessions?)\b", re.IGNORECASE)
 
+def _extract_pomodoro(tokens: list[_Token], tracker: _SpanTracker) -> int | None:
+    """Extract pomodoro estimate: ~N followed by a pomodoro unit word."""
+    intents = _get_intents()
+    pom_units = intents["pomodoro_units"]
+    threshold = intents["fuzzy_threshold"]
 
-def _extract_pomodoro(text: str, tracker: _SpanTracker) -> int | None:
-    """Extract pomodoro estimate (~3p, ~2 pomodoros, etc.)."""
-    m = _POMODORO_RE.search(text)
-    if m and tracker.is_free(m.start(), m.end()):
-        value = int(m.group(1))
-        tracker.reserve(EntitySpan(m.start(), m.end(), EntityKind.POMODORO, f"~{value} pom"))
-        return value
-    return None
+    for i, tok in enumerate(tokens):
+        if not tok.text.startswith("~"):
+            continue
+        if not tracker.is_free(tok.start, tok.end):
+            continue
 
+        # Parse ~N or ~Np
+        rest = tok.text[1:]
+        if not rest:
+            continue
 
-# ---------------------------------------------------------------------------
-# Date extraction
-# ---------------------------------------------------------------------------
+        # ~3p, ~2pom (number + unit suffix in same token)
+        num_str = ""
+        unit_part = ""
+        for ch in rest:
+            if ch.isdigit():
+                num_str += ch
+            else:
+                unit_part = rest[len(num_str) :]
+                break
+        if not num_str:
+            continue
+        num = int(num_str)
 
-# Optional prefix words that are consumed with the date
-_DATE_PREFIX_RE = re.compile(r"\b(?:due|by|on|before)\s+", re.IGNORECASE)
-
-
-def _parse_date_text(text: str, today: date) -> date | None:
-    """Try to parse a date from a short text fragment (used by recurrence 'until')."""
-    text = text.strip()
-    # Try simple patterns
-    for pattern, resolver in _DATE_RESOLVERS:
-        m = pattern.search(text)
-        if m:
-            try:
-                return resolver(m, today)
-            except (ValueError, KeyError):
+        # Check if unit part is in the same token
+        if unit_part:
+            match = _fuzzy_match_token(unit_part, list(pom_units), threshold)
+            if match:
+                tracker.reserve(EntitySpan(tok.start, tok.end, EntityKind.POMODORO, f"~{num} pom"))
+                return num
+            # Check if it's a time estimate unit instead
+            time_units = intents["time_estimate_units"]
+            if unit_part in time_units:
+                # This is estimated_minutes, not pomodoro — skip here
                 continue
+
+        # Check next token for unit word
+        if i + 1 < len(tokens):
+            next_tok = tokens[i + 1]
+            if tracker.is_free(next_tok.start, next_tok.end):
+                match = _fuzzy_match_token(next_tok.text, list(pom_units), threshold)
+                if match:
+                    end = next_tok.end
+                    tracker.reserve(EntitySpan(tok.start, end, EntityKind.POMODORO, f"~{num} pom"))
+                    return num
+
+        # Bare ~N without unit — treat as pomodoro if number is small
+        if num <= 20 and not unit_part:
+            tracker.reserve(EntitySpan(tok.start, tok.end, EntityKind.POMODORO, f"~{num} pom"))
+            return num
+
     return None
 
 
-def _resolve_today(m: re.Match[str], today: date) -> date:
-    return today
+# ---------------------------------------------------------------------------
+# Estimated minutes extraction (NEW)
+# ---------------------------------------------------------------------------
 
 
-def _resolve_tomorrow(m: re.Match[str], today: date) -> date:
-    return today + timedelta(days=1)
+def _extract_estimated_minutes(tokens: list[_Token], tracker: _SpanTracker) -> int | None:
+    """Extract time estimate: ~90m, ~2h, ~1h30m."""
+    intents = _get_intents()
+    time_units = intents["time_estimate_units"]
 
+    for tok in tokens:
+        if not tok.text.startswith("~"):
+            continue
+        if not tracker.is_free(tok.start, tok.end):
+            continue
 
-def _resolve_yesterday(m: re.Match[str], today: date) -> date:
-    return today - timedelta(days=1)
+        rest = tok.text[1:]
+        if not rest:
+            continue
 
+        # Parse ~Nm, ~Nh, ~NhNm patterns
+        total_minutes = 0
+        pos = 0
+        found_unit = False
+        while pos < len(rest):
+            # Extract number
+            num_str = ""
+            while pos < len(rest) and rest[pos].isdigit():
+                num_str += rest[pos]
+                pos += 1
+            if not num_str:
+                break
+            num = int(num_str)
 
-def _resolve_next_day(m: re.Match[str], today: date) -> date:
-    day_name = m.group(1).lower()
-    return _resolve_next_day_name(day_name, today)
+            # Extract unit suffix
+            unit_str = ""
+            while pos < len(rest) and rest[pos].isalpha():
+                unit_str += rest[pos]
+                pos += 1
 
+            if unit_str in time_units:
+                total_minutes += num * time_units[unit_str]
+                found_unit = True
+            else:
+                break
 
-def _resolve_day(m: re.Match[str], today: date) -> date:
-    day_name = m.group(0).lower()
-    return _resolve_day_name(day_name, today)
-
-
-def _resolve_next_week(m: re.Match[str], today: date) -> date:
-    return today + timedelta(days=7)
-
-
-def _resolve_next_month(m: re.Match[str], today: date) -> date:
-    return _add_months(today, 1)
-
-
-def _resolve_in_days(m: re.Match[str], today: date) -> date:
-    return today + timedelta(days=int(m.group(1)))
-
-
-def _resolve_in_weeks(m: re.Match[str], today: date) -> date:
-    return today + timedelta(weeks=int(m.group(1)))
-
-
-def _resolve_in_months(m: re.Match[str], today: date) -> date:
-    return _add_months(today, int(m.group(1)))
-
-
-def _resolve_day_after_tomorrow(m: re.Match[str], today: date) -> date:
-    return today + timedelta(days=2)
-
-
-def _resolve_this_weekend(m: re.Match[str], today: date) -> date:
-    # Saturday of this week (or next if already Saturday/Sunday)
-    days_until_sat = (5 - today.weekday()) % 7
-    if days_until_sat == 0:
-        days_until_sat = 7
-    return today + timedelta(days=days_until_sat)
-
-
-def _resolve_end_of_week(m: re.Match[str], today: date) -> date:
-    # Friday of this week (or next Friday if already past)
-    days_until_fri = (4 - today.weekday()) % 7
-    if days_until_fri == 0 and today.weekday() != 4:
-        days_until_fri = 7
-    if days_until_fri == 0:
-        days_until_fri = 7  # If today IS Friday, next Friday
-    return today + timedelta(days=days_until_fri)
-
-
-def _resolve_end_of_month(m: re.Match[str], today: date) -> date:
-    last_day = calendar.monthrange(today.year, today.month)[1]
-    eom = date(today.year, today.month, last_day)
-    if eom <= today:
-        # Already past end of month — next month
-        return _add_months(today, 1).replace(
-            day=calendar.monthrange(_add_months(today, 1).year, _add_months(today, 1).month)[1]
-        )
-    return eom
-
-
-def _resolve_in_one_unit(m: re.Match[str], today: date) -> date:
-    unit = m.group(1).lower()
-    if unit == "day":
-        return today + timedelta(days=1)
-    if unit == "week":
-        return today + timedelta(weeks=1)
-    return _add_months(today, 1)
-
-
-def _resolve_ordinal_day(m: re.Match[str], today: date) -> date:
-    day = int(m.group(1))
-    # This month if not passed, else next month
-    try:
-        candidate = date(today.year, today.month, day)
-    except ValueError:
-        return _add_months(today, 1).replace(day=min(day, 28))
-    if candidate <= today:
-        return _add_months(today, 1).replace(
-            day=min(
-                day, calendar.monthrange(_add_months(today, 1).year, _add_months(today, 1).month)[1]
+        if found_unit and total_minutes > 0:
+            display = (
+                f"~{total_minutes}m"
+                if total_minutes < 60
+                else f"~{total_minutes // 60}h {total_minutes % 60}m"
             )
-        )
-    return candidate
+            tracker.reserve(EntitySpan(tok.start, tok.end, EntityKind.ESTIMATE, display))
+            return total_minutes
+
+    return None
 
 
-def _resolve_ordinal_of_month(m: re.Match[str], today: date) -> date:
-    day = int(m.group(1))
-    month_name = m.group(2).lower()
-    month = _MONTHS_MAP.get(month_name)
-    if month is None:
-        raise ValueError(f"Unknown month: {month_name}")
-    year = today.year
+# ---------------------------------------------------------------------------
+# Date/time extraction via dateparser
+# ---------------------------------------------------------------------------
+
+
+def _extract_dates_and_times(
+    text: str, tokens: list[_Token], tracker: _SpanTracker, today: date
+) -> tuple[date | None, time | None]:
+    """Extract dates and times using dateparser.search.search_dates()."""
+    intents = _get_intents()
+    due_date: date | None = None
+    due_time: time | None = None
+
+    # 1. Time-of-day keywords from intent dictionary (before dateparser)
+    tod = intents["time_of_day"]
+    tod_phrases = intents["time_of_day_phrases"]
+
+    # Check phrases first (2-3 token windows)
+    for window_size in (3, 2):
+        for i in range(len(tokens) - window_size + 1):
+            phrase_tokens = tokens[i : i + window_size]
+            start = phrase_tokens[0].start
+            end = phrase_tokens[-1].end
+            if not tracker.is_free(start, end):
+                continue
+            phrase = " ".join(t.text for t in phrase_tokens)
+            if phrase in tod_phrases:
+                t = tod_phrases[phrase]
+                tracker.unreserve_kind(EntityKind.TIME)
+                tracker.reserve(
+                    EntitySpan(start, end, EntityKind.TIME, t.strftime("%I:%M %p").lstrip("0"))
+                )
+                due_time = t
+
+    # Check single tokens
+    for tok in tokens:
+        if not tracker.is_free(tok.start, tok.end):
+            continue
+        if tok.text in tod:
+            t = tod[tok.text]
+            tracker.unreserve_kind(EntityKind.TIME)
+            tracker.reserve(
+                EntitySpan(tok.start, tok.end, EntityKind.TIME, t.strftime("%I:%M %p").lstrip("0"))
+            )
+            due_time = t
+
+    # 2. Use dateparser for remaining date/time extraction
+    # Build unclaimed text for dateparser
     try:
-        candidate = date(year, month, day)
-    except ValueError:
-        raise
-    if candidate < today:
-        year += 1
-    return date(year, month, day)
+        from dateparser.search import search_dates
 
+        settings = {
+            "RELATIVE_BASE": _datetime(today.year, today.month, today.day),
+            "PREFER_DATES_FROM": "future",
+            "STRICT_PARSING": False,
+        }
 
-def _resolve_month_day(m: re.Match[str], today: date) -> date:
-    month_name = m.group(1).lower()
-    month = _MONTHS_MAP.get(month_name)
-    if month is None:
-        raise ValueError(f"Unknown month: {month_name}")
-    day = int(m.group(2))
-    year_str = m.group(3)
-    if year_str:
-        year = int(year_str)
-    else:
-        # Current year if date hasn't passed, else next year
-        year = today.year
-        try:
-            candidate = date(year, month, day)
-        except ValueError:
-            raise
-        if candidate < today:
-            year += 1
-    return date(year, month, day)
+        # Search for dates in the full text
+        results = search_dates(text, languages=["en"], settings=settings)
+        if results:
+            for matched_text, dt in results:
+                # Find the position of the matched text in the original string
+                search_start = 0
+                while True:
+                    pos = text.lower().find(matched_text.lower(), search_start)
+                    if pos == -1:
+                        break
+                    end_pos = pos + len(matched_text)
 
+                    # Check for prefix words (due, by, on, before)
+                    prefix_start = pos
+                    for ptok in tokens:
+                        if (
+                            ptok.end <= pos
+                            and pos - ptok.end <= 1
+                            and ptok.text in intents["date_prefixes"]
+                        ):
+                            prefix_start = ptok.start
+                            break
 
-def _resolve_iso_date(m: re.Match[str], today: date) -> date:
-    return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                    if tracker.is_free(prefix_start, end_pos):
+                        # Determine if this is a date, time, or both
+                        has_date = dt.date() != today or matched_text.lower() in ("today",)
+                        has_time = dt.hour != 0 or dt.minute != 0
 
+                        if has_date:
+                            tracker.unreserve_kind(EntityKind.DATE)
+                            due_date = dt.date()
+                            display = due_date.strftime("%b %d, %Y")
+                            tracker.reserve(
+                                EntitySpan(prefix_start, end_pos, EntityKind.DATE, display)
+                            )
 
-def _resolve_slash_date(m: re.Match[str], today: date) -> date:
-    month = int(m.group(1))
-    day = int(m.group(2))
-    year_str = m.group(3)
-    if year_str:
-        year = int(year_str)
-    else:
-        year = today.year
-        try:
-            candidate = date(year, month, day)
-        except ValueError:
-            raise
-        if candidate < today:
-            year += 1
-    return date(year, month, day)
+                        if has_time and due_time is None:
+                            due_time = time(dt.hour, dt.minute)
+                            # Only add time span if not already covered by the date span
+                            # (dateparser often returns combined date+time)
+                        break
+                    search_start = pos + 1
 
+    except Exception:
+        logger.log.debug("dateparser search_dates failed", exc_info=True)
 
-# Ordered list of (compiled pattern, resolver function)
-_DateResolver = Callable[[re.Match[str], date], date]
-
-_DATE_RESOLVERS: list[tuple[re.Pattern[str], _DateResolver]] = [
-    (re.compile(r"\btoday\b", re.IGNORECASE), _resolve_today),
-    (re.compile(r"\bday\s+after\s+tomorrow\b", re.IGNORECASE), _resolve_day_after_tomorrow),
-    (re.compile(r"\btomorrow\b", re.IGNORECASE), _resolve_tomorrow),
-    (re.compile(r"\byesterday\b", re.IGNORECASE), _resolve_yesterday),
-    (
-        re.compile(r"\bthis\s+coming\s+(" + _DAYS_RE + r")\b", re.IGNORECASE),
-        lambda m, today: _resolve_day_name(m.group(1).lower(), today),
-    ),
-    (
-        re.compile(r"\bnext\s+(" + _DAYS_RE + r")\b", re.IGNORECASE),
-        _resolve_next_day,
-    ),
-    (
-        re.compile(r"\bthis\s+(" + _DAYS_RE + r")\b", re.IGNORECASE),
-        lambda m, today: _resolve_day_name(m.group(1).lower(), today),
-    ),
-    (re.compile(r"\b(" + _DAYS_RE + r")\b", re.IGNORECASE), _resolve_day),
-    (re.compile(r"\bthis\s+weekend\b", re.IGNORECASE), _resolve_this_weekend),
-    (re.compile(r"\bnext\s+week\b", re.IGNORECASE), _resolve_next_week),
-    (re.compile(r"\bnext\s+month\b", re.IGNORECASE), _resolve_next_month),
-    (
-        re.compile(r"\bend\s+of\s+(?:the\s+)?week\b", re.IGNORECASE),
-        _resolve_end_of_week,
-    ),
-    (
-        re.compile(r"\bend\s+of\s+(?:the\s+)?month\b", re.IGNORECASE),
-        _resolve_end_of_month,
-    ),
-    (re.compile(r"\bin\s+an?\s+(day|week|month)\b", re.IGNORECASE), _resolve_in_one_unit),
-    (re.compile(r"\bin\s+(\d+)\s+days?\b", re.IGNORECASE), _resolve_in_days),
-    (re.compile(r"\bin\s+(\d+)\s+weeks?\b", re.IGNORECASE), _resolve_in_weeks),
-    (re.compile(r"\bin\s+(\d+)\s+months?\b", re.IGNORECASE), _resolve_in_months),
-    (
-        re.compile(
-            r"\bthe\s+(\d{1,2})(?:st|nd|rd|th)\s+of\s+(" + _MONTHS_RE + r")\b",
-            re.IGNORECASE,
-        ),
-        _resolve_ordinal_of_month,
-    ),
-    (
-        re.compile(r"\bthe\s+(\d{1,2})(?:st|nd|rd|th)\b", re.IGNORECASE),
-        _resolve_ordinal_day,
-    ),
-    (
-        re.compile(
-            r"\b(" + _MONTHS_RE + r")\s+(\d{1,2})(?:\s*,?\s*(\d{4}))?\b",
-            re.IGNORECASE,
-        ),
-        _resolve_month_day,
-    ),
-    (re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b"), _resolve_iso_date),
-    (re.compile(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{4}))?\b"), _resolve_slash_date),
-]
-
-
-def _extract_dates(text: str, tracker: _SpanTracker, today: date) -> date | None:
-    """Extract date (last match wins)."""
-    result: date | None = None
-    result_span: EntitySpan | None = None
-
-    for pattern, resolver in _DATE_RESOLVERS:
-        for m in pattern.finditer(text):
-            start = m.start()
-            end = m.end()
-
-            # Check for prefix word before the match
-            prefix_start = start
-            before = text[:start]
-            pm = _DATE_PREFIX_RE.search(before)
-            if pm and pm.end() == start:
-                prefix_start = pm.start()
-
-            if not tracker.is_free(prefix_start, end):
-                continue
-
-            try:
-                resolved = resolver(m, today)
-            except (ValueError, KeyError):
-                continue
-
-            # Last match wins
-            result = resolved
-            if result_span is not None:
-                tracker._spans = [s for s in tracker._spans if s is not result_span]
-            display = result.strftime("%b %d, %Y") if result else ""
-            result_span = EntitySpan(prefix_start, end, EntityKind.DATE, display)
-            tracker.reserve(result_span)
-
-    return result
+    return due_date, due_time
 
 
 # ---------------------------------------------------------------------------
-# Time extraction
-# ---------------------------------------------------------------------------
-
-
-def _resolve_time_12h(m: re.Match[str]) -> time:
-    hour = int(m.group(1))
-    minute = int(m.group(2))
-    ampm = m.group(3).lower()
-    if ampm == "pm" and hour != 12:
-        hour += 12
-    elif ampm == "am" and hour == 12:
-        hour = 0
-    return time(hour, minute)
-
-
-def _resolve_time_12h_no_min(m: re.Match[str]) -> time:
-    hour = int(m.group(1))
-    ampm = m.group(2).lower()
-    if ampm == "pm" and hour != 12:
-        hour += 12
-    elif ampm == "am" and hour == 12:
-        hour = 0
-    return time(hour, 0)
-
-
-def _resolve_time_24h(m: re.Match[str]) -> time:
-    return time(int(m.group(1)), int(m.group(2)))
-
-
-_TimeResolver = Callable[[re.Match[str]], time]
-
-
-def _resolve_in_minutes_time(m: re.Match[str]) -> time:
-    mins = int(m.group(1))
-    dt = _datetime.now() + timedelta(minutes=mins)
-    return dt.time().replace(second=0, microsecond=0)
-
-
-def _resolve_in_hours_time(m: re.Match[str]) -> time:
-    hours = int(m.group(1))
-    dt = _datetime.now() + timedelta(hours=hours)
-    return dt.time().replace(second=0, microsecond=0)
-
-
-def _resolve_in_one_hour_time(m: re.Match[str]) -> time:
-    dt = _datetime.now() + timedelta(hours=1)
-    return dt.time().replace(second=0, microsecond=0)
-
-
-_TIME_PATTERNS: list[tuple[re.Pattern[str], _TimeResolver]] = [
-    # With "at/by" prefix (most specific)
-    (
-        re.compile(r"\b(?:at|by|before)\s+(\d{1,2}):(\d{2})\s*(am|pm)\b", re.IGNORECASE),
-        _resolve_time_12h,
-    ),
-    (
-        re.compile(r"\b(?:at|by|before)\s+(\d{1,2})\s*(am|pm)\b", re.IGNORECASE),
-        _resolve_time_12h_no_min,
-    ),
-    (
-        re.compile(r"\b(?:at|by|before)\s+(\d{1,2}):(\d{2})\b"),
-        _resolve_time_24h,
-    ),
-    (re.compile(r"\b(?:at|by)\s+noon\b", re.IGNORECASE), lambda _m: time(12, 0)),
-    (re.compile(r"\b(?:at|by)\s+midnight\b", re.IGNORECASE), lambda _m: time(0, 0)),
-    # Bare times without prefix (voice dictation often omits "at")
-    (
-        re.compile(r"\b(\d{1,2}):(\d{2})\s*(am|pm)\b", re.IGNORECASE),
-        _resolve_time_12h,
-    ),
-    (
-        re.compile(r"\b(\d{1,2})\s*(am|pm)\b", re.IGNORECASE),
-        _resolve_time_12h_no_min,
-    ),
-    # Relative times
-    (
-        re.compile(r"\bin\s+(\d+)\s+minutes?\b", re.IGNORECASE),
-        _resolve_in_minutes_time,
-    ),
-    (
-        re.compile(r"\bin\s+(\d+)\s+hours?\b", re.IGNORECASE),
-        _resolve_in_hours_time,
-    ),
-    (
-        re.compile(r"\bin\s+an?\s+hour\b", re.IGNORECASE),
-        _resolve_in_one_hour_time,
-    ),
-    # Contextual keywords
-    (re.compile(r"\bnoon\b", re.IGNORECASE), lambda _m: time(12, 0)),
-    (re.compile(r"\bmidnight\b", re.IGNORECASE), lambda _m: time(0, 0)),
-    (re.compile(r"\btonight\b", re.IGNORECASE), lambda _m: time(20, 0)),
-    (re.compile(r"\bthis\s+morning\b", re.IGNORECASE), lambda _m: time(9, 0)),
-    (re.compile(r"\bthis\s+afternoon\b", re.IGNORECASE), lambda _m: time(14, 0)),
-    (re.compile(r"\bthis\s+evening\b", re.IGNORECASE), lambda _m: time(18, 0)),
-    (re.compile(r"\bmorning\b", re.IGNORECASE), lambda _m: time(9, 0)),
-    (re.compile(r"\bafternoon\b", re.IGNORECASE), lambda _m: time(14, 0)),
-    (re.compile(r"\bevening\b", re.IGNORECASE), lambda _m: time(18, 0)),
-    (re.compile(r"\b(?:eod|end\s+of\s+day)\b", re.IGNORECASE), lambda _m: time(17, 0)),
-]
-
-
-def _extract_times(text: str, tracker: _SpanTracker) -> time | None:
-    """Extract time (last match wins)."""
-    result: time | None = None
-    result_span: EntitySpan | None = None
-
-    for pattern, resolver in _TIME_PATTERNS:
-        for m in pattern.finditer(text):
-            if not tracker.is_free(m.start(), m.end()):
-                continue
-            try:
-                resolved = resolver(m)
-            except (ValueError, TypeError):
-                continue
-
-            result = resolved
-            if result_span is not None:
-                tracker._spans = [s for s in tracker._spans if s is not result_span]
-            display = result.strftime("%I:%M %p").lstrip("0") if result else ""
-            result_span = EntitySpan(m.start(), m.end(), EntityKind.TIME, display)
-            tracker.reserve(result_span)
-
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Remainder extraction
+# Remainder builder (preserved from previous parser)
 # ---------------------------------------------------------------------------
 
 
@@ -925,7 +975,7 @@ def _build_reminder(text: str, spans: list[EntitySpan]) -> str:
 
     # Join, collapse whitespace, strip
     raw = "".join(parts)
-    return re.sub(r"\s+", " ", raw).strip()
+    return " ".join(raw.split()).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -935,6 +985,9 @@ def _build_reminder(text: str, spans: list[EntitySpan]) -> str:
 
 def parse(text: str, today: date | None = None) -> ParseResult:
     """Parse a natural language task description into structured fields.
+
+    Uses intent dictionaries + fuzzy matching + dateparser.
+    No regex for NLP patterns (only @/# tag syntax).
 
     Args:
         text: Raw user input, e.g. "Buy groceries tomorrow at 3pm @errands"
@@ -946,30 +999,32 @@ def parse(text: str, today: date | None = None) -> ParseResult:
     if today is None:
         today = date.today()
 
-    # Preprocess: convert number words to digits in relevant contexts
-    text = _normalize_number_words(text)
+    text = _sanitize(text)
+    if not text:
+        return ParseResult(reminder="")
 
+    tokens = _tokenize(text)
     tracker = _SpanTracker()
 
     # 1. Tags (most unambiguous)
-    tags = _extract_tags(text, tracker)
+    tags = _extract_tags(text, tokens, tracker)
 
     # 2. Priority
-    priority = _extract_priority(text, tracker)
+    priority = _extract_priority(text, tokens, tracker)
 
     # 3. Recurrence (before dates — "every Monday" contains a day name)
     rec_type, rec_interval, rec_end_date, rec_end_count, times_anno, rec_time = _extract_recurrence(
-        text, tracker, today
+        text, tokens, tracker, today
     )
 
     # 4. Pomodoro estimate
-    pomodoro = _extract_pomodoro(text, tracker)
+    pomodoro = _extract_pomodoro(tokens, tracker)
 
-    # 5. Dates
-    due_date = _extract_dates(text, tracker, today)
+    # 5. Estimated minutes (~90m, ~2h)
+    estimated_minutes = _extract_estimated_minutes(tokens, tracker)
 
-    # 6. Times
-    due_time = _extract_times(text, tracker)
+    # 6. Dates and times (via dateparser)
+    due_date, due_time = _extract_dates_and_times(text, tokens, tracker, today)
 
     # Apply recurrence time hint (e.g., "every morning" → 9:00)
     if rec_time is not None and due_time is None:
@@ -999,5 +1054,6 @@ def parse(text: str, today: date | None = None) -> ParseResult:
         recurrence_end_date=rec_end_date,
         recurrence_end_count=rec_end_count,
         pomodoro_estimate=pomodoro,
+        estimated_minutes=estimated_minutes,
         spans=tracker.spans,
     )
