@@ -159,8 +159,15 @@ class MainWindow(QMainWindow):
         self._setup_status_bar()
         self._setup_tray_icon()
 
-        # Apply theme
+        # Apply theme and watch for system theme changes
         apply_current_theme()
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is not None:
+            style_hints = app.styleHints()
+            if style_hints is not None and hasattr(style_hints, "colorSchemeChanged"):
+                style_hints.colorSchemeChanged.connect(self._on_system_theme_changed)
 
         # Load data
         self._load_database()
@@ -3512,6 +3519,12 @@ class MainWindow(QMainWindow):
                 self._start_web_server()
             elif not self._config.web.enabled and self._web_server is not None:
                 self._stop_web_server()
+            self._refresh_ui()
+
+    def _on_system_theme_changed(self) -> None:
+        """Handle system dark/light mode change (macOS auto-switch)."""
+        if self._config.appearance.theme == "system":
+            apply_current_theme()
             self._refresh_ui()
 
     def _on_focus_stats(self) -> None:
