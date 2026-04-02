@@ -437,11 +437,22 @@ async def handle_get_board(request: web.Request) -> web.Response:
         return _error(404, "List not found")
 
     columns: dict[str, list[dict[str, Any]]] = {col: [] for col in lst.board_columns}
-    for item in lst.active_items():
+    children_by_parent: dict[str, list[dict[str, Any]]] = {}
+    active = list(lst.active_items())
+    for item in active:
         if item.parent_id is not None:
+            pid = str(item.parent_id)
+            children_by_parent.setdefault(pid, []).append(_item_to_json(item))
             continue  # subtasks don't appear as top-level board cards
         col = item.board_column if item.board_column in columns else lst.board_columns[0]
-        columns[col].append(_item_to_json(item))
+        item_json = _item_to_json(item)
+        item_json["subtasks"] = []  # populated below
+        columns[col].append(item_json)
+
+    # Attach subtasks to their parent cards
+    for col_items in columns.values():
+        for card in col_items:
+            card["subtasks"] = children_by_parent.get(card["id"], [])
 
     return web.json_response(
         {

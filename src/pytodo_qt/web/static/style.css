@@ -702,6 +702,19 @@ body {
   font-weight: 600;
 }
 
+.item-subtask-toggle {
+  background: none;
+  border: none;
+  padding: 0 4px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  line-height: 1;
+}
+.item-subtask-toggle:hover {
+  color: var(--accent);
+}
+
 .item-subtask-badge {
   display: inline-flex;
   align-items: center;
@@ -853,6 +866,53 @@ body {
   margin-top: 6px;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.board-card-subtask-badge {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 4px 0;
+  background: none;
+  border: none;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+.board-card-subtask-badge:hover {
+  color: var(--accent);
+}
+.board-card-subtask-badge.all-done {
+  color: var(--success, #4caf50);
+}
+
+.board-card-subtasks {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.board-card-subtask-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.board-card-subtask-row.completed span {
+  text-decoration: line-through;
+  color: var(--completed-text);
+}
+.board-card-subtask-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.board-card-subtask-row span {
+  cursor: pointer;
+  flex: 1;
+  word-break: break-word;
 }
 
 .board-column-add {

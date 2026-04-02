@@ -7,6 +7,7 @@
   var VIEW_MODE_KEY = "pytodo_view_mode";
   var INSTALL_DISMISSED_KEY = "pytodo_install_dismissed";
   var AUTH_TOKEN_KEY = "pytodo_auth_token";
+  var COLLAPSED_PARENTS_KEY = "pytodo_collapsed_parents";
 
   var currentListId = null;
   var cachedLists = [];
@@ -30,6 +31,37 @@
     undo_text: "",
     redo_text: "",
   };
+
+  // Collapsed parent IDs for list view subtask toggle
+  var collapsedParents = (function () {
+    try {
+      var stored = localStorage.getItem(COLLAPSED_PARENTS_KEY);
+      return stored ? JSON.parse(stored) : {};
+    } catch (e) {
+      return {};
+    }
+  })();
+
+  function saveCollapsedParents() {
+    try {
+      localStorage.setItem(
+        COLLAPSED_PARENTS_KEY,
+        JSON.stringify(collapsedParents),
+      );
+    } catch (e) {
+      /* best-effort */
+    }
+  }
+
+  function toggleCollapse(parentId) {
+    if (collapsedParents[parentId]) {
+      delete collapsedParents[parentId];
+    } else {
+      collapsedParents[parentId] = true;
+    }
+    saveCollapsedParents();
+    renderItems(cachedItems, true);
+  }
 
   // ====================================================================
   // DOM refs
@@ -2222,11 +2254,14 @@
     topLevel = sortItems(topLevel);
 
     topLevel.forEach(function (item) {
-      itemsContainer.appendChild(createItemCard(item, items));
-      var children = childMap[item.id];
-      if (children) {
-        sortItems(children).forEach(function (child) {
-          var el = createItemCard(child, items);
+      var hasChildren = childMap[item.id] && childMap[item.id].length > 0;
+      var isCollapsed = hasChildren && collapsedParents[item.id];
+      itemsContainer.appendChild(
+        createItemCard(item, items, hasChildren, isCollapsed),
+      );
+      if (hasChildren && !isCollapsed) {
+        sortItems(childMap[item.id]).forEach(function (child) {
+          var el = createItemCard(child, items, false, false);
           el.classList.add("subtask");
           itemsContainer.appendChild(el);
         });
@@ -2234,7 +2269,7 @@
     });
   }
 
-  function createItemCard(item, allItems) {
+  function createItemCard(item, allItems, hasChildren, isCollapsed) {
     var div = document.createElement("div");
     var pClass =
       item.priority === 1
@@ -2324,8 +2359,8 @@
       meta.appendChild(pomC);
     }
 
-    // Subtask progress badge
-    if (!item.parent_id && allItems) {
+    // Subtask progress badge with collapse toggle
+    if (hasChildren && allItems) {
       var childCount = 0,
         childDone = 0;
       allItems.forEach(function (i) {
@@ -2335,6 +2370,19 @@
         }
       });
       if (childCount > 0) {
+        var toggle = document.createElement("button");
+        toggle.className = "item-subtask-toggle";
+        toggle.textContent = isCollapsed ? "\u25B6" : "\u25BC";
+        toggle.setAttribute(
+          "aria-label",
+          isCollapsed ? "Expand subtasks" : "Collapse subtasks",
+        );
+        toggle.addEventListener("click", function (e) {
+          e.stopPropagation();
+          toggleCollapse(item.id);
+        });
+        meta.appendChild(toggle);
+
         var badge = document.createElement("span");
         badge.className = "item-subtask-badge";
         badge.textContent = "[" + childDone + "/" + childCount + "]";
@@ -2548,6 +2596,56 @@
     }
 
     if (meta.childNodes.length > 0) card.appendChild(meta);
+
+    // Subtask badge and collapsible checklist
+    var subtasks = item.subtasks || [];
+    if (subtasks.length > 0) {
+      var stDone = subtasks.filter(function (s) {
+        return s.complete;
+      }).length;
+      var stBadge = document.createElement("button");
+      stBadge.className =
+        "board-card-subtask-badge" +
+        (stDone === subtasks.length ? " all-done" : "");
+      stBadge.textContent =
+        "\u2630 " + stDone + "/" + subtasks.length + " subtasks";
+      stBadge.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var container = card.querySelector(".board-card-subtasks");
+        if (container) {
+          container.classList.toggle("hidden");
+        }
+      });
+      card.appendChild(stBadge);
+
+      var stContainer = document.createElement("div");
+      stContainer.className = "board-card-subtasks hidden";
+      subtasks.forEach(function (sub) {
+        var row = document.createElement("div");
+        row.className =
+          "board-card-subtask-row" + (sub.complete ? " completed" : "");
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = sub.complete;
+        cb.addEventListener("click", function (e) {
+          e.stopPropagation();
+        });
+        cb.addEventListener("change", function (e) {
+          e.stopPropagation();
+          onToggle(sub.id);
+        });
+        row.appendChild(cb);
+        var label = document.createElement("span");
+        label.textContent = sub.reminder;
+        label.addEventListener("click", function (e) {
+          e.stopPropagation();
+          location.hash = "#/item/" + sub.id;
+        });
+        row.appendChild(label);
+        stContainer.appendChild(row);
+      });
+      card.appendChild(stContainer);
+    }
 
     // Grip icon for pick-up-and-place / drag
     var grip = document.createElement("span");

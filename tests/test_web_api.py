@@ -1114,7 +1114,7 @@ class TestBoardEndpoint:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_get_board_excludes_subtasks(self):
+    async def test_get_board_excludes_subtasks_as_top_level(self):
         db = _make_db_with_data()
         lst = next(iter(db.lists.values()))
         items = list(lst.active_items())
@@ -1130,10 +1130,48 @@ class TestBoardEndpoint:
         try:
             resp = await client.get(f"/api/lists/{lst.id}/board")
             data = await resp.json()
+            # Subtask should NOT appear as a top-level card
             all_ids = []
             for col_items in data["columns"].values():
                 all_ids.extend(i["id"] for i in col_items)
             assert str(subtask.id) not in all_ids
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_get_board_includes_subtasks_nested(self):
+        """Board cards include subtasks array for parent items."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        items = list(lst.active_items())
+        parent = items[0]
+        parent.board_column = "To Do"
+        # Add subtasks
+        sub1 = create_todo_item("Subtask 1")
+        sub1.parent_id = parent.id
+        sub1.complete = True
+        lst.add_item(sub1)
+        sub2 = create_todo_item("Subtask 2")
+        sub2.parent_id = parent.id
+        lst.add_item(sub2)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}/board")
+            data = await resp.json()
+            # Find the parent card
+            parent_card = None
+            for col_items in data["columns"].values():
+                for c in col_items:
+                    if c["id"] == str(parent.id):
+                        parent_card = c
+                        break
+            assert parent_card is not None
+            assert "subtasks" in parent_card
+            assert len(parent_card["subtasks"]) == 2
+            sub_ids = {s["id"] for s in parent_card["subtasks"]}
+            assert str(sub1.id) in sub_ids
+            assert str(sub2.id) in sub_ids
         finally:
             await client.close()
 
