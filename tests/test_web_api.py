@@ -3143,6 +3143,261 @@ class TestWebSocket:
 
 
 # ===========================================================================
+# Integration: multi-client interop
+# ===========================================================================
+
+
+class TestMultiClientInterop:
+    """End-to-end integration tests for concurrent client scenarios."""
+
+    @staticmethod
+    async def _get_item_from_list(client, list_id, item_id):
+        """Fetch a single item's data via the list endpoint."""
+        resp = await client.get(f"/api/lists/{list_id}")
+        data = await resp.json()
+        for i in data["items"]:
+            if i["id"] == str(item_id):
+                return i
+        return None
+
+    @pytest.mark.asyncio
+    async def test_concurrent_item_update_conflict(self):
+        """Two clients updating the same item — second gets 409."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            # Both clients read the item at the same time
+            data_a = await self._get_item_from_list(client, lst.id, item.id)
+            ts = data_a["updated_at"]
+
+            # Client A updates successfully
+            resp_a = await client.put(
+                f"/api/items/{item.id}",
+                json={"reminder": "Client A edit", "updated_at": ts},
+            )
+            assert resp_a.status == 200
+
+            # Client B tries to update with same (now stale) timestamp → 409
+            resp_b = await client.put(
+                f"/api/items/{item.id}",
+                json={"reminder": "Client B edit", "updated_at": ts},
+            )
+            assert resp_b.status == 409
+            conflict = await resp_b.json()
+            assert conflict["current"]["reminder"] == "Client A edit"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_ws_observer_sees_http_update(self):
+        """A WS client sees changes made by an HTTP-only client."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            async with client.ws_connect("/ws") as ws_conn:
+                # HTTP client updates item
+                await client.put(
+                    f"/api/items/{item.id}",
+                    json={"reminder": "Updated by HTTP"},
+                )
+                # WS observer gets notified
+                msg = await ws_conn.receive_json(timeout=2.0)
+                assert msg["event"] == "refresh"
+
+                # Observer fetches fresh state and sees the update
+                data = await self._get_item_from_list(client, lst.id, item.id)
+                assert data["reminder"] == "Updated by HTTP"
+                await ws_conn.close()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_recurring_item_toggle_broadcasts(self):
+        """Toggling a recurring item broadcasts to WS clients."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.recurrence_type = "daily"
+        item.recurrence_interval = 1
+        item.due_date = date.today()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            async with client.ws_connect("/ws") as ws_conn:
+                await client.patch(f"/api/items/{item.id}/toggle")
+                msg = await ws_conn.receive_json(timeout=2.0)
+                assert msg["event"] == "refresh"
+
+                # Item should be toggled
+                data = await self._get_item_from_list(client, lst.id, item.id)
+                assert data["complete"] is True
+                await ws_conn.close()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_column_rename_remaps_items(self):
+        """Renaming a board column updates items' board_column field."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.board_column = "In Progress"
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            # Rename column via API
+            resp = await client.patch(
+                f"/api/lists/{lst.id}/columns",
+                json={"action": "rename", "old_name": "In Progress", "new_name": "Doing"},
+            )
+            assert resp.status == 200
+
+            # Verify board data shows item under new column name
+            resp2 = await client.get(f"/api/lists/{lst.id}/board")
+            data = await resp2.json()
+            assert "Doing" in data["columns"]
+            assert "In Progress" not in data["columns"]
+            doing_ids = [i["id"] for i in data["columns"]["Doing"]]
+            assert str(item.id) in doing_ids
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_column_rename_ws_broadcast(self):
+        """Column rename broadcasts refresh to WS clients."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            async with client.ws_connect("/ws") as ws_conn:
+                await client.patch(
+                    f"/api/lists/{lst.id}/columns",
+                    json={"action": "rename", "old_name": "In Progress", "new_name": "Review"},
+                )
+                msg = await ws_conn.receive_json(timeout=2.0)
+                assert msg["event"] == "refresh"
+                await ws_conn.close()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_sort_conflict_between_clients(self, tmp_path):
+        """Two clients changing sort config — second gets 409."""
+        cm = _make_config_manager(tmp_path)
+        client = await _make_client(config_manager=cm)
+        await client.start_server()
+        try:
+            # Client A reads sort
+            resp_a = await client.get("/api/sort")
+            ts_a = (await resp_a.json())["updated_at"]
+
+            # Client A updates
+            resp_a2 = await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "priority", "reverse": True},
+                        {"dimension": "completion", "reverse": False},
+                        {"dimension": "due_date", "reverse": False},
+                    ],
+                    "updated_at": ts_a,
+                },
+            )
+            assert resp_a2.status == 200
+            new_ts = (await resp_a2.json())["updated_at"]
+
+            # Client B tries with stale timestamp
+            resp_b = await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "due_date", "reverse": True},
+                        {"dimension": "priority", "reverse": False},
+                        {"dimension": "completion", "reverse": False},
+                    ],
+                    "updated_at": ts_a,
+                },
+            )
+            assert resp_b.status == 409
+
+            # Client B fetches fresh state, retries with current timestamp
+            resp_b2 = await client.get("/api/sort")
+            current_ts = (await resp_b2.json())["updated_at"]
+            assert current_ts == new_ts
+
+            resp_b3 = await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "due_date", "reverse": True},
+                        {"dimension": "priority", "reverse": False},
+                        {"dimension": "completion", "reverse": False},
+                    ],
+                    "updated_at": current_ts,
+                },
+            )
+            assert resp_b3.status == 200
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_two_ws_clients_both_see_toggle(self):
+        """Two WS clients both receive broadcast when item is toggled."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            async with client.ws_connect("/ws") as ws1, client.ws_connect("/ws") as ws2:
+                await client.patch(f"/api/items/{item.id}/toggle")
+                msg1 = await ws1.receive_json(timeout=2.0)
+                msg2 = await ws2.receive_json(timeout=2.0)
+                assert msg1["event"] == "refresh"
+                assert msg2["event"] == "refresh"
+                await ws1.close()
+                await ws2.close()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_delete_conflict_stale_timestamp(self):
+        """DELETE with stale updated_at returns 409."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            # Get current timestamp
+            data = await self._get_item_from_list(client, lst.id, item.id)
+            ts = data["updated_at"]
+
+            # Update the item to advance its timestamp
+            await client.put(
+                f"/api/items/{item.id}",
+                json={"reminder": "Modified"},
+            )
+
+            # Try to delete with stale timestamp
+            resp2 = await client.request(
+                "DELETE",
+                f"/api/items/{item.id}",
+                json={"updated_at": ts},
+            )
+            assert resp2.status == 409
+        finally:
+            await client.close()
+
+
+# ===========================================================================
 # Authentication tests
 # ===========================================================================
 
