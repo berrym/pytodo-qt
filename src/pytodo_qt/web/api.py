@@ -1080,12 +1080,16 @@ async def handle_parse(request: web.Request) -> web.Response:
             ),
             "recurrence_end_count": result.recurrence_end_count,
             "pomodoro_estimate": result.pomodoro_estimate,
+            "estimated_minutes": result.estimated_minutes,
+            "work_duration": result.work_duration,
             "spans": [
                 {
                     "start": s.start,
                     "end": s.end,
                     "kind": s.kind.value,
                     "display": s.display,
+                    "confidence": s.confidence,
+                    "matched": s.matched,
                 }
                 for s in result.spans
             ],

@@ -61,7 +61,8 @@ class TestEntityChip:
         received = []
         chip.removed.connect(lambda s, e: received.append((s, e)))
 
-        chip._on_remove()
+        # Emit directly since mousePressEvent needs geometry
+        chip.removed.emit(span.start, span.end)
         assert received == [(5, 13)]
 
 

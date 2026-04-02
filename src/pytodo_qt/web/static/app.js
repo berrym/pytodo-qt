@@ -56,7 +56,6 @@
   var addSheet = document.getElementById("add-sheet");
   var addForm = document.getElementById("add-form");
   var addInput = document.getElementById("add-input");
-  var addPresetsEl = document.getElementById("add-presets");
   var addEntities = document.getElementById("add-entities");
   var addListSelect = document.getElementById("add-list-select");
   var addSheetClose = document.getElementById("add-sheet-close");
@@ -2359,54 +2358,6 @@
       addEntities.appendChild(chip);
     });
 
-    // Sync preset pill active states
-    updateAddPresetPills(parseResult.recurrence_type, parseResult.recurrence_interval);
-  }
-
-  // Recurrence preset pills in add sheet
-  var ADD_PRESETS = [
-    { label: "25m", text: "every 25 minutes", type: "minutely", interval: 25 },
-    { label: "1h", text: "every hour", type: "minutely", interval: 60 },
-    { label: "Daily", text: "daily", type: "daily", interval: 1 },
-    { label: "Weekly", text: "weekly", type: "weekly", interval: 1 },
-    { label: "Monthly", text: "monthly", type: "monthly", interval: 1 },
-  ];
-
-  function initAddPresetPills() {
-    if (!addPresetsEl) return;
-    ADD_PRESETS.forEach(function (p) {
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "preset-pill";
-      btn.textContent = p.label;
-      btn.dataset.recText = p.text;
-      btn.addEventListener("click", function () {
-        if (!addInput) return;
-        var current = addInput.value.trim();
-        var has = current.toLowerCase().indexOf(p.text) >= 0;
-        if (has) {
-          addInput.value = current.replace(new RegExp(p.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), "").trim();
-        } else {
-          ADD_PRESETS.forEach(function (other) {
-            current = current.replace(new RegExp(other.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"), "").trim();
-          });
-          addInput.value = current + (current ? " " : "") + p.text;
-        }
-        addInput.dispatchEvent(new Event("input"));
-      });
-      addPresetsEl.appendChild(btn);
-    });
-  }
-  initAddPresetPills();
-
-  function updateAddPresetPills(recType, recInterval) {
-    if (!addPresetsEl) return;
-    var pills = addPresetsEl.querySelectorAll(".preset-pill");
-    pills.forEach(function (pill, i) {
-      var p = ADD_PRESETS[i];
-      if (!p) return;
-      pill.classList.toggle("active", recType === p.type && recInterval === p.interval);
-    });
   }
 
   if (addForm) {

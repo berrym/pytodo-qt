@@ -32,6 +32,16 @@ from ...core.logger import Logger
 from ...core.models import TodoItem, TodoList
 from ..styles.themes import get_colors
 
+
+class ClickableLabel(QLabel):
+    """QLabel that emits a clicked signal on mouse press."""
+
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, ev) -> None:  # noqa: N802
+        self.clicked.emit()
+
+
 _CHECK_ICON_PATH: str | None = None
 
 
@@ -152,6 +162,7 @@ class KanbanCardWidget(QFrame):
     double_clicked = pyqtSignal(object)  # (item_id)
     context_menu_requested = pyqtSignal(object, QPoint)  # (item_id, global_pos)
     toggle_requested = pyqtSignal(object)  # (item_id) — card-level, has ID
+    edit_tags_requested = pyqtSignal(object)  # (item_id)
 
     def __init__(
         self,
@@ -165,6 +176,7 @@ class KanbanCardWidget(QFrame):
         super().__init__(parent)
         self._item_id = item.id
         self._colors = colors
+        self._tags = list(item.tags) if item.tags else []
         self._expanded = False
         self._subtasks = subtasks or []
         self._drag_start: QPoint | None = None
@@ -357,10 +369,14 @@ class KanbanCardWidget(QFrame):
                 )
                 row3.addWidget(chip)
             if len(item.tags) > max_tags:
-                overflow = QLabel(f"+{len(item.tags) - max_tags}")
+                overflow = ClickableLabel(f"+{len(item.tags) - max_tags}")
                 overflow.setStyleSheet(
-                    f"color: {colors['completed_text']}; font-size: 10px; border: none;"
+                    f"background-color: {colors['button']}; "
+                    f"color: {colors['text']}; "
+                    "border-radius: 8px; padding: 1px 6px; font-size: 10px; border: none;"
                 )
+                overflow.setCursor(Qt.CursorShape.PointingHandCursor)
+                overflow.clicked.connect(lambda b=overflow: self._show_tag_popup(max_tags, b))
                 row3.addWidget(overflow)
             row3.addStretch()
             card_layout.addLayout(row3)
@@ -420,6 +436,41 @@ class KanbanCardWidget(QFrame):
                 sub_layout.addLayout(sub_row)
 
             card_layout.addWidget(self._subtask_container)
+
+    def _show_tag_popup(self, max_tags: int, badge: QWidget) -> None:
+        """Show a popup with all overflow tags as styled chips."""
+        colors = self._colors
+        chip_style = (
+            f"background-color: {colors['highlight']}; "
+            f"color: {colors.get('highlight_text', '#ffffff')}; "
+            "border-radius: 8px; padding: 2px 8px; font-size: 10px;"
+        )
+
+        popup = QWidget(self, Qt.WindowType.Popup)
+        layout = QHBoxLayout(popup)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(4)
+
+        for tag in self._tags[max_tags:]:
+            chip = QLabel(tag)
+            chip.setStyleSheet(chip_style)
+            layout.addWidget(chip)
+
+        edit_btn = QPushButton("Edit...")
+        edit_btn.setFixedHeight(20)
+        edit_btn.setStyleSheet("font-size: 10px; padding: 1px 6px;")
+        edit_btn.clicked.connect(lambda: self._on_popup_edit(popup))
+        layout.addWidget(edit_btn)
+
+        popup.adjustSize()
+        pos = badge.mapToGlobal(QPoint(0, badge.height() + 2))
+        popup.move(pos)
+        popup.show()
+
+    def _on_popup_edit(self, popup: QWidget) -> None:
+        """Handle 'Edit...' click in tag popup."""
+        popup.close()
+        self.edit_tags_requested.emit(self._item_id)
 
     def _toggle_subtask_list(self) -> None:
         """Toggle subtask checklist visibility."""
@@ -514,6 +565,7 @@ class KanbanColumnWidget(QFrame):
     card_double_clicked = pyqtSignal(object)  # (item_id)
     card_context_menu = pyqtSignal(object, QPoint)  # (item_id, global_pos)
     card_toggle = pyqtSignal(object)  # (item_id)
+    card_edit_tags = pyqtSignal(object)  # (item_id)
     card_dropped = pyqtSignal(object, str)  # (item_id, column_name)
     add_item_clicked = pyqtSignal(str)  # (column_name)
     rename_requested = pyqtSignal(str)  # (column_name)
@@ -626,6 +678,7 @@ class KanbanColumnWidget(QFrame):
         card.double_clicked.connect(self.card_double_clicked.emit)
         card.context_menu_requested.connect(self.card_context_menu.emit)
         card.toggle_requested.connect(self.card_toggle.emit)
+        card.edit_tags_requested.connect(self.card_edit_tags.emit)
         self._update_count_display()
 
     def clear_cards(self) -> None:
@@ -875,6 +928,7 @@ class KanbanBoardWidget(QWidget):
             col_widget.card_double_clicked.connect(self._on_card_double_clicked)
             col_widget.card_context_menu.connect(self._on_card_context_menu)
             col_widget.card_toggle.connect(self._on_card_toggle)
+            col_widget.card_edit_tags.connect(self.edit_tags_requested.emit)
             col_widget.card_dropped.connect(self._on_card_dropped)
             col_widget.add_item_clicked.connect(self._on_add_item_in_column)
             col_widget.rename_requested.connect(self._on_column_rename)

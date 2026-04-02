@@ -1215,32 +1215,6 @@ body {
 .entity-chip.recurrence { background: rgba(46, 125, 50, 0.12); color: var(--entity-recurrence); }
 .entity-chip.pomodoro { background: rgba(106, 27, 154, 0.12); color: var(--entity-pomodoro); }
 
-.add-preset-pills, .detail-recurrence-presets {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.preset-pill {
-  padding: 4px 10px;
-  border-radius: 14px;
-  border: 1px solid var(--entity-recurrence);
-  background: transparent;
-  color: var(--entity-recurrence);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.preset-pill:hover {
-  background: rgba(46, 125, 50, 0.08);
-}
-
-.preset-pill.active {
-  background: var(--entity-recurrence);
-  color: white;
-}
-
 .add-meta-row {
   display: flex;
   gap: 8px;

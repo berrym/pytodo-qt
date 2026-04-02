@@ -1,0 +1,312 @@
+# English intent dictionary for pytodo-qt NLP parser
+# YAML 1.2 — load with ruamel.yaml (no sexagesimal time corruption)
+#
+# Adding a language = creating a new file (e.g. es.yaml, fr.yaml)
+# with the same keys and language-specific vocabulary.
+
+version: 1
+language: en
+
+# ---------------------------------------------------------------------------
+# Priority
+# ---------------------------------------------------------------------------
+
+priority:
+  fuzzy_threshold: 80
+  min_length: 4
+  tokens:
+    # level 1 — high / urgent
+    p1: {level: 1}
+    urgent: {level: 1}
+    important: {level: 1, synonyms: [vital, crucial, critical, essential, pressing]}
+    asap: {level: 1}
+    high: {level: 1}
+    mandatory: {level: 1}
+    # level 2 — normal / medium
+    p2: {level: 2}
+    normal: {level: 2, synonyms: [medium, moderate, standard]}
+    routine: {level: 2}
+    # level 3 — low / minor
+    p3: {level: 3}
+    low: {level: 3, synonyms: [minor, trivial, someday, optional]}
+  phrases:
+    "high priority": {level: 1}
+    "highest priority": {level: 1}
+    "top priority": {level: 1}
+    "high prio": {level: 1}
+    "high importance": {level: 1}
+    "really important": {level: 1}
+    "very important": {level: 1}
+    "most important": {level: 1}
+    "super important": {level: 1}
+    "must do": {level: 1}
+    "do first": {level: 1}
+    "time sensitive": {level: 1}
+    "priority one": {level: 1}
+    "priority 1": {level: 1}
+    "priority two": {level: 2}
+    "priority 2": {level: 2}
+    "priority three": {level: 3}
+    "priority 3": {level: 3}
+    "low priority": {level: 3}
+    "low prio": {level: 3}
+    "lowest priority": {level: 3}
+    "not important": {level: 3}
+    "not urgent": {level: 3}
+    "no rush": {level: 3}
+    "can wait": {level: 3}
+    "when possible": {level: 3}
+
+# ---------------------------------------------------------------------------
+# Recurrence
+# ---------------------------------------------------------------------------
+
+recurrence:
+  fuzzy_threshold: 85
+  min_length: 4
+  # Single-word recurrence tokens
+  tokens:
+    daily: {type: daily, interval: 1, synonyms: [everyday]}
+    weekly: {type: weekly, interval: 1}
+    monthly: {type: monthly, interval: 1}
+    yearly: {type: yearly, interval: 1, synonyms: [annually]}
+    minutely: {type: minutely, interval: 1}
+    hourly: {type: minutely, interval: 60}
+    biweekly: {type: weekly, interval: 2, synonyms: [fortnightly]}
+    bimonthly: {type: monthly, interval: 2}
+    nightly: {type: daily, interval: 1}
+  # "every <key>" patterns
+  every_map:
+    day: {type: daily, interval: 1}
+    days: {type: daily, interval: 1}
+    week: {type: weekly, interval: 1}
+    weeks: {type: weekly, interval: 1}
+    month: {type: monthly, interval: 1}
+    months: {type: monthly, interval: 1}
+    year: {type: yearly, interval: 1}
+    years: {type: yearly, interval: 1}
+    minute: {type: minutely, interval: 1}
+    minutes: {type: minutely, interval: 1}
+    hour: {type: minutely, interval: 60}
+    hours: {type: minutely, interval: 60}
+    weekday: {type: daily, interval: 1}
+    morning: {type: daily, interval: 1}
+    night: {type: daily, interval: 1}
+    evening: {type: daily, interval: 1}
+    other: null  # "every other" prefix — needs next token
+  # Time hints for "every morning/night/evening"
+  time_hints:
+    morning: 09:00
+    night: 21:00
+    evening: 18:00
+
+# ---------------------------------------------------------------------------
+# Pomodoro / Focus units
+# ---------------------------------------------------------------------------
+
+pomodoro_units:
+  - pomodoro
+  - pomodoros
+  - pom
+  - poms
+  - session
+  - sessions
+  - p
+  - focus
+  - sprint
+  - block
+  - blocks
+
+# ---------------------------------------------------------------------------
+# Time estimate units (multiplier to minutes)
+# ---------------------------------------------------------------------------
+
+time_estimate_units:
+  m: 1
+  min: 1
+  mins: 1
+  minute: 1
+  minutes: 1
+  h: 60
+  hr: 60
+  hrs: 60
+  hour: 60
+  hours: 60
+
+# ---------------------------------------------------------------------------
+# Time of day — keyword to HH:MM
+# ---------------------------------------------------------------------------
+
+time_of_day:
+  noon: 12:00
+  midnight: 00:00
+  morning: 09:00
+  afternoon: 14:00
+  evening: 18:00
+  tonight: 20:00
+  eod: 17:00
+  dawn: 06:00
+  sunrise: 06:30
+  dusk: 18:30
+  sunset: 18:30
+  lunchtime: 12:00
+  lunch: 12:00
+
+time_of_day_phrases:
+  "end of day": 17:00
+  "this morning": 09:00
+  "this afternoon": 14:00
+  "this evening": 18:00
+
+# ---------------------------------------------------------------------------
+# Tags — voice dictation prefixes
+# ---------------------------------------------------------------------------
+
+tag_voice_prefixes:
+  - hashtag
+  - "with tag"
+  - "at tag"
+  - "at sign"
+  - "with group"
+  - tag
+  - label
+  - category
+
+# ---------------------------------------------------------------------------
+# Number words — all map to integer values
+# ---------------------------------------------------------------------------
+
+number_words:
+  one: 1
+  two: 2
+  three: 3
+  four: 4
+  five: 5
+  six: 6
+  seven: 7
+  eight: 8
+  nine: 9
+  ten: 10
+  eleven: 11
+  twelve: 12
+  thirteen: 13
+  fourteen: 14
+  fifteen: 15
+  sixteen: 16
+  seventeen: 17
+  eighteen: 18
+  nineteen: 19
+  twenty: 20
+  thirty: 30
+  forty: 40
+  fifty: 50
+  a: 1
+  an: 1
+  couple: 2
+  few: 3
+  several: 5
+
+# ---------------------------------------------------------------------------
+# Couple/few — subset used for "in a couple/few days" date patterns
+# ---------------------------------------------------------------------------
+
+couple_few:
+  couple: 2
+  few: 3
+
+# ---------------------------------------------------------------------------
+# Date prefixes — words consumed before date tokens
+# ---------------------------------------------------------------------------
+
+date_prefixes:
+  - due
+  - by
+  - on
+  - before
+
+# ---------------------------------------------------------------------------
+# Approximation prefixes — quantity modifiers for estimates/pomodoro
+# NOT recurrence triggers (those are: over, for, until)
+# ---------------------------------------------------------------------------
+
+approximation_prefixes:
+  - approximately
+  - approx
+  - about
+  - around
+  - roughly
+  - estimated
+  - estimate
+  - nearly
+  - circa
+
+# ---------------------------------------------------------------------------
+# Duration end phrases — consumed after "until N days ..."
+# ---------------------------------------------------------------------------
+
+duration_end_phrases:
+  - "is over"
+  - "is done"
+  - "is up"
+  - "are over"
+  - "are done"
+  - "are up"
+
+# ---------------------------------------------------------------------------
+# Date abbreviations — shorthand to canonical date word
+# ---------------------------------------------------------------------------
+
+date_abbreviations:
+  tmrw: tomorrow
+  tmr: tomorrow
+  tom: tomorrow
+  tomo: tomorrow
+  2morrow: tomorrow
+  2mrw: tomorrow
+  yest: yesterday
+  yday: yesterday
+  tdy: today
+  2day: today
+
+# ---------------------------------------------------------------------------
+# Unit map — time unit words to recurrence type
+# ---------------------------------------------------------------------------
+
+unit_map:
+  day: daily
+  days: daily
+  week: weekly
+  weeks: weekly
+  month: monthly
+  months: monthly
+  year: yearly
+  years: yearly
+  minute: minutely
+  minutes: minutely
+  hour: minutely
+  hours: minutely
+
+# ---------------------------------------------------------------------------
+# Unit multiplier — for minutely recurrence interval calculation
+# ---------------------------------------------------------------------------
+
+unit_multiplier:
+  hour: 60
+  hours: 60
+  minute: 1
+  minutes: 1
+
+# ---------------------------------------------------------------------------
+# Priority display labels
+# ---------------------------------------------------------------------------
+
+priority_display:
+  1: High
+  2: Normal
+  3: Low
+
+# ---------------------------------------------------------------------------
+# Global fuzzy matching threshold (can be overridden per entity above)
+# ---------------------------------------------------------------------------
+
+fuzzy_threshold: 80

@@ -1063,3 +1063,343 @@ class TestVoiceDictationIntegration:
         r = parse("Check plants every three days", today=TODAY)
         assert r.recurrence_type == "daily"
         assert r.recurrence_interval == 3
+
+
+# ---------------------------------------------------------------------------
+# TestFuzzyMatching — typos, misspellings, abbreviations
+# ---------------------------------------------------------------------------
+
+
+class TestFuzzyMatching:
+    """Tests for fuzzy matching capabilities (new in intent-based parser)."""
+
+    def test_importnt_matches_important(self) -> None:
+        r = parse("Fix bug importnt", today=TODAY)
+        assert r.priority == 1
+
+    def test_urgnt_matches_urgent(self) -> None:
+        r = parse("Deploy patch urgnt", today=TODAY)
+        assert r.priority == 1
+
+    def test_daly_matches_daily(self) -> None:
+        r = parse("Stand up daly", today=TODAY)
+        assert r.recurrence_type == "daily"
+
+    def test_weeky_matches_weekly(self) -> None:
+        r = parse("Sync meeting weeky", today=TODAY)
+        assert r.recurrence_type == "weekly"
+
+    def test_montly_matches_monthly(self) -> None:
+        r = parse("Review budget montly", today=TODAY)
+        assert r.recurrence_type == "monthly"
+
+    def test_sesions_matches_sessions(self) -> None:
+        r = parse("Study math ~3 sesions", today=TODAY)
+        assert r.pomodoro_estimate == 3
+
+    def test_pomdoro_matches_pomodoro(self) -> None:
+        r = parse("Deep work ~2 pomdoro", today=TODAY)
+        assert r.pomodoro_estimate == 2
+
+    def test_fuzzy_no_false_positive_short_word(self) -> None:
+        """Short tokens (< 4 chars) should never fuzzy match."""
+        r = parse("Do the big task", today=TODAY)
+        assert r.priority is None  # "big" should not match anything
+
+    def test_fuzzy_no_false_positive_parenthetical(self) -> None:
+        """Tokens with non-alpha chars should not fuzzy match."""
+        r = parse("Fix (critical) bug", today=TODAY)
+        assert r.priority is None
+        assert "(critical)" in r.reminder
+
+
+# ---------------------------------------------------------------------------
+# TestConfidenceScoring
+# ---------------------------------------------------------------------------
+
+
+class TestConfidenceScoring:
+    """Tests for confidence values on fuzzy-matched EntitySpans."""
+
+    def test_exact_match_confidence_1(self) -> None:
+        r = parse("Task important", today=TODAY)
+        priority_spans = [s for s in r.spans if s.kind == EntityKind.PRIORITY]
+        assert len(priority_spans) == 1
+        assert priority_spans[0].confidence == 1.0
+
+    def test_fuzzy_match_confidence_below_1(self) -> None:
+        r = parse("Task importnt", today=TODAY)
+        priority_spans = [s for s in r.spans if s.kind == EntityKind.PRIORITY]
+        assert len(priority_spans) == 1
+        assert 0.80 <= priority_spans[0].confidence < 1.0
+
+    def test_fuzzy_match_has_matched_field(self) -> None:
+        r = parse("Task importnt", today=TODAY)
+        priority_spans = [s for s in r.spans if s.kind == EntityKind.PRIORITY]
+        assert len(priority_spans) == 1
+        assert priority_spans[0].matched == "important"
+
+    def test_exact_match_matched_field_empty(self) -> None:
+        r = parse("Task important", today=TODAY)
+        priority_spans = [s for s in r.spans if s.kind == EntityKind.PRIORITY]
+        assert len(priority_spans) == 1
+        assert priority_spans[0].matched == ""
+
+    def test_fuzzy_recurrence_confidence(self) -> None:
+        r = parse("Do task weeky", today=TODAY)
+        rec_spans = [s for s in r.spans if s.kind == EntityKind.RECURRENCE]
+        assert len(rec_spans) == 1
+        assert 0.80 <= rec_spans[0].confidence < 1.0
+        assert rec_spans[0].matched == "weekly"
+
+
+# ---------------------------------------------------------------------------
+# TestEstimatedMinutes — ~90m, ~2h, ~1h30m
+# ---------------------------------------------------------------------------
+
+
+class TestEstimatedMinutes:
+    """Tests for estimated time parsing (~Nm, ~Nh patterns)."""
+
+    def test_tilde_90m(self) -> None:
+        r = parse("Write report ~90m", today=TODAY)
+        assert r.estimated_minutes == 90
+
+    def test_tilde_2h(self) -> None:
+        r = parse("Code review ~2h", today=TODAY)
+        assert r.estimated_minutes == 120
+
+    def test_tilde_1h30m(self) -> None:
+        r = parse("Workshop ~1h30m", today=TODAY)
+        assert r.estimated_minutes == 90
+
+    def test_estimate_span_kind(self) -> None:
+        r = parse("Task ~45m", today=TODAY)
+        est_spans = [s for s in r.spans if s.kind == EntityKind.ESTIMATE]
+        assert len(est_spans) == 1
+        assert "45" in est_spans[0].display
+
+    def test_estimate_with_other_entities(self) -> None:
+        r = parse("Fix bug tomorrow ~2h p1", today=TODAY)
+        assert r.estimated_minutes == 120
+        assert r.priority == 1
+        assert r.due_date == date(2026, 3, 12)
+
+    def test_tilde_pomodoro_not_estimate(self) -> None:
+        """~N sessions should be pomodoro, not estimate."""
+        r = parse("Study ~3 sessions", today=TODAY)
+        assert r.pomodoro_estimate == 3
+        assert r.estimated_minutes is None or r.estimated_minutes == 0
+
+
+# ---------------------------------------------------------------------------
+# TestWorkDuration — "session length N minutes"
+# ---------------------------------------------------------------------------
+
+
+class TestWorkDuration:
+    """Tests for per-task work duration parsing."""
+
+    def test_session_length_50_minutes(self) -> None:
+        r = parse("Deep focus session length 50 minutes", today=TODAY)
+        assert r.work_duration == 50
+
+    def test_session_length_45_min(self) -> None:
+        r = parse("Study session length 45 min", today=TODAY)
+        assert r.work_duration == 45
+
+    def test_work_duration_span_kind(self) -> None:
+        r = parse("Task session length 30 minutes", today=TODAY)
+        wd_spans = [s for s in r.spans if s.kind == EntityKind.WORK_DURATION]
+        assert len(wd_spans) == 1
+
+
+# ---------------------------------------------------------------------------
+# TestAbbreviations — common shorthand
+# ---------------------------------------------------------------------------
+
+
+class TestAbbreviations:
+    """Tests for abbreviation handling."""
+
+    def test_tmrw_tomorrow(self) -> None:
+        r = parse("Call dentist tmrw", today=TODAY)
+        assert r.due_date == date(2026, 3, 12)
+
+    def test_tom_tomorrow(self) -> None:
+        r = parse("Buy groceries tom", today=TODAY)
+        assert r.due_date == date(2026, 3, 12)
+
+    def test_p1_priority(self) -> None:
+        r = parse("Fix crash p1", today=TODAY)
+        assert r.priority == 1
+
+    def test_p2_priority(self) -> None:
+        r = parse("Update docs p2", today=TODAY)
+        assert r.priority == 2
+
+    def test_p3_priority(self) -> None:
+        r = parse("Clean up code p3", today=TODAY)
+        assert r.priority == 3
+
+
+# ---------------------------------------------------------------------------
+# TestDurationRecurrence — "over/for the next N days/weeks"
+# ---------------------------------------------------------------------------
+
+
+class TestDurationRecurrence:
+    """Tests for duration-based recurrence: 'over the next N days'."""
+
+    def test_over_the_next_10_days(self) -> None:
+        r = parse("Practice piano over the next 10 days", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_interval == 1
+        assert r.recurrence_end_count == 10
+
+    def test_for_the_next_2_weeks(self) -> None:
+        r = parse("Take medicine for the next 2 weeks", today=TODAY)
+        assert r.recurrence_type == "weekly"
+        assert r.recurrence_interval == 1
+        assert r.recurrence_end_count == 2
+
+    def test_over_the_next_3_months(self) -> None:
+        r = parse("Review budget over the next 3 months", today=TODAY)
+        assert r.recurrence_type == "monthly"
+        assert r.recurrence_end_count == 3
+
+    def test_duration_recurrence_implies_today(self) -> None:
+        r = parse("Study over the next 5 days", today=TODAY)
+        assert r.due_date == TODAY
+
+    def test_duration_with_priority(self) -> None:
+        r = parse("Test NLP over the next 10 days as high priority", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_end_count == 10
+        assert r.priority == 1
+
+    def test_duration_with_tags(self) -> None:
+        r = parse("Study @math over the next 5 days", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_end_count == 5
+        assert "@math" in r.tags
+
+    def test_for_5_days_standalone(self) -> None:
+        """'for N days' without explicit recurrence type implies daily."""
+        r = parse("Practice piano for 5 days", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_end_count == 5
+        assert r.due_date == TODAY
+
+    def test_for_3_weeks_standalone(self) -> None:
+        r = parse("Take medicine for 3 weeks", today=TODAY)
+        assert r.recurrence_type == "weekly"
+        assert r.recurrence_end_count == 3
+
+    def test_for_2_months_standalone(self) -> None:
+        r = parse("Review budget for 2 months", today=TODAY)
+        assert r.recurrence_type == "monthly"
+        assert r.recurrence_end_count == 2
+
+    def test_daily_for_5_days_suffix(self) -> None:
+        """'daily for 5 days' — explicit type + suffix."""
+        r = parse("Study daily for 5 days", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_end_count == 5
+
+    def test_over_a_few_days(self) -> None:
+        r = parse("Test nlp over a few days", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_end_count == 3
+
+    def test_for_a_few_days(self) -> None:
+        r = parse("Practice piano for a few days", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_end_count == 3
+
+    def test_for_a_couple_of_weeks(self) -> None:
+        r = parse("Take medicine for a couple of weeks", today=TODAY)
+        assert r.recurrence_type == "weekly"
+        assert r.recurrence_end_count == 2
+
+    def test_for_a_period_of_a_few_days(self) -> None:
+        r = parse("Study for a period of a few days", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_end_count == 3
+
+    def test_for_several_months(self) -> None:
+        r = parse("Review budget for several months", today=TODAY)
+        assert r.recurrence_type == "monthly"
+        assert r.recurrence_end_count == 5
+
+    def test_over_the_next_couple_days(self) -> None:
+        r = parse("Clean house over the next couple days", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_end_count == 2
+
+    def test_until_3_days_is_over(self) -> None:
+        r = parse("Practice until 3 days is over", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_end_count == 3
+
+    def test_until_five_days_is_done(self) -> None:
+        r = parse("Study until five days is done", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_end_count == 5
+
+
+# ---------------------------------------------------------------------------
+# TestApproximationSynonyms
+# ---------------------------------------------------------------------------
+
+
+class TestApproximationSynonyms:
+    """Approximation prefixes work as synonyms for ~ in estimates and pomodoro."""
+
+    def test_approximately_4_hours(self) -> None:
+        r = parse("Task approximately 4 hours", today=TODAY)
+        assert r.estimated_minutes == 240
+
+    def test_about_2_hours(self) -> None:
+        r = parse("Task about 2 hours", today=TODAY)
+        assert r.estimated_minutes == 120
+
+    def test_around_90_minutes(self) -> None:
+        r = parse("Task around 90 minutes", today=TODAY)
+        assert r.estimated_minutes == 90
+
+    def test_roughly_two_hours(self) -> None:
+        r = parse("Task roughly two hours", today=TODAY)
+        assert r.estimated_minutes == 120
+
+    def test_tilde_two_token_estimate(self) -> None:
+        """~2 hr (space between number and unit) is estimated_minutes, not pomodoro."""
+        r = parse("Task ~2 hr", today=TODAY)
+        assert r.estimated_minutes == 120
+        assert r.pomodoro_estimate is None
+
+    def test_approx_3_sessions(self) -> None:
+        r = parse("Task approx 3 sessions", today=TODAY)
+        assert r.pomodoro_estimate == 3
+
+    def test_about_two_pom(self) -> None:
+        r = parse("Task about two pom", today=TODAY)
+        assert r.pomodoro_estimate == 2
+
+    def test_number_word_parity_estimate(self) -> None:
+        """'approximately two hours' == 'approximately 2 hours'."""
+        r1 = parse("Task approximately two hours", today=TODAY)
+        r2 = parse("Task approximately 2 hours", today=TODAY)
+        assert r1.estimated_minutes == r2.estimated_minutes == 120
+
+    def test_number_word_parity_pomodoro(self) -> None:
+        """'about three sessions' == 'about 3 sessions'."""
+        r1 = parse("Task about three sessions", today=TODAY)
+        r2 = parse("Task about 3 sessions", today=TODAY)
+        assert r1.pomodoro_estimate == r2.pomodoro_estimate == 3
+
+    def test_about_hours_not_recurrence(self) -> None:
+        """'about 4 hours' is a time estimate, not minutely recurrence."""
+        r = parse("Task about 4 hours", today=TODAY)
+        assert r.estimated_minutes == 240
+        assert r.recurrence_type is None

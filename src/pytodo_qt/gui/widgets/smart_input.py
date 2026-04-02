@@ -9,13 +9,19 @@ from __future__ import annotations
 import re
 
 from PyQt6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QKeyEvent, QSyntaxHighlighter, QTextCharFormat, QTextDocument
+from PyQt6.QtGui import (
+    QColor,
+    QKeyEvent,
+    QMouseEvent,
+    QSyntaxHighlighter,
+    QTextCharFormat,
+    QTextDocument,
+)
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
     QSizePolicy,
     QTextEdit,
     QVBoxLayout,
@@ -37,6 +43,8 @@ _ENTITY_COLORS: dict[Theme, dict[EntityKind, str]] = {
         EntityKind.TAG: "#2DA5A5",
         EntityKind.RECURRENCE: "#5BA55B",
         EntityKind.POMODORO: "#8B5CF6",
+        EntityKind.ESTIMATE: "#D97706",
+        EntityKind.WORK_DURATION: "#9333EA",
     },
     Theme.DARK: {
         EntityKind.DATE: "#6AB0F3",
@@ -45,6 +53,8 @@ _ENTITY_COLORS: dict[Theme, dict[EntityKind, str]] = {
         EntityKind.TAG: "#4DC4C4",
         EntityKind.RECURRENCE: "#7DC87D",
         EntityKind.POMODORO: "#A78BFA",
+        EntityKind.ESTIMATE: "#FBBF24",
+        EntityKind.WORK_DURATION: "#C084FC",
     },
 }
 
@@ -104,10 +114,22 @@ class SmartInputHighlighter(QSyntaxHighlighter):
 # ---------------------------------------------------------------------------
 
 
-class EntityChip(QWidget):
-    """Small pill showing a parsed entity with a remove button."""
+_CONFIDENCE_THRESHOLD = 0.90
+
+
+class EntityChip(QLabel):
+    """Styled QLabel chip for a parsed entity.
+
+    Same pattern as tag chips in todo_table and kanban_board — a single QLabel
+    with direct inline stylesheet, mousePressEvent for click handling, and
+    setToolTip for hover text. No container widgets, no layout nesting.
+
+    Click on "×" suffix removes the entity. For uncertain matches (confidence < 0.90),
+    clicking the chip body accepts the match.
+    """
 
     removed = pyqtSignal(int, int)  # start, end offsets
+    confirmed = pyqtSignal(int, int)  # start, end offsets — user accepted uncertain match
 
     def __init__(
         self,
@@ -116,41 +138,80 @@ class EntityChip(QWidget):
     ) -> None:
         super().__init__(parent)
         self._span = span
+        self._uncertain = span.confidence < _CONFIDENCE_THRESHOLD
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 1, 2, 1)
-        layout.setSpacing(2)
-
-        label = QLabel(span.display)
-        label.setStyleSheet(self._label_style())
-        layout.addWidget(label)
-
-        remove_btn = QPushButton("\u00d7")  # × character
-        remove_btn.setFixedSize(16, 16)
-        remove_btn.setStyleSheet(
-            "QPushButton { border: none; font-weight: bold; font-size: 12px; }"
-        )
-        remove_btn.clicked.connect(self._on_remove)
-        layout.addWidget(remove_btn)
-
-        self.setStyleSheet(self._pill_style())
+        if self._uncertain and span.matched:
+            # Show matched term inline so user sees why it was flagged
+            display = f'{span.display}? \u2190 "{span.matched}"  \u00d7'
+        elif self._uncertain:
+            display = f"{span.display} ?  \u00d7"
+        else:
+            display = f"{span.display}  \u00d7"
+        self.setText(display)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
-    def _label_style(self) -> str:
+        if self._uncertain and span.matched:
+            pct = round(span.confidence * 100)
+            self.setToolTip(
+                f"Fuzzy match ({pct}% confidence)\n"
+                f'You typed: "{span.display.lower()}"\n'
+                f'Matched: "{span.matched}"\n\n'
+                f"Click to accept \u2022 \u00d7 to remove"
+            )
+
+        self._apply_style()
+
+    def _apply_style(self) -> None:
         colors = _get_entity_colors()
         color = colors.get(self._span.kind, "#888888")
-        return f"QLabel {{ color: {color}; font-weight: bold; font-size: 11px; }}"
+        r, g, b = _hex_to_rgb(color)
+        # Scope to QLabel so tooltip rendering is not affected by cascade
+        if self._uncertain:
+            self.setStyleSheet(
+                f"QLabel {{ background-color: rgba({r}, {g}, {b}, 15); "
+                f"color: {color}; "
+                f"border: 1px dashed rgba({r}, {g}, {b}, 128); "
+                "border-radius: 8px; padding: 1px 6px; "
+                "font-size: 11px; font-weight: bold; }"
+            )
+        else:
+            self.setStyleSheet(
+                f"QLabel {{ background-color: rgba({r}, {g}, {b}, 30); "
+                f"color: {color}; "
+                f"border: 1px solid rgba({r}, {g}, {b}, 97); "
+                "border-radius: 8px; padding: 1px 6px; "
+                "font-size: 11px; font-weight: bold; }"
+            )
 
-    def _pill_style(self) -> str:
-        colors = _get_entity_colors()
-        color = colors.get(self._span.kind, "#888888")
-        return (
-            f"EntityChip {{ background: {color}20; border: 1px solid {color}60; "
-            f"border-radius: 8px; }}"
-        )
+    def mousePressEvent(self, a0: QMouseEvent | None) -> None:  # noqa: N802
+        if a0 is None:
+            return
+        # Right ~16px is the "×" remove zone
+        if a0.position().x() > self.width() - 18:
+            self.removed.emit(self._span.start, self._span.end)
+            return
+        # Body click — accept uncertain match
+        if self._uncertain:
+            self._uncertain = False
+            self._span = EntitySpan(
+                self._span.start,
+                self._span.end,
+                self._span.kind,
+                self._span.display,
+                1.0,
+                self._span.matched,
+            )
+            self.setText(f"{self._span.display}  \u00d7")
+            self.setToolTip("")
+            self._apply_style()
+            self.confirmed.emit(self._span.start, self._span.end)
 
-    def _on_remove(self) -> None:
-        self.removed.emit(self._span.start, self._span.end)
+
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """Convert '#RRGGBB' to (R, G, B) tuple."""
+    h = hex_color.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +286,9 @@ class SmartInputWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._parse_result = ParseResult(reminder="")
+        self._accepted_spans: set[tuple[int, int]] = (
+            set()
+        )  # (start, end) of confirmed fuzzy matches
         self._debounce_timer = QTimer(self)
         self._debounce_timer.setSingleShot(True)
         self._debounce_timer.setInterval(100)
@@ -352,6 +416,18 @@ class SmartInputWidget(QWidget):
         text = self._text_edit.toPlainText()
         self._parse_result = parse(text)
 
+        # Apply accepted state — user already confirmed these fuzzy matches
+        for i, span in enumerate(self._parse_result.spans):
+            if (span.start, span.end) in self._accepted_spans and span.confidence < 1.0:
+                self._parse_result.spans[i] = EntitySpan(
+                    span.start,
+                    span.end,
+                    span.kind,
+                    span.display,
+                    1.0,
+                    span.matched,
+                )
+
         # Update highlighter
         self._highlighter.set_spans(self._parse_result.spans)
 
@@ -374,6 +450,7 @@ class SmartInputWidget(QWidget):
                 continue
             chip = EntityChip(span, self._chip_container)
             chip.removed.connect(self._on_chip_removed)
+            chip.confirmed.connect(self._on_chip_confirmed)
             # Insert before the stretch
             self._chip_layout.insertWidget(self._chip_layout.count() - 1, chip)
 
@@ -395,6 +472,12 @@ class SmartInputWidget(QWidget):
         new_text = " ".join(new_text.split())
         self._text_edit.setPlainText(new_text)
 
+    def _on_chip_confirmed(self, start: int, end: int) -> None:
+        """Mark a fuzzy match as accepted so re-parse preserves it."""
+        self._accepted_spans.add((start, end))
+        # Re-parse to rebuild chips with confirmed state
+        self._do_parse()
+
     # --- Public API ---
 
     def get_parse_result(self) -> ParseResult:
@@ -409,6 +492,7 @@ class SmartInputWidget(QWidget):
         return self._text_edit.toPlainText()
 
     def set_text(self, text: str) -> None:
+        self._accepted_spans.clear()
         self._text_edit.setPlainText(text)
 
     def set_known_tags(self, tags: list[str]) -> None:

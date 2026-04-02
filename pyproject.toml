@@ -12,6 +12,7 @@ pytodo_qt = ["*.png", "*.qss"]
 "pytodo_qt.gui.fonts" = ["*.ttf", "*.txt"]
 "pytodo_qt.gui.styles" = ["*.qss"]
 "pytodo_qt.web.static" = ["*.html", "*.css", "*.js", "*.json", "*.png"]
+"pytodo_qt.core.intents" = ["*.yaml"]
 
 [tool.basedpyright]
 typeCheckingMode = "standard"
@@ -72,6 +73,7 @@ dependencies = [
     "pandas>=2.0",
     "dateparser>=1.2",
     "rapidfuzz>=3.0",
+    "ruamel-yaml>=0.19.1",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
