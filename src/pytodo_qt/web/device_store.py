@@ -285,6 +285,20 @@ class WebDeviceStore:
         rows = self._conn.execute("SELECT token FROM paired_devices").fetchall()
         return {r[0] for r in rows}
 
+    def remove_inactive_devices(self, max_age_ms: int) -> int:
+        """Remove devices not seen within *max_age_ms* milliseconds.
+
+        Returns the number of devices removed.
+        """
+        assert self._conn is not None
+        cutoff = _now_ms() - max_age_ms
+        cursor = self._conn.execute(
+            "DELETE FROM paired_devices WHERE last_seen < ?",
+            (cutoff,),
+        )
+        self._conn.commit()
+        return cursor.rowcount
+
     def get_stale_devices(self, current_ca_generation: int) -> list[PairedDevice]:
         """Return devices paired at an older CA generation (need cert reinstall)."""
         assert self._conn is not None

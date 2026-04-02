@@ -453,6 +453,16 @@ class WebServer:
             app[device_store_key] = self._device_store
             self.generate_pin()
 
+            # Auto-cleanup inactive devices on startup
+            inactivity_days = self._config.device_inactivity_days
+            if inactivity_days > 0:
+                max_age_ms = inactivity_days * 86_400_000
+                removed = self._device_store.remove_inactive_devices(max_age_ms)
+                if removed:
+                    logger.log.info(
+                        "Removed %d inactive device(s) (>%d days)", removed, inactivity_days
+                    )
+
         # API routes
         setup_routes(app)
 

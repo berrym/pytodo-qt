@@ -106,6 +106,7 @@ class WebConfig:
     ca_generation: int = 0  # Incremented on CA cert regeneration
     caldav_enabled: bool = True  # CalDAV server on /caldav/ path
     caldav_password: str = ""  # Auto-generated on first use
+    device_inactivity_days: int = 30  # Auto-remove devices inactive for N days (0 = disabled)
 
 
 @dataclass
@@ -225,6 +226,7 @@ class AppConfig:
         lines.append(f"ca_generation = {self.web.ca_generation}")
         lines.append(f"caldav_enabled = {str(self.web.caldav_enabled).lower()}")
         lines.append(f'caldav_password = "{self.web.caldav_password}"')
+        lines.append(f"device_inactivity_days = {self.web.device_inactivity_days}")
         lines.append("")
 
         return "\n".join(lines)
@@ -320,6 +322,7 @@ class AppConfig:
                 ca_generation=w.get("ca_generation", 0),
                 caldav_enabled=w.get("caldav_enabled", True),
                 caldav_password=w.get("caldav_password", ""),
+                device_inactivity_days=w.get("device_inactivity_days", 30),
             )
 
         return config

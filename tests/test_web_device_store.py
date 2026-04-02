@@ -214,6 +214,48 @@ class TestWebDeviceStore:
         assert store.get_active_tokens() == set()
         store.close()
 
+    def test_remove_inactive_devices(self, tmp_path: Path):
+        store = self._make_store(tmp_path)
+        # Add a device and manually backdate its last_seen
+        device = store.add_device("Old Phone", "ua", "quick", 0)
+        assert store._conn is not None
+        # Set last_seen to 60 days ago (in ms)
+        old_ts = device.last_seen - (60 * 86_400_000)
+        store._conn.execute(
+            "UPDATE paired_devices SET last_seen = ? WHERE id = ?",
+            (old_ts, device.id),
+        )
+        store._conn.commit()
+
+        # Add a recent device
+        recent = store.add_device("New Phone", "ua2", "quick", 0)
+
+        # Remove devices inactive for >30 days
+        removed = store.remove_inactive_devices(30 * 86_400_000)
+        assert removed == 1
+
+        # Old device gone, recent device still present
+        assert store.get_device_by_token(device.token) is None
+        assert store.get_device_by_token(recent.token) is not None
+        store.close()
+
+    def test_remove_inactive_devices_none_inactive(self, tmp_path: Path):
+        store = self._make_store(tmp_path)
+        store.add_device("Active", "ua", "quick", 0)
+        removed = store.remove_inactive_devices(30 * 86_400_000)
+        assert removed == 0
+        assert len(store.get_all_devices()) == 1
+        store.close()
+
+    def test_remove_inactive_devices_zero_max_age(self, tmp_path: Path):
+        """max_age_ms=0 would remove everything — but caller should not pass 0."""
+        store = self._make_store(tmp_path)
+        store.add_device("Test", "ua", "quick", 0)
+        # With max_age_ms large enough, nothing removed
+        removed = store.remove_inactive_devices(999_999_999_999)
+        assert removed == 0
+        store.close()
+
     def test_get_stale_devices(self, tmp_path: Path):
         store = self._make_store(tmp_path)
         store.add_device("Old", "ua1", "trusted", 0)
