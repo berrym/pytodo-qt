@@ -8,6 +8,7 @@
   var INSTALL_DISMISSED_KEY = "pytodo_install_dismissed";
   var AUTH_TOKEN_KEY = "pytodo_auth_token";
   var COLLAPSED_PARENTS_KEY = "pytodo_collapsed_parents";
+  var THEME_KEY = "pytodo_theme";
 
   var currentListId = null;
   var cachedLists = [];
@@ -62,6 +63,51 @@
     saveCollapsedParents();
     renderItems(cachedItems, true);
   }
+
+  // Theme management: "system" (default), "light", or "dark"
+  var currentTheme = localStorage.getItem(THEME_KEY) || "system";
+
+  function applyTheme(theme) {
+    currentTheme = theme;
+    if (theme === "dark") {
+      document.documentElement.setAttribute("data-theme", "dark");
+    } else if (theme === "light") {
+      document.documentElement.setAttribute("data-theme", "light");
+    } else {
+      document.documentElement.removeAttribute("data-theme");
+    }
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch (e) {
+      /* best-effort */
+    }
+  }
+
+  function cycleTheme() {
+    var next =
+      currentTheme === "system"
+        ? "light"
+        : currentTheme === "light"
+          ? "dark"
+          : "system";
+    applyTheme(next);
+    updateThemeLabel();
+  }
+
+  function getThemeLabel() {
+    if (currentTheme === "light") return "Light";
+    if (currentTheme === "dark") return "Dark";
+    var isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    return isDark ? "Dark (system)" : "Light (system)";
+  }
+
+  function updateThemeLabel() {
+    var el = document.getElementById("settings-theme");
+    if (el) el.textContent = getThemeLabel();
+  }
+
+  // Apply saved theme immediately
+  applyTheme(currentTheme);
 
   // ====================================================================
   // DOM refs
@@ -3460,11 +3506,7 @@
     renderQueueList(queue);
 
     // Display info
-    var themeEl = document.getElementById("settings-theme");
-    if (themeEl) {
-      var isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      themeEl.textContent = isDark ? "Dark (system)" : "Light (system)";
-    }
+    updateThemeLabel();
     var viewModeEl = document.getElementById("settings-view-mode");
     if (viewModeEl)
       viewModeEl.textContent = viewMode === "board" ? "Board" : "List";
@@ -3612,6 +3654,14 @@
       saveOfflineQueue([]);
       showToast("Offline queue cleared");
       refreshSettings();
+    });
+  }
+
+  // Theme toggle
+  var themeRow = document.getElementById("settings-theme-row");
+  if (themeRow) {
+    themeRow.addEventListener("click", function () {
+      cycleTheme();
     });
   }
 
