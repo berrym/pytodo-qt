@@ -24,7 +24,12 @@
   var lastSyncTime = 0;
   var offlineUndoStack = [];
   var offlineRedoStack = [];
-  var serverUndoState = { can_undo: false, can_redo: false, undo_text: "", redo_text: "" };
+  var serverUndoState = {
+    can_undo: false,
+    can_redo: false,
+    undo_text: "",
+    redo_text: "",
+  };
 
   // ====================================================================
   // DOM refs
@@ -83,7 +88,11 @@
     // Undo/redo: Ctrl+Z / Ctrl+Shift+Z (or Cmd on Mac)
     if ((e.ctrlKey || e.metaKey) && e.key === "z") {
       e.preventDefault();
-      if (e.shiftKey) { onRedo(); } else { onUndo(); }
+      if (e.shiftKey) {
+        onRedo();
+      } else {
+        onUndo();
+      }
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key === "y") {
@@ -121,7 +130,7 @@
   function trapFocus(sheet) {
     if (!sheet) return;
     var focusable = sheet.querySelectorAll(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
     );
     if (focusable.length === 0) return;
     var first = focusable[0];
@@ -130,9 +139,15 @@
     sheet._focusTrapHandler = function (e) {
       if (e.key !== "Tab") return;
       if (e.shiftKey) {
-        if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
       } else {
-        if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
     sheet.addEventListener("keydown", sheet._focusTrapHandler);
@@ -152,7 +167,9 @@
   function animateSheetClose(sheet, afterClose) {
     if (!sheet) return;
     releaseFocusTrap(sheet);
-    var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var reducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
     if (reducedMotion) {
       sheet.classList.add("hidden");
       if (afterClose) afterClose();
@@ -197,7 +214,9 @@
       throw err401;
     }
     if (!resp.ok) {
-      var body = await resp.json().catch(function () { return {}; });
+      var body = await resp.json().catch(function () {
+        return {};
+      });
       var err = new Error(body.error || resp.statusText);
       err.status = resp.status;
       err.body = body;
@@ -219,7 +238,10 @@
   function showLoginScreen() {
     if (loginScreen) loginScreen.classList.remove("hidden");
     if (appContainer) appContainer.classList.add("hidden");
-    if (loginPinInput) { loginPinInput.value = ""; loginPinInput.focus(); }
+    if (loginPinInput) {
+      loginPinInput.value = "";
+      loginPinInput.focus();
+    }
     if (loginError) loginError.textContent = "";
     stopPolling();
     disconnectWebSocket();
@@ -241,7 +263,7 @@
         var resp = await fetch(API + "/auth", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pin: pin })
+          body: JSON.stringify({ pin: pin }),
         });
         if (resp.ok) {
           var data = await resp.json();
@@ -249,21 +271,31 @@
           hideLoginScreen();
           init();
         } else {
-          var err = await resp.json().catch(function () { return {}; });
+          var err = await resp.json().catch(function () {
+            return {};
+          });
           if (loginError) loginError.textContent = err.error || "Invalid PIN";
         }
       } catch (e) {
-        if (loginError) loginError.textContent = "Connection failed — try refreshing the page";
+        if (loginError)
+          loginError.textContent =
+            "Connection failed — try refreshing the page";
         // Network error during PIN — likely a stale service worker blocking
         // connections after cert change. Unregister SW so direct browser
         // requests can show the cert acceptance dialog.
         if (navigator.serviceWorker) {
           try {
             var swRegs = await navigator.serviceWorker.getRegistrations();
-            for (var k = 0; k < swRegs.length; k++) { await swRegs[k].unregister(); }
+            for (var k = 0; k < swRegs.length; k++) {
+              await swRegs[k].unregister();
+            }
             var cn = await caches.keys();
-            for (var m = 0; m < cn.length; m++) { await caches.delete(cn[m]); }
-          } catch (swE) { /* best effort */ }
+            for (var m = 0; m < cn.length; m++) {
+              await caches.delete(cn[m]);
+            }
+          } catch (swE) {
+            /* best effort */
+          }
         }
       }
       loginBtn.disabled = false;
@@ -273,7 +305,10 @@
 
   if (loginPinInput) {
     loginPinInput.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") { e.preventDefault(); if (loginBtn) loginBtn.click(); }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (loginBtn) loginBtn.click();
+      }
     });
     // Auto-submit when 6 digits entered
     loginPinInput.addEventListener("input", function () {
@@ -301,7 +336,8 @@
     for (var i = 0; i < cachedLists.length; i++) {
       if (cachedLists[i].id === listId) return cachedLists[i].updated_at;
     }
-    if (cachedBoardData && cachedBoardData.id === listId) return cachedBoardData.updated_at;
+    if (cachedBoardData && cachedBoardData.id === listId)
+      return cachedBoardData.updated_at;
     return undefined;
   }
 
@@ -324,7 +360,10 @@
 
   function openIDB() {
     return new Promise(function (resolve) {
-      if (idb) { resolve(idb); return; }
+      if (idb) {
+        resolve(idb);
+        return;
+      }
       var req = indexedDB.open(IDB_NAME, IDB_VERSION);
       req.onupgradeneeded = function (e) {
         var db = e.target.result;
@@ -335,8 +374,13 @@
           db.createObjectStore("listItems", { keyPath: "listId" });
         }
       };
-      req.onsuccess = function (e) { idb = e.target.result; resolve(idb); };
-      req.onerror = function () { resolve(null); }; // Graceful degradation
+      req.onsuccess = function (e) {
+        idb = e.target.result;
+        resolve(idb);
+      };
+      req.onerror = function () {
+        resolve(null);
+      }; // Graceful degradation
     });
   }
 
@@ -347,8 +391,12 @@
       var tx = db.transaction("lists", "readwrite");
       var store = tx.objectStore("lists");
       store.clear();
-      lists.forEach(function (lst) { store.put(lst); });
-    } catch (e) { /* best-effort */ }
+      lists.forEach(function (lst) {
+        store.put(lst);
+      });
+    } catch (e) {
+      /* best-effort */
+    }
   }
 
   async function getCachedLists() {
@@ -358,9 +406,15 @@
       try {
         var tx = db.transaction("lists", "readonly");
         var req = tx.objectStore("lists").getAll();
-        req.onsuccess = function () { resolve(req.result); };
-        req.onerror = function () { resolve(null); };
-      } catch (e) { resolve(null); }
+        req.onsuccess = function () {
+          resolve(req.result);
+        };
+        req.onerror = function () {
+          resolve(null);
+        };
+      } catch (e) {
+        resolve(null);
+      }
     });
   }
 
@@ -370,7 +424,9 @@
     try {
       var tx = db.transaction("listItems", "readwrite");
       tx.objectStore("listItems").put({ listId: listId, items: items });
-    } catch (e) { /* best-effort */ }
+    } catch (e) {
+      /* best-effort */
+    }
   }
 
   async function getCachedListItems(listId) {
@@ -380,9 +436,15 @@
       try {
         var tx = db.transaction("listItems", "readonly");
         var req = tx.objectStore("listItems").get(listId);
-        req.onsuccess = function () { resolve(req.result ? req.result.items : null); };
-        req.onerror = function () { resolve(null); };
-      } catch (e) { resolve(null); }
+        req.onsuccess = function () {
+          resolve(req.result ? req.result.items : null);
+        };
+        req.onerror = function () {
+          resolve(null);
+        };
+      } catch (e) {
+        resolve(null);
+      }
     });
   }
 
@@ -391,8 +453,11 @@
   // ====================================================================
 
   function getOfflineQueue() {
-    try { return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || "[]"); }
-    catch (e) { return []; }
+    try {
+      return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY) || "[]");
+    } catch (e) {
+      return [];
+    }
   }
 
   function saveOfflineQueue(queue) {
@@ -436,7 +501,13 @@
   async function replayOfflineQueue() {
     var queue = getOfflineQueue();
     if (queue.length === 0) return;
-    showToast("Syncing " + queue.length + " offline change" + (queue.length > 1 ? "s" : "") + "...");
+    showToast(
+      "Syncing " +
+        queue.length +
+        " offline change" +
+        (queue.length > 1 ? "s" : "") +
+        "...",
+    );
     var remaining = [];
     var conflicts = 0;
     var chainedTs = {}; // entityId → latest updated_at from successful replays
@@ -451,7 +522,9 @@
             patchedBody.updated_at = chainedTs[entityId];
             entry.opts.body = JSON.stringify(patchedBody);
           }
-        } catch (e) { /* leave body as-is */ }
+        } catch (e) {
+          /* leave body as-is */
+        }
       }
       try {
         entry.opts.headers = authHeaders(entry.opts.headers);
@@ -467,7 +540,9 @@
             if (data && data.updated_at) {
               chainedTs[entityId] = data.updated_at;
             }
-          } catch (e) { /* no parseable body */ }
+          } catch (e) {
+            /* no parseable body */
+          }
         }
       } catch (e) {
         remaining.push(entry);
@@ -475,12 +550,22 @@
     }
     saveOfflineQueue(remaining);
     if (conflicts > 0) {
-      showToast(conflicts + " change" + (conflicts > 1 ? "s" : "") + " conflicted (data updated elsewhere)");
+      showToast(
+        conflicts +
+          " change" +
+          (conflicts > 1 ? "s" : "") +
+          " conflicted (data updated elsewhere)",
+      );
     } else if (remaining.length === 0) {
       showToast("All changes synced");
     }
     if (remaining.length > 0) {
-      showToast(remaining.length + " change" + (remaining.length > 1 ? "s" : "") + " still pending");
+      showToast(
+        remaining.length +
+          " change" +
+          (remaining.length > 1 ? "s" : "") +
+          " still pending",
+      );
     }
     await refreshCurrentList();
   }
@@ -520,7 +605,8 @@
       connectionDot.title = "Offline";
     } else if (hasPending) {
       connectionDot.classList.add("pending");
-      connectionDot.title = queue.length + " change" + (queue.length > 1 ? "s" : "") + " pending";
+      connectionDot.title =
+        queue.length + " change" + (queue.length > 1 ? "s" : "") + " pending";
     } else {
       connectionDot.classList.add("online");
       connectionDot.title = "Connected";
@@ -577,7 +663,8 @@
     if (hash === "#" || hash === "#/") return { view: "home", id: null };
     if (hash.startsWith("#/search")) return { view: "search", id: null };
     if (hash.startsWith("#/settings")) return { view: "settings", id: null };
-    if (hash.startsWith("#/item/")) return { view: "item", id: hash.substring(7) };
+    if (hash.startsWith("#/item/"))
+      return { view: "item", id: hash.substring(7) };
     return { view: "home", id: null };
   }
 
@@ -609,7 +696,9 @@
       if (activeView !== prevView) {
         var fromIdx = viewOrder.indexOf(prevView);
         var toIdx = viewOrder.indexOf(activeView);
-        viewEl.classList.add(toIdx > fromIdx ? "slide-in-right" : "slide-in-left");
+        viewEl.classList.add(
+          toIdx > fromIdx ? "slide-in-right" : "slide-in-left",
+        );
       }
       prevView = activeView;
     }
@@ -626,7 +715,8 @@
 
     // Update header title
     var titles = { home: "PyTodo-Qt", search: "Search", settings: "Settings" };
-    if (headerTitle) headerTitle.textContent = titles[activeView] || "PyTodo-Qt";
+    if (headerTitle)
+      headerTitle.textContent = titles[activeView] || "PyTodo-Qt";
 
     // Trigger view-specific actions
     if (activeView === "search") refreshSearch();
@@ -682,6 +772,7 @@
     { dimension: "due_date", reverse: false },
     { dimension: "priority", reverse: false },
   ];
+  var sortUpdatedAt = 0;
 
   // Fetch sort tiers from API (non-blocking, falls back to defaults)
   function fetchSortTiers() {
@@ -692,6 +783,7 @@
       .then(function (data) {
         if (data && data.sort_tiers && data.sort_tiers.length === 3) {
           currentSortTiers = data.sort_tiers;
+          if (data.updated_at != null) sortUpdatedAt = data.updated_at;
           updateSortButtonLabel();
         }
       })
@@ -703,7 +795,11 @@
   function updateSortButtonLabel() {
     if (!sortBtn) return;
     var dim = currentSortTiers[0].dimension;
-    var labels = { completion: "Completion", due_date: "Due Date", priority: "Priority" };
+    var labels = {
+      completion: "Completion",
+      due_date: "Due Date",
+      priority: "Priority",
+    };
     var arrow = currentSortTiers[0].reverse ? "\u2193" : "\u2191";
     sortBtn.textContent = "Sort: " + (labels[dim] || dim) + " " + arrow;
   }
@@ -775,7 +871,9 @@
       sortTierSelects[i].value = currentSortTiers[i].dimension;
     }
     for (var j = 0; j < sortDirBtns.length; j++) {
-      sortDirBtns[j].textContent = currentSortTiers[j].reverse ? "\u2193" : "\u2191";
+      sortDirBtns[j].textContent = currentSortTiers[j].reverse
+        ? "\u2193"
+        : "\u2191";
     }
   }
 
@@ -791,14 +889,32 @@
   }
 
   function saveSortTiers() {
-    var payload = { tiers: currentSortTiers };
+    var payload = { tiers: currentSortTiers, updated_at: sortUpdatedAt };
     fetch(API + "/sort", {
       method: "PUT",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
-    }).catch(function () {
-      /* best-effort save */
-    });
+    })
+      .then(function (r) {
+        if (r.status === 409) {
+          return r.json().then(function (data) {
+            if (data.current && data.current.sort_tiers) {
+              currentSortTiers = data.current.sort_tiers;
+              if (data.current.updated_at != null)
+                sortUpdatedAt = data.current.updated_at;
+              syncSortSheetUI();
+            }
+            showToast("Sort was changed elsewhere — refreshed");
+          });
+        }
+        return r.ok ? r.json() : null;
+      })
+      .then(function (data) {
+        if (data && data.updated_at != null) sortUpdatedAt = data.updated_at;
+      })
+      .catch(function () {
+        /* best-effort save */
+      });
     updateSortButtonLabel();
     // Re-render current view with new sort order
     if (viewMode === "list") {
@@ -822,33 +938,41 @@
 
   // Tier dimension change with auto-swap (no duplicates)
   for (var si = 0; si < sortTierSelects.length; si++) {
-    sortTierSelects[si].addEventListener("change", (function (changedIdx) {
-      return function () {
-        var newDim = sortTierSelects[changedIdx].value;
-        // Find if another tier already has this dimension
-        for (var k = 0; k < currentSortTiers.length; k++) {
-          if (k !== changedIdx && currentSortTiers[k].dimension === newDim) {
-            // Swap: give the other tier the dimension we're leaving
-            currentSortTiers[k].dimension = currentSortTiers[changedIdx].dimension;
-            break;
+    sortTierSelects[si].addEventListener(
+      "change",
+      (function (changedIdx) {
+        return function () {
+          var newDim = sortTierSelects[changedIdx].value;
+          // Find if another tier already has this dimension
+          for (var k = 0; k < currentSortTiers.length; k++) {
+            if (k !== changedIdx && currentSortTiers[k].dimension === newDim) {
+              // Swap: give the other tier the dimension we're leaving
+              currentSortTiers[k].dimension =
+                currentSortTiers[changedIdx].dimension;
+              break;
+            }
           }
-        }
-        currentSortTiers[changedIdx].dimension = newDim;
-        syncSortSheetUI();
-        saveSortTiers();
-      };
-    })(si));
+          currentSortTiers[changedIdx].dimension = newDim;
+          syncSortSheetUI();
+          saveSortTiers();
+        };
+      })(si),
+    );
   }
 
   // Direction toggle buttons
   for (var di = 0; di < sortDirBtns.length; di++) {
-    sortDirBtns[di].addEventListener("click", (function (tierIdx) {
-      return function () {
-        currentSortTiers[tierIdx].reverse = !currentSortTiers[tierIdx].reverse;
-        syncSortSheetUI();
-        saveSortTiers();
-      };
-    })(di));
+    sortDirBtns[di].addEventListener(
+      "click",
+      (function (tierIdx) {
+        return function () {
+          currentSortTiers[tierIdx].reverse =
+            !currentSortTiers[tierIdx].reverse;
+          syncSortSheetUI();
+          saveSortTiers();
+        };
+      })(di),
+    );
   }
 
   // Board layout preset button
@@ -872,7 +996,11 @@
 
   function haptic(duration) {
     if (navigator.vibrate) {
-      try { navigator.vibrate(duration || 10); } catch (e) { /* best-effort */ }
+      try {
+        navigator.vibrate(duration || 10);
+      } catch (e) {
+        /* best-effort */
+      }
     }
   }
 
@@ -904,7 +1032,9 @@
 
     var backdrop = document.createElement("div");
     backdrop.className = "context-menu-backdrop";
-    backdrop.addEventListener("click", function () { closeContextMenu(); });
+    backdrop.addEventListener("click", function () {
+      closeContextMenu();
+    });
     overlay.appendChild(backdrop);
 
     var content = document.createElement("div");
@@ -920,7 +1050,9 @@
     var cancelBtn = document.createElement("button");
     cancelBtn.className = "context-menu-cancel";
     cancelBtn.textContent = "Cancel";
-    cancelBtn.addEventListener("click", function () { closeContextMenu(); });
+    cancelBtn.addEventListener("click", function () {
+      closeContextMenu();
+    });
     content.appendChild(cancelBtn);
 
     overlay.appendChild(content);
@@ -990,13 +1122,17 @@
     activeContextMenu = null;
     releaseFocusTrap(menu);
 
-    var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    var reducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
     if (reducedMotion) {
       menu.remove();
       return;
     }
     menu.classList.add("closing");
-    setTimeout(function () { menu.remove(); }, 150);
+    setTimeout(function () {
+      menu.remove();
+    }, 150);
   }
 
   // ====================================================================
@@ -1010,7 +1146,8 @@
    */
   function attachLongPress(el, onLongPress) {
     var timer = null;
-    var startX = 0, startY = 0;
+    var startX = 0,
+      startY = 0;
     var HOLD_MS = 500;
     var MOVE_THRESHOLD = 10;
     var fired = false;
@@ -1040,7 +1177,10 @@
     }
 
     function cancel() {
-      if (timer) { clearTimeout(timer); timer = null; }
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
       el.classList.remove("long-press-active");
     }
 
@@ -1072,14 +1212,18 @@
     actions.push({
       icon: "\u270F\uFE0F",
       label: "Edit",
-      onTap: function () { location.hash = "#/item/" + item.id; }
+      onTap: function () {
+        location.hash = "#/item/" + item.id;
+      },
     });
 
     // Toggle complete
     actions.push({
       icon: item.complete ? "\u25CB" : "\u2713",
       label: item.complete ? "Mark Incomplete" : "Mark Complete",
-      onTap: function () { onToggle(item.id); }
+      onTap: function () {
+        onToggle(item.id);
+      },
     });
 
     actions.push({ divider: true });
@@ -1088,7 +1232,7 @@
     var priorities = [
       { label: "High", value: 1, icon: "\u{1F534}" },
       { label: "Normal", value: 2, icon: "\u{1F535}" },
-      { label: "Low", value: 3, icon: "\u26AA" }
+      { label: "Low", value: 3, icon: "\u26AA" },
     ];
     actions.push({
       icon: "\u{1F3F7}\uFE0F",
@@ -1100,27 +1244,36 @@
           checked: item.priority === p.value,
           onTap: function () {
             setPriority(item.id, p.value);
-          }
+          },
         };
-      })
+      }),
     });
 
     // Move to column sub-menu (if board data is available)
-    if (cachedBoardData && cachedBoardData.board_columns && cachedBoardData.board_columns.length > 0) {
+    if (
+      cachedBoardData &&
+      cachedBoardData.board_columns &&
+      cachedBoardData.board_columns.length > 0
+    ) {
       var columns = cachedBoardData.board_columns;
       actions.push({
         icon: "\u{1F4CB}",
         label: "Move to Column",
         submenu: columns.map(function (col) {
           return {
-            icon: col === columns[0] ? "\u{1F4E5}" : col === columns[columns.length - 1] ? "\u2705" : "\u25AB",
+            icon:
+              col === columns[0]
+                ? "\u{1F4E5}"
+                : col === columns[columns.length - 1]
+                  ? "\u2705"
+                  : "\u25AB",
             label: col,
             checked: item.board_column === col,
             onTap: function () {
               moveToColumn(item.id, col);
-            }
+            },
           };
-        })
+        }),
       });
     }
 
@@ -1140,12 +1293,16 @@
         return {
           icon: p.type === null ? "\u274C" : "\u{1F504}",
           label: p.label,
-          checked: p.type === null ? !item.recurrence_type : (item.recurrence_type === p.type && item.recurrence_interval === p.interval),
+          checked:
+            p.type === null
+              ? !item.recurrence_type
+              : item.recurrence_type === p.type &&
+                item.recurrence_interval === p.interval,
           onTap: function () {
             setRecurrence(item.id, p.type, p.interval);
-          }
+          },
         };
-      })
+      }),
     });
 
     actions.push({ divider: true });
@@ -1158,7 +1315,7 @@
       onTap: function () {
         var cardEl = document.querySelector('[data-id="' + item.id + '"]');
         onDeleteWithUndo(item.id, item.reminder, cardEl);
-      }
+      },
     });
 
     return actions;
@@ -1172,7 +1329,7 @@
     var opts = {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(fields)
+      body: JSON.stringify(fields),
     };
     if (!isOnline) {
       var snap = captureItemSnapshot(itemId);
@@ -1195,13 +1352,16 @@
 
   async function setRecurrence(itemId, recType, recInterval) {
     var path = "/items/" + itemId;
-    var fields = { recurrence_type: recType, recurrence_interval: recInterval || 1 };
+    var fields = {
+      recurrence_type: recType,
+      recurrence_interval: recInterval || 1,
+    };
     var ua = getItemUpdatedAt(itemId);
     if (ua !== undefined) fields.updated_at = ua;
     var opts = {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(fields)
+      body: JSON.stringify(fields),
     };
     if (!isOnline) {
       var snap = captureItemSnapshot(itemId);
@@ -1231,7 +1391,7 @@
     var opts = {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(fields)
+      body: JSON.stringify(fields),
     };
     if (!isOnline) {
       var snap = captureItemSnapshot(itemId);
@@ -1254,9 +1414,10 @@
   }
 
   function openItemContextMenu(item) {
-    var title = item.reminder.length > 40
-      ? item.reminder.substring(0, 40) + "\u2026"
-      : item.reminder;
+    var title =
+      item.reminder.length > 40
+        ? item.reminder.substring(0, 40) + "\u2026"
+        : item.reminder;
     showContextMenu(title, buildItemContextActions(item));
   }
 
@@ -1273,7 +1434,9 @@
     actions.push({
       icon: "\u270F\uFE0F",
       label: "Rename",
-      onTap: function () { promptRenameColumn(colName); }
+      onTap: function () {
+        promptRenameColumn(colName);
+      },
     });
 
     // WIP limit (middle columns only)
@@ -1281,33 +1444,45 @@
       actions.push({
         icon: "\u{1F522}",
         label: "Set WIP Limit",
-        onTap: function () { promptWipLimit(colName); }
+        onTap: function () {
+          promptWipLimit(colName);
+        },
       });
     }
 
     // Delete (middle columns only, min 3 total)
     if (!isFirst && !isLast && totalColumns > 3) {
       actions.push({ divider: true });
-      var firstCol = cachedBoardData ? cachedBoardData.board_columns[0] : "first column";
+      var firstCol = cachedBoardData
+        ? cachedBoardData.board_columns[0]
+        : "first column";
       actions.push({
         icon: "\u{1F5D1}\uFE0F",
         label: "Delete",
         danger: true,
         onTap: function () {
-          var msg = itemCount > 0
-            ? itemCount + " item" + (itemCount > 1 ? "s" : "") + ' will be moved to "' + firstCol + '"'
-            : "This column is empty";
-          showContextMenu("Delete \"" + colName + "\"?", [
+          var msg =
+            itemCount > 0
+              ? itemCount +
+                " item" +
+                (itemCount > 1 ? "s" : "") +
+                ' will be moved to "' +
+                firstCol +
+                '"'
+              : "This column is empty";
+          showContextMenu('Delete "' + colName + '"?', [
             { label: msg },
             { divider: true },
             {
               icon: "\u{1F5D1}\uFE0F",
               label: "Delete Column",
               danger: true,
-              onTap: function () { deleteColumn(colName); }
-            }
+              onTap: function () {
+                deleteColumn(colName);
+              },
+            },
           ]);
-        }
+        },
       });
     }
 
@@ -1323,9 +1498,14 @@
   }
 
   function promptWipLimit(colName) {
-    var currentLimit = (cachedBoardData && cachedBoardData.wip_limits)
-      ? cachedBoardData.wip_limits[colName] || 0 : 0;
-    var input = prompt("WIP limit for \"" + colName + "\" (0 = no limit):", String(currentLimit));
+    var currentLimit =
+      cachedBoardData && cachedBoardData.wip_limits
+        ? cachedBoardData.wip_limits[colName] || 0
+        : 0;
+    var input = prompt(
+      'WIP limit for "' + colName + '" (0 = no limit):',
+      String(currentLimit),
+    );
     if (input === null) return;
     var limit = parseInt(input, 10);
     if (isNaN(limit) || limit < 0 || limit > 99) {
@@ -1343,13 +1523,17 @@
       await api("/lists/" + currentListId + "/columns", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(colFields)
+        body: JSON.stringify(colFields),
       });
       await refreshCurrentList();
-      showToast("Renamed to \"" + newName + "\"");
+      showToast('Renamed to "' + newName + '"');
     } catch (e) {
-      if (e.status === 409) { showToast("Board was modified \u2014 refreshing"); await refreshCurrentList(); }
-      else { showToast("Rename failed: " + e.message); }
+      if (e.status === 409) {
+        showToast("Board was modified \u2014 refreshing");
+        await refreshCurrentList();
+      } else {
+        showToast("Rename failed: " + e.message);
+      }
     }
   }
 
@@ -1361,13 +1545,17 @@
       await api("/lists/" + currentListId + "/columns", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(wipFields)
+        body: JSON.stringify(wipFields),
       });
       await refreshCurrentList();
       showToast(limit > 0 ? "WIP limit set to " + limit : "WIP limit removed");
     } catch (e) {
-      if (e.status === 409) { showToast("Board was modified \u2014 refreshing"); await refreshCurrentList(); }
-      else { showToast("Failed: " + e.message); }
+      if (e.status === 409) {
+        showToast("Board was modified \u2014 refreshing");
+        await refreshCurrentList();
+      } else {
+        showToast("Failed: " + e.message);
+      }
     }
   }
 
@@ -1379,13 +1567,17 @@
       await api("/lists/" + currentListId + "/columns", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(delColFields)
+        body: JSON.stringify(delColFields),
       });
       await refreshCurrentList();
-      showToast("Column \"" + colName + "\" deleted");
+      showToast('Column "' + colName + '" deleted');
     } catch (e) {
-      if (e.status === 409) { showToast("Board was modified \u2014 refreshing"); await refreshCurrentList(); }
-      else { showToast("Delete failed: " + e.message); }
+      if (e.status === 409) {
+        showToast("Board was modified \u2014 refreshing");
+        await refreshCurrentList();
+      } else {
+        showToast("Delete failed: " + e.message);
+      }
     }
   }
 
@@ -1408,12 +1600,15 @@
 
     var currentCols = cachedBoardData ? cachedBoardData.board_columns : [];
     var actions = cachedPresets.map(function (preset) {
-      var isActive = JSON.stringify(currentCols) === JSON.stringify(preset.columns);
+      var isActive =
+        JSON.stringify(currentCols) === JSON.stringify(preset.columns);
       return {
         icon: isActive ? "\u2713" : "\u25AB",
         label: preset.name,
         checked: isActive,
-        onTap: function () { applyPreset(preset.columns, preset.name); }
+        onTap: function () {
+          applyPreset(preset.columns, preset.name);
+        },
       };
     });
 
@@ -1428,17 +1623,26 @@
       var result = await api("/lists/" + currentListId + "/apply-preset", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(presetFields)
+        body: JSON.stringify(presetFields),
       });
       await refreshCurrentList();
-      var msg = "Applied \"" + presetName + "\"";
+      var msg = 'Applied "' + presetName + '"';
       if (result.remapped > 0) {
-        msg += " (" + result.remapped + " item" + (result.remapped > 1 ? "s" : "") + " remapped)";
+        msg +=
+          " (" +
+          result.remapped +
+          " item" +
+          (result.remapped > 1 ? "s" : "") +
+          " remapped)";
       }
       showToast(msg);
     } catch (e) {
-      if (e.status === 409) { showToast("Board was modified \u2014 refreshing"); await refreshCurrentList(); }
-      else { showToast("Failed: " + e.message); }
+      if (e.status === 409) {
+        showToast("Board was modified \u2014 refreshing");
+        await refreshCurrentList();
+      } else {
+        showToast("Failed: " + e.message);
+      }
     }
   }
 
@@ -1450,7 +1654,11 @@
 
   function enterMoveMode(itemId, itemReminder, sourceColumn) {
     if (moveMode) exitMoveMode();
-    moveMode = { itemId: itemId, itemReminder: itemReminder, sourceColumn: sourceColumn };
+    moveMode = {
+      itemId: itemId,
+      itemReminder: itemReminder,
+      sourceColumn: sourceColumn,
+    };
     haptic(15);
     renderMoveUI();
   }
@@ -1461,17 +1669,25 @@
     var banner = document.querySelector(".move-banner");
     if (banner) banner.remove();
     // Remove drop zones and held state
-    document.querySelectorAll(".board-drop-zone").forEach(function (z) { z.remove(); });
-    document.querySelectorAll(".board-card.held").forEach(function (c) { c.classList.remove("held"); });
+    document.querySelectorAll(".board-drop-zone").forEach(function (z) {
+      z.remove();
+    });
+    document.querySelectorAll(".board-card.held").forEach(function (c) {
+      c.classList.remove("held");
+    });
     // Remove sort indicators
-    document.querySelectorAll(".board-sort-indicator").forEach(function (s) { s.remove(); });
+    document.querySelectorAll(".board-sort-indicator").forEach(function (s) {
+      s.remove();
+    });
   }
 
   function renderMoveUI() {
     if (!moveMode || !boardContainer) return;
 
     // Mark held card
-    var heldCard = boardContainer.querySelector('[data-id="' + moveMode.itemId + '"]');
+    var heldCard = boardContainer.querySelector(
+      '[data-id="' + moveMode.itemId + '"]',
+    );
     if (heldCard) heldCard.classList.add("held");
 
     // Add move banner above board
@@ -1482,15 +1698,18 @@
     banner.setAttribute("aria-live", "polite");
     var bannerText = document.createElement("span");
     bannerText.className = "move-banner-text";
-    var truncated = moveMode.itemReminder.length > 30
-      ? moveMode.itemReminder.substring(0, 30) + "\u2026"
-      : moveMode.itemReminder;
+    var truncated =
+      moveMode.itemReminder.length > 30
+        ? moveMode.itemReminder.substring(0, 30) + "\u2026"
+        : moveMode.itemReminder;
     bannerText.textContent = "Moving: " + truncated;
     banner.appendChild(bannerText);
     var cancelBtn = document.createElement("button");
     cancelBtn.className = "move-banner-cancel";
     cancelBtn.textContent = "\u2715 Cancel";
-    cancelBtn.addEventListener("click", function () { exitMoveMode(); });
+    cancelBtn.addEventListener("click", function () {
+      exitMoveMode();
+    });
     banner.appendChild(cancelBtn);
     boardContainer.parentElement.insertBefore(banner, boardContainer);
 
@@ -1517,7 +1736,10 @@
       });
 
       // Insert sort position indicator
-      var colItems = (cachedBoardData && cachedBoardData.columns) ? cachedBoardData.columns[colName] || [] : [];
+      var colItems =
+        cachedBoardData && cachedBoardData.columns
+          ? cachedBoardData.columns[colName] || []
+          : [];
       var sortPos = computeSortPosition(moveMode.itemId, colItems);
       var cards = itemsDiv.querySelectorAll(".board-card");
 
@@ -1555,7 +1777,10 @@
       var otherKey = sortKey(colItems[i], tiers);
       var cmp = 0;
       for (var k = 0; k < movingKey.length; k++) {
-        if (movingKey[k] !== otherKey[k]) { cmp = movingKey[k] < otherKey[k] ? -1 : 1; break; }
+        if (movingKey[k] !== otherKey[k]) {
+          cmp = movingKey[k] < otherKey[k] ? -1 : 1;
+          break;
+        }
       }
       if (cmp === 0) {
         cmp = movingReminder.localeCompare(colItems[i].reminder.toLowerCase());
@@ -1570,8 +1795,12 @@
     var itemId = moveMode.itemId;
     var sourceColumn = moveMode.sourceColumn;
     var boardColumns = cachedBoardData ? cachedBoardData.board_columns : [];
-    var isCompletionCol = boardColumns.length > 0 && targetColumn === boardColumns[boardColumns.length - 1];
-    var wasInCompletionCol = boardColumns.length > 0 && sourceColumn === boardColumns[boardColumns.length - 1];
+    var isCompletionCol =
+      boardColumns.length > 0 &&
+      targetColumn === boardColumns[boardColumns.length - 1];
+    var wasInCompletionCol =
+      boardColumns.length > 0 &&
+      sourceColumn === boardColumns[boardColumns.length - 1];
     exitMoveMode();
 
     var dropFields = { column: targetColumn };
@@ -1581,10 +1810,10 @@
       await api("/items/" + itemId + "/move", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(dropFields)
+        body: JSON.stringify(dropFields),
       });
       await refreshCurrentList();
-      var msg = "Moved to \"" + targetColumn + "\"";
+      var msg = 'Moved to "' + targetColumn + '"';
       if (isCompletionCol && !wasInCompletionCol) {
         msg += " (completed)";
       } else if (!isCompletionCol && wasInCompletionCol) {
@@ -1603,7 +1832,8 @@
   function attachCardDrag(gripEl, card, item) {
     var dragging = false;
     var ghostEl = null;
-    var startX = 0, startY = 0;
+    var startX = 0,
+      startY = 0;
     var scrollInterval = null;
 
     gripEl.addEventListener("pointerdown", function (e) {
@@ -1662,7 +1892,11 @@
 
       // Show drop zones (reuse move mode rendering partially)
       if (!moveMode) {
-        moveMode = { itemId: dragItem.id, itemReminder: dragItem.reminder, sourceColumn: dragItem.board_column };
+        moveMode = {
+          itemId: dragItem.id,
+          itemReminder: dragItem.reminder,
+          sourceColumn: dragItem.board_column,
+        };
       }
       // Add drop zones to columns
       var columns = boardContainer.querySelectorAll(".board-column");
@@ -1692,8 +1926,8 @@
 
     function updateGhostPosition(ev) {
       if (!ghostEl) return;
-      ghostEl.style.left = (ev.clientX - 40) + "px";
-      ghostEl.style.top = (ev.clientY - 20) + "px";
+      ghostEl.style.left = ev.clientX - 40 + "px";
+      ghostEl.style.top = ev.clientY - 20 + "px";
     }
 
     function updateDragPosition(ev) {
@@ -1702,8 +1936,11 @@
       var zones = document.querySelectorAll(".board-drop-zone");
       zones.forEach(function (z) {
         var rect = z.getBoundingClientRect();
-        var over = ev.clientX >= rect.left && ev.clientX <= rect.right &&
-                   ev.clientY >= rect.top && ev.clientY <= rect.bottom;
+        var over =
+          ev.clientX >= rect.left &&
+          ev.clientX <= rect.right &&
+          ev.clientY >= rect.top &&
+          ev.clientY <= rect.bottom;
         z.classList.toggle("drag-over", over);
       });
       // Update auto-scroll reference
@@ -1713,20 +1950,30 @@
     }
 
     function endDirectDrag(ev) {
-      if (scrollInterval) { clearInterval(scrollInterval); scrollInterval = null; }
+      if (scrollInterval) {
+        clearInterval(scrollInterval);
+        scrollInterval = null;
+      }
       // Find drop zone under cursor
       var targetCol = null;
       var zones = document.querySelectorAll(".board-drop-zone");
       zones.forEach(function (z) {
         var rect = z.getBoundingClientRect();
-        if (ev.clientX >= rect.left && ev.clientX <= rect.right &&
-            ev.clientY >= rect.top && ev.clientY <= rect.bottom) {
+        if (
+          ev.clientX >= rect.left &&
+          ev.clientX <= rect.right &&
+          ev.clientY >= rect.top &&
+          ev.clientY <= rect.bottom
+        ) {
           targetCol = z.dataset.column;
         }
       });
 
       // Clean up
-      if (ghostEl) { ghostEl.remove(); ghostEl = null; }
+      if (ghostEl) {
+        ghostEl.remove();
+        ghostEl = null;
+      }
       card.classList.remove("dragging");
 
       if (targetCol && moveMode) {
@@ -1759,8 +2006,11 @@
   // ====================================================================
 
   function attachSwipe(el, itemId, itemReminder) {
-    var startX = 0, startY = 0, currentX = 0;
-    var swiping = false, locked = false;
+    var startX = 0,
+      startY = 0,
+      currentX = 0;
+    var swiping = false,
+      locked = false;
     var threshold = 120; // Require deliberate swipe (was 80)
 
     // Create swipe action indicators
@@ -1790,7 +2040,10 @@
 
       // Lock direction after 10px movement
       if (!swiping && Math.abs(dx) > 10) {
-        if (Math.abs(dy) > Math.abs(dx)) { locked = true; return; }
+        if (Math.abs(dy) > Math.abs(dx)) {
+          locked = true;
+          return;
+        }
         swiping = true;
         el.setPointerCapture(e.pointerId);
       }
@@ -1840,24 +2093,35 @@
   (function initPullToRefresh() {
     var viewHome = document.getElementById("view-home");
     if (!viewHome) return;
-    var startY = 0, pulling = false, refreshing = false;
+    var startY = 0,
+      pulling = false,
+      refreshing = false;
 
-    viewHome.addEventListener("touchstart", function (e) {
-      if (refreshing) return;
-      // Only trigger when scrolled to top
-      var scrollTop = document.getElementById("main").scrollTop || window.scrollY;
-      if (scrollTop > 5) return;
-      startY = e.touches[0].clientY;
-      pulling = true;
-    }, { passive: true });
+    viewHome.addEventListener(
+      "touchstart",
+      function (e) {
+        if (refreshing) return;
+        // Only trigger when scrolled to top
+        var scrollTop =
+          document.getElementById("main").scrollTop || window.scrollY;
+        if (scrollTop > 5) return;
+        startY = e.touches[0].clientY;
+        pulling = true;
+      },
+      { passive: true },
+    );
 
-    viewHome.addEventListener("touchmove", function (e) {
-      if (!pulling || refreshing) return;
-      var dy = e.touches[0].clientY - startY;
-      if (dy > 60 && ptrIndicator) {
-        ptrIndicator.classList.add("active");
-      }
-    }, { passive: true });
+    viewHome.addEventListener(
+      "touchmove",
+      function (e) {
+        if (!pulling || refreshing) return;
+        var dy = e.touches[0].clientY - startY;
+        if (dy > 60 && ptrIndicator) {
+          ptrIndicator.classList.add("active");
+        }
+      },
+      { passive: true },
+    );
 
     viewHome.addEventListener("touchend", function () {
       if (!pulling) return;
@@ -1890,7 +2154,10 @@
       return { text: dateStr.substring(5) + timeSuffix, cls: "" };
     }
     if (diff < 0) {
-      return { text: "Overdue (" + Math.abs(diff) + "d)" + timeSuffix, cls: "overdue" };
+      return {
+        text: "Overdue (" + Math.abs(diff) + "d)" + timeSuffix,
+        cls: "overdue",
+      };
     }
     if (diff === 0) {
       return { text: "Today" + timeSuffix, cls: "today" };
@@ -1899,7 +2166,15 @@
       return { text: "Tomorrow" + timeSuffix, cls: "upcoming" };
     }
     if (diff < 7) {
-      var days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      var days = [
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+      ];
       return { text: days[due.getDay()] + timeSuffix, cls: "upcoming" };
     }
     return { text: dateStr.substring(5) + timeSuffix, cls: "" };
@@ -1961,7 +2236,12 @@
 
   function createItemCard(item, allItems) {
     var div = document.createElement("div");
-    var pClass = item.priority === 1 ? "priority-high" : item.priority === 3 ? "priority-low" : "priority-normal";
+    var pClass =
+      item.priority === 1
+        ? "priority-high"
+        : item.priority === 3
+          ? "priority-low"
+          : "priority-normal";
     div.className = "item " + pClass;
     if (item.complete) div.classList.add("completed");
     if (isItemOverdue(item)) div.classList.add("overdue");
@@ -1973,12 +2253,16 @@
     cb.className = "item-checkbox";
     cb.checked = item.complete;
     cb.setAttribute("aria-label", "Toggle " + item.reminder);
-    cb.addEventListener("click", function (e) { e.stopPropagation(); });
+    cb.addEventListener("click", function (e) {
+      e.stopPropagation();
+    });
     cb.addEventListener("change", function (e) {
       e.stopPropagation();
       haptic(10);
       cb.classList.add("bounce");
-      setTimeout(function () { cb.classList.remove("bounce"); }, 150);
+      setTimeout(function () {
+        cb.classList.remove("bounce");
+      }, 150);
       onToggle(item.id);
     });
     div.appendChild(cb);
@@ -2030,7 +2314,8 @@
     if (item.estimated_pomodoros > 0) {
       var pom = document.createElement("span");
       pom.className = "item-pomodoro";
-      pom.textContent = item.pomodoro_count + "/" + item.estimated_pomodoros + " \u{1F345}";
+      pom.textContent =
+        item.pomodoro_count + "/" + item.estimated_pomodoros + " \u{1F345}";
       meta.appendChild(pom);
     } else if (item.pomodoro_count > 0) {
       var pomC = document.createElement("span");
@@ -2041,9 +2326,13 @@
 
     // Subtask progress badge
     if (!item.parent_id && allItems) {
-      var childCount = 0, childDone = 0;
+      var childCount = 0,
+        childDone = 0;
       allItems.forEach(function (i) {
-        if (i.parent_id === item.id) { childCount++; if (i.complete) childDone++; }
+        if (i.parent_id === item.id) {
+          childCount++;
+          if (i.complete) childDone++;
+        }
       });
       if (childCount > 0) {
         var badge = document.createElement("span");
@@ -2177,7 +2466,8 @@
     });
 
     // Column dots for phone
-    var existingDots = boardContainer.parentElement.querySelector(".board-dots");
+    var existingDots =
+      boardContainer.parentElement.querySelector(".board-dots");
     if (existingDots) existingDots.remove();
     if (data.board_columns.length > 1) {
       var dots = document.createElement("div");
@@ -2187,12 +2477,17 @@
         dot.className = "board-dot" + (idx === 0 ? " active" : "");
         dots.appendChild(dot);
       });
-      boardContainer.parentElement.insertBefore(dots, boardContainer.nextSibling);
+      boardContainer.parentElement.insertBefore(
+        dots,
+        boardContainer.nextSibling,
+      );
 
       // Update dots on scroll
       boardContainer.addEventListener("scroll", function () {
         var scrollLeft = boardContainer.scrollLeft;
-        var colWidth = boardContainer.firstElementChild ? boardContainer.firstElementChild.offsetWidth + 12 : 1;
+        var colWidth = boardContainer.firstElementChild
+          ? boardContainer.firstElementChild.offsetWidth + 12
+          : 1;
         var activeIdx = Math.round(scrollLeft / colWidth);
         dots.querySelectorAll(".board-dot").forEach(function (d, i) {
           d.classList.toggle("active", i === activeIdx);
@@ -2203,7 +2498,12 @@
 
   function createBoardCard(item) {
     var card = document.createElement("div");
-    var pClass = item.priority === 1 ? "priority-high" : item.priority === 3 ? "priority-low" : "priority-normal";
+    var pClass =
+      item.priority === 1
+        ? "priority-high"
+        : item.priority === 3
+          ? "priority-low"
+          : "priority-normal";
     card.className = "board-card " + pClass;
     if (item.complete) card.classList.add("completed");
     card.dataset.id = item.id;
@@ -2311,7 +2611,9 @@
 
   if (addSheetClose) addSheetClose.addEventListener("click", closeAddSheet);
   if (addSheet) {
-    addSheet.querySelector(".sheet-backdrop").addEventListener("click", closeAddSheet);
+    addSheet
+      .querySelector(".sheet-backdrop")
+      .addEventListener("click", closeAddSheet);
   }
 
   // NLP preview debounce
@@ -2357,7 +2659,6 @@
       chip.textContent = span.display;
       addEntities.appendChild(chip);
     });
-
   }
 
   if (addForm) {
@@ -2405,7 +2706,10 @@
     // Find item in cache
     var item = null;
     for (var i = 0; i < cachedItems.length; i++) {
-      if (cachedItems[i].id === itemId) { item = cachedItems[i]; break; }
+      if (cachedItems[i].id === itemId) {
+        item = cachedItems[i];
+        break;
+      }
     }
     if (!item) {
       // Try fetching
@@ -2424,21 +2728,31 @@
     var statusBtn = document.createElement("button");
     statusBtn.type = "button";
     statusBtn.className = "btn-toggle " + (item.complete ? "done" : "active");
-    statusBtn.textContent = item.complete ? "\u2713 Completed" : "Mark Complete";
+    statusBtn.textContent = item.complete
+      ? "\u2713 Completed"
+      : "Mark Complete";
     statusBtn.addEventListener("click", async function () {
       await onToggle(itemId);
       // Re-open with updated data
       for (var j = 0; j < cachedItems.length; j++) {
-        if (cachedItems[j].id === itemId) { openDetailSheet(itemId); break; }
+        if (cachedItems[j].id === itemId) {
+          openDetailSheet(itemId);
+          break;
+        }
       }
     });
     statusDiv.appendChild(statusBtn);
     detailBody.appendChild(statusDiv);
 
     // Reminder
-    var reminderField = makeField("Task", "textarea", item.reminder, function (val) {
-      saveItemField(itemId, { reminder: val });
-    });
+    var reminderField = makeField(
+      "Task",
+      "textarea",
+      item.reminder,
+      function (val) {
+        saveItemField(itemId, { reminder: val });
+      },
+    );
     detailBody.appendChild(reminderField);
 
     // Priority
@@ -2449,9 +2763,11 @@
     prioDiv.appendChild(prioLabel);
     var prioBtns = document.createElement("div");
     prioBtns.className = "detail-priority-btns";
-    [{ label: "High", value: 1, cls: "active-high" },
-     { label: "Normal", value: 2, cls: "active-normal" },
-     { label: "Low", value: 3, cls: "active-low" }].forEach(function (p) {
+    [
+      { label: "High", value: 1, cls: "active-high" },
+      { label: "Normal", value: 2, cls: "active-normal" },
+      { label: "Low", value: 3, cls: "active-low" },
+    ].forEach(function (p) {
       var btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = p.label;
@@ -2469,23 +2785,43 @@
     detailBody.appendChild(prioDiv);
 
     // Due date
-    detailBody.appendChild(makeField("Due Date", "date", item.due_date || "", function (val) {
-      saveItemField(itemId, { due_date: val || null });
-    }));
+    detailBody.appendChild(
+      makeField("Due Date", "date", item.due_date || "", function (val) {
+        saveItemField(itemId, { due_date: val || null });
+      }),
+    );
 
     // Due time
-    detailBody.appendChild(makeField("Due Time", "time", item.due_time ? item.due_time.substring(0, 5) : "", function (val) {
-      saveItemField(itemId, { due_time: val ? val + ":00" : null });
-    }));
+    detailBody.appendChild(
+      makeField(
+        "Due Time",
+        "time",
+        item.due_time ? item.due_time.substring(0, 5) : "",
+        function (val) {
+          saveItemField(itemId, { due_time: val ? val + ":00" : null });
+        },
+      ),
+    );
 
     // Tags
-    detailBody.appendChild(makeField("Tags", "text", (item.tags || []).join(", "), function (val) {
-      var tags = val.split(",").map(function (t) { return t.trim(); }).filter(Boolean);
-      saveItemField(itemId, { tags: tags });
-    }));
+    detailBody.appendChild(
+      makeField("Tags", "text", (item.tags || []).join(", "), function (val) {
+        var tags = val
+          .split(",")
+          .map(function (t) {
+            return t.trim();
+          })
+          .filter(Boolean);
+        saveItemField(itemId, { tags: tags });
+      }),
+    );
 
     // Board column
-    if (cachedBoardData && cachedBoardData.board_columns && cachedBoardData.board_columns.length > 0) {
+    if (
+      cachedBoardData &&
+      cachedBoardData.board_columns &&
+      cachedBoardData.board_columns.length > 0
+    ) {
       var colField = document.createElement("div");
       colField.className = "detail-field";
       var colLabel = document.createElement("label");
@@ -2515,9 +2851,14 @@
     var recRow = document.createElement("div");
     recRow.className = "detail-recurrence-row";
     var recTypeSelect = document.createElement("select");
-    [{ label: "None", value: "" }, { label: "Minutes", value: "minutely" },
-     { label: "Daily", value: "daily" }, { label: "Weekly", value: "weekly" },
-     { label: "Monthly", value: "monthly" }, { label: "Yearly", value: "yearly" }].forEach(function (opt) {
+    [
+      { label: "None", value: "" },
+      { label: "Minutes", value: "minutely" },
+      { label: "Daily", value: "daily" },
+      { label: "Weekly", value: "weekly" },
+      { label: "Monthly", value: "monthly" },
+      { label: "Yearly", value: "yearly" },
+    ].forEach(function (opt) {
       var o = document.createElement("option");
       o.value = opt.value;
       o.textContent = opt.label;
@@ -2538,26 +2879,48 @@
     recTypeSelect.addEventListener("change", function () {
       var val = recTypeSelect.value || null;
       recIntervalInput.classList.toggle("hidden", !val);
-      saveItemField(itemId, { recurrence_type: val, recurrence_interval: parseInt(recIntervalInput.value) || 1 });
+      saveItemField(itemId, {
+        recurrence_type: val,
+        recurrence_interval: parseInt(recIntervalInput.value) || 1,
+      });
     });
     recIntervalInput.addEventListener("change", function () {
-      saveItemField(itemId, { recurrence_interval: parseInt(recIntervalInput.value) || 1 });
+      saveItemField(itemId, {
+        recurrence_interval: parseInt(recIntervalInput.value) || 1,
+      });
     });
 
     // Recurrence end conditions (only show if recurring)
     if (item.recurrence_type) {
       var endDiv = document.createElement("div");
       endDiv.className = "detail-recurrence-end";
-      endDiv.appendChild(makeField("End After (count)", "number", item.recurrence_end_count || "", function (val) {
-        saveItemField(itemId, { recurrence_end_count: parseInt(val) || null });
-      }));
-      endDiv.appendChild(makeField("End Date", "date", item.recurrence_end_date || "", function (val) {
-        saveItemField(itemId, { recurrence_end_date: val || null });
-      }));
+      endDiv.appendChild(
+        makeField(
+          "End After (count)",
+          "number",
+          item.recurrence_end_count || "",
+          function (val) {
+            saveItemField(itemId, {
+              recurrence_end_count: parseInt(val) || null,
+            });
+          },
+        ),
+      );
+      endDiv.appendChild(
+        makeField(
+          "End Date",
+          "date",
+          item.recurrence_end_date || "",
+          function (val) {
+            saveItemField(itemId, { recurrence_end_date: val || null });
+          },
+        ),
+      );
       if (item.recurrence_count > 0) {
         var countInfo = document.createElement("div");
         countInfo.className = "detail-meta";
-        countInfo.textContent = item.recurrence_count + " completed occurrences";
+        countInfo.textContent =
+          item.recurrence_count + " completed occurrences";
         endDiv.appendChild(countInfo);
       }
       recDiv.appendChild(endDiv);
@@ -2565,16 +2928,24 @@
     detailBody.appendChild(recDiv);
 
     // Estimated pomodoros
-    detailBody.appendChild(makeField("Pomodoro Estimate", "number", item.estimated_pomodoros || "", function (val) {
-      saveItemField(itemId, { estimated_pomodoros: parseInt(val) || 0 });
-    }));
+    detailBody.appendChild(
+      makeField(
+        "Pomodoro Estimate",
+        "number",
+        item.estimated_pomodoros || "",
+        function (val) {
+          saveItemField(itemId, { estimated_pomodoros: parseInt(val) || 0 });
+        },
+      ),
+    );
 
     // Pomodoro progress (read-only)
     if (item.pomodoro_count > 0 || item.estimated_pomodoros > 0) {
       var pomInfo = document.createElement("div");
       pomInfo.className = "detail-meta";
       var total = item.pomodoro_count * (item.work_duration || 25);
-      pomInfo.textContent = item.pomodoro_count + " sessions completed (" + total + " min focused)";
+      pomInfo.textContent =
+        item.pomodoro_count + " sessions completed (" + total + " min focused)";
       detailBody.appendChild(pomInfo);
     }
 
@@ -2585,21 +2956,28 @@
     subtaskLabel.textContent = "Subtasks";
     subtaskDiv.appendChild(subtaskLabel);
 
-    var children = cachedItems.filter(function (i) { return i.parent_id === itemId; });
+    var children = cachedItems.filter(function (i) {
+      return i.parent_id === itemId;
+    });
     if (children.length > 0) {
       var subtaskList = document.createElement("div");
       subtaskList.className = "detail-subtask-list";
       children.forEach(function (child) {
         var row = document.createElement("div");
-        row.className = "detail-subtask-row" + (child.complete ? " completed" : "");
+        row.className =
+          "detail-subtask-row" + (child.complete ? " completed" : "");
         var cb = document.createElement("input");
         cb.type = "checkbox";
         cb.checked = child.complete;
-        cb.addEventListener("change", function () { onToggle(child.id); });
+        cb.addEventListener("change", function () {
+          onToggle(child.id);
+        });
         row.appendChild(cb);
         var text = document.createElement("span");
         text.textContent = child.reminder;
-        text.addEventListener("click", function () { openDetailSheet(child.id); });
+        text.addEventListener("click", function () {
+          openDetailSheet(child.id);
+        });
         row.appendChild(text);
         subtaskList.appendChild(row);
       });
@@ -2633,7 +3011,10 @@
       }
     });
     addSubInput.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") { e.preventDefault(); addSubBtn.click(); }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addSubBtn.click();
+      }
     });
     addSubRow.appendChild(addSubInput);
     addSubRow.appendChild(addSubBtn);
@@ -2647,8 +3028,11 @@
     // Metadata
     var metaDiv = document.createElement("div");
     metaDiv.className = "detail-meta";
-    metaDiv.innerHTML = "Created: " + new Date(item.created_at).toLocaleDateString() +
-      "<br>Updated: " + new Date(item.updated_at).toLocaleDateString();
+    metaDiv.innerHTML =
+      "Created: " +
+      new Date(item.created_at).toLocaleDateString() +
+      "<br>Updated: " +
+      new Date(item.updated_at).toLocaleDateString();
     detailBody.appendChild(metaDiv);
 
     // Save indicator
@@ -2687,9 +3071,13 @@
       input.type = type;
     }
     input.value = value;
-    input.addEventListener("change", function () { onChange(input.value); });
+    input.addEventListener("change", function () {
+      onChange(input.value);
+    });
     if (type === "text" || type === "textarea") {
-      input.addEventListener("blur", function () { onChange(input.value); });
+      input.addEventListener("blur", function () {
+        onChange(input.value);
+      });
     }
     div.appendChild(input);
     return div;
@@ -2701,7 +3089,10 @@
     clearTimeout(saveDebounceTimer);
     saveDebounceTimer = setTimeout(async function () {
       var indicator = document.getElementById("detail-save-indicator");
-      if (indicator) { indicator.textContent = "Saving..."; indicator.className = "detail-save-indicator"; }
+      if (indicator) {
+        indicator.textContent = "Saving...";
+        indicator.className = "detail-save-indicator";
+      }
       var ua = getItemUpdatedAt(itemId);
       if (ua !== undefined) fields.updated_at = ua;
       lastSavedFields = Object.assign({}, fields);
@@ -2713,7 +3104,9 @@
         });
         updateCachedItemTimestamp(itemId, result.updated_at);
         if (indicator) indicator.textContent = "Saved \u2713";
-        setTimeout(function () { if (indicator) indicator.textContent = ""; }, 2000);
+        setTimeout(function () {
+          if (indicator) indicator.textContent = "";
+        }, 2000);
         await refreshCurrentList();
       } catch (e) {
         if (e.status === 409) {
@@ -2758,7 +3151,10 @@
 
   async function saveItemFieldForce(itemId, fields) {
     var indicator = document.getElementById("detail-save-indicator");
-    if (indicator) { indicator.textContent = "Saving..."; indicator.className = "detail-save-indicator"; }
+    if (indicator) {
+      indicator.textContent = "Saving...";
+      indicator.className = "detail-save-indicator";
+    }
     try {
       var result = await api("/items/" + itemId, {
         method: "PUT",
@@ -2767,7 +3163,9 @@
       });
       updateCachedItemTimestamp(itemId, result.updated_at);
       if (indicator) indicator.textContent = "Saved \u2713";
-      setTimeout(function () { if (indicator) indicator.textContent = ""; }, 2000);
+      setTimeout(function () {
+        if (indicator) indicator.textContent = "";
+      }, 2000);
       await refreshCurrentList();
     } catch (e) {
       if (indicator) indicator.textContent = "Save failed";
@@ -2782,7 +3180,9 @@
 
   if (detailClose) detailClose.addEventListener("click", closeDetailSheet);
   if (detailSheet) {
-    detailSheet.querySelector(".sheet-backdrop").addEventListener("click", closeDetailSheet);
+    detailSheet
+      .querySelector(".sheet-backdrop")
+      .addEventListener("click", closeDetailSheet);
   }
 
   // ====================================================================
@@ -2801,7 +3201,9 @@
     try {
       var data = await api("/tags");
       allTags = data.tags || [];
-    } catch (e) { allTags = []; }
+    } catch (e) {
+      allTags = [];
+    }
   }
 
   function renderSearchTagChips() {
@@ -2844,7 +3246,9 @@
           chip.classList.remove("active");
           searchFilters.priority = null;
         } else {
-          chip.parentElement.querySelectorAll(".chip").forEach(function (c) { c.classList.remove("active"); });
+          chip.parentElement.querySelectorAll(".chip").forEach(function (c) {
+            c.classList.remove("active");
+          });
           chip.classList.add("active");
           searchFilters.priority = value;
         }
@@ -2853,7 +3257,9 @@
           chip.classList.remove("active");
           searchFilters.due = null;
         } else {
-          chip.parentElement.querySelectorAll(".chip").forEach(function (c) { c.classList.remove("active"); });
+          chip.parentElement.querySelectorAll(".chip").forEach(function (c) {
+            c.classList.remove("active");
+          });
           chip.classList.add("active");
           searchFilters.due = value;
         }
@@ -2881,16 +3287,22 @@
       try {
         var params = [];
         if (query) params.push("q=" + encodeURIComponent(query));
-        if (searchFilters.priority) params.push("priority=" + searchFilters.priority);
-        if (searchFilters.status !== "all") params.push("status=" + searchFilters.status);
+        if (searchFilters.priority)
+          params.push("priority=" + searchFilters.priority);
+        if (searchFilters.status !== "all")
+          params.push("status=" + searchFilters.status);
         if (searchFilters.due) params.push("due=" + searchFilters.due);
-        if (searchFilters.tags) params.push("tags=" + encodeURIComponent(searchFilters.tags));
-        var url = "/lists/" + lst.id + (params.length ? "?" + params.join("&") : "");
+        if (searchFilters.tags)
+          params.push("tags=" + encodeURIComponent(searchFilters.tags));
+        var url =
+          "/lists/" + lst.id + (params.length ? "?" + params.join("&") : "");
         var data = await api(url);
         if (data.items && data.items.length > 0) {
           results.push({ list: lst, items: data.items });
         }
-      } catch (e) { /* skip failed lists */ }
+      } catch (e) {
+        /* skip failed lists */
+      }
     }
 
     if (results.length === 0) {
@@ -2923,8 +3335,14 @@
     var connStatus = document.getElementById("settings-conn-status");
     if (connStatus) {
       var wsConnected = ws && ws.readyState === WebSocket.OPEN;
-      var statusText = !isOnline ? "Offline" : wsConnected ? "Connected (live)" : "Connected (polling)";
-      var statusClass = isOnline ? "settings-conn-online" : "settings-conn-offline";
+      var statusText = !isOnline
+        ? "Offline"
+        : wsConnected
+          ? "Connected (live)"
+          : "Connected (polling)";
+      var statusClass = isOnline
+        ? "settings-conn-online"
+        : "settings-conn-offline";
       connStatus.textContent = statusText;
       connStatus.className = "settings-value " + statusClass;
     }
@@ -2936,9 +3354,11 @@
     var offlineCount = document.getElementById("settings-offline-count");
     var queueSection = document.getElementById("settings-queue-section");
     var queue = getOfflineQueue();
-    if (offlineRow) offlineRow.style.display = queue.length > 0 ? "flex" : "none";
+    if (offlineRow)
+      offlineRow.style.display = queue.length > 0 ? "flex" : "none";
     if (offlineCount) offlineCount.textContent = String(queue.length);
-    if (queueSection) queueSection.style.display = queue.length > 0 ? "block" : "none";
+    if (queueSection)
+      queueSection.style.display = queue.length > 0 ? "block" : "none";
     renderQueueList(queue);
 
     // Display info
@@ -2948,15 +3368,20 @@
       themeEl.textContent = isDark ? "Dark (system)" : "Light (system)";
     }
     var viewModeEl = document.getElementById("settings-view-mode");
-    if (viewModeEl) viewModeEl.textContent = viewMode === "board" ? "Board" : "List";
+    if (viewModeEl)
+      viewModeEl.textContent = viewMode === "board" ? "Board" : "List";
 
     // Server data
     try {
       var data = await api("/status");
       if (settingsStatus) {
         settingsStatus.textContent =
-          data.list_count + " lists \u00B7 " +
-          data.total_completed + "/" + data.total_items + " completed";
+          data.list_count +
+          " lists \u00B7 " +
+          data.total_completed +
+          "/" +
+          data.total_items +
+          " completed";
       }
       if (versionText) versionText.textContent = "Version " + data.version;
     } catch (e) {
@@ -2995,7 +3420,8 @@
         info.appendChild(name);
         var meta = document.createElement("div");
         meta.className = "trash-item-meta";
-        meta.textContent = item.list_name + " \u00B7 " + formatDeletedAgo(item.deleted_ago_ms);
+        meta.textContent =
+          item.list_name + " \u00B7 " + formatDeletedAgo(item.deleted_ago_ms);
         info.appendChild(meta);
         row.appendChild(info);
 
@@ -3140,7 +3566,9 @@
     try {
       await api(path, opts);
       await refreshCurrentList();
-      showToast(reminderText ? '"' + reminderText + '" deleted' : "Item deleted");
+      showToast(
+        reminderText ? '"' + reminderText + '" deleted' : "Item deleted",
+      );
     } catch (e) {
       if (e.status === 409) {
         showToast("Updated elsewhere \u2014 refreshing");
@@ -3177,8 +3605,10 @@
 
   function pushOfflineUndo(snapshot, queueTimestamp, path, opts) {
     offlineUndoStack.push({
-      snapshot: snapshot, timestamp: queueTimestamp,
-      path: path || "", opts: opts || {}
+      snapshot: snapshot,
+      timestamp: queueTimestamp,
+      path: path || "",
+      opts: opts || {},
     });
     offlineRedoStack = []; // new action invalidates redo
     updateUndoButtons();
@@ -3197,11 +3627,15 @@
     } else {
       if (undoBtn) {
         undoBtn.disabled = !serverUndoState.can_undo;
-        undoBtn.title = serverUndoState.undo_text ? "Undo: " + serverUndoState.undo_text : "Undo";
+        undoBtn.title = serverUndoState.undo_text
+          ? "Undo: " + serverUndoState.undo_text
+          : "Undo";
       }
       if (redoBtn) {
         redoBtn.disabled = !serverUndoState.can_redo;
-        redoBtn.title = serverUndoState.redo_text ? "Redo: " + serverUndoState.redo_text : "Redo";
+        redoBtn.title = serverUndoState.redo_text
+          ? "Redo: " + serverUndoState.redo_text
+          : "Redo";
       }
     }
   }
@@ -3211,7 +3645,9 @@
       var resp = await api("/undo-state");
       serverUndoState = resp;
       updateUndoButtons();
-    } catch (e) { /* server unreachable */ }
+    } catch (e) {
+      /* server unreachable */
+    }
   }
 
   function offlineUndoAction() {
@@ -3219,7 +3655,9 @@
     var entry = offlineUndoStack.pop();
     // Remove matching entry from offline queue
     var queue = getOfflineQueue();
-    queue = queue.filter(function (q) { return q.timestamp !== entry.timestamp; });
+    queue = queue.filter(function (q) {
+      return q.timestamp !== entry.timestamp;
+    });
     saveOfflineQueue(queue);
 
     // Restore snapshot into cached items
@@ -3259,7 +3697,11 @@
     // Re-create a queue entry from the snapshot's corresponding operation
     // We stored the timestamp — find what path/opts would have been
     // Simplest: we just re-enqueue and let the snapshot be the "before" state again
-    queue.push({ path: entry.path || "", opts: entry.opts || {}, timestamp: entry.timestamp });
+    queue.push({
+      path: entry.path || "",
+      opts: entry.opts || {},
+      timestamp: entry.timestamp,
+    });
     saveOfflineQueue(queue);
 
     offlineUndoStack.push(entry);
@@ -3268,7 +3710,10 @@
     lastBoardFingerprint = "";
     if (currentListId) {
       getCachedListItems(currentListId).then(function (items) {
-        if (items) { cachedItems = items; renderItems(cachedItems); }
+        if (items) {
+          cachedItems = items;
+          renderItems(cachedItems);
+        }
       });
     }
     updateUndoButtons();
@@ -3281,7 +3726,10 @@
       return;
     }
     try {
-      var resp = await api("/undo", { method: "POST", headers: { "Content-Type": "application/json" } });
+      var resp = await api("/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
       if (resp && resp.ok) {
         showToast("Undone: " + resp.undone);
         refreshCurrentList();
@@ -3289,7 +3737,9 @@
         serverUndoState.can_redo = resp.can_redo;
         updateUndoButtons();
       }
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      /* ignore */
+    }
   }
 
   async function onRedo() {
@@ -3298,7 +3748,10 @@
       return;
     }
     try {
-      var resp = await api("/redo", { method: "POST", headers: { "Content-Type": "application/json" } });
+      var resp = await api("/redo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
       if (resp && resp.ok) {
         showToast("Redone: " + resp.redone);
         refreshCurrentList();
@@ -3306,7 +3759,9 @@
         serverUndoState.can_redo = resp.can_redo;
         updateUndoButtons();
       }
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      /* ignore */
+    }
   }
 
   if (undoBtn) undoBtn.addEventListener("click", onUndo);
@@ -3321,9 +3776,12 @@
 
     // Delete immediately (undo available via undo button/Ctrl+Z)
     onDelete(itemId, null);
-    showToast(reminderText ? '"' + reminderText + '" deleted' : "Item deleted", function () {
-      onUndo();
-    });
+    showToast(
+      reminderText ? '"' + reminderText + '" deleted' : "Item deleted",
+      function () {
+        onUndo();
+      },
+    );
   }
 
   // ====================================================================
@@ -3348,9 +3806,12 @@
     }
 
     toastContainer.appendChild(toast);
-    setTimeout(function () {
-      toast.remove();
-    }, undoCallback ? 5500 : 3000);
+    setTimeout(
+      function () {
+        toast.remove();
+      },
+      undoCallback ? 5500 : 3000,
+    );
   }
 
   // ====================================================================
@@ -3369,7 +3830,9 @@
 
     // Update header button text
     if (currentListId && lists.length > 0) {
-      var current = lists.find(function (l) { return l.id === currentListId; });
+      var current = lists.find(function (l) {
+        return l.id === currentListId;
+      });
       if (current && listPickerName) listPickerName.textContent = current.name;
     } else if (lists.length > 0) {
       currentListId = lists[0].id;
@@ -3405,8 +3868,12 @@
 
       var stats = document.createElement("div");
       stats.className = "list-row-stats";
-      var pct = lst.item_count > 0 ? Math.round(lst.completed_count / lst.item_count * 100) : 0;
-      stats.textContent = lst.completed_count + "/" + lst.item_count + " done (" + pct + "%)";
+      var pct =
+        lst.item_count > 0
+          ? Math.round((lst.completed_count / lst.item_count) * 100)
+          : 0;
+      stats.textContent =
+        lst.completed_count + "/" + lst.item_count + " done (" + pct + "%)";
       if (lst.overdue_count > 0) {
         stats.textContent += " \u00B7 " + lst.overdue_count + " overdue";
       }
@@ -3483,7 +3950,9 @@
             showToast("List was modified \u2014 refreshing");
             await refreshLists();
             renderListSheetBody(cachedLists);
-            nameEl.textContent = e.body.current ? e.body.current.name : currentName;
+            nameEl.textContent = e.body.current
+              ? e.body.current.name
+              : currentName;
           } else {
             showToast("Failed to rename list");
             nameEl.textContent = currentName;
@@ -3496,14 +3965,21 @@
 
     input.addEventListener("blur", commitRename);
     input.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") { e.preventDefault(); input.blur(); }
-      if (e.key === "Escape") { nameEl.textContent = currentName; }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        input.blur();
+      }
+      if (e.key === "Escape") {
+        nameEl.textContent = currentName;
+      }
     });
   }
 
   function confirmDeleteList(listId, name, itemCount) {
     var msg = 'Delete "' + name + '"';
-    if (itemCount > 0) msg += " and its " + itemCount + " item" + (itemCount > 1 ? "s" : "") + "?";
+    if (itemCount > 0)
+      msg +=
+        " and its " + itemCount + " item" + (itemCount > 1 ? "s" : "") + "?";
     else msg += "?";
 
     if (!confirm(msg)) return;
@@ -3545,7 +4021,9 @@
   if (listPickerBtn) listPickerBtn.addEventListener("click", openListSheet);
   if (listSheetClose) listSheetClose.addEventListener("click", closeListSheet);
   if (listSheet) {
-    listSheet.querySelector(".sheet-backdrop").addEventListener("click", closeListSheet);
+    listSheet
+      .querySelector(".sheet-backdrop")
+      .addEventListener("click", closeListSheet);
   }
 
   if (listCreateBtn) {
@@ -3572,7 +4050,10 @@
   }
   if (listCreateInput) {
     listCreateInput.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") { e.preventDefault(); listCreateBtn.click(); }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        listCreateBtn.click();
+      }
     });
   }
 
@@ -3648,7 +4129,10 @@
   }
 
   function stopPolling() {
-    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
   }
 
   // ====================================================================
@@ -3661,10 +4145,20 @@
   var WS_MAX_DELAY = 30000;
 
   function connectWebSocket() {
-    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+    if (
+      ws &&
+      (ws.readyState === WebSocket.OPEN ||
+        ws.readyState === WebSocket.CONNECTING)
+    )
+      return;
     var protocol = location.protocol === "https:" ? "wss:" : "ws:";
     var wsToken = getAuthToken();
-    var url = protocol + "//" + location.host + "/ws" + (wsToken ? "?token=" + encodeURIComponent(wsToken) : "");
+    var url =
+      protocol +
+      "//" +
+      location.host +
+      "/ws" +
+      (wsToken ? "?token=" + encodeURIComponent(wsToken) : "");
     try {
       ws = new WebSocket(url);
     } catch (e) {
@@ -3684,7 +4178,9 @@
           refreshCurrentList();
           fetchUndoState();
         }
-      } catch (err) { /* ignore malformed messages */ }
+      } catch (err) {
+        /* ignore malformed messages */
+      }
     };
     ws.onclose = function () {
       ws = null;
@@ -3695,7 +4191,9 @@
         updateOnlineStatus(false);
       }
     };
-    ws.onerror = function () { /* onclose fires after onerror */ };
+    ws.onerror = function () {
+      /* onclose fires after onerror */
+    };
   }
 
   function scheduleReconnect() {
@@ -3708,8 +4206,14 @@
   }
 
   function disconnectWebSocket() {
-    if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
-    if (ws) { ws.close(); ws = null; }
+    if (wsReconnectTimer) {
+      clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = null;
+    }
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
   }
 
   document.addEventListener("visibilitychange", function () {
@@ -3768,9 +4272,11 @@
   if (installText) {
     var ua = navigator.userAgent || "";
     if (/iPhone|iPad|iPod/.test(ua)) {
-      installText.innerHTML = "Tap <b>Share</b> \u2192 <b>Add to Home Screen</b> for quick access";
+      installText.innerHTML =
+        "Tap <b>Share</b> \u2192 <b>Add to Home Screen</b> for quick access";
     } else {
-      installText.innerHTML = "Tap <b>\u22ee</b> menu \u2192 <b>Add to Home Screen</b> for quick access";
+      installText.innerHTML =
+        "Tap <b>\u22ee</b> menu \u2192 <b>Add to Home Screen</b> for quick access";
     }
   }
 
@@ -3797,20 +4303,28 @@
   }
 
   // Block insecure HTTP connections — require HTTPS
-  if (location.protocol === "http:" && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+  if (
+    location.protocol === "http:" &&
+    location.hostname !== "localhost" &&
+    location.hostname !== "127.0.0.1"
+  ) {
     var upgradeUrl = "https://" + location.host + location.pathname;
-    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;'
-      + 'min-height:100vh;background:var(--bg,#fff);padding:24px;text-align:center;">'
-      + '<div style="max-width:360px;">'
-      + '<h2 style="color:var(--danger,#c0392b);">Insecure Connection</h2>'
-      + '<p>This app requires an encrypted (HTTPS) connection.</p>'
-      + '<p>Please reinstall from:</p>'
-      + '<a href="' + upgradeUrl + '" style="color:var(--accent,#2196F3);word-break:break-all;">'
-      + upgradeUrl + '</a>'
-      + '<p style="margin-top:16px;font-size:12px;opacity:0.7;">'
-      + 'If you previously added this app to your home screen over HTTP, '
-      + 'remove it and add again from the HTTPS URL above.</p>'
-      + '</div></div>';
+    document.body.innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:center;' +
+      'min-height:100vh;background:var(--bg,#fff);padding:24px;text-align:center;">' +
+      '<div style="max-width:360px;">' +
+      '<h2 style="color:var(--danger,#c0392b);">Insecure Connection</h2>' +
+      "<p>This app requires an encrypted (HTTPS) connection.</p>" +
+      "<p>Please reinstall from:</p>" +
+      '<a href="' +
+      upgradeUrl +
+      '" style="color:var(--accent,#2196F3);word-break:break-all;">' +
+      upgradeUrl +
+      "</a>" +
+      '<p style="margin-top:16px;font-size:12px;opacity:0.7;">' +
+      "If you previously added this app to your home screen over HTTP, " +
+      "remove it and add again from the HTTPS URL above.</p>" +
+      "</div></div>";
     return;
   }
 
@@ -3830,17 +4344,25 @@
       // Try without token (server might have auth disabled)
       try {
         var resp = await fetch(API + "/status");
-        if (resp.ok) { init(); return; }
-      } catch (e) { /* server unreachable */ }
+        if (resp.ok) {
+          init();
+          return;
+        }
+      } catch (e) {
+        /* server unreachable */
+      }
       showLoginScreen();
       return;
     }
     // Validate stored token
     try {
       var resp2 = await fetch(API + "/status", {
-        headers: { "Authorization": "Bearer " + token }
+        headers: { Authorization: "Bearer " + token },
       });
-      if (resp2.ok) { init(); return; }
+      if (resp2.ok) {
+        init();
+        return;
+      }
       // Token rejected (401) — clear it so user re-pairs
       if (resp2.status === 401) {
         localStorage.removeItem(AUTH_TOKEN_KEY);
@@ -3852,11 +4374,17 @@
       if (navigator.serviceWorker) {
         try {
           var regs = await navigator.serviceWorker.getRegistrations();
-          for (var i = 0; i < regs.length; i++) { await regs[i].unregister(); }
+          for (var i = 0; i < regs.length; i++) {
+            await regs[i].unregister();
+          }
           // Clear caches too so stale content doesn't persist
           var cacheNames = await caches.keys();
-          for (var j = 0; j < cacheNames.length; j++) { await caches.delete(cacheNames[j]); }
-        } catch (swErr) { /* best effort */ }
+          for (var j = 0; j < cacheNames.length; j++) {
+            await caches.delete(cacheNames[j]);
+          }
+        } catch (swErr) {
+          /* best effort */
+        }
       }
     }
     showLoginScreen();

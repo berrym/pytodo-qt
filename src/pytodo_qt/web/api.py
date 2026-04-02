@@ -7,6 +7,7 @@ a UI refresh is scheduled via QTimer.singleShot(0, ...).
 
 from __future__ import annotations
 
+import time as _time
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -1124,6 +1125,7 @@ async def handle_status(request: web.Request) -> web.Response:
         result["sort_tiers"] = [
             {"dimension": dim, "reverse": rev} for dim, rev in cm.config.database.sort_tiers()
         ]
+        result["sort_updated_at"] = cm.config.database.sort_updated_at
     return web.json_response(result)
 
 
@@ -1139,10 +1141,12 @@ async def handle_get_sort(request: web.Request) -> web.Response:
     cm = request.app.get(config_manager_key)
     if cm is None:
         return _error(503, "Sort configuration not available")
-    tiers = cm.config.database.sort_tiers()
+    db_config = cm.config.database
+    tiers = db_config.sort_tiers()
     return web.json_response(
         {
             "sort_tiers": [{"dimension": dim, "reverse": rev} for dim, rev in tiers],
+            "updated_at": db_config.sort_updated_at,
         }
     )
 
@@ -1184,14 +1188,30 @@ async def handle_update_sort(request: web.Request) -> web.Response:
     if len(set(dimensions)) != 3:
         return _error(400, "All 3 sort dimensions must be unique")
 
-    # Apply to config
+    # Conflict guard — same pattern as item/list endpoints
     db_config = cm.config.database
+    client_updated_at = body.get("updated_at")
+    if (
+        client_updated_at is not None
+        and not body.get("force")
+        and client_updated_at < db_config.sort_updated_at
+    ):
+        tiers = db_config.sort_tiers()
+        return _conflict_response(
+            {
+                "sort_tiers": [{"dimension": d, "reverse": r} for d, r in tiers],
+                "updated_at": db_config.sort_updated_at,
+            }
+        )
+
+    # Apply to config
     db_config.sort_tier1 = dimensions[0]
     db_config.sort_tier1_reverse = reverses[0]
     db_config.sort_tier2 = dimensions[1]
     db_config.sort_tier2_reverse = reverses[1]
     db_config.sort_tier3 = dimensions[2]
     db_config.sort_tier3_reverse = reverses[2]
+    db_config.sort_updated_at = _time.time()
     cm.save()
 
     _schedule_save_and_refresh(request)
@@ -1201,6 +1221,7 @@ async def handle_update_sort(request: web.Request) -> web.Response:
                 {"dimension": dim, "reverse": rev}
                 for dim, rev in zip(dimensions, reverses, strict=True)
             ],
+            "updated_at": db_config.sort_updated_at,
         }
     )
 

@@ -2172,6 +2172,160 @@ class TestUpdateSort:
         finally:
             await client.close()
 
+    @pytest.mark.asyncio
+    async def test_update_sort_returns_updated_at(self, tmp_path):
+        """PUT /api/sort returns updated_at timestamp."""
+        cm = _make_config_manager(tmp_path)
+        client = await _make_client(config_manager=cm)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "priority", "reverse": True},
+                        {"dimension": "completion", "reverse": False},
+                        {"dimension": "due_date", "reverse": False},
+                    ]
+                },
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert "updated_at" in data
+            assert data["updated_at"] > 0
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_sort_conflict_stale(self, tmp_path):
+        """PUT /api/sort returns 409 when client updated_at is stale."""
+        cm = _make_config_manager(tmp_path)
+        client = await _make_client(config_manager=cm)
+        await client.start_server()
+        try:
+            # First update to set a timestamp
+            resp = await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "priority", "reverse": True},
+                        {"dimension": "completion", "reverse": False},
+                        {"dimension": "due_date", "reverse": False},
+                    ]
+                },
+            )
+            data = await resp.json()
+            server_ts = data["updated_at"]
+
+            # Second update with stale timestamp
+            resp2 = await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "due_date", "reverse": False},
+                        {"dimension": "priority", "reverse": True},
+                        {"dimension": "completion", "reverse": False},
+                    ],
+                    "updated_at": server_ts - 1,
+                },
+            )
+            assert resp2.status == 409
+            conflict = await resp2.json()
+            assert "current" in conflict
+            assert conflict["current"]["sort_tiers"][0]["dimension"] == "priority"
+            assert conflict["current"]["updated_at"] == server_ts
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_sort_conflict_force(self, tmp_path):
+        """PUT /api/sort with force=true bypasses conflict guard."""
+        cm = _make_config_manager(tmp_path)
+        client = await _make_client(config_manager=cm)
+        await client.start_server()
+        try:
+            # First update
+            resp = await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "priority", "reverse": True},
+                        {"dimension": "completion", "reverse": False},
+                        {"dimension": "due_date", "reverse": False},
+                    ]
+                },
+            )
+            data = await resp.json()
+            server_ts = data["updated_at"]
+
+            # Force update with stale timestamp
+            resp2 = await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "due_date", "reverse": False},
+                        {"dimension": "priority", "reverse": True},
+                        {"dimension": "completion", "reverse": False},
+                    ],
+                    "updated_at": server_ts - 1,
+                    "force": True,
+                },
+            )
+            assert resp2.status == 200
+            data2 = await resp2.json()
+            assert data2["sort_tiers"][0]["dimension"] == "due_date"
+            assert data2["updated_at"] > server_ts
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_sort_no_updated_at_succeeds(self, tmp_path):
+        """PUT /api/sort without updated_at always succeeds (backwards compat)."""
+        cm = _make_config_manager(tmp_path)
+        client = await _make_client(config_manager=cm)
+        await client.start_server()
+        try:
+            # First update to set a timestamp
+            await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "priority", "reverse": True},
+                        {"dimension": "completion", "reverse": False},
+                        {"dimension": "due_date", "reverse": False},
+                    ]
+                },
+            )
+
+            # Update without updated_at — should succeed
+            resp = await client.put(
+                "/api/sort",
+                json={
+                    "tiers": [
+                        {"dimension": "due_date", "reverse": False},
+                        {"dimension": "priority", "reverse": True},
+                        {"dimension": "completion", "reverse": False},
+                    ]
+                },
+            )
+            assert resp.status == 200
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_get_sort_includes_updated_at(self, tmp_path):
+        """GET /api/sort includes updated_at in response."""
+        cm = _make_config_manager(tmp_path)
+        client = await _make_client(config_manager=cm)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/sort")
+            data = await resp.json()
+            assert "updated_at" in data
+            assert data["updated_at"] == 0.0  # default
+        finally:
+            await client.close()
+
 
 # ===========================================================================
 # Board layout presets

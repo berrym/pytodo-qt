@@ -32,6 +32,7 @@ class DatabaseConfig:
     view_mode: str = "list"  # "list", "board", or "calendar"
     calendar_sub_view: str = "week"  # "day", "week", "month", or "timeline"
     timeline_sub_view: str = "tasks"  # "tasks", "daily", "productivity", or "accuracy"
+    sort_updated_at: float = 0.0  # Timestamp of last sort config change
     day_start_hour: int = 0  # Hour when the logical day starts (0-23)
 
     def sort_tiers(self) -> list[tuple[str, bool]]:
@@ -156,6 +157,7 @@ class AppConfig:
         lines.append(f'view_mode = "{self.database.view_mode}"')
         lines.append(f'calendar_sub_view = "{self.database.calendar_sub_view}"')
         lines.append(f'timeline_sub_view = "{self.database.timeline_sub_view}"')
+        lines.append(f"sort_updated_at = {self.database.sort_updated_at}")
         lines.append(f"day_start_hour = {self.database.day_start_hour}")
         lines.append("")
 
@@ -242,6 +244,7 @@ class AppConfig:
                 sort_tier2_reverse=db.get("sort_tier2_reverse", False),
                 sort_tier3=db.get("sort_tier3", "priority"),
                 sort_tier3_reverse=db.get("sort_tier3_reverse", False),
+                sort_updated_at=float(db.get("sort_updated_at", 0.0)),
                 view_mode=db.get("view_mode", "list"),
                 calendar_sub_view=db.get("calendar_sub_view", "week"),
                 timeline_sub_view=db.get("timeline_sub_view", "tasks"),
