@@ -53,7 +53,7 @@ class PeerManagerDialog(QDialog):
         storage: DatabaseStorage | None = None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("Peer Manager")
+        self.setWindowTitle(self.tr("Peer Manager"))
         self.setMinimumWidth(600)
         self.setMinimumHeight(400)
 
@@ -74,14 +74,20 @@ class PeerManagerDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # Discovered peers section
-        peers_group = QGroupBox("Discovered Peers")
+        peers_group = QGroupBox(self.tr("Discovered Peers"))
         peers_layout = QVBoxLayout(peers_group)
 
         # Peer table
         self.peer_table = QTableWidget()
         self.peer_table.setColumnCount(5)
         self.peer_table.setHorizontalHeaderLabels(
-            ["Name", "Address", "Port", "Version", "Fingerprint"]
+            [
+                self.tr("Name"),
+                self.tr("Address"),
+                self.tr("Port"),
+                self.tr("Version"),
+                self.tr("Fingerprint"),
+            ]
         )
         peer_header = self.peer_table.horizontalHeader()
         assert peer_header is not None
@@ -94,17 +100,17 @@ class PeerManagerDialog(QDialog):
         # Peer action buttons
         peer_btns = QHBoxLayout()
 
-        self.ping_btn = QPushButton("Ping")
+        self.ping_btn = QPushButton(self.tr("Ping"))
         self.ping_btn.clicked.connect(self._on_ping)
         self.ping_btn.setEnabled(False)
         peer_btns.addWidget(self.ping_btn)
 
-        self.sync_btn = QPushButton("Sync")
+        self.sync_btn = QPushButton(self.tr("Sync"))
         self.sync_btn.clicked.connect(self._on_sync)
         self.sync_btn.setEnabled(False)
         peer_btns.addWidget(self.sync_btn)
 
-        refresh_btn = QPushButton("Refresh")
+        refresh_btn = QPushButton(self.tr("Refresh"))
         refresh_btn.clicked.connect(self._refresh_peers)
         peer_btns.addWidget(refresh_btn)
 
@@ -114,20 +120,20 @@ class PeerManagerDialog(QDialog):
         layout.addWidget(peers_group)
 
         # Manual connection section
-        manual_group = QGroupBox("Manual Connection")
+        manual_group = QGroupBox(self.tr("Manual Connection"))
         manual_layout = QFormLayout(manual_group)
 
         self.manual_host_edit = QLineEdit()
-        self.manual_host_edit.setPlaceholderText("hostname or IP address")
-        manual_layout.addRow("Host:", self.manual_host_edit)
+        self.manual_host_edit.setPlaceholderText(self.tr("hostname or IP address"))
+        manual_layout.addRow(self.tr("Host:"), self.manual_host_edit)
 
         self.manual_port_spin = QSpinBox()
         self.manual_port_spin.setRange(1024, 65535)
         self.manual_port_spin.setValue(5364)
-        manual_layout.addRow("Port:", self.manual_port_spin)
+        manual_layout.addRow(self.tr("Port:"), self.manual_port_spin)
 
         manual_btns = QHBoxLayout()
-        manual_connect_btn = QPushButton("Connect")
+        manual_connect_btn = QPushButton(self.tr("Connect"))
         manual_connect_btn.clicked.connect(self._on_manual_connect)
         manual_btns.addWidget(manual_connect_btn)
         manual_btns.addStretch()
@@ -140,7 +146,7 @@ class PeerManagerDialog(QDialog):
         layout.addWidget(self.status_label)
 
         # Close button
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(self.tr("Close"))
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
@@ -178,7 +184,7 @@ class PeerManagerDialog(QDialog):
             fp_item.setToolTip(peer.fingerprint)
             self.peer_table.setItem(row, 4, fp_item)
 
-        self.status_label.setText(f"Found {len(peers)} peer(s)")
+        self.status_label.setText(self.tr(f"Found {len(peers)} peer(s)"))
 
     def _get_selected_peer(self) -> DiscoveredPeer | None:
         """Get the currently selected peer."""
@@ -226,21 +232,23 @@ class PeerManagerDialog(QDialog):
             if success:
                 QMessageBox.information(
                     self,
-                    "Connection Successful",
-                    f"Connected to {peer.name}\n\n"
-                    f"Address: {peer.address}:{peer.port}\n"
-                    f"Latency: {latency:.1f}ms\n"
-                    f"Fingerprint: {peer.fingerprint}",
+                    self.tr("Connection Successful"),
+                    self.tr(
+                        f"Connected to {peer.name}\n\n"
+                        f"Address: {peer.address}:{peer.port}\n"
+                        f"Latency: {latency:.1f}ms\n"
+                        f"Fingerprint: {peer.fingerprint}"
+                    ),
                 )
             else:
                 QMessageBox.warning(
                     self,
-                    "Connection Failed",
-                    f"Could not connect to {peer.name} at {peer.address}:{peer.port}",
+                    self.tr("Connection Failed"),
+                    self.tr(f"Could not connect to {peer.name} at {peer.address}:{peer.port}"),
                 )
         except Exception as e:
             logger.log.exception("Ping failed: %s", e)
-            QMessageBox.critical(self, "Error", f"Connection failed: {e}")
+            QMessageBox.critical(self, self.tr("Error"), self.tr(f"Connection failed: {e}"))
         finally:
             self._set_busy(False)
 
@@ -294,48 +302,54 @@ class PeerManagerDialog(QDialog):
                 if merged_count > 0:
                     QMessageBox.information(
                         self,
-                        "Sync Complete",
-                        f"Synced with {peer.name}\n"
-                        f"Merged {merged_count} new items.\n"
-                        f"Pushed {len(push_data)} bytes.",
+                        self.tr("Sync Complete"),
+                        self.tr(
+                            f"Synced with {peer.name}\n"
+                            f"Merged {merged_count} new items.\n"
+                            f"Pushed {len(push_data)} bytes."
+                        ),
                     )
                 elif local_newer > 0:
                     QMessageBox.information(
                         self,
-                        "Sync Complete",
-                        f"Synced with {peer.name}\n"
-                        f"{local_newer} local items were newer (kept).\n"
-                        f"Pushed {len(push_data)} bytes.",
+                        self.tr("Sync Complete"),
+                        self.tr(
+                            f"Synced with {peer.name}\n"
+                            f"{local_newer} local items were newer (kept).\n"
+                            f"Pushed {len(push_data)} bytes."
+                        ),
                     )
                 else:
                     QMessageBox.information(
                         self,
-                        "Already In Sync",
-                        f"Synced with {peer.name}\n"
-                        f"Databases are identical.\n"
-                        f"Pushed {len(push_data)} bytes.",
+                        self.tr("Already In Sync"),
+                        self.tr(
+                            f"Synced with {peer.name}\n"
+                            f"Databases are identical.\n"
+                            f"Pushed {len(push_data)} bytes."
+                        ),
                     )
             elif pull_success:
                 QMessageBox.warning(
                     self,
-                    "Partial Sync",
-                    f"Pulled {merged_count} items from {peer.name}\nbut push failed.",
+                    self.tr("Partial Sync"),
+                    self.tr(f"Pulled {merged_count} items from {peer.name}\nbut push failed."),
                 )
             elif push_success:
                 QMessageBox.warning(
                     self,
-                    "Partial Sync",
-                    f"Pushed to {peer.name}\nbut pull failed.",
+                    self.tr("Partial Sync"),
+                    self.tr(f"Pushed to {peer.name}\nbut pull failed."),
                 )
             else:
                 QMessageBox.warning(
                     self,
-                    "Sync Failed",
-                    f"Could not sync with {peer.name}",
+                    self.tr("Sync Failed"),
+                    self.tr(f"Could not sync with {peer.name}"),
                 )
         except Exception as e:
             logger.log.exception("Sync failed: %s", e)
-            QMessageBox.critical(self, "Error", f"Sync failed: {e}")
+            QMessageBox.critical(self, self.tr("Error"), self.tr(f"Sync failed: {e}"))
         finally:
             self._set_busy(False)
 
@@ -420,7 +434,9 @@ class PeerManagerDialog(QDialog):
         port = self.manual_port_spin.value()
 
         if not host:
-            QMessageBox.warning(self, "Error", "Please enter a hostname or IP address.")
+            QMessageBox.warning(
+                self, self.tr("Error"), self.tr("Please enter a hostname or IP address.")
+            )
             return
 
         self._set_busy(True, f"Pinging {host}:{port}...")
@@ -430,18 +446,18 @@ class PeerManagerDialog(QDialog):
             if success:
                 QMessageBox.information(
                     self,
-                    "Connection Successful",
-                    f"Connected to {host}:{port}\nLatency: {latency:.1f}ms",
+                    self.tr("Connection Successful"),
+                    self.tr(f"Connected to {host}:{port}\nLatency: {latency:.1f}ms"),
                 )
             else:
                 QMessageBox.warning(
                     self,
-                    "Connection Failed",
-                    f"Could not connect to {host}:{port}",
+                    self.tr("Connection Failed"),
+                    self.tr(f"Could not connect to {host}:{port}"),
                 )
         except Exception as e:
             logger.log.exception("Manual connect failed: %s", e)
-            QMessageBox.critical(self, "Error", f"Connection failed: {e}")
+            QMessageBox.critical(self, self.tr("Error"), self.tr(f"Connection failed: {e}"))
         finally:
             self._set_busy(False)
 
@@ -450,7 +466,7 @@ class PeerManagerDialog(QDialog):
         self.ping_btn.setEnabled(not busy)
         self.sync_btn.setEnabled(not busy)
         self.status_label.setText(
-            message if busy else f"Found {len(self._discovery.get_peers())} peer(s)"
+            message if busy else self.tr(f"Found {len(self._discovery.get_peers())} peer(s)")
         )
 
     def _track_device(self, fingerprint: str, address: str | None = None) -> None:

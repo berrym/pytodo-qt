@@ -59,7 +59,7 @@ class ListSelectorWidget(QWidget):
         self._lock_icon = self._load_icon("lock.svg")
 
         # Label
-        layout.addWidget(QLabel("List:"))
+        layout.addWidget(QLabel(self.tr("List:")))
 
         # Combo box for list selection
         self.combo = QComboBox()
@@ -72,21 +72,21 @@ class ListSelectorWidget(QWidget):
         # Add button
         self.add_btn = QPushButton("+")
         self.add_btn.setMaximumWidth(30)
-        self.add_btn.setToolTip("Add new list")
+        self.add_btn.setToolTip(self.tr("Add new list"))
         self.add_btn.clicked.connect(self.add_list_requested.emit)
         layout.addWidget(self.add_btn)
 
         # Delete button
         self.delete_btn = QPushButton("-")
         self.delete_btn.setMaximumWidth(30)
-        self.delete_btn.setToolTip("Delete current list")
+        self.delete_btn.setToolTip(self.tr("Delete current list"))
         self.delete_btn.clicked.connect(self.delete_list_requested.emit)
         layout.addWidget(self.delete_btn)
 
         # Rename button
         self.rename_btn = QPushButton("✎")
         self.rename_btn.setMaximumWidth(30)
-        self.rename_btn.setToolTip("Rename current list")
+        self.rename_btn.setToolTip(self.tr("Rename current list"))
         self.rename_btn.clicked.connect(self.rename_list_requested.emit)
         layout.addWidget(self.rename_btn)
 
@@ -284,20 +284,20 @@ class ListSelectorWidget(QWidget):
         menu = QMenu(self)
 
         # Sync settings
-        menu.addAction("Sync Settings...", self.sync_settings_requested.emit)
+        menu.addAction(self.tr("Sync Settings..."), self.sync_settings_requested.emit)
 
         menu.addSeparator()
 
         # Private/Shared toggle
         if current_list.private:
-            action = menu.addAction(self._lock_icon, "Make Shared")
+            action = menu.addAction(self._lock_icon, self.tr("Make Shared"))
         else:
-            action = menu.addAction(self._lock_icon, "Make Private")
+            action = menu.addAction(self._lock_icon, self.tr("Make Private"))
         if action:
             action.triggered.connect(self.toggle_private_requested.emit)
 
         menu.addSeparator()
-        menu.addAction("Rename...", self.rename_list_requested.emit)
-        menu.addAction("Delete...", self.delete_list_requested.emit)
+        menu.addAction(self.tr("Rename..."), self.rename_list_requested.emit)
+        menu.addAction(self.tr("Delete..."), self.delete_list_requested.emit)
 
         menu.exec(self.combo.mapToGlobal(position))

@@ -47,9 +47,9 @@ class ListSyncSettingsDialog(QDialog):
         self._group_checkboxes: list[QCheckBox] = []
 
         if todo_list:
-            self.setWindowTitle(f"Sync Settings: {todo_list.name}")
+            self.setWindowTitle(self.tr(f"Sync Settings: {todo_list.name}"))
         else:
-            self.setWindowTitle("Sync Settings")
+            self.setWindowTitle(self.tr("Sync Settings"))
 
         self.setMinimumWidth(400)
         self.setMinimumHeight(350)
@@ -63,29 +63,33 @@ class ListSyncSettingsDialog(QDialog):
 
         # Description
         desc = QLabel(
-            "Configure how this list syncs with other devices.\n"
-            "Lists can sync to all devices, selected groups only, or be kept private."
+            self.tr(
+                "Configure how this list syncs with other devices.\n"
+                "Lists can sync to all devices, selected groups only, or be kept private."
+            )
         )
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
         # Sync mode group
-        mode_group = QGroupBox("Sync this list to:")
+        mode_group = QGroupBox(self.tr("Sync this list to:"))
         mode_layout = QVBoxLayout(mode_group)
 
         self._mode_button_group = QButtonGroup(self)
 
         # All devices option
-        self._all_devices_radio = QRadioButton("All devices (default)")
+        self._all_devices_radio = QRadioButton(self.tr("All devices (default)"))
         self._all_devices_radio.setToolTip(
-            "Sync to all non-blocked devices regardless of group membership"
+            self.tr("Sync to all non-blocked devices regardless of group membership")
         )
         self._mode_button_group.addButton(self._all_devices_radio, 0)
         mode_layout.addWidget(self._all_devices_radio)
 
         # Selected groups option
-        self._selected_groups_radio = QRadioButton("Selected groups only:")
-        self._selected_groups_radio.setToolTip("Only sync to devices in the selected groups")
+        self._selected_groups_radio = QRadioButton(self.tr("Selected groups only:"))
+        self._selected_groups_radio.setToolTip(
+            self.tr("Only sync to devices in the selected groups")
+        )
         self._mode_button_group.addButton(self._selected_groups_radio, 1)
         self._selected_groups_radio.toggled.connect(self._on_mode_changed)
         mode_layout.addWidget(self._selected_groups_radio)
@@ -104,15 +108,17 @@ class ListSyncSettingsDialog(QDialog):
         mode_layout.addWidget(self._groups_scroll)
 
         # Private option
-        self._private_radio = QRadioButton("Private (never sync)")
-        self._private_radio.setToolTip("Keep this list local only - it will never be synced")
+        self._private_radio = QRadioButton(self.tr("Private (never sync)"))
+        self._private_radio.setToolTip(
+            self.tr("Keep this list local only - it will never be synced")
+        )
         self._mode_button_group.addButton(self._private_radio, 2)
         mode_layout.addWidget(self._private_radio)
 
         layout.addWidget(mode_group)
 
         # Preview
-        self._preview_group = QGroupBox("Preview")
+        self._preview_group = QGroupBox(self.tr("Preview"))
         preview_layout = QVBoxLayout(self._preview_group)
         self._preview_label = QLabel()
         self._preview_label.setWordWrap(True)
@@ -137,14 +143,14 @@ class ListSyncSettingsDialog(QDialog):
     def _populate_groups(self) -> None:
         """Populate the groups checkboxes."""
         if self._storage is None:
-            no_groups = QLabel("(No storage available)")
+            no_groups = QLabel(self.tr("(No storage available)"))
             self._groups_layout.addWidget(no_groups)
             return
 
         groups = self._storage.get_all_sync_groups()
 
         if not groups:
-            no_groups = QLabel("(No sync groups created)")
+            no_groups = QLabel(self.tr("(No sync groups created)"))
             no_groups.setStyleSheet("color: gray; font-style: italic;")
             self._groups_layout.addWidget(no_groups)
             return
@@ -153,7 +159,7 @@ class ListSyncSettingsDialog(QDialog):
             # Get device count for this group
             devices = self._storage.get_devices_in_group(group.id)
             cb = QCheckBox(
-                f"{group.name} ({len(devices)} device{'s' if len(devices) != 1 else ''})"
+                self.tr(f"{group.name} ({len(devices)} device{'s' if len(devices) != 1 else ''})")
             )
             cb.setProperty("group_id", group.id)
             cb.toggled.connect(self._update_preview)
@@ -196,21 +202,21 @@ class ListSyncSettingsDialog(QDialog):
     def _update_preview(self) -> None:
         """Update the preview text."""
         if self._storage is None:
-            self._preview_label.setText("(Storage not available)")
+            self._preview_label.setText(self.tr("(Storage not available)"))
             return
 
         if self._private_radio.isChecked():
-            self._preview_label.setText(
-                '<span style="color: gray;">This list will never sync with other devices.</span>'
-            )
+            self._preview_label.setText(self.tr("This list will never sync with other devices."))
             return
 
         if self._all_devices_radio.isChecked():
             # Count non-blocked devices
             devices = self._storage.get_all_devices(include_blocked=False)
             self._preview_label.setText(
-                f"Will sync to <b>all {len(devices)} device{'s' if len(devices) != 1 else ''}</b> "
-                f"(except blocked devices)."
+                self.tr(
+                    f"Will sync to all {len(devices)} device{'s' if len(devices) != 1 else ''} "
+                    f"(except blocked devices)."
+                )
             )
             return
 
@@ -230,14 +236,15 @@ class ListSyncSettingsDialog(QDialog):
 
         if not selected_group_names:
             self._preview_label.setText(
-                '<span style="color: orange;">No groups selected. '
-                "List will not sync to any devices.</span>"
+                self.tr("No groups selected. List will not sync to any devices.")
             )
         else:
             groups_text = ", ".join(selected_group_names)
             self._preview_label.setText(
-                f"Will sync to <b>{len(selected_device_ids)} device{'s' if len(selected_device_ids) != 1 else ''}</b> "
-                f"in: {groups_text}"
+                self.tr(
+                    f"Will sync to {len(selected_device_ids)} device{'s' if len(selected_device_ids) != 1 else ''} "
+                    f"in: {groups_text}"
+                )
             )
 
     def _on_save(self) -> None:

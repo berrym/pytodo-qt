@@ -133,7 +133,7 @@ class FocusStatsDialog(QDialog):
         self._database = database
         self._config = config
 
-        self.setWindowTitle("Focus Statistics")
+        self.setWindowTitle(self.tr("Focus Statistics"))
         self.setMinimumWidth(450)
         self.setMinimumHeight(500)
 
@@ -165,9 +165,9 @@ class FocusStatsDialog(QDialog):
             float(today_summary["total_minutes"].sum()) if not today_summary.empty else 0.0
         )
         today_duration = int(today_minutes * 60)
-        today_card = self._create_card("Today", today_sessions, today_duration)
+        today_card = self._create_card(self.tr("Today"), today_sessions, today_duration)
         if self._config.daily_goal > 0:
-            goal_label = QLabel(f"Goal: {today_sessions}/{self._config.daily_goal}")
+            goal_label = QLabel(self.tr(f"Goal: {today_sessions}/{self._config.daily_goal}"))
             goal_label.setStyleSheet("color: gray;")
             goal_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             card_layout = today_card.layout()
@@ -185,7 +185,7 @@ class FocusStatsDialog(QDialog):
         )
         week_minutes = float(week_summary["total_minutes"].sum()) if not week_summary.empty else 0.0
         cards_layout.addWidget(
-            self._create_card("This Week", week_sessions, int(week_minutes * 60))
+            self._create_card(self.tr("This Week"), week_sessions, int(week_minutes * 60))
         )
 
         # This Month card
@@ -200,13 +200,13 @@ class FocusStatsDialog(QDialog):
             float(month_summary["total_minutes"].sum()) if not month_summary.empty else 0.0
         )
         cards_layout.addWidget(
-            self._create_card("This Month", month_sessions, int(month_minutes * 60))
+            self._create_card(self.tr("This Month"), month_sessions, int(month_minutes * 60))
         )
 
         layout.addLayout(cards_layout)
 
         # Weekly bar chart
-        chart_group = QGroupBox("This Week")
+        chart_group = QGroupBox(self.tr("This Week"))
         chart_layout_box = QVBoxLayout(chart_group)
         weekly = self._analytics.weekly_chart(week_start)
         day_counts = [
@@ -219,7 +219,7 @@ class FocusStatsDialog(QDialog):
         # Top tasks this week
         top = self._analytics.top_items(week_start.isoformat(), today_str, limit=5)
         if not top.empty:
-            tasks_group = QGroupBox("Top Tasks This Week")
+            tasks_group = QGroupBox(self.tr("Top Tasks This Week"))
             tasks_layout = QVBoxLayout(tasks_group)
             for i, (_, row) in enumerate(top.iterrows(), 1):
                 name = self._resolve_item_name(row["item_id"])
@@ -234,7 +234,7 @@ class FocusStatsDialog(QDialog):
         streak = self._analytics.streak(
             self._config.daily_goal if self._config.daily_goal > 0 else 1
         )
-        streak_label = QLabel(f"Current Streak: {streak} day{'s' if streak != 1 else ''}")
+        streak_label = QLabel(self.tr(f"Current Streak: {streak} day{'s' if streak != 1 else ''}"))
         streak_font = QFont()
         streak_font.setPointSize(13)
         streak_font.setBold(True)
@@ -261,7 +261,7 @@ class FocusStatsDialog(QDialog):
         card_layout = QVBoxLayout(card)
         card_layout.setSpacing(4)
 
-        sessions_label = QLabel(f"{sessions} session{'s' if sessions != 1 else ''}")
+        sessions_label = QLabel(self.tr(f"{sessions} session{'s' if sessions != 1 else ''}"))
         sessions_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         font = QFont()
         font.setPointSize(13)
@@ -283,13 +283,13 @@ class FocusStatsDialog(QDialog):
         try:
             item_id = UUID(item_id_str)
         except ValueError:
-            return "(unknown)"
+            return self.tr("(unknown)")
 
         for todo_list in self._database.lists.values():
             item = todo_list.get_item(item_id)
             if item is not None:
-                return item.reminder or "(untitled)"
-        return "(deleted)"
+                return item.reminder or self.tr("(untitled)")
+        return self.tr("(deleted)")
 
     # ------------------------------------------------------------------
     # Insights — powered by AnalyticsService DataFrames
@@ -304,7 +304,7 @@ class FocusStatsDialog(QDialog):
         if work.empty:
             return None
 
-        group = QGroupBox("Insights")
+        group = QGroupBox(self.tr("Insights"))
         group_layout = QVBoxLayout(group)
 
         def _add(text: str) -> None:
@@ -318,13 +318,13 @@ class FocusStatsDialog(QDialog):
         pct = round(completed / total * 100) if total > 0 else 0
         interrupted = total - completed
         if interrupted > 0:
-            _add(f"Completion rate: {pct}% ({interrupted}/{total} sessions interrupted)")
+            _add(self.tr(f"Completion rate: {pct}% ({interrupted}/{total} sessions interrupted)"))
         else:
-            _add(f"Completion rate: {pct}% ({total} sessions, none interrupted)")
+            _add(self.tr(f"Completion rate: {pct}% ({total} sessions, none interrupted)"))
 
         # Average session duration
         avg_dur = float(work["duration_seconds"].mean())
-        _add(f"Average session duration: {_format_duration(round(avg_dur))}")
+        _add(self.tr(f"Average session duration: {_format_duration(round(avg_dur))}"))
 
         # Time block analysis
         blocks = self._analytics.time_block_analysis()
@@ -332,8 +332,10 @@ class FocusStatsDialog(QDialog):
         if not active_blocks.empty:
             most_active = active_blocks.loc[active_blocks["session_count"].idxmax()]
             _add(
-                f"Most active time: {most_active['block_label']} "
-                f"({int(most_active['session_count'])} sessions)"
+                self.tr(
+                    f"Most active time: {most_active['block_label']} "
+                    f"({int(most_active['session_count'])} sessions)"
+                )
             )
 
         # Best focus time (highest completion rate, min 3 sessions)
@@ -342,9 +344,11 @@ class FocusStatsDialog(QDialog):
             best = qualified.loc[qualified["completion_rate"].idxmax()]
             if best["completion_rate"] > 0:
                 _add(
-                    f"Best focus time: {best['block_label']} "
-                    f"({round(best['completion_rate'] * 100)}% completion, "
-                    f"{int(best['session_count'])} sessions)"
+                    self.tr(
+                        f"Best focus time: {best['block_label']} "
+                        f"({round(best['completion_rate'] * 100)}% completion, "
+                        f"{int(best['session_count'])} sessions)"
+                    )
                 )
 
             # Worst focus time (lowest completion rate < 100%, min 3 sessions)
@@ -352,9 +356,11 @@ class FocusStatsDialog(QDialog):
             if not imperfect.empty:
                 worst = imperfect.loc[imperfect["completion_rate"].idxmin()]
                 _add(
-                    f"Worst focus time: {worst['block_label']} "
-                    f"({round(worst['completion_rate'] * 100)}% completion, "
-                    f"{int(worst['session_count'])} sessions)"
+                    self.tr(
+                        f"Worst focus time: {worst['block_label']} "
+                        f"({round(worst['completion_rate'] * 100)}% completion, "
+                        f"{int(worst['session_count'])} sessions)"
+                    )
                 )
 
         # Completion rate trend (this week vs last week)
@@ -371,10 +377,14 @@ class FocusStatsDialog(QDialog):
             delta = this_pct - last_pct
             if abs(delta) < 3:
                 avg = round((this_pct + last_pct) / 2)
-                _add(f"Completion rate: steady at {avg}%")
+                _add(self.tr(f"Completion rate: steady at {avg}%"))
             else:
                 arrow = "\u2191" if delta > 0 else "\u2193"
-                _add(f"{arrow} Completion rate: {this_pct}% this week vs {last_pct}% last week")
+                _add(
+                    self.tr(
+                        f"{arrow} Completion rate: {this_pct}% this week vs {last_pct}% last week"
+                    )
+                )
 
         # Most interrupted tasks
         item_summary = self._analytics.item_summary()
@@ -386,12 +396,12 @@ class FocusStatsDialog(QDialog):
             ].sort_values("completion_rate")
 
             if not candidates.empty:
-                _add("<b>Most interrupted tasks:</b>")
+                _add(self.tr("<b>Most interrupted tasks:</b>"))
                 for _, row in candidates.head(3).iterrows():
                     name = self._resolve_item_name(row["item_id"])
                     item_total = int(row["work_sessions"] + row["stopwatch_sessions"])
                     item_completed = int(row["completed_sessions"])
-                    _add(f"  \u2022 {name} \u2014 {item_completed}/{item_total} completed")
+                    _add(self.tr(f"  \u2022 {name} \u2014 {item_completed}/{item_total} completed"))
 
         # Interruption duration comparison
         completed_work = work[work["completed"]]
@@ -403,8 +413,10 @@ class FocusStatsDialog(QDialog):
             i_min = round(avg_i / 60)
             timing = "early" if avg_c > 0 and avg_i < avg_c * 0.5 else "near the end"
             _add(
-                f"Interrupted sessions avg {i_min}m vs completed "
-                f"{c_min}m \u2014 most interruptions happen {timing}"
+                self.tr(
+                    f"Interrupted sessions avg {i_min}m vs completed "
+                    f"{c_min}m \u2014 most interruptions happen {timing}"
+                )
             )
 
         return group

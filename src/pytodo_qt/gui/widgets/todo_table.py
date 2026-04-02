@@ -93,7 +93,7 @@ class DueDatePickerDialog(QDialog):
         parent=None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("Set Due Date")
+        self.setWindowTitle(self.tr("Set Due Date"))
         self._date = current_date
         self._time = current_time
         self._setup_ui()
@@ -112,7 +112,7 @@ class DueDatePickerDialog(QDialog):
 
         # Time picker with checkbox
         time_layout = QHBoxLayout()
-        self.time_checkbox = QCheckBox("Set due time")
+        self.time_checkbox = QCheckBox(self.tr("Set due time"))
         self.time_checkbox.stateChanged.connect(self._on_time_toggled)
         time_layout.addWidget(self.time_checkbox)
 
@@ -129,17 +129,17 @@ class DueDatePickerDialog(QDialog):
         # Buttons
         btn_layout = QHBoxLayout()
 
-        clear_btn = QPushButton("Clear")
+        clear_btn = QPushButton(self.tr("Clear"))
         clear_btn.clicked.connect(self._on_clear)
         btn_layout.addWidget(clear_btn)
 
         btn_layout.addStretch()
 
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(self.tr("Cancel"))
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(cancel_btn)
 
-        ok_btn = QPushButton("OK")
+        ok_btn = QPushButton(self.tr("OK"))
         ok_btn.setDefault(True)
         ok_btn.clicked.connect(self._on_ok)
         btn_layout.addWidget(ok_btn)
@@ -293,7 +293,7 @@ class TodoTableWidget(QTableWidget):
         """Configure the table widget."""
         # Columns: Priority, Reminder, Due
         self.setColumnCount(3)
-        self.setHorizontalHeaderLabels(["Priority", "Reminder", "Due"])
+        self.setHorizontalHeaderLabels([self.tr("Priority"), self.tr("Reminder"), self.tr("Due")])
 
         # Configure column sizes
         header = self.horizontalHeader()
@@ -322,7 +322,7 @@ class TodoTableWidget(QTableWidget):
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
         # Tooltips
-        self.setToolTip("Your to-do list")
+        self.setToolTip(self.tr("Your to-do list"))
 
         # Alternating row colors
         self.setAlternatingRowColors(True)
@@ -343,15 +343,15 @@ class TodoTableWidget(QTableWidget):
         menu = QMenu(self)
 
         if len(item_ids) == 1:
-            edit_tags_action = QAction("Edit Tags...", self)
+            edit_tags_action = QAction(self.tr("Edit Tags..."), self)
             edit_tags_action.triggered.connect(lambda: self.edit_tags_requested.emit(item_ids[0]))
             menu.addAction(edit_tags_action)
 
-            edit_rec_action = QAction("Edit Recurrence...", self)
+            edit_rec_action = QAction(self.tr("Edit Recurrence..."), self)
             edit_rec_action.triggered.connect(self.edit_recurrence_requested.emit)
             menu.addAction(edit_rec_action)
 
-            focus_action = QAction("Start Focus Session", self)
+            focus_action = QAction(self.tr("Start Focus Session"), self)
             focus_action.triggered.connect(
                 lambda checked=False, iid=item_ids[0]: self.focus_requested.emit(iid)
             )
@@ -360,7 +360,7 @@ class TodoTableWidget(QTableWidget):
             # Only allow adding subtasks to top-level items
             item = self._current_list.get_item(item_ids[0]) if self._current_list else None
             if item and item.parent_id is None:
-                add_subtask_action = QAction("Add Subtask...", self)
+                add_subtask_action = QAction(self.tr("Add Subtask..."), self)
                 add_subtask_action.triggered.connect(
                     lambda checked=False, iid=item_ids[0]: self.add_subtask_requested.emit(iid)
                 )
@@ -368,11 +368,11 @@ class TodoTableWidget(QTableWidget):
 
             menu.addSeparator()
 
-        toggle_action = QAction("Toggle Complete", self)
+        toggle_action = QAction(self.tr("Toggle Complete"), self)
         toggle_action.triggered.connect(self.toggle_requested.emit)
         menu.addAction(toggle_action)
 
-        delete_action = QAction("Delete", self)
+        delete_action = QAction(self.tr("Delete"), self)
         delete_action.triggered.connect(self.delete_requested.emit)
         menu.addAction(delete_action)
 
@@ -609,7 +609,7 @@ class TodoTableWidget(QTableWidget):
             # Priority combo box
             priority_combo = QComboBox()
             priority_combo.setMinimumHeight(32)
-            priority_combo.addItems(["Low", "Normal", "High"])
+            priority_combo.addItems([self.tr("Low"), self.tr("Normal"), self.tr("High")])
             priority_combo.setCurrentIndex(
                 2 - item.priority + 1
             )  # 1=High->2, 2=Normal->1, 3=Low->0
@@ -686,12 +686,12 @@ class TodoTableWidget(QTableWidget):
                 from .pomodoro import PomodoroWidget
 
                 tooltip_parts.append(
-                    f"Time spent: {PomodoroWidget.format_time_spent(item.time_spent)}"
+                    self.tr(f"Time spent: {PomodoroWidget.format_time_spent(item.time_spent)}")
                 )
             if item.pomodoro_count > 0 or item.estimated_pomodoros > 0:
-                pomo_text = f"Sessions: {item.pomodoro_count}"
+                pomo_text = self.tr(f"Sessions: {item.pomodoro_count}")
                 if item.estimated_pomodoros > 0:
-                    pomo_text += f" / {item.estimated_pomodoros} estimated"
+                    pomo_text += self.tr(f" / {item.estimated_pomodoros} estimated")
                 tooltip_parts.append(pomo_text)
             if tooltip_parts:
                 reminder_edit.setToolTip("\n".join(tooltip_parts))
@@ -940,7 +940,7 @@ class TodoTableWidget(QTableWidget):
             chip.setStyleSheet(chip_style)
             layout.addWidget(chip)
 
-        edit_btn = QPushButton("Edit...")
+        edit_btn = QPushButton(self.tr("Edit..."))
         edit_btn.setFixedHeight(20)
         edit_btn.setStyleSheet("font-size: 10px; padding: 1px 6px;")
         edit_btn.clicked.connect(lambda: self._on_popup_edit(popup, item_id))

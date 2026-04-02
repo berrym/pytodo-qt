@@ -23,7 +23,14 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import pyqtgraph as pg
-from PyQt6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, Qt, pyqtSignal
+from PyQt6.QtCore import (
+    QAbstractTableModel,
+    QCoreApplication,
+    QMimeData,
+    QModelIndex,
+    Qt,
+    pyqtSignal,
+)
 from PyQt6.QtGui import QColor, QDrag, QFont, QFontMetrics, QPainter, QPen
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -360,7 +367,7 @@ class _CalendarDelegate(QStyledItemDelegate):
             painter.drawText(
                 overflow_rect,
                 Qt.AlignmentFlag.AlignCenter,
-                f"+{overflow} more",
+                QCoreApplication.translate("CalendarViewWidget", f"+{overflow} more"),
             )
 
         painter.restore()
@@ -535,7 +542,7 @@ class _CalendarTableView(QTableView):
             n = len(hit[2])
             QToolTip.showText(
                 a0.globalPosition().toPoint(),
-                f"Click to see all {n} tasks",
+                QCoreApplication.translate("CalendarViewWidget", f"Click to see all {n} tasks"),
                 self,
             )
         else:
@@ -1105,11 +1112,12 @@ class _TimelineTasksWidget(QWidget):
         c = self._colors
         text_color = c.get("text", "#e0e0e0")
         legend_layout = self._legend_widget.layout()
+        _tr = QCoreApplication.translate
         for hex_c, name in [
-            (c.get("chart_span", "#4992ff"), "Time Span"),
-            (c.get("chart_estimate", "#3D4147"), "Estimated"),
-            (c.get("chart_pomodoro", "#D55E00"), "Pomodoro"),
-            (c.get("chart_stopwatch", "#0072B2"), "Stopwatch"),
+            (c.get("chart_span", "#4992ff"), _tr("CalendarViewWidget", "Time Span")),
+            (c.get("chart_estimate", "#3D4147"), _tr("CalendarViewWidget", "Estimated")),
+            (c.get("chart_pomodoro", "#D55E00"), _tr("CalendarViewWidget", "Pomodoro")),
+            (c.get("chart_stopwatch", "#0072B2"), _tr("CalendarViewWidget", "Stopwatch")),
         ]:
             lbl = QLabel(
                 f'<span style="color:{hex_c};">\u25a0</span> '
@@ -1475,7 +1483,9 @@ class _TimelineDailyWidget(QWidget):
         self._trend_y = None
 
         if self._analytics is None:
-            self._show_empty("Analytics service not available")
+            self._show_empty(
+                QCoreApplication.translate("CalendarViewWidget", "Analytics service not available")
+            )
             self._build_legend()
             return
 
@@ -1563,7 +1573,12 @@ class _TimelineDailyWidget(QWidget):
         # Empty state
         total = pom_mins.sum() + sw_mins.sum()
         if total == 0:
-            self._show_empty("No sessions this week \u2014 use \u25c0 \u25b6 to navigate")
+            self._show_empty(
+                QCoreApplication.translate(
+                    "CalendarViewWidget",
+                    "No sessions this week \u2014 use \u25c0 \u25b6 to navigate",
+                )
+            )
 
         # Legend
         self._build_legend()
@@ -1572,7 +1587,7 @@ class _TimelineDailyWidget(QWidget):
         left_axis = plot.getAxis("left")
         left_axis.setTextPen(self._col_text)
         left_axis.setPen(pg.mkPen(self._col_border))
-        left_axis.setLabel("Minutes")
+        left_axis.setLabel(QCoreApplication.translate("CalendarViewWidget", "Minutes"))
 
         bottom_axis = plot.getAxis("bottom")
         bottom_axis.setTicks([[(float(i), day_labels[i]) for i in range(7)]])
@@ -1587,10 +1602,11 @@ class _TimelineDailyWidget(QWidget):
         c = self._colors
         text_color = c.get("text", "#e0e0e0")
         legend_layout = self._legend_widget.layout()
+        _tr = QCoreApplication.translate
         for hex_c, name in [
-            (c.get("chart_pomodoro", "#D55E00"), "Pomodoro"),
-            (c.get("chart_stopwatch", "#0072B2"), "Stopwatch"),
-            (c.get("highlight", "#0078d4"), "7-day avg"),
+            (c.get("chart_pomodoro", "#D55E00"), _tr("CalendarViewWidget", "Pomodoro")),
+            (c.get("chart_stopwatch", "#0072B2"), _tr("CalendarViewWidget", "Stopwatch")),
+            (c.get("highlight", "#0078d4"), _tr("CalendarViewWidget", "7-day avg")),
         ]:
             lbl = QLabel(
                 f'<span style="color:{hex_c};">\u25a0</span> '
@@ -1867,13 +1883,20 @@ class _TimelineProductivityWidget(QWidget):
         self._legend_labels.clear()
 
         if self._analytics is None:
-            self._show_empty("Analytics service not available")
+            self._show_empty(
+                QCoreApplication.translate("CalendarViewWidget", "Analytics service not available")
+            )
             self._build_legend()
             return
 
         blocks = self._analytics.time_block_analysis()
         if blocks.empty or blocks["session_count"].sum() == 0:
-            self._show_empty("Complete some focus sessions to see productivity patterns")
+            self._show_empty(
+                QCoreApplication.translate(
+                    "CalendarViewWidget",
+                    "Complete some focus sessions to see productivity patterns",
+                )
+            )
             self._build_legend()
             return
 
@@ -1926,7 +1949,7 @@ class _TimelineProductivityWidget(QWidget):
         bottom_axis = plot.getAxis("bottom")
         bottom_axis.setTextPen(self._col_text)
         bottom_axis.setPen(pg.mkPen(self._col_border))
-        bottom_axis.setLabel("Minutes")
+        bottom_axis.setLabel(QCoreApplication.translate("CalendarViewWidget", "Minutes"))
 
         plot.setXRange(0, max_minutes * 1.75, padding=0)
         plot.setYRange(-0.7, n - 0.3, padding=0.02)
@@ -1937,9 +1960,10 @@ class _TimelineProductivityWidget(QWidget):
         c = self._colors
         text_color = c.get("text", "#e0e0e0")
         legend_layout = self._legend_widget.layout()
+        _tr = QCoreApplication.translate
         for hex_c, name in [
-            (c.get("chart_pomodoro", "#D55E00"), "Pomodoro"),
-            (c.get("chart_stopwatch", "#0072B2"), "Stopwatch"),
+            (c.get("chart_pomodoro", "#D55E00"), _tr("CalendarViewWidget", "Pomodoro")),
+            (c.get("chart_stopwatch", "#0072B2"), _tr("CalendarViewWidget", "Stopwatch")),
         ]:
             lbl = QLabel(
                 f'<span style="color:{hex_c};">\u25a0</span> '
@@ -1951,7 +1975,7 @@ class _TimelineProductivityWidget(QWidget):
             self._legend_labels.append(lbl)
         note = QLabel(
             f'<span style="color:{c.get("completed_text", "#8c8c8c")};">'
-            f"% = sessions finished without interruption</span>"
+            f"{_tr('CalendarViewWidget', '% = sessions finished without interruption')}</span>"
         )
         note.setStyleSheet("font-size: 10px;")
         if legend_layout is not None:
@@ -2210,20 +2234,26 @@ class _TimelineAccuracyWidget(QWidget):
         left_axis = plot.getAxis("left")
         left_axis.setTextPen(self._col_text)
         left_axis.setPen(pg.mkPen(self._col_border))
-        left_axis.setLabel("Actual (min)")
+        left_axis.setLabel(QCoreApplication.translate("CalendarViewWidget", "Actual (min)"))
 
         bottom_axis = plot.getAxis("bottom")
         bottom_axis.setTextPen(self._col_text)
         bottom_axis.setPen(pg.mkPen(self._col_border))
-        bottom_axis.setLabel("Estimated (min)")
+        bottom_axis.setLabel(QCoreApplication.translate("CalendarViewWidget", "Estimated (min)"))
 
         if self._analytics is None:
-            self._show_empty("Analytics service not available")
+            self._show_empty(
+                QCoreApplication.translate("CalendarViewWidget", "Analytics service not available")
+            )
             return
 
         accuracy = self._analytics.estimate_accuracy(list_id=self._list_id)
         if accuracy.empty:
-            self._show_empty("Add estimates and complete sessions to track accuracy")
+            self._show_empty(
+                QCoreApplication.translate(
+                    "CalendarViewWidget", "Add estimates and complete sessions to track accuracy"
+                )
+            )
             return
 
         estimated = accuracy["estimated_minutes"].values.astype(float)
@@ -2270,10 +2300,11 @@ class _TimelineAccuracyWidget(QWidget):
         c = self._colors
         text_color = c.get("text", "#e0e0e0")
         legend_layout = self._legend_widget.layout()
+        _tr = QCoreApplication.translate
         for hex_c, name in [
-            (c.get("chart_overdue", "#b12f25"), "Under-estimated"),
-            (c.get("chart_span", "#4a90d2"), "Accurate"),
-            (c.get("chart_stopwatch", "#0072B2"), "Over-estimated"),
+            (c.get("chart_overdue", "#b12f25"), _tr("CalendarViewWidget", "Under-estimated")),
+            (c.get("chart_span", "#4a90d2"), _tr("CalendarViewWidget", "Accurate")),
+            (c.get("chart_stopwatch", "#0072B2"), _tr("CalendarViewWidget", "Over-estimated")),
         ]:
             lbl = QLabel(
                 f'<span style="color:{hex_c};">\u25cf</span> '
@@ -2348,7 +2379,7 @@ class _WeekModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.DisplayRole:
             if row == 0:
-                return "All Day"
+                return QCoreApplication.translate("CalendarViewWidget", "All Day")
             return _format_hour(row - 1)
         return None
 
@@ -2543,7 +2574,7 @@ class _WeekDelegate(QStyledItemDelegate):
             painter.drawText(
                 overflow_rect,
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                f"+{overflow} more",
+                QCoreApplication.translate("CalendarViewWidget", f"+{overflow} more"),
             )
 
         painter.restore()
@@ -2823,11 +2854,11 @@ class _UnscheduledPanel(QFrame):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(4)
 
-        header = QLabel("Unscheduled")
+        header = QLabel(self.tr("Unscheduled"))
         header.setStyleSheet("font-weight: bold; font-size: 12px;")
         layout.addWidget(header)
 
-        self._count_label = QLabel("0 tasks")
+        self._count_label = QLabel(self.tr("0 tasks"))
         self._count_label.setStyleSheet("font-size: 10px; color: palette(placeholderText);")
         layout.addWidget(self._count_label)
 
@@ -2930,7 +2961,7 @@ class _UnscheduledPanel(QFrame):
         self._scroll.setWidget(content)
 
         n = len(items)
-        self._count_label.setText(f"{n} task{'s' if n != 1 else ''}")
+        self._count_label.setText(self.tr(f"{n} task{'s' if n != 1 else ''}"))
 
 
 # ---------------------------------------------------------------------------
@@ -3018,7 +3049,9 @@ class CalendarViewWidget(QWidget):
         pill_layout.setSpacing(0)
 
         self._sub_buttons: list[QPushButton] = []
-        for i, label in enumerate(["Day", "Week", "Month", "Timeline"]):
+        for i, label in enumerate(
+            [self.tr("Day"), self.tr("Week"), self.tr("Month"), self.tr("Timeline")]
+        ):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setChecked(i == self._sub_view)
@@ -3053,7 +3086,7 @@ class CalendarViewWidget(QWidget):
         self._next_btn.clicked.connect(self._navigate_next)
         top_layout.addWidget(self._next_btn)
 
-        self._today_btn = QPushButton("Today")
+        self._today_btn = QPushButton(self.tr("Today"))
         self._today_btn.setStyleSheet(
             "QPushButton { border: 1px solid palette(mid); border-radius: 3px;"
             " padding: 3px 10px; font-size: 11px; }"
@@ -3075,7 +3108,9 @@ class CalendarViewWidget(QWidget):
 
         self._tl_sub_view = self._initial_tl_sub_view
         self._tl_sub_buttons: list[QPushButton] = []
-        for i, label in enumerate(["Tasks", "Daily", "Productivity", "Accuracy"]):
+        for i, label in enumerate(
+            [self.tr("Tasks"), self.tr("Daily"), self.tr("Productivity"), self.tr("Accuracy")]
+        ):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setChecked(i == self._tl_sub_view)
@@ -3450,9 +3485,9 @@ class CalendarViewWidget(QWidget):
                     f"{start.strftime('%b %d')} \u2014 {end.strftime('%b %d, %Y')}"
                 )
             elif self._tl_sub_view == 2:  # Productivity
-                self._nav_label.setText("Productivity \u2014 All Time")
+                self._nav_label.setText(self.tr("Productivity \u2014 All Time"))
             elif self._tl_sub_view == 3:  # Accuracy
-                self._nav_label.setText("Accuracy \u2014 All Time")
+                self._nav_label.setText(self.tr("Accuracy \u2014 All Time"))
             else:  # Tasks
                 self._nav_label.setText(f"Timeline \u2014 {d.strftime('%B %Y')}")
 
@@ -3538,11 +3573,11 @@ class CalendarViewWidget(QWidget):
         menu = QMenu(self)
 
         if item:
-            edit_action = QAction("Edit Reminder...", self)
+            edit_action = QAction(self.tr("Edit Reminder..."), self)
 
             def _edit_reminder(_checked=False, it=item, iid=item_id):
                 text, ok = QInputDialog.getText(
-                    self, "Edit Reminder", "Reminder:", text=it.reminder
+                    self, self.tr("Edit Reminder"), self.tr("Reminder:"), text=it.reminder
                 )
                 if ok and text.strip():
                     self.item_reminder_changed.emit(iid, text.strip())
@@ -3550,30 +3585,30 @@ class CalendarViewWidget(QWidget):
             edit_action.triggered.connect(_edit_reminder)
             menu.addAction(edit_action)
 
-        edit_tags = QAction("Edit Tags...", self)
+        edit_tags = QAction(self.tr("Edit Tags..."), self)
         edit_tags.triggered.connect(lambda: self.edit_tags_requested.emit(item_id))
         menu.addAction(edit_tags)
 
-        edit_rec = QAction("Edit Recurrence...", self)
+        edit_rec = QAction(self.tr("Edit Recurrence..."), self)
         edit_rec.triggered.connect(self.edit_recurrence_requested.emit)
         menu.addAction(edit_rec)
 
-        focus = QAction("Start Focus Session", self)
+        focus = QAction(self.tr("Start Focus Session"), self)
         focus.triggered.connect(lambda: self.focus_requested.emit(item_id))
         menu.addAction(focus)
 
         if item and item.parent_id is None:
-            add_sub = QAction("Add Subtask...", self)
+            add_sub = QAction(self.tr("Add Subtask..."), self)
             add_sub.triggered.connect(lambda: self.add_subtask_requested.emit(item_id))
             menu.addAction(add_sub)
 
         menu.addSeparator()
 
-        toggle = QAction("Toggle Complete", self)
+        toggle = QAction(self.tr("Toggle Complete"), self)
         toggle.triggered.connect(self.toggle_requested.emit)
         menu.addAction(toggle)
 
-        delete = QAction("Delete", self)
+        delete = QAction(self.tr("Delete"), self)
         delete.triggered.connect(self.delete_requested.emit)
         menu.addAction(delete)
 

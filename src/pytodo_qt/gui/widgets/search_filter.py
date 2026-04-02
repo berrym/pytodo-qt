@@ -69,7 +69,7 @@ class SearchFilterWidget(QWidget):
 
         # Search field
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Search todos...")
+        self.search_edit.setPlaceholderText(self.tr("Search todos..."))
         self.search_edit.setClearButtonEnabled(True)
         self.search_edit.setMinimumHeight(32)
 
@@ -80,7 +80,7 @@ class SearchFilterWidget(QWidget):
                 search_icon, QLineEdit.ActionPosition.LeadingPosition
             )
             if action:
-                action.setToolTip("Search")
+                action.setToolTip(self.tr("Search"))
 
         self.search_edit.textChanged.connect(self._on_text_changed)
         layout.addWidget(self.search_edit, 1)
@@ -88,38 +88,38 @@ class SearchFilterWidget(QWidget):
         # Priority combo
         self.priority_combo = QComboBox()
         self.priority_combo.setMinimumHeight(32)
-        self.priority_combo.addItem("Priority: All", 0)
-        self.priority_combo.addItem("High", 1)
-        self.priority_combo.addItem("Normal", 2)
-        self.priority_combo.addItem("Low", 3)
+        self.priority_combo.addItem(self.tr("Priority: All"), 0)
+        self.priority_combo.addItem(self.tr("High"), 1)
+        self.priority_combo.addItem(self.tr("Normal"), 2)
+        self.priority_combo.addItem(self.tr("Low"), 3)
         self.priority_combo.currentIndexChanged.connect(self._on_combo_changed)
         layout.addWidget(self.priority_combo)
 
         # Status combo
         self.status_combo = QComboBox()
         self.status_combo.setMinimumHeight(32)
-        self.status_combo.addItem("Status: All", 0)
-        self.status_combo.addItem("Active", 1)
-        self.status_combo.addItem("Completed", 2)
+        self.status_combo.addItem(self.tr("Status: All"), 0)
+        self.status_combo.addItem(self.tr("Active"), 1)
+        self.status_combo.addItem(self.tr("Completed"), 2)
         self.status_combo.currentIndexChanged.connect(self._on_combo_changed)
         layout.addWidget(self.status_combo)
 
         # Due date combo
         self.due_date_combo = QComboBox()
         self.due_date_combo.setMinimumHeight(32)
-        self.due_date_combo.addItem("Due: All", 0)
-        self.due_date_combo.addItem("Overdue", 1)
-        self.due_date_combo.addItem("Due Today", 2)
-        self.due_date_combo.addItem("This Week", 3)
-        self.due_date_combo.addItem("No Due Date", 4)
-        self.due_date_combo.addItem("Recurring", 5)
+        self.due_date_combo.addItem(self.tr("Due: All"), 0)
+        self.due_date_combo.addItem(self.tr("Overdue"), 1)
+        self.due_date_combo.addItem(self.tr("Due Today"), 2)
+        self.due_date_combo.addItem(self.tr("This Week"), 3)
+        self.due_date_combo.addItem(self.tr("No Due Date"), 4)
+        self.due_date_combo.addItem(self.tr("Recurring"), 5)
         self.due_date_combo.currentIndexChanged.connect(self._on_combo_changed)
         layout.addWidget(self.due_date_combo)
 
         # Tag combo
         self.tag_combo = QComboBox()
         self.tag_combo.setMinimumHeight(32)
-        self.tag_combo.addItem("Tag: All", "")
+        self.tag_combo.addItem(self.tr("Tag: All"), "")
         self.tag_combo.currentIndexChanged.connect(self._on_combo_changed)
         layout.addWidget(self.tag_combo)
 
@@ -204,7 +204,7 @@ class SearchFilterWidget(QWidget):
         current_tag = self.tag_combo.currentData() or ""
         self.tag_combo.blockSignals(True)
         self.tag_combo.clear()
-        self.tag_combo.addItem("Tag: All", "")
+        self.tag_combo.addItem(self.tr("Tag: All"), "")
         for tag in sorted(tags):
             self.tag_combo.addItem(tag, tag)
         # Restore selection

@@ -203,7 +203,7 @@ class MainWindow(QMainWindow):
 
     def _setup_window(self) -> None:
         """Configure the main window."""
-        self.setWindowTitle("PyTodo-Qt")
+        self.setWindowTitle(self.tr("PyTodo-Qt"))
         self.setWindowIcon(self._get_icon("pytodo-qt.svg"))
         self.resize(1100, 700)
         self._center_window()
@@ -265,121 +265,127 @@ class MainWindow(QMainWindow):
 
     def _on_undo_text_changed(self, text: str) -> None:
         """Update undo tooltip when the undo stack description changes."""
-        label = f"Undo {text}" if text else "Undo"
+        label = self.tr(f"Undo {text}") if text else self.tr("Undo")
         self.undo_action.setToolTip(f"{label} ({self._undo_native})")
 
     def _on_redo_text_changed(self, text: str) -> None:
         """Update redo tooltip when the redo stack description changes."""
-        label = f"Redo {text}" if text else "Redo"
+        label = self.tr(f"Redo {text}") if text else self.tr("Redo")
         self.redo_action.setToolTip(f"{label} ({self._redo_native})")
 
     def _setup_actions(self) -> None:
         """Create all actions."""
         # File actions
-        self.import_ics_action = QAction("&Import from .ics...", self)
+        self.import_ics_action = QAction(self.tr("&Import from .ics..."), self)
         self.import_ics_action.setShortcut("Ctrl+I")
-        self.import_ics_action.setToolTip(self._tip("Import from .ics file", "Ctrl+I"))
+        self.import_ics_action.setToolTip(self._tip(self.tr("Import from .ics file"), "Ctrl+I"))
         self.import_ics_action.triggered.connect(self._on_import_ics)
 
-        self.export_ics_action = QAction("&Export List as .ics...", self)
+        self.export_ics_action = QAction(self.tr("&Export List as .ics..."), self)
         self.export_ics_action.setShortcut("Ctrl+E")
-        self.export_ics_action.setToolTip(self._tip("Export list as .ics file", "Ctrl+E"))
+        self.export_ics_action.setToolTip(self._tip(self.tr("Export list as .ics file"), "Ctrl+E"))
         self.export_ics_action.triggered.connect(self._on_export_ics)
 
-        self.print_action = QAction("&Print", self)
+        self.print_action = QAction(self.tr("&Print"), self)
         self.print_action.setShortcut("Ctrl+P")
-        self.print_action.setToolTip(self._tip("Print current list", "Ctrl+P"))
+        self.print_action.setToolTip(self._tip(self.tr("Print current list"), "Ctrl+P"))
         self.print_action.triggered.connect(self._on_print)
 
-        self.settings_action = QAction("&Settings...", self)
+        self.settings_action = QAction(self.tr("&Settings..."), self)
         self.settings_action.triggered.connect(self._on_settings)
 
-        self.exit_action = QAction(self._get_icon("exit.svg"), "&Quit", self)
+        self.exit_action = QAction(self._get_icon("exit.svg"), self.tr("&Quit"), self)
         self.exit_action.setShortcut(QKeySequence.StandardKey.Quit)
-        self.exit_action.setToolTip(self._tip("Quit application", "Ctrl+Q"))
+        self.exit_action.setToolTip(self._tip(self.tr("Quit application"), "Ctrl+Q"))
         self.exit_action.triggered.connect(self._quit_application)
 
         # Todo actions
-        self.add_todo_action = QAction(self._get_icon("plus.svg"), "&Add To-Do", self)
+        self.add_todo_action = QAction(self._get_icon("plus.svg"), self.tr("&Add To-Do"), self)
         self.add_todo_action.setShortcut("+")
-        self.add_todo_action.setToolTip(self._tip("Add new to-do", "+"))
+        self.add_todo_action.setToolTip(self._tip(self.tr("Add new to-do"), "+"))
         self.add_todo_action.triggered.connect(self._on_add_todo)
 
-        self.delete_todo_action = QAction(self._get_icon("minus.svg"), "&Delete To-Do", self)
+        self.delete_todo_action = QAction(
+            self._get_icon("minus.svg"), self.tr("&Delete To-Do"), self
+        )
         self.delete_todo_action.setShortcut("-")
-        self.delete_todo_action.setToolTip(self._tip("Delete selected to-do", "-"))
+        self.delete_todo_action.setToolTip(self._tip(self.tr("Delete selected to-do"), "-"))
         self.delete_todo_action.triggered.connect(self._on_delete_todo)
 
-        self.toggle_todo_action = QAction(self._get_icon("toggle.svg"), "&Toggle Complete", self)
+        self.toggle_todo_action = QAction(
+            self._get_icon("toggle.svg"), self.tr("&Toggle Complete"), self
+        )
         self.toggle_todo_action.setShortcut("%")
-        self.toggle_todo_action.setToolTip(self._tip("Toggle completion status", "%"))
+        self.toggle_todo_action.setToolTip(self._tip(self.tr("Toggle completion status"), "%"))
         self.toggle_todo_action.triggered.connect(self._on_toggle_todo)
 
-        self.edit_tags_action = QAction(self._get_icon("tag.svg"), "Edit &Tags...", self)
+        self.edit_tags_action = QAction(self._get_icon("tag.svg"), self.tr("Edit &Tags..."), self)
         self.edit_tags_action.setShortcut("Ctrl+Shift+T")
-        self.edit_tags_action.setToolTip(self._tip("Edit tags", "Ctrl+Shift+T"))
+        self.edit_tags_action.setToolTip(self._tip(self.tr("Edit tags"), "Ctrl+Shift+T"))
         self.edit_tags_action.triggered.connect(self._on_edit_tags)
 
         self.edit_recurrence_action = QAction(
-            self._get_icon("clock.svg"), "Edit &Recurrence...", self
+            self._get_icon("clock.svg"), self.tr("Edit &Recurrence..."), self
         )
         self.edit_recurrence_action.setShortcut("Ctrl+Shift+R")
-        self.edit_recurrence_action.setToolTip(self._tip("Edit recurrence", "Ctrl+Shift+R"))
+        self.edit_recurrence_action.setToolTip(
+            self._tip(self.tr("Edit recurrence"), "Ctrl+Shift+R")
+        )
         self.edit_recurrence_action.triggered.connect(self._on_edit_recurrence)
 
-        self.add_subtask_action = QAction("Add &Subtask...", self)
+        self.add_subtask_action = QAction(self.tr("Add &Subtask..."), self)
         self.add_subtask_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
         self.add_subtask_action.setToolTip(
-            self._tip("Add subtask to selected item", "Ctrl+Shift+N")
+            self._tip(self.tr("Add subtask to selected item"), "Ctrl+Shift+N")
         )
         self.add_subtask_action.triggered.connect(lambda: self._on_add_subtask())
         self.addAction(self.add_subtask_action)
 
         self.edit_due_date_action = QAction(
-            self._get_icon("calendar.svg"), "Edit Due &Date...", self
+            self._get_icon("calendar.svg"), self.tr("Edit Due &Date..."), self
         )
         self.edit_due_date_action.setShortcut("Ctrl+D")
-        self.edit_due_date_action.setToolTip(self._tip("Edit due date", "Ctrl+D"))
+        self.edit_due_date_action.setToolTip(self._tip(self.tr("Edit due date"), "Ctrl+D"))
         self.edit_due_date_action.triggered.connect(self._on_edit_due_date)
 
         # List actions
-        self.add_list_action = QAction("Add &List", self)
+        self.add_list_action = QAction(self.tr("Add &List"), self)
         self.add_list_action.setShortcut("Ctrl++")
-        self.add_list_action.setToolTip(self._tip("Add new list", "Ctrl++"))
+        self.add_list_action.setToolTip(self._tip(self.tr("Add new list"), "Ctrl++"))
         self.add_list_action.triggered.connect(self._on_add_list)
 
-        self.delete_list_action = QAction("&Delete List", self)
+        self.delete_list_action = QAction(self.tr("&Delete List"), self)
         self.delete_list_action.setShortcut("Ctrl+-")
-        self.delete_list_action.setToolTip(self._tip("Delete current list", "Ctrl+-"))
+        self.delete_list_action.setToolTip(self._tip(self.tr("Delete current list"), "Ctrl+-"))
         self.delete_list_action.triggered.connect(self._on_delete_list)
 
-        self.rename_list_action = QAction("&Rename List", self)
+        self.rename_list_action = QAction(self.tr("&Rename List"), self)
         self.rename_list_action.setShortcut("Ctrl+R")
-        self.rename_list_action.setToolTip(self._tip("Rename current list", "Ctrl+R"))
+        self.rename_list_action.setToolTip(self._tip(self.tr("Rename current list"), "Ctrl+R"))
         self.rename_list_action.triggered.connect(self._on_rename_list)
 
-        self.toggle_private_action = QAction("Toggle &Private", self)
+        self.toggle_private_action = QAction(self.tr("Toggle &Private"), self)
         self.toggle_private_action.setShortcut("Ctrl+Shift+P")
         self.toggle_private_action.setToolTip(
-            self._tip("Toggle list private/shared", "Ctrl+Shift+P")
+            self._tip(self.tr("Toggle list private/shared"), "Ctrl+Shift+P")
         )
         self.toggle_private_action.triggered.connect(self._on_toggle_private)
 
         # Sync actions
-        self.sync_pull_action = QAction("&Pull from Remote...", self)
+        self.sync_pull_action = QAction(self.tr("&Pull from Remote..."), self)
         self.sync_pull_action.setShortcut("F6")
-        self.sync_pull_action.setToolTip(self._tip("Pull from remote", "F6"))
+        self.sync_pull_action.setToolTip(self._tip(self.tr("Pull from remote"), "F6"))
         self.sync_pull_action.triggered.connect(self._on_sync_pull)
 
-        self.sync_push_action = QAction("Pu&sh to Remote...", self)
+        self.sync_push_action = QAction(self.tr("Pu&sh to Remote..."), self)
         self.sync_push_action.setShortcut("F7")
-        self.sync_push_action.setToolTip(self._tip("Push to remote", "F7"))
+        self.sync_push_action.setToolTip(self._tip(self.tr("Push to remote"), "F7"))
         self.sync_push_action.triggered.connect(self._on_sync_push)
 
-        self.peer_manager_action = QAction("&Peer Manager...", self)
+        self.peer_manager_action = QAction(self.tr("&Peer Manager..."), self)
         self.peer_manager_action.triggered.connect(self._on_peer_manager)
 
-        self.device_manager_action = QAction("&Device Manager...", self)
+        self.device_manager_action = QAction(self.tr("&Device Manager..."), self)
         self.device_manager_action.triggered.connect(self._on_device_manager)
 
         # Peer submenus (populated dynamically)
@@ -387,14 +393,14 @@ class MainWindow(QMainWindow):
         self.push_peers_menu: QMenu | None = None
 
         # Help actions
-        self.about_action = QAction("&About", self)
+        self.about_action = QAction(self.tr("&About"), self)
         self.about_action.triggered.connect(self._on_about)
 
-        self.about_qt_action = QAction("About &Qt", self)
+        self.about_qt_action = QAction(self.tr("About &Qt"), self)
         self.about_qt_action.triggered.connect(self._on_about_qt)
 
         # Undo/redo actions (auto-enable/disable and update text from QUndoStack)
-        undo_action = self._undo_stack.createUndoAction(self, "&Undo")
+        undo_action = self._undo_stack.createUndoAction(self, self.tr("&Undo"))
         assert undo_action is not None
         self.undo_action = undo_action
         self.undo_action.setShortcut(QKeySequence.StandardKey.Undo)
@@ -403,7 +409,7 @@ class MainWindow(QMainWindow):
             QKeySequence.SequenceFormat.NativeText
         )
 
-        redo_action = self._undo_stack.createRedoAction(self, "&Redo")
+        redo_action = self._undo_stack.createRedoAction(self, self.tr("&Redo"))
         assert redo_action is not None
         self.redo_action = redo_action
         self.redo_action.setShortcut(QKeySequence.StandardKey.Redo)
@@ -417,48 +423,64 @@ class MainWindow(QMainWindow):
         self._on_redo_text_changed(self._undo_stack.redoText())
 
         # Focus timer actions
-        self.start_focus_action = QAction(self._get_icon("play.svg"), "Start &Focus Session", self)
+        self.start_focus_action = QAction(
+            self._get_icon("play.svg"), self.tr("Start &Focus Session"), self
+        )
         self.start_focus_action.setShortcut("Ctrl+T")
         self.start_focus_action.setToolTip(
-            self._tip("Start focus timer on selected item", "Ctrl+T")
+            self._tip(self.tr("Start focus timer on selected item"), "Ctrl+T")
         )
         self.start_focus_action.triggered.connect(self._on_start_focus)
 
-        self.pause_focus_action = QAction(self._get_icon("pause.svg"), "&Pause/Resume Focus", self)
+        self.pause_focus_action = QAction(
+            self._get_icon("pause.svg"), self.tr("&Pause/Resume Focus"), self
+        )
         self.pause_focus_action.setShortcut("Ctrl+Space")
-        self.pause_focus_action.setToolTip(self._tip("Pause or resume focus timer", "Ctrl+Space"))
+        self.pause_focus_action.setToolTip(
+            self._tip(self.tr("Pause or resume focus timer"), "Ctrl+Space")
+        )
         self.pause_focus_action.triggered.connect(self._on_pause_focus)
 
-        self.stop_focus_action = QAction(self._get_icon("stop.svg"), "S&top Focus Session", self)
+        self.stop_focus_action = QAction(
+            self._get_icon("stop.svg"), self.tr("S&top Focus Session"), self
+        )
         self.stop_focus_action.setShortcut("Ctrl+.")
-        self.stop_focus_action.setToolTip(self._tip("Stop focus timer", "Ctrl+."))
+        self.stop_focus_action.setToolTip(self._tip(self.tr("Stop focus timer"), "Ctrl+."))
         self.stop_focus_action.triggered.connect(self._on_stop_focus)
 
         self.start_stopwatch_action = QAction(
-            self._get_icon("stopwatch.svg"), "Start &Stopwatch", self
+            self._get_icon("stopwatch.svg"), self.tr("Start &Stopwatch"), self
         )
         self.start_stopwatch_action.setShortcut("Ctrl+Shift+T")
         self.start_stopwatch_action.setToolTip(
-            self._tip("Start stopwatch on selected item", "Ctrl+Shift+T")
+            self._tip(self.tr("Start stopwatch on selected item"), "Ctrl+Shift+T")
         )
         self.start_stopwatch_action.triggered.connect(self._on_start_stopwatch)
 
         # View toggle actions
-        self.list_view_action = QAction(self._get_icon("view-list.svg"), "&List View", self)
+        self.list_view_action = QAction(
+            self._get_icon("view-list.svg"), self.tr("&List View"), self
+        )
         self.list_view_action.setCheckable(True)
-        self.list_view_action.setToolTip(self._tip("Switch to list view", "Ctrl+Shift+B"))
+        self.list_view_action.setToolTip(self._tip(self.tr("Switch to list view"), "Ctrl+Shift+B"))
         self.list_view_action.triggered.connect(lambda: self._set_view_mode(0))
 
-        self.board_view_action = QAction(self._get_icon("view-board.svg"), "&Board View", self)
+        self.board_view_action = QAction(
+            self._get_icon("view-board.svg"), self.tr("&Board View"), self
+        )
         self.board_view_action.setCheckable(True)
-        self.board_view_action.setToolTip(self._tip("Switch to board view", "Ctrl+Shift+B"))
+        self.board_view_action.setToolTip(
+            self._tip(self.tr("Switch to board view"), "Ctrl+Shift+B")
+        )
         self.board_view_action.triggered.connect(lambda: self._set_view_mode(1))
 
         self.calendar_view_action = QAction(
-            self._get_icon("view-calendar.svg"), "&Calendar View", self
+            self._get_icon("view-calendar.svg"), self.tr("&Calendar View"), self
         )
         self.calendar_view_action.setCheckable(True)
-        self.calendar_view_action.setToolTip(self._tip("Switch to calendar view", "Ctrl+Shift+B"))
+        self.calendar_view_action.setToolTip(
+            self._tip(self.tr("Switch to calendar view"), "Ctrl+Shift+B")
+        )
         self.calendar_view_action.triggered.connect(lambda: self._set_view_mode(2))
 
         self._view_action_group = QActionGroup(self)
@@ -468,14 +490,16 @@ class MainWindow(QMainWindow):
         self._view_action_group.setExclusive(True)
 
         # Tools actions
-        self.focus_stats_action = QAction("Focus &Stats...", self)
+        self.focus_stats_action = QAction(self.tr("Focus &Stats..."), self)
         self.focus_stats_action.triggered.connect(self._on_focus_stats)
 
-        self.web_connect_action = QAction(self._get_icon("mobile.svg"), "Mobile &Setup...", self)
+        self.web_connect_action = QAction(
+            self._get_icon("mobile.svg"), self.tr("Mobile &Setup..."), self
+        )
         self.web_connect_action.triggered.connect(self._on_web_connect)
 
         # Help actions
-        self.shortcuts_help_action = QAction("&Keyboard Shortcuts", self)
+        self.shortcuts_help_action = QAction(self.tr("&Keyboard Shortcuts"), self)
         self.shortcuts_help_action.setShortcut("F1")
         self.shortcuts_help_action.triggered.connect(self._on_shortcuts_help)
 
@@ -506,7 +530,7 @@ class MainWindow(QMainWindow):
             return
 
         # File menu
-        file_menu = menu_bar.addMenu("&File")
+        file_menu = menu_bar.addMenu(self.tr("&File"))
         if file_menu:
             file_menu.addAction(self.import_ics_action)
             file_menu.addAction(self.export_ics_action)
@@ -518,20 +542,20 @@ class MainWindow(QMainWindow):
             file_menu.addAction(self.exit_action)
 
         # Edit menu
-        edit_menu = menu_bar.addMenu("&Edit")
+        edit_menu = menu_bar.addMenu(self.tr("&Edit"))
         if edit_menu:
             edit_menu.addAction(self.undo_action)
             edit_menu.addAction(self.redo_action)
 
         # View menu
-        view_menu = menu_bar.addMenu("&View")
+        view_menu = menu_bar.addMenu(self.tr("&View"))
         if view_menu:
             view_menu.addAction(self.list_view_action)
             view_menu.addAction(self.board_view_action)
             view_menu.addAction(self.calendar_view_action)
 
         # Todo menu
-        todo_menu = menu_bar.addMenu("&To-Do")
+        todo_menu = menu_bar.addMenu(self.tr("&To-Do"))
         if todo_menu:
             todo_menu.addAction(self.add_todo_action)
             todo_menu.addAction(self.add_subtask_action)
@@ -548,7 +572,7 @@ class MainWindow(QMainWindow):
             todo_menu.addAction(self.stop_focus_action)
 
         # List menu
-        list_menu = menu_bar.addMenu("&List")
+        list_menu = menu_bar.addMenu(self.tr("&List"))
         if list_menu:
             list_menu.addAction(self.add_list_action)
             list_menu.addAction(self.delete_list_action)
@@ -557,18 +581,18 @@ class MainWindow(QMainWindow):
             list_menu.addAction(self.toggle_private_action)
 
         # Sync menu
-        sync_menu = menu_bar.addMenu("&Sync")
+        sync_menu = menu_bar.addMenu(self.tr("&Sync"))
         if sync_menu:
             # Sync Group submenu
-            self.sync_group_menu = sync_menu.addMenu("Sync &Group")
+            self.sync_group_menu = sync_menu.addMenu(self.tr("Sync &Group"))
             if self.sync_group_menu:
                 self.sync_group_menu.aboutToShow.connect(self._populate_sync_group_menu)
 
             # Sync All Trusted action
-            self.sync_all_action = QAction("Sync &All Trusted", self)
+            self.sync_all_action = QAction(self.tr("Sync &All Trusted"), self)
             self.sync_all_action.setShortcut("Ctrl+Shift+S")
             self.sync_all_action.setToolTip(
-                self._tip("Sync with all online trusted devices", "Ctrl+Shift+S")
+                self._tip(self.tr("Sync with all online trusted devices"), "Ctrl+Shift+S")
             )
             self.sync_all_action.triggered.connect(self._on_sync_all_trusted)
             sync_menu.addAction(self.sync_all_action)
@@ -576,12 +600,12 @@ class MainWindow(QMainWindow):
             sync_menu.addSeparator()
 
             # Pull submenu with discovered peers
-            self.pull_peers_menu = sync_menu.addMenu("Pull from &Peer")
+            self.pull_peers_menu = sync_menu.addMenu(self.tr("Pull from &Peer"))
             if self.pull_peers_menu:
                 self.pull_peers_menu.aboutToShow.connect(self._populate_pull_peers_menu)
 
             # Push submenu with discovered peers
-            self.push_peers_menu = sync_menu.addMenu("Push to P&eer")
+            self.push_peers_menu = sync_menu.addMenu(self.tr("Push to P&eer"))
             if self.push_peers_menu:
                 self.push_peers_menu.aboutToShow.connect(self._populate_push_peers_menu)
 
@@ -593,13 +617,13 @@ class MainWindow(QMainWindow):
             sync_menu.addAction(self.peer_manager_action)
 
         # Tools menu
-        tools_menu = menu_bar.addMenu("&Tools")
+        tools_menu = menu_bar.addMenu(self.tr("&Tools"))
         if tools_menu:
             tools_menu.addAction(self.focus_stats_action)
             tools_menu.addAction(self.web_connect_action)
 
         # Help menu
-        help_menu = menu_bar.addMenu("&Help")
+        help_menu = menu_bar.addMenu(self.tr("&Help"))
         if help_menu:
             help_menu.addAction(self.shortcuts_help_action)
             help_menu.addSeparator()
@@ -608,7 +632,7 @@ class MainWindow(QMainWindow):
 
     def _setup_toolbar(self) -> None:
         """Create the toolbar."""
-        toolbar = self.addToolBar("Actions")
+        toolbar = self.addToolBar(self.tr("Actions"))
         if toolbar:
             toolbar.addAction(self.undo_action)
             toolbar.addAction(self.redo_action)
@@ -657,25 +681,25 @@ class MainWindow(QMainWindow):
         _icon_dir = _Path(__file__).parent / "icons"
 
         self._list_view_btn = QToolButton()
-        self._list_view_btn.setText("List")
+        self._list_view_btn.setText(self.tr("List"))
         self._list_view_btn.setCheckable(True)
-        self._list_view_btn.setToolTip("List view")
+        self._list_view_btn.setToolTip(self.tr("List view"))
         _list_icon_path = _icon_dir / "view-list.svg"
         if _list_icon_path.exists():
             self._list_view_btn.setIcon(QIcon(str(_list_icon_path)))
 
         self._board_view_btn = QToolButton()
-        self._board_view_btn.setText("Board")
+        self._board_view_btn.setText(self.tr("Board"))
         self._board_view_btn.setCheckable(True)
-        self._board_view_btn.setToolTip("Board view (Ctrl+Shift+B)")
+        self._board_view_btn.setToolTip(self.tr("Board view (Ctrl+Shift+B)"))
         _board_icon_path = _icon_dir / "view-board.svg"
         if _board_icon_path.exists():
             self._board_view_btn.setIcon(QIcon(str(_board_icon_path)))
 
         self._calendar_view_btn = QToolButton()
-        self._calendar_view_btn.setText("Calendar")
+        self._calendar_view_btn.setText(self.tr("Calendar"))
         self._calendar_view_btn.setCheckable(True)
-        self._calendar_view_btn.setToolTip("Calendar view (Ctrl+Shift+B)")
+        self._calendar_view_btn.setToolTip(self.tr("Calendar view (Ctrl+Shift+B)"))
         _cal_icon_path = _icon_dir / "view-calendar.svg"
         if _cal_icon_path.exists():
             self._calendar_view_btn.setIcon(QIcon(str(_cal_icon_path)))
@@ -919,7 +943,7 @@ class MainWindow(QMainWindow):
 
         known_tags = self._collect_known_tags()
         item = AddTodoDialog.create_item(
-            self, title=f"Add Item \u2014 {column_name}", known_tags=known_tags
+            self, title=self.tr(f"Add Item \u2014 {column_name}"), known_tags=known_tags
         )
         if item is None:
             return
@@ -942,24 +966,28 @@ class MainWindow(QMainWindow):
         if len(active_list.board_columns) <= 3:
             QMessageBox.warning(
                 self,
-                "Cannot Remove",
-                "Board must have at least 3 columns. Use the Layout button to change board layout.",
+                self.tr("Cannot Remove"),
+                self.tr(
+                    "Board must have at least 3 columns. Use the Layout button to change board layout."
+                ),
             )
             return
         # Protect the inbox column (first column)
         if column_name == active_list.board_columns[0]:
             QMessageBox.warning(
                 self,
-                "Cannot Remove",
-                "Cannot remove the inbox column. New items land here.",
+                self.tr("Cannot Remove"),
+                self.tr("Cannot remove the inbox column. New items land here."),
             )
             return
         # Protect the completion column (last column)
         if column_name == active_list.board_columns[-1]:
             QMessageBox.warning(
                 self,
-                "Cannot Remove",
-                "Cannot remove the completion column. Items moved to this column are automatically marked complete.",
+                self.tr("Cannot Remove"),
+                self.tr(
+                    "Cannot remove the completion column. Items moved to this column are automatically marked complete."
+                ),
             )
             return
         try:
@@ -1031,10 +1059,10 @@ class MainWindow(QMainWindow):
         self.tray_icon.setIcon(icon)
 
         self._tray_menu = QMenu()
-        self._tray_menu.addAction("Show", self.show)
-        self._tray_menu.addAction("Hide", self.hide)
+        self._tray_menu.addAction(self.tr("Show"), self.show)
+        self._tray_menu.addAction(self.tr("Hide"), self.hide)
         self._tray_menu.addSeparator()
-        self._tray_menu.addAction("Quit", self._quit_application)
+        self._tray_menu.addAction(self.tr("Quit"), self._quit_application)
 
         # On macOS, don't auto-attach context menu (it shows on every click)
         # Instead, we manually show it on right-click in _on_tray_activated
@@ -1646,9 +1674,11 @@ class MainWindow(QMainWindow):
                 logger.log.exception("Database migration failed: %s", e)
                 QMessageBox.warning(
                     self,
-                    "Migration Error",
-                    f"Failed to migrate database to new format: {e}\n\n"
-                    "The application will continue with an empty database.",
+                    self.tr("Migration Error"),
+                    self.tr(
+                        f"Failed to migrate database to new format: {e}\n\n"
+                        "The application will continue with an empty database."
+                    ),
                 )
 
         # Open SQLite storage and load database
@@ -1658,7 +1688,9 @@ class MainWindow(QMainWindow):
             logger.log.info("Loaded database from %s", sqlite_path)
         except Exception as e:
             logger.log.exception("Error loading database: %s", e)
-            QMessageBox.warning(self, "Load Error", f"Failed to load database: {e}")
+            QMessageBox.warning(
+                self, self.tr("Load Error"), self.tr(f"Failed to load database: {e}")
+            )
             self._database = Database()
 
         # Analytics service (pandas data pipeline)
@@ -1695,7 +1727,9 @@ class MainWindow(QMainWindow):
             return True
         except Exception as e:
             logger.log.exception("Error saving database: %s", e)
-            QMessageBox.warning(self, "Save Error", f"Failed to save database: {e}")
+            QMessageBox.warning(
+                self, self.tr("Save Error"), self.tr(f"Failed to save database: {e}")
+            )
             return False
 
     def _check_timed_overdue(self) -> None:
@@ -1741,7 +1775,7 @@ class MainWindow(QMainWindow):
             old_ip = self._last_known_ip
             self._last_known_ip = current_ip
             logger.log.info("Network address changed: %s → %s", old_ip, current_ip)
-            self.status_bar_widget.show_message(f"Network address changed to {current_ip}")
+            self.status_bar_widget.show_message(self.tr(f"Network address changed to {current_ip}"))
 
     def _active_view_widget(self) -> TodoTableWidget | KanbanBoardWidget:
         """Return the currently visible view widget.
@@ -1842,15 +1876,17 @@ class MainWindow(QMainWindow):
         """Handle add to-do action."""
         if self._database.active_list is None:
             if not list(self._database.active_lists()):
-                QMessageBox.information(self, "No List", "You need to create a list first.")
+                QMessageBox.information(
+                    self, self.tr("No List"), self.tr("You need to create a list first.")
+                )
                 self._on_add_list()
                 return
             else:
                 # Pick a list
                 list_name, ok = QInputDialog.getItem(
                     self,
-                    "Select List",
-                    "Select a list:",
+                    self.tr("Select List"),
+                    self.tr("Select a list:"),
                     self._database.list_names(),
                 )
                 if not ok or not list_name:
@@ -1889,7 +1925,7 @@ class MainWindow(QMainWindow):
             return
 
         known_tags = self._collect_known_tags()
-        item = AddTodoDialog.create_item(self, title="Add Subtask", known_tags=known_tags)
+        item = AddTodoDialog.create_item(self, title=self.tr("Add Subtask"), known_tags=known_tags)
         if item is not None:
             item.parent_id = parent_id
             # Assign default board column (may get promoted to top-level later)
@@ -1906,7 +1942,7 @@ class MainWindow(QMainWindow):
         """Handle delete to-do action."""
         item_ids = self._active_view_widget().get_selected_item_ids()
         if not item_ids:
-            QMessageBox.information(self, "Delete", "No items selected.")
+            QMessageBox.information(self, self.tr("Delete"), self.tr("No items selected."))
             return
 
         active_list = self._database.active_list
@@ -2002,8 +2038,8 @@ class MainWindow(QMainWindow):
 
         reply = QMessageBox.question(
             self,
-            "Confirm Delete",
-            f'Delete list "{active_list.name}" and all its items?',
+            self.tr("Confirm Delete"),
+            self.tr(f'Delete list "{active_list.name}" and all its items?'),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
 
@@ -2028,8 +2064,8 @@ class MainWindow(QMainWindow):
 
         name, ok = QInputDialog.getText(
             self,
-            "Rename List",
-            "Enter new name:",
+            self.tr("Rename List"),
+            self.tr("Enter new name:"),
             text=active_list.name,
         )
         if not ok or not name.strip():
@@ -2074,13 +2110,13 @@ class MainWindow(QMainWindow):
 
                 # Show status message
                 if updated_list.private:
-                    msg = f'List "{updated_list.name}" is now private'
+                    msg = self.tr(f'List "{updated_list.name}" is now private')
                 else:
                     rules = self._storage.get_sync_rules_for_list(updated_list.id)
                     if rules:
-                        msg = f'List "{updated_list.name}" syncs to selected groups'
+                        msg = self.tr(f'List "{updated_list.name}" syncs to selected groups')
                     else:
-                        msg = f'List "{updated_list.name}" syncs to all devices'
+                        msg = self.tr(f'List "{updated_list.name}" syncs to all devices')
                 self.status_bar_widget.show_message(msg, 3000)
 
     @pyqtSlot(object)
@@ -2232,8 +2268,8 @@ class MainWindow(QMainWindow):
         current_text = ", ".join(item.tags) if item.tags else ""
         text, ok = QInputDialog.getText(
             self,
-            "Edit Tags",
-            "Tags (comma-separated, e.g. @work, @errands):",
+            self.tr("Edit Tags"),
+            self.tr("Tags (comma-separated, e.g. @work, @errands):"),
             text=current_text,
         )
         if not ok:
@@ -2350,7 +2386,7 @@ class MainWindow(QMainWindow):
         """Start a focus timer on the selected item."""
         item_ids = self._active_view_widget().get_selected_item_ids()
         if not item_ids:
-            self.status_bar_widget.show_message("Select an item to start focus timer")
+            self.status_bar_widget.show_message(self.tr("Select an item to start focus timer"))
             return
         self._start_focus_on_item(item_ids[0])
 
@@ -2376,9 +2412,9 @@ class MainWindow(QMainWindow):
         from .widgets.stopwatch import StopwatchState
 
         if self._pomodoro.state != TimerState.IDLE:
-            return self._pomodoro.item_name or "another item"
+            return self._pomodoro.item_name or self.tr("another item")
         if self._stopwatch.state != StopwatchState.IDLE:
-            return self._stopwatch.item_name or "another item"
+            return self._stopwatch.item_name or self.tr("another item")
         return ""
 
     def _stop_all_timers(self) -> None:
@@ -2398,8 +2434,8 @@ class MainWindow(QMainWindow):
             return True
         result = QMessageBox.question(
             self,
-            "Timer Active",
-            f'A session is active on "{active_name}".\nStop it and start {new_mode}?',
+            self.tr("Timer Active"),
+            self.tr(f'A session is active on "{active_name}".\nStop it and start {new_mode}?'),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if result != QMessageBox.StandardButton.Yes:
@@ -2427,7 +2463,7 @@ class MainWindow(QMainWindow):
         if (
             self._is_any_timer_active()
             and (self._pomodoro.item_id != item_id or self._pomodoro.state == TimerState.IDLE)
-            and not self._prompt_stop_active_timer("a focus session")
+            and not self._prompt_stop_active_timer(self.tr("a focus session"))
         ):
             return
 
@@ -2516,7 +2552,7 @@ class MainWindow(QMainWindow):
         spent_str = PomodoroWidget.format_time_spent(item.time_spent)
         sessions = item.pomodoro_count
         self.status_bar_widget.show_message(
-            f"Focus session complete! Total: {spent_str} ({sessions} sessions)"
+            self.tr(f"Focus session complete! Total: {spent_str} ({sessions} sessions)")
         )
 
         # Auto-complete recurring tasks when pomodoro estimate is met
@@ -2549,11 +2585,13 @@ class MainWindow(QMainWindow):
                     )
                     self._undo_stack.push(cmd)
                     self.status_bar_widget.show_message(
-                        "Recurring task completed \u2014 next occurrence scheduled", 3000
+                        self.tr("Recurring task completed \u2014 next occurrence scheduled"), 3000
                     )
             else:
                 self.status_bar_widget.show_message(
-                    "This task has reached its estimate \u2014 consider breaking it into subtasks",
+                    self.tr(
+                        "This task has reached its estimate \u2014 consider breaking it into subtasks"
+                    ),
                     5000,
                 )
 
@@ -2574,8 +2612,8 @@ class MainWindow(QMainWindow):
             self._sound_player.play("work-complete")
             if self.tray_icon is not None:
                 self.tray_icon.showMessage(
-                    "Focus Session Complete",
-                    "Time for a break!",
+                    self.tr("Focus Session Complete"),
+                    self.tr("Time for a break!"),
                     QSystemTrayIcon.MessageIcon.Information,
                     5000,
                 )
@@ -2583,8 +2621,8 @@ class MainWindow(QMainWindow):
             self._sound_player.play("break-complete")
             if self.tray_icon is not None:
                 self.tray_icon.showMessage(
-                    "Break Over",
-                    "Ready for the next session?",
+                    self.tr("Break Over"),
+                    self.tr("Ready for the next session?"),
                     QSystemTrayIcon.MessageIcon.Information,
                     5000,
                 )
@@ -2627,7 +2665,7 @@ class MainWindow(QMainWindow):
         """Start a stopwatch on the selected item."""
         item_ids = self._active_view_widget().get_selected_item_ids()
         if not item_ids:
-            self.status_bar_widget.show_message("Select an item to start stopwatch")
+            self.status_bar_widget.show_message(self.tr("Select an item to start stopwatch"))
             return
         self._start_stopwatch_on_item(item_ids[0])
 
@@ -2640,7 +2678,9 @@ class MainWindow(QMainWindow):
         if item is None:
             return
 
-        if self._is_any_timer_active() and not self._prompt_stop_active_timer("stopwatch tracking"):
+        if self._is_any_timer_active() and not self._prompt_stop_active_timer(
+            self.tr("stopwatch tracking")
+        ):
             return
 
         self._stopwatch.start(item.id, item.reminder)
@@ -2681,7 +2721,9 @@ class MainWindow(QMainWindow):
 
         spent_str = StopwatchWidget.format_time_spent(item.time_spent)
         elapsed_str = StopwatchWidget.format_elapsed(seconds)
-        self.status_bar_widget.show_message(f"Tracked {elapsed_str} \u2014 Total: {spent_str}")
+        self.status_bar_widget.show_message(
+            self.tr(f"Tracked {elapsed_str} \u2014 Total: {spent_str}")
+        )
 
     def _on_stopwatch_stopped(
         self, item_id: object, elapsed: int, start_iso: str, session_type: str
@@ -2695,7 +2737,9 @@ class MainWindow(QMainWindow):
         if elapsed < min_s:
             if elapsed > 0:
                 self.status_bar_widget.show_message(
-                    f"Session too short ({elapsed}s < {min_s}s minimum) \u2014 not recorded"
+                    self.tr(
+                        f"Session too short ({elapsed}s < {min_s}s minimum) \u2014 not recorded"
+                    )
                 )
             return
         active_list = self._database.active_list
@@ -2753,12 +2797,12 @@ class MainWindow(QMainWindow):
             self._stopwatch.pause()
             timeout_mins = self._config.stopwatch.idle_timeout
             self.status_bar_widget.show_message(
-                f"Stopwatch paused \u2014 no activity for {timeout_mins}m"
+                self.tr(f"Stopwatch paused \u2014 no activity for {timeout_mins}m")
             )
             if self.tray_icon is not None:
                 self.tray_icon.showMessage(
-                    "Stopwatch Paused",
-                    f"No activity detected for {timeout_mins} minutes",
+                    self.tr("Stopwatch Paused"),
+                    self.tr(f"No activity detected for {timeout_mins} minutes"),
                     QSystemTrayIcon.MessageIcon.Information,
                     5000,
                 )
@@ -2865,12 +2909,16 @@ class MainWindow(QMainWindow):
 
         # First session of the day
         if today_count == 1:
-            self._notify_milestone("Good start!", "First focus session of the day")
+            self._notify_milestone(
+                self.tr("Good start!"), self.tr("First focus session of the day")
+            )
             return
 
         # Daily goal reached
         if goal > 0 and today_count == goal:
-            self._notify_milestone("Goal achieved!", f"Completed {goal} sessions today")
+            self._notify_milestone(
+                self.tr("Goal achieved!"), self.tr(f"Completed {goal} sessions today")
+            )
             return
 
         # Lifetime milestones
@@ -2878,7 +2926,9 @@ class MainWindow(QMainWindow):
         lifetime = int(lifetime_df["completed"].sum()) if not lifetime_df.empty else 0
         milestones = {10, 25, 50, 100, 250, 500, 1000}
         if lifetime in milestones:
-            self._notify_milestone(f"Milestone: {lifetime}!", f"{lifetime} lifetime focus sessions")
+            self._notify_milestone(
+                self.tr(f"Milestone: {lifetime}!"), self.tr(f"{lifetime} lifetime focus sessions")
+            )
             return
 
         # Streak record
@@ -2886,7 +2936,9 @@ class MainWindow(QMainWindow):
         if streak > self._best_streak:
             self._best_streak = streak
             if streak >= 3:
-                self._notify_milestone(f"{streak}-day streak!", "New personal best")
+                self._notify_milestone(
+                    self.tr(f"{streak}-day streak!"), self.tr("New personal best")
+                )
 
     def _notify_milestone(self, title: str, message: str) -> None:
         """Show a milestone notification via system tray and status bar toast."""
@@ -3005,7 +3057,7 @@ class MainWindow(QMainWindow):
         from .widgets.stopwatch import StopwatchState
 
         if not self._is_any_timer_active():
-            self.status_bar_widget.show_message("No focus session active")
+            self.status_bar_widget.show_message(self.tr("No focus session active"))
             return
 
         if self._focus_timer_dialog is None:
@@ -3061,7 +3113,7 @@ class MainWindow(QMainWindow):
 
         groups = self._storage.get_all_sync_groups()
         if not groups:
-            no_groups = self.sync_group_menu.addAction("No sync groups created")
+            no_groups = self.sync_group_menu.addAction(self.tr("No sync groups created"))
             if no_groups:
                 no_groups.setEnabled(False)
             return
@@ -3100,16 +3152,17 @@ class MainWindow(QMainWindow):
         if not online_devices:
             QMessageBox.information(
                 self,
-                "No Online Devices",
-                f"No devices in '{group.name}' are currently online.",
+                self.tr("No Online Devices"),
+                self.tr(f"No devices in '{group.name}' are currently online."),
             )
             return
 
         result = QMessageBox.question(
             self,
-            "Sync Group",
-            f"Sync with {len(online_devices)} online device(s) in '{group.name}'?\n\n"
-            + "\n".join(f"  - {d.name or 'Unnamed'}" for d in online_devices),
+            self.tr("Sync Group"),
+            self.tr(f"Sync with {len(online_devices)} online device(s) in '{group.name}'?")
+            + "\n\n"
+            + "\n".join(f"  - {d.name or self.tr('Unnamed')}" for d in online_devices),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
 
@@ -3136,16 +3189,17 @@ class MainWindow(QMainWindow):
         if not devices:
             QMessageBox.information(
                 self,
-                "No Trusted Devices",
-                "No trusted devices are currently online.",
+                self.tr("No Trusted Devices"),
+                self.tr("No trusted devices are currently online."),
             )
             return
 
         result = QMessageBox.question(
             self,
-            "Sync All Trusted",
-            f"Sync with {len(devices)} trusted online device(s)?\n\n"
-            + "\n".join(f"  - {d.name or 'Unnamed'}" for d in devices),
+            self.tr("Sync All Trusted"),
+            self.tr(f"Sync with {len(devices)} trusted online device(s)?")
+            + "\n\n"
+            + "\n".join(f"  - {d.name or self.tr('Unnamed')}" for d in devices),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
 
@@ -3234,23 +3288,23 @@ class MainWindow(QMainWindow):
             self.status_bar_widget.set_sync_status("success")
             QMessageBox.information(
                 self,
-                "Sync Complete",
-                f"Successfully synced with {success_count} device(s).",
+                self.tr("Sync Complete"),
+                self.tr(f"Successfully synced with {success_count} device(s)."),
             )
         elif queued_count > 0:
             self.status_bar_widget.set_sync_status("success")
-            msg = f"Synced with {success_count} device(s)."
+            msg = self.tr(f"Synced with {success_count} device(s).")
             if queued_count > 0:
-                msg += f"\n{queued_count} device(s) offline - syncs queued."
+                msg += self.tr(f"\n{queued_count} device(s) offline - syncs queued.")
             if fail_count > 0:
-                msg += f"\n{fail_count} failed."
-            QMessageBox.information(self, "Sync Complete", msg)
+                msg += self.tr(f"\n{fail_count} failed.")
+            QMessageBox.information(self, self.tr("Sync Complete"), msg)
         else:
             self.status_bar_widget.set_sync_status("error")
             QMessageBox.warning(
                 self,
-                "Sync Partial",
-                f"Synced with {success_count} device(s).\n{fail_count} failed.",
+                self.tr("Sync Partial"),
+                self.tr(f"Synced with {success_count} device(s).\n{fail_count} failed."),
             )
 
     def queue_sync_for_device(self, device_id: UUID) -> bool:
@@ -3277,7 +3331,7 @@ class MainWindow(QMainWindow):
         peers = [p for p in discovery.get_peers() if not p.is_local]
 
         if not peers:
-            no_peers = self.pull_peers_menu.addAction("No peers discovered")
+            no_peers = self.pull_peers_menu.addAction(self.tr("No peers discovered"))
             if no_peers:
                 no_peers.setEnabled(False)
         else:
@@ -3297,7 +3351,7 @@ class MainWindow(QMainWindow):
         peers = [p for p in discovery.get_peers() if not p.is_local]
 
         if not peers:
-            no_peers = self.push_peers_menu.addAction("No peers discovered")
+            no_peers = self.push_peers_menu.addAction(self.tr("No peers discovered"))
             if no_peers:
                 no_peers.setEnabled(False)
         else:
@@ -3351,29 +3405,33 @@ class MainWindow(QMainWindow):
                     if merged > 0:
                         QMessageBox.information(
                             self,
-                            "Pull Complete",
-                            f"Pulled and merged {merged} items from {host}:{port}",
+                            self.tr("Pull Complete"),
+                            self.tr(f"Pulled and merged {merged} items from {host}:{port}"),
                         )
                     elif local_newer > 0:
                         QMessageBox.information(
                             self,
-                            "Local Is Newer",
-                            f"No items merged - {local_newer} local items are newer.\n"
-                            "Push to update remote with your changes.",
+                            self.tr("Local Is Newer"),
+                            self.tr(
+                                f"No items merged - {local_newer} local items are newer.\n"
+                                "Push to update remote with your changes."
+                            ),
                         )
                     else:
                         QMessageBox.information(
                             self,
-                            "Already In Sync",
-                            f"Databases are identical with {host}:{port}",
+                            self.tr("Already In Sync"),
+                            self.tr(f"Databases are identical with {host}:{port}"),
                         )
                 else:
                     self.status_bar_widget.set_sync_status("error")
-                    QMessageBox.warning(self, "Pull Failed", f"Could not pull from {host}:{port}")
+                    QMessageBox.warning(
+                        self, self.tr("Pull Failed"), self.tr(f"Could not pull from {host}:{port}")
+                    )
             except Exception as e:
                 self.status_bar_widget.set_sync_status("error")
                 logger.log.exception("Menu pull failed: %s", e)
-                QMessageBox.critical(self, "Pull Error", f"Pull failed: {e}")
+                QMessageBox.critical(self, self.tr("Pull Error"), self.tr(f"Pull failed: {e}"))
 
         asyncio.ensure_future(do_pull())
 
@@ -3396,16 +3454,20 @@ class MainWindow(QMainWindow):
                     self.status_bar_widget.set_sync_status("success")
                     QMessageBox.information(
                         self,
-                        "Push Complete",
-                        f"Pushed {len(data)} bytes to {host}:{port}\nRemote will merge any new items.",
+                        self.tr("Push Complete"),
+                        self.tr(
+                            f"Pushed {len(data)} bytes to {host}:{port}\nRemote will merge any new items."
+                        ),
                     )
                 else:
                     self.status_bar_widget.set_sync_status("error")
-                    QMessageBox.warning(self, "Push Failed", f"Could not push to {host}:{port}")
+                    QMessageBox.warning(
+                        self, self.tr("Push Failed"), self.tr(f"Could not push to {host}:{port}")
+                    )
             except Exception as e:
                 self.status_bar_widget.set_sync_status("error")
                 logger.log.exception("Menu push failed: %s", e)
-                QMessageBox.critical(self, "Push Error", f"Push failed: {e}")
+                QMessageBox.critical(self, self.tr("Push Error"), self.tr(f"Push failed: {e}"))
 
         asyncio.ensure_future(do_push())
 
@@ -3459,21 +3521,27 @@ class MainWindow(QMainWindow):
             )
             if merged > 0:
                 QMessageBox.information(
-                    self, "Sync Complete", f"Merged {merged} items from remote."
+                    self, self.tr("Sync Complete"), self.tr(f"Merged {merged} items from remote.")
                 )
             elif local_newer > 0:
                 QMessageBox.information(
                     self,
-                    "Local Is Newer",
-                    f"No items merged - {local_newer} local items are newer.\n"
-                    "Push to update remote with your changes.",
+                    self.tr("Local Is Newer"),
+                    self.tr(
+                        f"No items merged - {local_newer} local items are newer.\n"
+                        "Push to update remote with your changes."
+                    ),
                 )
             else:
-                QMessageBox.information(self, "Already In Sync", "Databases are identical.")
+                QMessageBox.information(
+                    self, self.tr("Already In Sync"), self.tr("Databases are identical.")
+                )
         except Exception as e:
             self.status_bar_widget.set_sync_status("error")
             logger.log.exception("Error merging sync data: %s", e)
-            QMessageBox.warning(self, "Merge Error", f"Failed to merge sync data: {e}")
+            QMessageBox.warning(
+                self, self.tr("Merge Error"), self.tr(f"Failed to merge sync data: {e}")
+            )
 
     def _on_peer_manager(self) -> None:
         """Handle peer manager action."""
@@ -3547,11 +3615,11 @@ class MainWindow(QMainWindow):
 
         active_list = self._database.active_list
         if active_list is None:
-            QMessageBox.warning(self, "Import", "No list selected.")
+            QMessageBox.warning(self, self.tr("Import"), self.tr("No list selected."))
             return
 
         path, _ = QFileDialog.getOpenFileName(
-            self, "Import from .ics", "", "iCalendar Files (*.ics);;All Files (*)"
+            self, self.tr("Import from .ics"), "", self.tr("iCalendar Files (*.ics);;All Files (*)")
         )
         if not path:
             return
@@ -3560,12 +3628,16 @@ class MainWindow(QMainWindow):
             data = Path(path).read_bytes()
             items = import_ics_to_items(data)
         except Exception as e:
-            QMessageBox.critical(self, "Import Error", f"Could not parse file:\n{e}")
+            QMessageBox.critical(
+                self, self.tr("Import Error"), self.tr(f"Could not parse file:\n{e}")
+            )
             return
 
         if not items:
             QMessageBox.information(
-                self, "Import", "No tasks found in file (may contain only events)."
+                self,
+                self.tr("Import"),
+                self.tr("No tasks found in file (may contain only events)."),
             )
             return
 
@@ -3585,7 +3657,7 @@ class MainWindow(QMainWindow):
         self._undo_stack.endMacro()
 
         self.status_bar_widget.show_message(
-            f"Imported {len(items)} items ({completed} completed) from {Path(path).name}"
+            self.tr(f"Imported {len(items)} items ({completed} completed) from {Path(path).name}")
         )
 
     def _on_export_ics(self) -> None:
@@ -3594,12 +3666,15 @@ class MainWindow(QMainWindow):
 
         active_list = self._database.active_list
         if active_list is None:
-            QMessageBox.warning(self, "Export", "No list selected.")
+            QMessageBox.warning(self, self.tr("Export"), self.tr("No list selected."))
             return
 
         default_name = f"{active_list.name}.ics"
         path, _ = QFileDialog.getSaveFileName(
-            self, "Export List as .ics", default_name, "iCalendar Files (*.ics);;All Files (*)"
+            self,
+            self.tr("Export List as .ics"),
+            default_name,
+            self.tr("iCalendar Files (*.ics);;All Files (*)"),
         )
         if not path:
             return
@@ -3608,17 +3683,19 @@ class MainWindow(QMainWindow):
             ics_data = export_list_to_ics(active_list)
             Path(path).write_bytes(ics_data)
         except Exception as e:
-            QMessageBox.critical(self, "Export Error", f"Could not write file:\n{e}")
+            QMessageBox.critical(
+                self, self.tr("Export Error"), self.tr(f"Could not write file:\n{e}")
+            )
             return
 
         count = active_list.active_item_count()
-        self.status_bar_widget.show_message(f"Exported {count} items to {Path(path).name}")
+        self.status_bar_widget.show_message(self.tr(f"Exported {count} items to {Path(path).name}"))
 
     def _on_print(self) -> None:
         """Handle print action."""
         active_list = self._database.active_list
         if active_list is None or active_list.active_item_count() == 0:
-            QMessageBox.information(self, "Print", "No items to print.")
+            QMessageBox.information(self, self.tr("Print"), self.tr("No items to print."))
             return
 
         dialog = QPrintDialog(self._printer, self)
@@ -3627,28 +3704,30 @@ class MainWindow(QMainWindow):
             lines = [f"{'=' * 20} {active_list.name} {'=' * 20}", ""]
             for item in active_list.active_items():
                 status = "✓" if item.complete else "○"
-                priority = ["High", "Normal", "Low"][item.priority - 1]
+                priority = [self.tr("High"), self.tr("Normal"), self.tr("Low")][item.priority - 1]
                 lines.append(f"{status} [{priority}] {item.reminder}")
 
             doc = QTextDocument("\n".join(lines))
             doc.print(self._printer)
-            QMessageBox.information(self, "Print", "Print job sent.")
+            QMessageBox.information(self, self.tr("Print"), self.tr("Print job sent."))
 
     def _on_about(self) -> None:
         """Handle about action."""
         QMessageBox.about(
             self,
-            "About PyTodo-Qt",
-            f"<b>PyTodo-Qt v{settings.__version__}</b><br><br>"
-            "A modern cross-platform to-do application with "
-            "encrypted peer-to-peer synchronization.<br><br>"
-            "License: <a href='http://www.fsf.org/licenses/gpl.html'>GPLv3</a><br><br>"
-            "<b>Copyright (C) 2024-2026 Michael Berry</b>",
+            self.tr("About PyTodo-Qt"),
+            self.tr(
+                f"<b>PyTodo-Qt v{settings.__version__}</b><br><br>"
+                "A modern cross-platform to-do application with "
+                "encrypted peer-to-peer synchronization.<br><br>"
+                "License: <a href='http://www.fsf.org/licenses/gpl.html'>GPLv3</a><br><br>"
+                "<b>Copyright (C) 2024-2026 Michael Berry</b>"
+            ),
         )
 
     def _on_about_qt(self) -> None:
         """Handle about Qt action."""
-        QMessageBox.aboutQt(self, "About Qt")
+        QMessageBox.aboutQt(self, self.tr("About Qt"))
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         """Handle tray icon activation."""

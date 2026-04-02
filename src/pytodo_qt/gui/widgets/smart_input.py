@@ -306,7 +306,9 @@ class SmartInputWidget(QWidget):
         self._text_edit.setAcceptRichText(False)
         self._text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._text_edit.setFixedHeight(32)
-        self._text_edit.setPlaceholderText("e.g. Buy groceries tomorrow at 3pm @errands p1")
+        self._text_edit.setPlaceholderText(
+            self.tr("e.g. Buy groceries tomorrow at 3pm @errands p1")
+        )
         self._text_edit.textChanged.connect(self._on_text_changed)
         self._text_edit.installEventFilter(self)
         layout.addWidget(self._text_edit)

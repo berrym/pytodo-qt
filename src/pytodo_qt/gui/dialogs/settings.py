@@ -45,7 +45,7 @@ class SettingsDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Settings")
+        self.setWindowTitle(self.tr("Settings"))
         self.setMinimumWidth(500)
         self.setMinimumHeight(400)
 
@@ -66,13 +66,13 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.tabs)
 
         # Create tabs
-        self.tabs.addTab(self._create_general_tab(), "General")
-        self.tabs.addTab(self._create_network_tab(), "Network")
-        self.tabs.addTab(self._create_security_tab(), "Security")
-        self.tabs.addTab(self._create_sync_tab(), "Sync")
-        self.tabs.addTab(self._create_appearance_tab(), "Appearance")
-        self.tabs.addTab(self._create_pomodoro_tab(), "Focus Timer")
-        self.tabs.addTab(self._create_web_tab(), "Web UI")
+        self.tabs.addTab(self._create_general_tab(), self.tr("General"))
+        self.tabs.addTab(self._create_network_tab(), self.tr("Network"))
+        self.tabs.addTab(self._create_security_tab(), self.tr("Security"))
+        self.tabs.addTab(self._create_sync_tab(), self.tr("Sync"))
+        self.tabs.addTab(self._create_appearance_tab(), self.tr("Appearance"))
+        self.tabs.addTab(self._create_pomodoro_tab(), self.tr("Focus Timer"))
+        self.tabs.addTab(self._create_web_tab(), self.tr("Web UI"))
 
         # Button box
         button_box = QDialogButtonBox(
@@ -93,23 +93,23 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(widget)
 
         # Sort order group
-        sort_group = QGroupBox("Sort Order")
+        sort_group = QGroupBox(self.tr("Sort Order"))
         sort_layout = QFormLayout(sort_group)
 
         dimensions = [
-            ("Completion", "completion"),
-            ("Due Date", "due_date"),
-            ("Priority", "priority"),
+            (self.tr("Completion"), "completion"),
+            (self.tr("Due Date"), "due_date"),
+            (self.tr("Priority"), "priority"),
         ]
 
         self._sort_combos: list[QComboBox] = []
         self._sort_reverses: list[QCheckBox] = []
 
-        for label_text in ["Primary:", "Secondary:", "Tertiary:"]:
+        for label_text in [self.tr("Primary:"), self.tr("Secondary:"), self.tr("Tertiary:")]:
             combo = QComboBox()
             for display, value in dimensions:
                 combo.addItem(display, value)
-            reverse = QCheckBox("Reverse")
+            reverse = QCheckBox(self.tr("Reverse"))
             row_layout = QHBoxLayout()
             row_layout.addWidget(combo, 1)
             row_layout.addWidget(reverse)
@@ -121,12 +121,12 @@ class SettingsDialog(QDialog):
         layout.addWidget(sort_group)
 
         # View mode group
-        view_group = QGroupBox("View")
+        view_group = QGroupBox(self.tr("View"))
         view_layout = QFormLayout(view_group)
         self._view_mode_combo = QComboBox()
-        self._view_mode_combo.addItem("List", "list")
-        self._view_mode_combo.addItem("Board (Kanban)", "board")
-        view_layout.addRow("Default view:", self._view_mode_combo)
+        self._view_mode_combo.addItem(self.tr("List"), "list")
+        self._view_mode_combo.addItem(self.tr("Board (Kanban)"), "board")
+        view_layout.addRow(self.tr("Default view:"), self._view_mode_combo)
         layout.addWidget(view_group)
 
         layout.addStretch()
@@ -157,47 +157,47 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(widget)
 
         # Server settings group
-        server_group = QGroupBox("Server")
+        server_group = QGroupBox(self.tr("Server"))
         server_layout = QFormLayout(server_group)
 
-        self.server_enabled_check = QCheckBox("Enable network server")
+        self.server_enabled_check = QCheckBox(self.tr("Enable network server"))
         server_layout.addRow("", self.server_enabled_check)
 
         self.server_address_edit = QLineEdit()
         self.server_address_edit.setPlaceholderText("0.0.0.0")
-        server_layout.addRow("Bind address:", self.server_address_edit)
+        server_layout.addRow(self.tr("Bind address:"), self.server_address_edit)
 
         self.server_port_spin = QSpinBox()
         self.server_port_spin.setRange(1024, 65535)
         self.server_port_spin.setValue(5364)
-        server_layout.addRow("Port:", self.server_port_spin)
+        server_layout.addRow(self.tr("Port:"), self.server_port_spin)
 
         layout.addWidget(server_group)
 
         # Permissions group
-        perms_group = QGroupBox("Permissions")
+        perms_group = QGroupBox(self.tr("Permissions"))
         perms_layout = QVBoxLayout(perms_group)
 
-        self.allow_pull_check = QCheckBox("Allow remote hosts to pull data")
+        self.allow_pull_check = QCheckBox(self.tr("Allow remote hosts to pull data"))
         perms_layout.addWidget(self.allow_pull_check)
 
-        self.allow_push_check = QCheckBox("Allow remote hosts to push data")
+        self.allow_push_check = QCheckBox(self.tr("Allow remote hosts to push data"))
         perms_layout.addWidget(self.allow_push_check)
 
         layout.addWidget(perms_group)
 
         # Discovery settings group
-        discovery_group = QGroupBox("Discovery")
+        discovery_group = QGroupBox(self.tr("Discovery"))
         discovery_layout = QFormLayout(discovery_group)
 
-        self.discovery_enabled_check = QCheckBox("Enable automatic discovery (mDNS)")
+        self.discovery_enabled_check = QCheckBox(self.tr("Enable automatic discovery (mDNS)"))
         discovery_layout.addRow("", self.discovery_enabled_check)
 
         self.service_name_edit = QLineEdit()
         self.service_name_edit.setPlaceholderText("pytodo-{hostname}")
-        discovery_layout.addRow("Service name:", self.service_name_edit)
+        discovery_layout.addRow(self.tr("Service name:"), self.service_name_edit)
 
-        self.auto_sync_check = QCheckBox("Auto-sync when trusted devices come online")
+        self.auto_sync_check = QCheckBox(self.tr("Auto-sync when trusted devices come online"))
         discovery_layout.addRow("", self.auto_sync_check)
 
         layout.addWidget(discovery_group)
@@ -211,7 +211,7 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(widget)
 
         # Identity group
-        identity_group = QGroupBox("Identity")
+        identity_group = QGroupBox(self.tr("Identity"))
         identity_layout = QFormLayout(identity_group)
 
         # Get current identity
@@ -225,27 +225,29 @@ class SettingsDialog(QDialog):
         self.fingerprint_edit.setReadOnly(True)
         mono_css = ", ".join(f'"{f}"' for f in MONO_FONT_FAMILIES)
         self.fingerprint_edit.setStyleSheet(f"font-family: {mono_css};")
-        identity_layout.addRow("Your fingerprint:", self.fingerprint_edit)
+        identity_layout.addRow(self.tr("Your fingerprint:"), self.fingerprint_edit)
 
-        copy_btn = QPushButton("Copy")
+        copy_btn = QPushButton(self.tr("Copy"))
         copy_btn.clicked.connect(self._copy_fingerprint)
         identity_layout.addRow("", copy_btn)
 
         layout.addWidget(identity_group)
 
         # Protocol group
-        protocol_group = QGroupBox("Protocol")
+        protocol_group = QGroupBox(self.tr("Protocol"))
         protocol_layout = QFormLayout(protocol_group)
 
         self.protocol_version_label = QLabel("2")
-        protocol_layout.addRow("Protocol version:", self.protocol_version_label)
+        protocol_layout.addRow(self.tr("Protocol version:"), self.protocol_version_label)
 
         layout.addWidget(protocol_group)
 
         # Trusted peers note
         note = QLabel(
-            "Note: Peer trust is established on first connection (TOFU).\n"
-            "Use the Peer Manager to view and manage trusted peers."
+            self.tr(
+                "Note: Peer trust is established on first connection (TOFU).\n"
+                "Use the Peer Manager to view and manage trusted peers."
+            )
         )
         note.setWordWrap(True)
         note.setStyleSheet("color: gray; font-style: italic;")
@@ -261,13 +263,15 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(widget)
 
         # Sync options group
-        sync_group = QGroupBox("Synchronization Options")
+        sync_group = QGroupBox(self.tr("Synchronization Options"))
         sync_layout = QVBoxLayout(sync_group)
 
         info = QLabel(
-            "Synchronization uses Last-Write-Wins (LWW) merge strategy.\n"
-            "Items are identified by UUID, allowing conflict-free adds.\n"
-            "Deleted items are marked as tombstones and cleaned up after 7 days."
+            self.tr(
+                "Synchronization uses Last-Write-Wins (LWW) merge strategy.\n"
+                "Items are identified by UUID, allowing conflict-free adds.\n"
+                "Deleted items are marked as tombstones and cleaned up after 7 days."
+            )
         )
         info.setWordWrap(True)
         sync_layout.addWidget(info)
@@ -275,12 +279,14 @@ class SettingsDialog(QDialog):
         layout.addWidget(sync_group)
 
         # Auto-sync group
-        auto_group = QGroupBox("Automatic Sync")
+        auto_group = QGroupBox(self.tr("Automatic Sync"))
         auto_layout = QFormLayout(auto_group)
 
         push_label = QLabel(
-            "Automatically push local changes to online trusted peers\n"
-            "after a quiet period with no further edits."
+            self.tr(
+                "Automatically push local changes to online trusted peers\n"
+                "after a quiet period with no further edits."
+            )
         )
         push_label.setWordWrap(True)
         push_label.setStyleSheet("color: gray; font-style: italic;")
@@ -288,13 +294,15 @@ class SettingsDialog(QDialog):
 
         self.auto_sync_delay_spin = QSpinBox()
         self.auto_sync_delay_spin.setRange(0, 60)
-        self.auto_sync_delay_spin.setSuffix(" seconds")
-        self.auto_sync_delay_spin.setSpecialValueText("Disabled")
-        auto_layout.addRow("Auto-push delay:", self.auto_sync_delay_spin)
+        self.auto_sync_delay_spin.setSuffix(self.tr(" seconds"))
+        self.auto_sync_delay_spin.setSpecialValueText(self.tr("Disabled"))
+        auto_layout.addRow(self.tr("Auto-push delay:"), self.auto_sync_delay_spin)
 
         interval_label = QLabel(
-            "Periodically perform a full bidirectional sync (pull + push)\n"
-            "with all online trusted peers."
+            self.tr(
+                "Periodically perform a full bidirectional sync (pull + push)\n"
+                "with all online trusted peers."
+            )
         )
         interval_label.setWordWrap(True)
         interval_label.setStyleSheet("color: gray; font-style: italic;")
@@ -302,9 +310,9 @@ class SettingsDialog(QDialog):
 
         self.auto_sync_interval_spin = QSpinBox()
         self.auto_sync_interval_spin.setRange(0, 120)
-        self.auto_sync_interval_spin.setSuffix(" minutes")
-        self.auto_sync_interval_spin.setSpecialValueText("Disabled")
-        auto_layout.addRow("Periodic sync interval:", self.auto_sync_interval_spin)
+        self.auto_sync_interval_spin.setSuffix(self.tr(" minutes"))
+        self.auto_sync_interval_spin.setSpecialValueText(self.tr("Disabled"))
+        auto_layout.addRow(self.tr("Periodic sync interval:"), self.auto_sync_interval_spin)
 
         layout.addWidget(auto_group)
         layout.addStretch()
@@ -317,54 +325,54 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(widget)
 
         # Theme group
-        theme_group = QGroupBox("Theme")
+        theme_group = QGroupBox(self.tr("Theme"))
         theme_layout = QFormLayout(theme_group)
 
         self.theme_combo = QComboBox()
-        self.theme_combo.addItem("System (follow OS)", "system")
-        self.theme_combo.addItem("Light", "light")
-        self.theme_combo.addItem("Dark", "dark")
+        self.theme_combo.addItem(self.tr("System (follow OS)"), "system")
+        self.theme_combo.addItem(self.tr("Light"), "light")
+        self.theme_combo.addItem(self.tr("Dark"), "dark")
         self.theme_combo.currentIndexChanged.connect(self._on_theme_changed)
-        theme_layout.addRow("Theme:", self.theme_combo)
+        theme_layout.addRow(self.tr("Theme:"), self.theme_combo)
 
         layout.addWidget(theme_group)
 
         # Font group
-        font_group = QGroupBox("Font")
+        font_group = QGroupBox(self.tr("Font"))
         font_layout = QFormLayout(font_group)
 
         self.font_combo = QComboBox()
-        self.font_combo.addItem("Noto Sans (Bundled)", "bundled")
-        self.font_combo.addItem("System Default", "system")
-        self.font_combo.addItem("Custom...", "custom")
+        self.font_combo.addItem(self.tr("Noto Sans (Bundled)"), "bundled")
+        self.font_combo.addItem(self.tr("System Default"), "system")
+        self.font_combo.addItem(self.tr("Custom..."), "custom")
         self.font_combo.currentIndexChanged.connect(self._on_font_changed)
-        font_layout.addRow("Font:", self.font_combo)
+        font_layout.addRow(self.tr("Font:"), self.font_combo)
 
         self._custom_font_family = ""
 
         layout.addWidget(font_group)
 
         # Time display group
-        time_group = QGroupBox("Time Display")
+        time_group = QGroupBox(self.tr("Time Display"))
         time_layout = QFormLayout(time_group)
 
         self.time_format_combo = QComboBox()
-        self.time_format_combo.addItem("System default", "system")
-        self.time_format_combo.addItem("12-hour (2:30 PM)", "12h")
-        self.time_format_combo.addItem("24-hour (14:30)", "24h")
-        time_layout.addRow("Time format:", self.time_format_combo)
+        self.time_format_combo.addItem(self.tr("System default"), "system")
+        self.time_format_combo.addItem(self.tr("12-hour (2:30 PM)"), "12h")
+        self.time_format_combo.addItem(self.tr("24-hour (14:30)"), "24h")
+        time_layout.addRow(self.tr("Time format:"), self.time_format_combo)
 
         layout.addWidget(time_group)
 
         # Behavior group
-        behavior_group = QGroupBox("Behavior")
+        behavior_group = QGroupBox(self.tr("Behavior"))
         behavior_layout = QFormLayout(behavior_group)
-        self.close_to_tray_check = QCheckBox("Minimize to system tray when closed")
+        self.close_to_tray_check = QCheckBox(self.tr("Minimize to system tray when closed"))
         behavior_layout.addRow(self.close_to_tray_check)
         layout.addWidget(behavior_group)
 
         # Preview note
-        note = QLabel("Theme changes are applied immediately.")
+        note = QLabel(self.tr("Theme changes are applied immediately."))
         note.setStyleSheet("color: gray; font-style: italic;")
         layout.addWidget(note)
 
@@ -377,38 +385,38 @@ class SettingsDialog(QDialog):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        group = QGroupBox("Focus Timer")
+        group = QGroupBox(self.tr("Focus Timer"))
         form = QFormLayout(group)
 
         self.work_duration_spin = QSpinBox()
         self.work_duration_spin.setRange(1, 120)
-        self.work_duration_spin.setSuffix(" minutes")
-        form.addRow("Work duration:", self.work_duration_spin)
+        self.work_duration_spin.setSuffix(self.tr(" minutes"))
+        form.addRow(self.tr("Work duration:"), self.work_duration_spin)
 
         self.break_duration_spin = QSpinBox()
         self.break_duration_spin.setRange(1, 30)
-        self.break_duration_spin.setSuffix(" minutes")
-        form.addRow("Break duration:", self.break_duration_spin)
+        self.break_duration_spin.setSuffix(self.tr(" minutes"))
+        form.addRow(self.tr("Break duration:"), self.break_duration_spin)
 
         self.long_break_spin = QSpinBox()
         self.long_break_spin.setRange(5, 60)
-        self.long_break_spin.setSuffix(" minutes")
-        form.addRow("Long break:", self.long_break_spin)
+        self.long_break_spin.setSuffix(self.tr(" minutes"))
+        form.addRow(self.tr("Long break:"), self.long_break_spin)
 
         self.sessions_spin = QSpinBox()
         self.sessions_spin.setRange(2, 10)
-        form.addRow("Sessions before long break:", self.sessions_spin)
+        form.addRow(self.tr("Sessions before long break:"), self.sessions_spin)
 
-        self.auto_break_check = QCheckBox("Auto-start break after work session")
+        self.auto_break_check = QCheckBox(self.tr("Auto-start break after work session"))
         form.addRow("", self.auto_break_check)
 
         layout.addWidget(group)
 
         # Sound notifications group
-        sound_group = QGroupBox("Sound Notifications")
+        sound_group = QGroupBox(self.tr("Sound Notifications"))
         sound_form = QFormLayout(sound_group)
 
-        self.sound_enabled_check = QCheckBox("Enable sound notifications")
+        self.sound_enabled_check = QCheckBox(self.tr("Enable sound notifications"))
         sound_form.addRow("", self.sound_enabled_check)
 
         volume_layout = QHBoxLayout()
@@ -418,7 +426,7 @@ class SettingsDialog(QDialog):
         self.sound_volume_label.setFixedWidth(40)
         volume_layout.addWidget(self.sound_volume_slider)
         volume_layout.addWidget(self.sound_volume_label)
-        sound_form.addRow("Volume:", volume_layout)
+        sound_form.addRow(self.tr("Volume:"), volume_layout)
 
         self.sound_enabled_check.stateChanged.connect(
             lambda state: self.sound_volume_slider.setEnabled(bool(state))
@@ -430,48 +438,48 @@ class SettingsDialog(QDialog):
         layout.addWidget(sound_group)
 
         # Daily goal group
-        goal_group = QGroupBox("Daily Goal")
+        goal_group = QGroupBox(self.tr("Daily Goal"))
         goal_form = QFormLayout(goal_group)
 
         self.daily_goal_spin = QSpinBox()
         self.daily_goal_spin.setRange(0, 24)
-        self.daily_goal_spin.setSuffix(" sessions")
-        self.daily_goal_spin.setSpecialValueText("Disabled")
-        goal_form.addRow("Daily target:", self.daily_goal_spin)
+        self.daily_goal_spin.setSuffix(self.tr(" sessions"))
+        self.daily_goal_spin.setSpecialValueText(self.tr("Disabled"))
+        goal_form.addRow(self.tr("Daily target:"), self.daily_goal_spin)
 
-        self.milestone_check = QCheckBox("Show milestone celebrations")
+        self.milestone_check = QCheckBox(self.tr("Show milestone celebrations"))
         goal_form.addRow("", self.milestone_check)
 
         layout.addWidget(goal_group)
 
         # Stopwatch group
-        sw_group = QGroupBox("Stopwatch")
+        sw_group = QGroupBox(self.tr("Stopwatch"))
         sw_form = QFormLayout(sw_group)
 
         self.sw_min_session_spin = QSpinBox()
         self.sw_min_session_spin.setRange(0, 300)
         self.sw_min_session_spin.setSingleStep(10)
-        self.sw_min_session_spin.setSuffix(" seconds")
-        self.sw_min_session_spin.setSpecialValueText("Record all")
+        self.sw_min_session_spin.setSuffix(self.tr(" seconds"))
+        self.sw_min_session_spin.setSpecialValueText(self.tr("Record all"))
         self.sw_min_session_spin.setToolTip(
-            "Sessions shorter than this are discarded (0 = record everything)"
+            self.tr("Sessions shorter than this are discarded (0 = record everything)")
         )
-        sw_form.addRow("Minimum session:", self.sw_min_session_spin)
+        sw_form.addRow(self.tr("Minimum session:"), self.sw_min_session_spin)
 
         self.sw_idle_timeout_spin = QSpinBox()
         self.sw_idle_timeout_spin.setRange(0, 120)
         self.sw_idle_timeout_spin.setSingleStep(5)
-        self.sw_idle_timeout_spin.setSuffix(" minutes")
-        self.sw_idle_timeout_spin.setSpecialValueText("Disabled")
+        self.sw_idle_timeout_spin.setSuffix(self.tr(" minutes"))
+        self.sw_idle_timeout_spin.setSpecialValueText(self.tr("Disabled"))
         self.sw_idle_timeout_spin.setToolTip(
-            "Auto-pause stopwatch after no keyboard/mouse activity (0 = disabled)"
+            self.tr("Auto-pause stopwatch after no keyboard/mouse activity (0 = disabled)")
         )
-        sw_form.addRow("Auto-pause after idle:", self.sw_idle_timeout_spin)
+        sw_form.addRow(self.tr("Auto-pause after idle:"), self.sw_idle_timeout_spin)
 
-        self.sw_status_bar_check = QCheckBox("Show elapsed time in status bar")
+        self.sw_status_bar_check = QCheckBox(self.tr("Show elapsed time in status bar"))
         sw_form.addRow("", self.sw_status_bar_check)
 
-        self.sw_sound_check = QCheckBox("Play sound when session is recorded")
+        self.sw_sound_check = QCheckBox(self.tr("Play sound when session is recorded"))
         sw_form.addRow("", self.sw_sound_check)
 
         layout.addWidget(sw_group)
@@ -484,23 +492,23 @@ class SettingsDialog(QDialog):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        group = QGroupBox("Web Server")
+        group = QGroupBox(self.tr("Web Server"))
         form = QFormLayout(group)
 
-        self.web_enabled_check = QCheckBox("Enable Web UI")
+        self.web_enabled_check = QCheckBox(self.tr("Enable Web UI"))
         form.addRow("", self.web_enabled_check)
 
         self.web_port_spin = QSpinBox()
         self.web_port_spin.setRange(1024, 65535)
-        form.addRow("Port:", self.web_port_spin)
+        form.addRow(self.tr("Port:"), self.web_port_spin)
 
         self.web_bind_combo = QComboBox()
-        self.web_bind_combo.addItem("All interfaces (0.0.0.0)", "0.0.0.0")
-        self.web_bind_combo.addItem("Localhost only (127.0.0.1)", "127.0.0.1")
-        form.addRow("Bind:", self.web_bind_combo)
+        self.web_bind_combo.addItem(self.tr("All interfaces (0.0.0.0)"), "0.0.0.0")
+        self.web_bind_combo.addItem(self.tr("Localhost only (127.0.0.1)"), "127.0.0.1")
+        form.addRow(self.tr("Bind:"), self.web_bind_combo)
 
         # TLS is always on — no user toggle (security requirement)
-        tls_label = QLabel("\U0001f512 All connections are encrypted (TLS)")
+        tls_label = QLabel(self.tr("\U0001f512 All connections are encrypted (TLS)"))
         tls_label.setStyleSheet("color: palette(highlight); font-size: 11px;")
         form.addRow("", tls_label)
 
@@ -511,67 +519,69 @@ class SettingsDialog(QDialog):
             " letter-spacing: 6px; padding: 8px; color: palette(highlight);"
         )
         self.web_pin_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        form.addRow("Pairing PIN:", self.web_pin_label)
+        form.addRow(self.tr("Pairing PIN:"), self.web_pin_label)
 
-        self.web_pin_hint = QLabel("Enter this PIN on your phone to connect")
+        self.web_pin_hint = QLabel(self.tr("Enter this PIN on your phone to connect"))
         self.web_pin_hint.setStyleSheet("font-size: 11px; color: palette(mid);")
         form.addRow("", self.web_pin_hint)
 
         # Device count indicator
-        self.web_device_count_label = QLabel("0 devices paired")
+        self.web_device_count_label = QLabel(self.tr("0 devices paired"))
         self.web_device_count_label.setStyleSheet("font-size: 12px;")
-        form.addRow("Devices:", self.web_device_count_label)
+        form.addRow(self.tr("Devices:"), self.web_device_count_label)
 
-        self.web_revoke_btn = QPushButton("Disconnect All Devices")
+        self.web_revoke_btn = QPushButton(self.tr("Disconnect All Devices"))
         self.web_revoke_btn.setStyleSheet("color: #c0392b;")
         self.web_revoke_btn.clicked.connect(self._revoke_web_token)
         form.addRow("", self.web_revoke_btn)
 
         # CalDAV credentials
-        caldav_group = QGroupBox("CalDAV (Calendar Sync)")
+        caldav_group = QGroupBox(self.tr("CalDAV (Calendar Sync)"))
         caldav_form = QFormLayout(caldav_group)
         caldav_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self.caldav_url_label = QLabel("")
         self.caldav_url_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.caldav_url_label.setStyleSheet("font-size: 11px;")
-        caldav_form.addRow("URL:", self.caldav_url_label)
+        caldav_form.addRow(self.tr("URL:"), self.caldav_url_label)
 
         self.caldav_user_label = QLabel("pytodo")
         self.caldav_user_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        caldav_form.addRow("Username:", self.caldav_user_label)
+        caldav_form.addRow(self.tr("Username:"), self.caldav_user_label)
 
         caldav_pw_row = QHBoxLayout()
         self.caldav_password_label = QLineEdit()
         self.caldav_password_label.setReadOnly(True)
         self.caldav_password_label.setEchoMode(QLineEdit.EchoMode.Password)
         caldav_pw_row.addWidget(self.caldav_password_label)
-        self.caldav_show_btn = QPushButton("Show")
+        self.caldav_show_btn = QPushButton(self.tr("Show"))
         self.caldav_show_btn.setFixedWidth(50)
         self.caldav_show_btn.clicked.connect(self._toggle_caldav_visibility)
         caldav_pw_row.addWidget(self.caldav_show_btn)
-        self.caldav_copy_btn = QPushButton("Copy")
+        self.caldav_copy_btn = QPushButton(self.tr("Copy"))
         self.caldav_copy_btn.setFixedWidth(50)
         self.caldav_copy_btn.clicked.connect(self._copy_caldav_password)
         caldav_pw_row.addWidget(self.caldav_copy_btn)
-        caldav_form.addRow("Password:", caldav_pw_row)
+        caldav_form.addRow(self.tr("Password:"), caldav_pw_row)
 
         # Certificate section
         cert_row = QHBoxLayout()
-        self.caldav_cert_btn = QPushButton("Open CA Certificate")
+        self.caldav_cert_btn = QPushButton(self.tr("Open CA Certificate"))
         self.caldav_cert_btn.setToolTip(
-            "Open the certificate file for import into your CalDAV client"
+            self.tr("Open the certificate file for import into your CalDAV client")
         )
         self.caldav_cert_btn.clicked.connect(self._open_caldav_cert)
         cert_row.addWidget(self.caldav_cert_btn)
         cert_row.addStretch()
-        caldav_form.addRow("Certificate:", cert_row)
+        caldav_form.addRow(self.tr("Certificate:"), cert_row)
 
         caldav_hint = QLabel(
-            "CalDAV clients need to trust the certificate before connecting.\n"
-            "Thunderbird: Settings \u2192 Privacy & Security \u2192 Certificates"
-            " \u2192 View Certificates \u2192 Authorities \u2192 Import\n"
-            "DAVx5: accepts self-signed certs during setup"
+            self.tr(
+                "CalDAV clients need to trust the certificate before connecting.\n"
+                "Thunderbird: Settings \u2192 Privacy & Security \u2192 Certificates"
+                " \u2192 View Certificates \u2192 Authorities \u2192 Import\n"
+                "DAVx5: accepts self-signed certs during setup"
+            )
         )
         caldav_hint.setWordWrap(True)
         caldav_hint.setStyleSheet("font-size: 10px; color: palette(mid);")
@@ -714,10 +724,10 @@ class SettingsDialog(QDialog):
                     self.caldav_url_label.setText(f"https://{ip}:{port}/caldav/")
             self.caldav_password_label.setText(web_server.caldav_password)
         else:
-            self.web_device_count_label.setText("Server not running")
-            self.web_pin_label.setText("Start web server to generate")
+            self.web_device_count_label.setText(self.tr("Server not running"))
+            self.web_pin_label.setText(self.tr("Start web server to generate"))
             self.web_pin_label.setStyleSheet("font-size: 12px; color: palette(mid); padding: 8px;")
-            self.caldav_url_label.setText("Start web server first")
+            self.caldav_url_label.setText(self.tr("Start web server first"))
             self.caldav_password_label.setText("")
 
     def _save_settings(self) -> bool:
@@ -782,7 +792,7 @@ class SettingsDialog(QDialog):
 
         # Save to file
         if not self._config_manager.save():
-            QMessageBox.warning(self, "Error", "Failed to save settings.")
+            QMessageBox.warning(self, self.tr("Error"), self.tr("Failed to save settings."))
             return False
 
         # Apply theme if changed
@@ -797,7 +807,9 @@ class SettingsDialog(QDialog):
         parent = self.parent()
         web_server = getattr(parent, "_web_server", None) if parent else None
         if web_server is None or web_server.ca_cert_path is None:
-            QMessageBox.information(self, "Certificate", "Web server is not running.")
+            QMessageBox.information(
+                self, self.tr("Certificate"), self.tr("Web server is not running.")
+            )
             return
         import subprocess
         import sys
@@ -814,10 +826,10 @@ class SettingsDialog(QDialog):
         """Toggle CalDAV password visibility."""
         if self.caldav_password_label.echoMode() == QLineEdit.EchoMode.Password:
             self.caldav_password_label.setEchoMode(QLineEdit.EchoMode.Normal)
-            self.caldav_show_btn.setText("Hide")
+            self.caldav_show_btn.setText(self.tr("Hide"))
         else:
             self.caldav_password_label.setEchoMode(QLineEdit.EchoMode.Password)
-            self.caldav_show_btn.setText("Show")
+            self.caldav_show_btn.setText(self.tr("Show"))
 
     def _copy_caldav_password(self) -> None:
         """Copy CalDAV password to clipboard."""
@@ -829,7 +841,7 @@ class SettingsDialog(QDialog):
             self.caldav_copy_btn.setText("\u2713")
             from PyQt6.QtCore import QTimer
 
-            QTimer.singleShot(2000, lambda: self.caldav_copy_btn.setText("Copy"))
+            QTimer.singleShot(2000, lambda: self.caldav_copy_btn.setText(self.tr("Copy")))
 
     def _copy_fingerprint(self) -> None:
         """Copy fingerprint to clipboard."""
@@ -838,7 +850,9 @@ class SettingsDialog(QDialog):
         clipboard = QApplication.clipboard()
         if clipboard:
             clipboard.setText(self.fingerprint_edit.text())
-            QMessageBox.information(self, "Copied", "Fingerprint copied to clipboard.")
+            QMessageBox.information(
+                self, self.tr("Copied"), self.tr("Fingerprint copied to clipboard.")
+            )
 
     def _on_accept(self) -> None:
         """Handle OK button."""
@@ -854,20 +868,22 @@ class SettingsDialog(QDialog):
         parent = self.parent()
         web_server = getattr(parent, "_web_server", None) if parent else None
         if web_server is None:
-            QMessageBox.information(self, "Info", "Web server is not running.")
+            QMessageBox.information(self, self.tr("Info"), self.tr("Web server is not running."))
             return
         if (
             QMessageBox.question(
                 self,
-                "Disconnect All Devices",
-                "This will immediately disconnect all phones and tablets.\n"
-                "They will need to re-pair using a new PIN.\n\nContinue?",
+                self.tr("Disconnect All Devices"),
+                self.tr(
+                    "This will immediately disconnect all phones and tablets.\n"
+                    "They will need to re-pair using a new PIN.\n\nContinue?"
+                ),
             )
             != QMessageBox.StandardButton.Yes
         ):
             return
         count = web_server.revoke_all_devices()
-        self.web_device_count_label.setText("0 devices paired")
+        self.web_device_count_label.setText(self.tr("0 devices paired"))
         self.web_pin_label.setText(web_server.pairing_pin)
         # Update status bar PIN
         main_window = parent

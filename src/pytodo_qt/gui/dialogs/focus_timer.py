@@ -42,7 +42,7 @@ class FocusTimerDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Focus Timer")
+        self.setWindowTitle(self.tr("Focus Timer"))
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
         self.setMinimumWidth(300)
         self._sessions_expanded = False
@@ -118,17 +118,17 @@ class FocusTimerDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
 
-        self._pause_btn = QPushButton("\u23f8 Pause")
+        self._pause_btn = QPushButton(self.tr("\u23f8 Pause"))
         self._pause_btn.setMinimumWidth(80)
         self._pause_btn.clicked.connect(self.pause_requested.emit)
         btn_layout.addWidget(self._pause_btn)
 
-        self._stop_btn = QPushButton("\u25a0 Stop")
+        self._stop_btn = QPushButton(self.tr("\u25a0 Stop"))
         self._stop_btn.setMinimumWidth(80)
         self._stop_btn.clicked.connect(self.stop_requested.emit)
         btn_layout.addWidget(self._stop_btn)
 
-        self._skip_btn = QPushButton("\u23ed Skip")
+        self._skip_btn = QPushButton(self.tr("\u23ed Skip"))
         self._skip_btn.setMinimumWidth(80)
         self._skip_btn.clicked.connect(self.skip_break_requested.emit)
         self._skip_btn.setVisible(False)
@@ -137,7 +137,7 @@ class FocusTimerDialog(QDialog):
         layout.addLayout(btn_layout)
 
         # Today's Sessions — compact stats + collapsible recent list
-        self._sessions_toggle = QPushButton("\u25b6 Today's Sessions")
+        self._sessions_toggle = QPushButton(self.tr("\u25b6 Today's Sessions"))
         self._sessions_toggle.setFlat(True)
         self._sessions_toggle.setStyleSheet("text-align: left; color: gray;")
         self._sessions_toggle.clicked.connect(self._toggle_sessions)
@@ -169,7 +169,9 @@ class FocusTimerDialog(QDialog):
         self._sessions_expanded = not self._sessions_expanded
         self._sessions_container.setVisible(self._sessions_expanded)
         arrow = "\u25bc" if self._sessions_expanded else "\u25b6"
-        self._sessions_toggle.setText(f"{arrow} Today's Sessions ({self._session_total_count})")
+        self._sessions_toggle.setText(
+            self.tr(f"{arrow} Today's Sessions ({self._session_total_count})")
+        )
         self.adjustSize()
 
     def set_mode(self, mode: str) -> None:
@@ -180,7 +182,7 @@ class FocusTimerDialog(QDialog):
         """
         self._mode = mode
         is_stopwatch = mode == "stopwatch"
-        self.setWindowTitle("Stopwatch" if is_stopwatch else "Focus Timer")
+        self.setWindowTitle(self.tr("Stopwatch") if is_stopwatch else self.tr("Focus Timer"))
         self._progress_bar.setVisible(not is_stopwatch)
         self._session_label.setVisible(not is_stopwatch)
         self._skip_btn.setVisible(False)
@@ -229,7 +231,7 @@ class FocusTimerDialog(QDialog):
             self._progress_bar.setValue(min(elapsed, total_seconds))
             self._progress_bar.setVisible(True)
             elapsed_m = elapsed // 60
-            self._session_label.setText(f"{elapsed_m} of {estimated_minutes} min")
+            self._session_label.setText(self.tr(f"{elapsed_m} of {estimated_minutes} min"))
             self._session_label.setVisible(True)
         else:
             self._progress_bar.setVisible(False)
@@ -242,9 +244,9 @@ class FocusTimerDialog(QDialog):
 
         # Pause button text
         if state == "stopwatch_paused":
-            self._pause_btn.setText("\u25b6 Resume")
+            self._pause_btn.setText(self.tr("\u25b6 Resume"))
         else:
-            self._pause_btn.setText("\u23f8 Pause")
+            self._pause_btn.setText(self.tr("\u23f8 Pause"))
 
         self._pause_btn.setEnabled(True)
         self._skip_btn.setVisible(False)
@@ -270,14 +272,14 @@ class FocusTimerDialog(QDialog):
         total_h, total_m = divmod(total_m, 60)
 
         stats_parts = [
-            f"Total: {len(sessions)}",
+            self.tr(f"Total: {len(sessions)}"),
             f"\u2713 {len(completed)}",
             f"\u2717 {len(incomplete)}",
         ]
         if total_h > 0:
-            stats_parts.append(f"Time: {total_h}h {total_m:02d}m")
+            stats_parts.append(self.tr(f"Time: {total_h}h {total_m:02d}m"))
         elif total_time > 0:
-            stats_parts.append(f"Time: {total_m}m {total_s:02d}s")
+            stats_parts.append(self.tr(f"Time: {total_m}m {total_s:02d}s"))
 
         if durations:
             longest = max(durations)
@@ -285,8 +287,8 @@ class FocusTimerDialog(QDialog):
             lm, ls = divmod(longest, 60)
             sm, ss = divmod(shortest, 60)
             if len(durations) > 1:
-                stats_parts.append(f"Longest: {lm:02d}:{ls:02d}")
-                stats_parts.append(f"Shortest: {sm:02d}:{ss:02d}")
+                stats_parts.append(self.tr(f"Longest: {lm:02d}:{ls:02d}"))
+                stats_parts.append(self.tr(f"Shortest: {sm:02d}:{ss:02d}"))
 
         self._stats_label.setText("  \u2022  ".join(stats_parts))
 
@@ -307,14 +309,14 @@ class FocusTimerDialog(QDialog):
             self._recent_layout.addWidget(label)
 
         if len(sessions) > max_recent:
-            more = QLabel(f"... and {len(sessions) - max_recent} earlier")
+            more = QLabel(self.tr(f"... and {len(sessions) - max_recent} earlier"))
             more.setStyleSheet("color: gray; font-size: 10px; font-style: italic;")
             # Insert at top
             self._recent_layout.insertWidget(0, more)
 
         # Update toggle button text
         arrow = "\u25bc" if self._sessions_expanded else "\u25b6"
-        self._sessions_toggle.setText(f"{arrow} Today's Sessions ({len(sessions)})")
+        self._sessions_toggle.setText(self.tr(f"{arrow} Today's Sessions ({len(sessions)})"))
 
         if self._sessions_expanded:
             self.adjustSize()
@@ -339,7 +341,7 @@ class FocusTimerDialog(QDialog):
         except (ValueError, TypeError):
             pass
 
-        text = f"Session {index}: {m:02d}:{s:02d} {mark}{time_range}"
+        text = self.tr(f"Session {index}: {m:02d}:{s:02d} {mark}{time_range}")
         label = QLabel(text)
         label.setStyleSheet("color: gray; font-size: 11px;")
 
@@ -402,16 +404,16 @@ class FocusTimerDialog(QDialog):
         # Session counter — use item estimate when available, else cycle position
         if item_estimated > 0:
             current = item_pomodoro_count + (1 if state in ("working", "paused") else 0)
-            self._session_label.setText(f"Session {current}/{item_estimated}")
+            self._session_label.setText(self.tr(f"Session {current}/{item_estimated}"))
         else:
             current = session_count + (1 if state in ("working", "paused") else 0)
-            self._session_label.setText(f"Session {current} of {total_sessions}")
+            self._session_label.setText(self.tr(f"Session {current} of {total_sessions}"))
 
         # Pause button text
         if state == "paused":
-            self._pause_btn.setText("\u25b6 Resume")
+            self._pause_btn.setText(self.tr("\u25b6 Resume"))
         else:
-            self._pause_btn.setText("\u23f8 Pause")
+            self._pause_btn.setText(self.tr("\u23f8 Pause"))
 
         # Pause button enabled during working, break, and paused
         self._pause_btn.setEnabled(state in ("working", "break", "paused"))
@@ -478,7 +480,7 @@ class FocusTimerDialog(QDialog):
         if goal <= 0:
             self._daily_goal_label.hide()
             return
-        self._daily_goal_label.setText(f"Today: {completed}/{goal} sessions")
+        self._daily_goal_label.setText(self.tr(f"Today: {completed}/{goal} sessions"))
         self._daily_goal_label.show()
 
     def update_streak(self, streak: int) -> None:
@@ -490,7 +492,7 @@ class FocusTimerDialog(QDialog):
         if streak <= 0:
             self._streak_label.hide()
             return
-        self._streak_label.setText(f"Streak: {streak} day{'s' if streak != 1 else ''}")
+        self._streak_label.setText(self.tr(f"Streak: {streak} day{'s' if streak != 1 else ''}"))
         self._streak_label.show()
 
     def update_focus_score(self, score: int) -> None:
@@ -512,7 +514,7 @@ class FocusTimerDialog(QDialog):
             grade = "D"
         else:
             grade = "F"
-        self._focus_score_label.setText(f"Score: {grade} ({score})")
+        self._focus_score_label.setText(self.tr(f"Score: {grade} ({score})"))
         self._focus_score_label.show()
 
     def _elide_item_name(self, name: str, max_lines: int = 2) -> str:

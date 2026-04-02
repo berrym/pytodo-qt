@@ -65,7 +65,7 @@ class DeviceManagerDialog(QDialog):
         storage: DatabaseStorage | None = None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("Device & Sync Manager")
+        self.setWindowTitle(self.tr("Device & Sync Manager"))
         self.setMinimumWidth(700)
         self.setMinimumHeight(500)
 
@@ -95,21 +95,21 @@ class DeviceManagerDialog(QDialog):
 
         # Tab widget
         self._tabs = QTabWidget()
-        self._tabs.addTab(self._create_devices_tab(), "Devices")
-        self._tabs.addTab(self._create_groups_tab(), "Sync Groups")
-        self._tabs.addTab(self._create_discovery_tab(), "Discovery")
+        self._tabs.addTab(self._create_devices_tab(), self.tr("Devices"))
+        self._tabs.addTab(self._create_groups_tab(), self.tr("Sync Groups"))
+        self._tabs.addTab(self._create_discovery_tab(), self.tr("Discovery"))
         layout.addWidget(self._tabs)
 
         # Bottom bar — always visible
         bottom_btns = QHBoxLayout()
 
-        self.sync_all_btn = QPushButton("Sync All Trusted")
-        self.sync_all_btn.setToolTip("Sync with all online trusted devices")
+        self.sync_all_btn = QPushButton(self.tr("Sync All Trusted"))
+        self.sync_all_btn.setToolTip(self.tr("Sync with all online trusted devices"))
         self.sync_all_btn.clicked.connect(self._on_sync_all)
         bottom_btns.addWidget(self.sync_all_btn)
 
-        self.sync_group_menu_btn = QPushButton("Sync Group...")
-        self.sync_group_menu_btn.setToolTip("Sync with all online devices in a group")
+        self.sync_group_menu_btn = QPushButton(self.tr("Sync Group..."))
+        self.sync_group_menu_btn.setToolTip(self.tr("Sync with all online devices in a group"))
         self._sync_group_menu = QMenu(self)
         self.sync_group_menu_btn.setMenu(self._sync_group_menu)
         self._sync_group_menu.aboutToShow.connect(self._populate_sync_group_menu)
@@ -120,7 +120,7 @@ class DeviceManagerDialog(QDialog):
         self.status_label = QLabel()
         bottom_btns.addWidget(self.status_label)
 
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(self.tr("Close"))
         close_btn.clicked.connect(self.accept)
         bottom_btns.addWidget(close_btn)
 
@@ -137,7 +137,13 @@ class DeviceManagerDialog(QDialog):
         self.device_table = QTableWidget()
         self.device_table.setColumnCount(5)
         self.device_table.setHorizontalHeaderLabels(
-            ["Name", "Status", "Trust", "Groups", "Pending"]
+            [
+                self.tr("Name"),
+                self.tr("Status"),
+                self.tr("Trust"),
+                self.tr("Groups"),
+                self.tr("Pending"),
+            ]
         )
         self.device_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.device_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -152,30 +158,30 @@ class DeviceManagerDialog(QDialog):
         # Action buttons — single row
         action_btns = QHBoxLayout()
 
-        self.sync_btn = QPushButton("Sync Now")
+        self.sync_btn = QPushButton(self.tr("Sync Now"))
         self.sync_btn.clicked.connect(self._on_sync)
         self.sync_btn.setEnabled(False)
         action_btns.addWidget(self.sync_btn)
 
-        self.test_btn = QPushButton("Test")
+        self.test_btn = QPushButton(self.tr("Test"))
         self.test_btn.clicked.connect(self._on_test_connection)
         self.test_btn.setEnabled(False)
         action_btns.addWidget(self.test_btn)
 
-        self.queue_sync_btn = QPushButton("Queue Sync")
-        self.queue_sync_btn.setToolTip("Queue sync for when device comes online")
+        self.queue_sync_btn = QPushButton(self.tr("Queue Sync"))
+        self.queue_sync_btn.setToolTip(self.tr("Queue sync for when device comes online"))
         self.queue_sync_btn.clicked.connect(self._on_queue_sync)
         self.queue_sync_btn.setEnabled(False)
         action_btns.addWidget(self.queue_sync_btn)
 
         action_btns.addStretch()
 
-        add_device_btn = QPushButton("Add Device...")
-        add_device_btn.setToolTip("Add a discovered device")
+        add_device_btn = QPushButton(self.tr("Add Device..."))
+        add_device_btn.setToolTip(self.tr("Add a discovered device"))
         add_device_btn.clicked.connect(self._on_add_to_devices)
         action_btns.addWidget(add_device_btn)
 
-        self.remove_btn = QPushButton("Remove")
+        self.remove_btn = QPushButton(self.tr("Remove"))
         self.remove_btn.clicked.connect(self._on_remove)
         self.remove_btn.setEnabled(False)
         action_btns.addWidget(self.remove_btn)
@@ -183,7 +189,7 @@ class DeviceManagerDialog(QDialog):
         layout.addLayout(action_btns)
 
         # Device details group (hidden until selection)
-        self.device_group = QGroupBox("Device Details")
+        self.device_group = QGroupBox(self.tr("Device Details"))
         self.device_group.setVisible(False)
         device_form = QFormLayout(self.device_group)
 
@@ -192,13 +198,13 @@ class DeviceManagerDialog(QDialog):
         name_layout = QHBoxLayout(name_widget)
         name_layout.setContentsMargins(0, 0, 0, 0)
         self.device_name_edit = QLineEdit()
-        self.device_name_edit.setPlaceholderText("Device name")
+        self.device_name_edit.setPlaceholderText(self.tr("Device name"))
         name_layout.addWidget(self.device_name_edit)
-        self.rename_btn = QPushButton("Save")
+        self.rename_btn = QPushButton(self.tr("Save"))
         self.rename_btn.setMaximumWidth(60)
         self.rename_btn.clicked.connect(self._on_rename)
         name_layout.addWidget(self.rename_btn)
-        device_form.addRow("Name:", name_widget)
+        device_form.addRow(self.tr("Name:"), name_widget)
 
         # Fingerprint
         self.device_fingerprint_label = QLabel()
@@ -207,28 +213,28 @@ class DeviceManagerDialog(QDialog):
         )
         self.device_fingerprint_label.setWordWrap(True)
         self.device_fingerprint_label.setFont(make_font(mono=True))
-        device_form.addRow("Fingerprint:", self.device_fingerprint_label)
+        device_form.addRow(self.tr("Fingerprint:"), self.device_fingerprint_label)
 
         # Hostname (from discovery or last_address)
         self.device_hostname_label = QLabel()
         self.device_hostname_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        device_form.addRow("Hostname:", self.device_hostname_label)
+        device_form.addRow(self.tr("Hostname:"), self.device_hostname_label)
 
         # Address
         self.device_address_label = QLabel()
-        device_form.addRow("Address:", self.device_address_label)
+        device_form.addRow(self.tr("Address:"), self.device_address_label)
 
         # Last Seen
         self.device_last_seen_label = QLabel()
-        device_form.addRow("Last Seen:", self.device_last_seen_label)
+        device_form.addRow(self.tr("Last Seen:"), self.device_last_seen_label)
 
         # Trust Level
         self.trust_combo = QComboBox()
-        self.trust_combo.addItems(["Normal", "Trusted", "Blocked"])
+        self.trust_combo.addItems([self.tr("Normal"), self.tr("Trusted"), self.tr("Blocked")])
         self.trust_combo.currentTextChanged.connect(self._on_trust_changed)
-        device_form.addRow("Trust Level:", self.trust_combo)
+        device_form.addRow(self.tr("Trust Level:"), self.trust_combo)
 
         # Groups
         groups_widget = QWidget()
@@ -236,12 +242,12 @@ class DeviceManagerDialog(QDialog):
         groups_layout.setContentsMargins(0, 0, 0, 0)
         self.device_groups_label = QLabel()
         groups_layout.addWidget(self.device_groups_label)
-        self.edit_device_groups_btn = QPushButton("Edit...")
+        self.edit_device_groups_btn = QPushButton(self.tr("Edit..."))
         self.edit_device_groups_btn.setMaximumWidth(60)
-        self.edit_device_groups_btn.setToolTip("Edit group membership for this device")
+        self.edit_device_groups_btn.setToolTip(self.tr("Edit group membership for this device"))
         self.edit_device_groups_btn.clicked.connect(self._on_edit_device_groups)
         groups_layout.addWidget(self.edit_device_groups_btn)
-        device_form.addRow("Groups:", groups_widget)
+        device_form.addRow(self.tr("Groups:"), groups_widget)
 
         # Pending
         pending_widget = QWidget()
@@ -249,26 +255,28 @@ class DeviceManagerDialog(QDialog):
         pending_layout.setContentsMargins(0, 0, 0, 0)
         self.pending_sync_label = QLabel()
         pending_layout.addWidget(self.pending_sync_label)
-        self.clear_queue_btn = QPushButton("Clear")
+        self.clear_queue_btn = QPushButton(self.tr("Clear"))
         self.clear_queue_btn.setMaximumWidth(60)
-        self.clear_queue_btn.setToolTip("Clear pending syncs for this device")
+        self.clear_queue_btn.setToolTip(self.tr("Clear pending syncs for this device"))
         self.clear_queue_btn.clicked.connect(self._on_clear_queue)
         pending_layout.addWidget(self.clear_queue_btn)
-        device_form.addRow("Pending:", pending_widget)
+        device_form.addRow(self.tr("Pending:"), pending_widget)
 
         # Security
-        self.update_fp_btn = QPushButton("Update Fingerprint...")
-        self.update_fp_btn.setToolTip("Update fingerprint if device key has changed")
+        self.update_fp_btn = QPushButton(self.tr("Update Fingerprint..."))
+        self.update_fp_btn.setToolTip(self.tr("Update fingerprint if device key has changed"))
         self.update_fp_btn.clicked.connect(self._on_update_fingerprint)
-        device_form.addRow("Security:", self.update_fp_btn)
+        device_form.addRow(self.tr("Security:"), self.update_fp_btn)
 
         layout.addWidget(self.device_group)
 
         # Empty state label
         self.devices_empty_label = QLabel(
-            "No known devices yet.\n"
-            "Devices are added automatically when you sync,\n"
-            "or add discovered peers from the Discovery tab."
+            self.tr(
+                "No known devices yet.\n"
+                "Devices are added automatically when you sync,\n"
+                "or add discovered peers from the Discovery tab."
+            )
         )
         self.devices_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.devices_empty_label.setStyleSheet("color: gray; font-style: italic; padding: 20px;")
@@ -286,7 +294,9 @@ class DeviceManagerDialog(QDialog):
         # Group table
         self.group_table = QTableWidget()
         self.group_table.setColumnCount(3)
-        self.group_table.setHorizontalHeaderLabels(["Name", "Devices", "Online"])
+        self.group_table.setHorizontalHeaderLabels(
+            [self.tr("Name"), self.tr("Devices"), self.tr("Online")]
+        )
         self.group_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.group_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.group_table.setAlternatingRowColors(True)
@@ -300,31 +310,31 @@ class DeviceManagerDialog(QDialog):
         # Action buttons
         group_btns = QHBoxLayout()
 
-        self.sync_group_btn = QPushButton("Sync Group")
-        self.sync_group_btn.setToolTip("Sync with all online devices in this group")
+        self.sync_group_btn = QPushButton(self.tr("Sync Group"))
+        self.sync_group_btn.setToolTip(self.tr("Sync with all online devices in this group"))
         self.sync_group_btn.clicked.connect(self._on_sync_group)
         self.sync_group_btn.setEnabled(False)
         group_btns.addWidget(self.sync_group_btn)
 
-        self.edit_group_members_btn = QPushButton("Edit Members...")
-        self.edit_group_members_btn.setToolTip("Add or remove devices from this group")
+        self.edit_group_members_btn = QPushButton(self.tr("Edit Members..."))
+        self.edit_group_members_btn.setToolTip(self.tr("Add or remove devices from this group"))
         self.edit_group_members_btn.clicked.connect(self._on_edit_group_members)
         self.edit_group_members_btn.setEnabled(False)
         group_btns.addWidget(self.edit_group_members_btn)
 
         group_btns.addStretch()
 
-        add_group_btn = QPushButton("Add Group...")
-        add_group_btn.setToolTip("Create a new sync group")
+        add_group_btn = QPushButton(self.tr("Add Group..."))
+        add_group_btn.setToolTip(self.tr("Create a new sync group"))
         add_group_btn.clicked.connect(self._on_add_group)
         group_btns.addWidget(add_group_btn)
 
-        self.rename_group_btn = QPushButton("Rename")
+        self.rename_group_btn = QPushButton(self.tr("Rename"))
         self.rename_group_btn.clicked.connect(self._on_rename_group)
         self.rename_group_btn.setEnabled(False)
         group_btns.addWidget(self.rename_group_btn)
 
-        self.delete_group_btn = QPushButton("Delete")
+        self.delete_group_btn = QPushButton(self.tr("Delete"))
         self.delete_group_btn.clicked.connect(self._on_delete_group)
         self.delete_group_btn.setEnabled(False)
         group_btns.addWidget(self.delete_group_btn)
@@ -332,7 +342,7 @@ class DeviceManagerDialog(QDialog):
         layout.addLayout(group_btns)
 
         # Group Members panel (hidden until selection)
-        self.group_details = QGroupBox("Group Members")
+        self.group_details = QGroupBox(self.tr("Group Members"))
         self.group_details.setVisible(False)
         gd_layout = QVBoxLayout(self.group_details)
 
@@ -342,7 +352,9 @@ class DeviceManagerDialog(QDialog):
 
         self.group_members_table = QTableWidget()
         self.group_members_table.setColumnCount(3)
-        self.group_members_table.setHorizontalHeaderLabels(["Device", "Status", "Trust"])
+        self.group_members_table.setHorizontalHeaderLabels(
+            [self.tr("Device"), self.tr("Status"), self.tr("Trust")]
+        )
         self.group_members_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.group_members_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.group_members_table.setMaximumHeight(180)
@@ -356,9 +368,11 @@ class DeviceManagerDialog(QDialog):
 
         # Empty state label (only when no user groups exist)
         self.groups_empty_label = QLabel(
-            "Sync groups let you organize devices and control\n"
-            "which lists sync to which devices.\n"
-            "The 'All Devices' group represents the default sync policy."
+            self.tr(
+                "Sync groups let you organize devices and control\n"
+                "which lists sync to which devices.\n"
+                "The 'All Devices' group represents the default sync policy."
+            )
         )
         self.groups_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.groups_empty_label.setStyleSheet("color: gray; font-style: italic; padding: 20px;")
@@ -375,20 +389,28 @@ class DeviceManagerDialog(QDialog):
 
         # Description
         desc = QLabel(
-            "Devices discovered on your local network.\n"
-            "Add them as known devices to manage sync and trust."
+            self.tr(
+                "Devices discovered on your local network.\n"
+                "Add them as known devices to manage sync and trust."
+            )
         )
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
         # Discovered Peers group
-        peers_group = QGroupBox("Discovered Peers")
+        peers_group = QGroupBox(self.tr("Discovered Peers"))
         peers_layout = QVBoxLayout(peers_group)
 
         self.peer_table = QTableWidget()
         self.peer_table.setColumnCount(5)
         self.peer_table.setHorizontalHeaderLabels(
-            ["Name", "Address", "Port", "Fingerprint", "Known"]
+            [
+                self.tr("Name"),
+                self.tr("Address"),
+                self.tr("Port"),
+                self.tr("Fingerprint"),
+                self.tr("Known"),
+            ]
         )
         self.peer_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.peer_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -400,22 +422,22 @@ class DeviceManagerDialog(QDialog):
         peers_layout.addWidget(self.peer_table)
 
         peer_btns = QHBoxLayout()
-        self.add_to_devices_btn = QPushButton("Add to Devices")
+        self.add_to_devices_btn = QPushButton(self.tr("Add to Devices"))
         self.add_to_devices_btn.clicked.connect(self._on_add_to_devices)
         self.add_to_devices_btn.setEnabled(False)
         peer_btns.addWidget(self.add_to_devices_btn)
 
-        self.peer_ping_btn = QPushButton("Ping")
+        self.peer_ping_btn = QPushButton(self.tr("Ping"))
         self.peer_ping_btn.clicked.connect(self._on_ping)
         self.peer_ping_btn.setEnabled(False)
         peer_btns.addWidget(self.peer_ping_btn)
 
-        self.peer_sync_btn = QPushButton("Sync")
+        self.peer_sync_btn = QPushButton(self.tr("Sync"))
         self.peer_sync_btn.clicked.connect(self._on_peer_sync)
         self.peer_sync_btn.setEnabled(False)
         peer_btns.addWidget(self.peer_sync_btn)
 
-        refresh_btn = QPushButton("Refresh")
+        refresh_btn = QPushButton(self.tr("Refresh"))
         refresh_btn.clicked.connect(self._refresh_peers)
         peer_btns.addWidget(refresh_btn)
 
@@ -425,20 +447,20 @@ class DeviceManagerDialog(QDialog):
         layout.addWidget(peers_group)
 
         # Manual Connection group
-        manual_group = QGroupBox("Manual Connection")
+        manual_group = QGroupBox(self.tr("Manual Connection"))
         manual_layout = QFormLayout(manual_group)
 
         self.manual_host_edit = QLineEdit()
-        self.manual_host_edit.setPlaceholderText("hostname or IP address")
-        manual_layout.addRow("Host:", self.manual_host_edit)
+        self.manual_host_edit.setPlaceholderText(self.tr("hostname or IP address"))
+        manual_layout.addRow(self.tr("Host:"), self.manual_host_edit)
 
         self.manual_port_spin = QSpinBox()
         self.manual_port_spin.setRange(1024, 65535)
         self.manual_port_spin.setValue(5364)
-        manual_layout.addRow("Port:", self.manual_port_spin)
+        manual_layout.addRow(self.tr("Port:"), self.manual_port_spin)
 
         connect_btns = QHBoxLayout()
-        connect_btn = QPushButton("Connect")
+        connect_btn = QPushButton(self.tr("Connect"))
         connect_btn.clicked.connect(self._on_manual_connect)
         connect_btns.addWidget(connect_btn)
         connect_btns.addStretch()
@@ -490,13 +512,13 @@ class DeviceManagerDialog(QDialog):
             # Status
             is_online = device.fingerprint in online_fingerprints
             if device.trust_level == "blocked":
-                status_item = QTableWidgetItem("Blocked")
+                status_item = QTableWidgetItem(self.tr("Blocked"))
                 status_item.setForeground(QColor("gray"))
             elif is_online:
-                status_item = QTableWidgetItem("Online")
+                status_item = QTableWidgetItem(self.tr("Online"))
                 status_item.setForeground(QColor("green"))
             else:
-                status_item = QTableWidgetItem("Offline")
+                status_item = QTableWidgetItem(self.tr("Offline"))
                 status_item.setForeground(QColor("gray"))
             status_item.setFlags(status_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.device_table.setItem(row, 1, status_item)
@@ -536,7 +558,7 @@ class DeviceManagerDialog(QDialog):
         all_online = sum(1 for d in all_devices if d.fingerprint in online_fps)
 
         self.group_table.insertRow(0)
-        all_name_item = QTableWidgetItem("All Devices")
+        all_name_item = QTableWidgetItem(self.tr("All Devices"))
         all_name_item.setData(Qt.ItemDataRole.UserRole, _ALL_DEVICES_SENTINEL)
         italic_font = QFont()
         italic_font.setItalic(True)
@@ -624,11 +646,11 @@ class DeviceManagerDialog(QDialog):
 
             # Known
             is_known = peer.fingerprint in known_fingerprints
-            known_item = QTableWidgetItem("Yes" if is_known else "No")
+            known_item = QTableWidgetItem(self.tr("Yes") if is_known else self.tr("No"))
             known_item.setFlags(known_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.peer_table.setItem(row, 4, known_item)
 
-        self.discovery_status_label.setText(f"Found {len(peers)} peer(s) on the network")
+        self.discovery_status_label.setText(self.tr(f"Found {len(peers)} peer(s) on the network"))
 
     def _refresh_online_status(self) -> None:
         """Refresh online status in device table and peer table without full rebuild."""
@@ -651,13 +673,13 @@ class DeviceManagerDialog(QDialog):
                 continue
 
             if device.trust_level == "blocked":
-                status_item.setText("Blocked")
+                status_item.setText(self.tr("Blocked"))
                 status_item.setForeground(QColor("gray"))
             elif device.fingerprint in online_fingerprints:
-                status_item.setText("Online")
+                status_item.setText(self.tr("Online"))
                 status_item.setForeground(QColor("green"))
             else:
-                status_item.setText("Offline")
+                status_item.setText(self.tr("Offline"))
                 status_item.setForeground(QColor("gray"))
 
         # Update selected device button states if visible
@@ -761,7 +783,7 @@ class DeviceManagerDialog(QDialog):
         """Show device details in the panel."""
         self.device_name_edit.setText(device.name)
         self.device_fingerprint_label.setText(device.fingerprint)
-        self.device_address_label.setText(device.last_address or "Unknown")
+        self.device_address_label.setText(device.last_address or self.tr("Unknown"))
 
         # Hostname — cross-reference with discovered peers for live info
         peer = self._find_peer_for_device(device)
@@ -777,7 +799,7 @@ class DeviceManagerDialog(QDialog):
                 f'{host_part} <span style="color: gray;">(last known)</span>'
             )
         else:
-            self.device_hostname_label.setText("Unknown")
+            self.device_hostname_label.setText(self.tr("Unknown"))
 
         # Format last seen
         from datetime import datetime
@@ -796,7 +818,7 @@ class DeviceManagerDialog(QDialog):
                 group_names = ", ".join(g.name for g in groups)
                 self.device_groups_label.setText(group_names)
             else:
-                self.device_groups_label.setText("(none)")
+                self.device_groups_label.setText(self.tr("(none)"))
 
         # Pending sync
         online_fingerprints = self._get_online_fingerprints()
@@ -830,7 +852,7 @@ class DeviceManagerDialog(QDialog):
     def _show_group_details_all_devices(self) -> None:
         """Show details for the 'All Devices' virtual group."""
         self.group_description_label.setText(
-            "Default policy: lists sync to all non-blocked devices unless restricted."
+            self.tr("Default policy: lists sync to all non-blocked devices unless restricted.")
         )
 
         online_fps = self._get_online_fingerprints()
@@ -846,7 +868,7 @@ class DeviceManagerDialog(QDialog):
             self.group_members_table.setItem(row, 0, d_item)
 
             is_online = device.fingerprint in online_fps
-            s_item = QTableWidgetItem("Online" if is_online else "Offline")
+            s_item = QTableWidgetItem(self.tr("Online") if is_online else self.tr("Offline"))
             s_item.setForeground(QColor("green") if is_online else QColor("gray"))
             s_item.setFlags(s_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.group_members_table.setItem(row, 1, s_item)
@@ -864,7 +886,7 @@ class DeviceManagerDialog(QDialog):
 
         # Get devices in group
         devices = self._storage.get_devices_in_group(group.id)
-        self.group_description_label.setText(f"{len(devices)} device(s) in this group.")
+        self.group_description_label.setText(self.tr(f"{len(devices)} device(s) in this group."))
 
         online_fps = self._get_online_fingerprints()
         self.group_members_table.setRowCount(0)
@@ -878,7 +900,7 @@ class DeviceManagerDialog(QDialog):
             self.group_members_table.setItem(row, 0, d_item)
 
             is_online = device.fingerprint in online_fps
-            s_item = QTableWidgetItem("Online" if is_online else "Offline")
+            s_item = QTableWidgetItem(self.tr("Online") if is_online else self.tr("Offline"))
             s_item.setForeground(QColor("green") if is_online else QColor("gray"))
             s_item.setFlags(s_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.group_members_table.setItem(row, 1, s_item)
@@ -951,7 +973,9 @@ class DeviceManagerDialog(QDialog):
             self._refresh_devices()
             self._refresh_peers()
             self.device_updated.emit()
-            QMessageBox.information(self, "Device Added", f"Added device: {device.name}")
+            QMessageBox.information(
+                self, self.tr("Device Added"), self.tr(f"Added device: {device.name}")
+            )
             return
 
         # Fallback: show a picker of unknown peers (e.g. called from Devices tab button)
@@ -964,17 +988,19 @@ class DeviceManagerDialog(QDialog):
         if not peers:
             QMessageBox.information(
                 self,
-                "No New Devices",
-                "No new devices discovered on the network.\n\n"
-                "Devices are automatically added when you sync with them.",
+                self.tr("No New Devices"),
+                self.tr(
+                    "No new devices discovered on the network.\n\n"
+                    "Devices are automatically added when you sync with them."
+                ),
             )
             return
 
         peer_names = [f"{p.display_name} ({p.address})" for p in peers]
         name, ok = QInputDialog.getItem(
             self,
-            "Add Device",
-            "Select a discovered device:",
+            self.tr("Add Device"),
+            self.tr("Select a discovered device:"),
             peer_names,
             editable=False,
         )
@@ -997,7 +1023,9 @@ class DeviceManagerDialog(QDialog):
         self._refresh_peers()
         self.device_updated.emit()
 
-        QMessageBox.information(self, "Device Added", f"Added device: {device.name}")
+        QMessageBox.information(
+            self, self.tr("Device Added"), self.tr(f"Added device: {device.name}")
+        )
 
     @asyncSlot()
     async def _on_ping(self) -> None:
@@ -1013,21 +1041,23 @@ class DeviceManagerDialog(QDialog):
             if success:
                 QMessageBox.information(
                     self,
-                    "Connection Successful",
-                    f"Connected to {peer.name}\n\n"
-                    f"Address: {peer.address}:{peer.port}\n"
-                    f"Latency: {latency:.1f}ms\n"
-                    f"Fingerprint: {peer.fingerprint}",
+                    self.tr("Connection Successful"),
+                    self.tr(
+                        f"Connected to {peer.name}\n\n"
+                        f"Address: {peer.address}:{peer.port}\n"
+                        f"Latency: {latency:.1f}ms\n"
+                        f"Fingerprint: {peer.fingerprint}"
+                    ),
                 )
             else:
                 QMessageBox.warning(
                     self,
-                    "Connection Failed",
-                    f"Could not connect to {peer.name} at {peer.address}:{peer.port}",
+                    self.tr("Connection Failed"),
+                    self.tr(f"Could not connect to {peer.name} at {peer.address}:{peer.port}"),
                 )
         except Exception as e:
             logger.log.exception("Ping failed: %s", e)
-            QMessageBox.critical(self, "Error", f"Connection failed: {e}")
+            QMessageBox.critical(self, self.tr("Error"), self.tr(f"Connection failed: {e}"))
         finally:
             self._set_busy(False)
 
@@ -1060,19 +1090,21 @@ class DeviceManagerDialog(QDialog):
             if pull_ok and push_ok:
                 QMessageBox.information(
                     self,
-                    "Sync Complete",
-                    f"Synced with {peer.name}\n"
-                    f"Merged {merged_count} items, pushed {len(push_data)} bytes.",
+                    self.tr("Sync Complete"),
+                    self.tr(
+                        f"Synced with {peer.name}\n"
+                        f"Merged {merged_count} items, pushed {len(push_data)} bytes."
+                    ),
                 )
             else:
                 QMessageBox.warning(
                     self,
-                    "Sync Partial",
-                    f"Sync with {peer.name} partially failed.",
+                    self.tr("Sync Partial"),
+                    self.tr(f"Sync with {peer.name} partially failed."),
                 )
         except Exception as e:
             logger.log.exception("Peer sync failed: %s", e)
-            QMessageBox.critical(self, "Error", f"Sync failed: {e}")
+            QMessageBox.critical(self, self.tr("Error"), self.tr(f"Sync failed: {e}"))
         finally:
             self._set_busy(False)
             self._refresh_devices()
@@ -1085,7 +1117,9 @@ class DeviceManagerDialog(QDialog):
         port = self.manual_port_spin.value()
 
         if not host:
-            QMessageBox.warning(self, "Error", "Please enter a hostname or IP address.")
+            QMessageBox.warning(
+                self, self.tr("Error"), self.tr("Please enter a hostname or IP address.")
+            )
             return
 
         self._set_busy(True, f"Pinging {host}:{port}...")
@@ -1095,18 +1129,18 @@ class DeviceManagerDialog(QDialog):
             if success:
                 QMessageBox.information(
                     self,
-                    "Connection Successful",
-                    f"Connected to {host}:{port}\nLatency: {latency:.1f}ms",
+                    self.tr("Connection Successful"),
+                    self.tr(f"Connected to {host}:{port}\nLatency: {latency:.1f}ms"),
                 )
             else:
                 QMessageBox.warning(
                     self,
-                    "Connection Failed",
-                    f"Could not connect to {host}:{port}",
+                    self.tr("Connection Failed"),
+                    self.tr(f"Could not connect to {host}:{port}"),
                 )
         except Exception as e:
             logger.log.exception("Manual connect failed: %s", e)
-            QMessageBox.critical(self, "Error", f"Connection failed: {e}")
+            QMessageBox.critical(self, self.tr("Error"), self.tr(f"Connection failed: {e}"))
         finally:
             self._set_busy(False)
 
@@ -1158,7 +1192,7 @@ class DeviceManagerDialog(QDialog):
     def _update_pending_sync_display(self, device: Device, is_online: bool) -> None:
         """Update the pending sync display for a device."""
         if self._offline_queue is None:
-            self.pending_sync_label.setText("(unavailable)")
+            self.pending_sync_label.setText(self.tr("(unavailable)"))
             self.queue_sync_btn.setEnabled(False)
             self.clear_queue_btn.setEnabled(False)
             return
@@ -1179,10 +1213,10 @@ class DeviceManagerDialog(QDialog):
             self.clear_queue_btn.setEnabled(True)
         else:
             if is_online:
-                self.pending_sync_label.setText("None (device online)")
+                self.pending_sync_label.setText(self.tr("None (device online)"))
                 self.queue_sync_btn.setEnabled(False)
             else:
-                self.pending_sync_label.setText("None")
+                self.pending_sync_label.setText(self.tr("None"))
                 self.queue_sync_btn.setEnabled(True)
             self.clear_queue_btn.setEnabled(False)
 
@@ -1207,9 +1241,11 @@ class DeviceManagerDialog(QDialog):
 
         QMessageBox.information(
             self,
-            "Sync Queued",
-            f"Sync queued for {self._selected_device.name or 'device'}.\n"
-            "It will be processed when the device comes online.",
+            self.tr("Sync Queued"),
+            self.tr(
+                f"Sync queued for {self._selected_device.name or 'device'}.\n"
+                "It will be processed when the device comes online."
+            ),
         )
 
     def _on_clear_queue(self) -> None:
@@ -1219,8 +1255,8 @@ class DeviceManagerDialog(QDialog):
 
         result = QMessageBox.question(
             self,
-            "Clear Pending Syncs",
-            f"Clear all pending syncs for {self._selected_device.name or 'this device'}?",
+            self.tr("Clear Pending Syncs"),
+            self.tr(f"Clear all pending syncs for {self._selected_device.name or 'this device'}?"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
 
@@ -1239,7 +1275,11 @@ class DeviceManagerDialog(QDialog):
         if self._selected_device is None or self._storage is None:
             return
 
-        trust_map = {"Normal": "normal", "Trusted": "trusted", "Blocked": "blocked"}
+        trust_map = {
+            self.tr("Normal"): "normal",
+            self.tr("Trusted"): "trusted",
+            self.tr("Blocked"): "blocked",
+        }
         new_trust = trust_map.get(text, "normal")
 
         if new_trust == self._selected_device.trust_level:
@@ -1273,9 +1313,11 @@ class DeviceManagerDialog(QDialog):
 
         result = QMessageBox.question(
             self,
-            "Remove Device",
-            f"Remove '{self._selected_device.name}' from known devices?\n\n"
-            f"This will also remove the device from any sync groups.",
+            self.tr("Remove Device"),
+            self.tr(
+                f"Remove '{self._selected_device.name}' from known devices?\n\n"
+                f"This will also remove the device from any sync groups."
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
 
@@ -1297,14 +1339,16 @@ class DeviceManagerDialog(QDialog):
         # Show warning
         result = QMessageBox.warning(
             self,
-            "Update Fingerprint",
-            f"<b>Security Warning</b><br><br>"
-            f"You are about to update the fingerprint for '{self._selected_device.name}'.<br><br>"
-            f"Only do this if you know why the device's key changed "
-            f"(e.g., app reinstall, new machine).<br><br>"
-            f"<b>Current fingerprint:</b><br>"
-            f"<code>{self._selected_device.fingerprint}</code><br><br>"
-            f"Do you want to select a new fingerprint from discovered devices?",
+            self.tr("Update Fingerprint"),
+            self.tr(
+                f"<b>Security Warning</b><br><br>"
+                f"You are about to update the fingerprint for '{self._selected_device.name}'.<br><br>"
+                f"Only do this if you know why the device's key changed "
+                f"(e.g., app reinstall, new machine).<br><br>"
+                f"<b>Current fingerprint:</b><br>"
+                f"<code>{self._selected_device.fingerprint}</code><br><br>"
+                f"Do you want to select a new fingerprint from discovered devices?"
+            ),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
         )
 
@@ -1316,8 +1360,8 @@ class DeviceManagerDialog(QDialog):
         if not peers:
             QMessageBox.information(
                 self,
-                "No Devices Found",
-                "No devices discovered on the network to update fingerprint from.",
+                self.tr("No Devices Found"),
+                self.tr("No devices discovered on the network to update fingerprint from."),
             )
             return
 
@@ -1325,8 +1369,8 @@ class DeviceManagerDialog(QDialog):
         peer_info = [f"{p.display_name} ({p.address}) - {p.fingerprint[:20]}..." for p in peers]
         selected, ok = QInputDialog.getItem(
             self,
-            "Select New Fingerprint",
-            "Select the device with the new fingerprint:",
+            self.tr("Select New Fingerprint"),
+            self.tr("Select the device with the new fingerprint:"),
             peer_info,
             editable=False,
         )
@@ -1338,7 +1382,7 @@ class DeviceManagerDialog(QDialog):
 
         if new_fingerprint == self._selected_device.fingerprint:
             QMessageBox.information(
-                self, "No Change", "Selected fingerprint is the same as current."
+                self, self.tr("No Change"), self.tr("Selected fingerprint is the same as current.")
             )
             return
 
@@ -1359,8 +1403,8 @@ class DeviceManagerDialog(QDialog):
 
         QMessageBox.information(
             self,
-            "Fingerprint Updated",
-            f"Fingerprint for '{self._selected_device.name}' has been updated.",
+            self.tr("Fingerprint Updated"),
+            self.tr(f"Fingerprint for '{self._selected_device.name}' has been updated."),
         )
 
     # ------------------------------------------------------------------ #
@@ -1376,7 +1420,9 @@ class DeviceManagerDialog(QDialog):
         # Find peer info
         peer = self._find_peer_for_device(self._selected_device)
         if peer is None:
-            QMessageBox.warning(self, "Device Offline", "Cannot sync - device is not online.")
+            QMessageBox.warning(
+                self, self.tr("Device Offline"), self.tr("Cannot sync - device is not online.")
+            )
             return
 
         self._set_busy(True, f"Syncing with {self._selected_device.name}...")
@@ -1402,19 +1448,21 @@ class DeviceManagerDialog(QDialog):
             if success and push_success:
                 QMessageBox.information(
                     self,
-                    "Sync Complete",
-                    f"Synced with {self._selected_device.name}\n"
-                    f"Merged {merged_count} items, pushed {len(push_data)} bytes.",
+                    self.tr("Sync Complete"),
+                    self.tr(
+                        f"Synced with {self._selected_device.name}\n"
+                        f"Merged {merged_count} items, pushed {len(push_data)} bytes."
+                    ),
                 )
             else:
                 QMessageBox.warning(
                     self,
-                    "Sync Partial",
-                    f"Sync with {self._selected_device.name} partially failed.",
+                    self.tr("Sync Partial"),
+                    self.tr(f"Sync with {self._selected_device.name} partially failed."),
                 )
         except Exception as e:
             logger.log.exception("Sync failed: %s", e)
-            QMessageBox.critical(self, "Sync Error", f"Sync failed: {e}")
+            QMessageBox.critical(self, self.tr("Sync Error"), self.tr(f"Sync failed: {e}"))
         finally:
             self._set_busy(False)
 
@@ -1436,13 +1484,15 @@ class DeviceManagerDialog(QDialog):
                 else:
                     QMessageBox.warning(
                         self,
-                        "Cannot Test",
-                        "Device is offline and no valid last address available.",
+                        self.tr("Cannot Test"),
+                        self.tr("Device is offline and no valid last address available."),
                     )
                     return
             else:
                 QMessageBox.warning(
-                    self, "Cannot Test", "Device is offline and no last address known."
+                    self,
+                    self.tr("Cannot Test"),
+                    self.tr("Device is offline and no last address known."),
                 )
                 return
         else:
@@ -1461,20 +1511,22 @@ class DeviceManagerDialog(QDialog):
 
                 QMessageBox.information(
                     self,
-                    "Connection Successful",
-                    f"Connected to {self._selected_device.name}\n\n"
-                    f"Address: {host}:{port}\n"
-                    f"Latency: {latency:.1f}ms",
+                    self.tr("Connection Successful"),
+                    self.tr(
+                        f"Connected to {self._selected_device.name}\n\n"
+                        f"Address: {host}:{port}\n"
+                        f"Latency: {latency:.1f}ms"
+                    ),
                 )
             else:
                 QMessageBox.warning(
                     self,
-                    "Connection Failed",
-                    f"Could not connect to {self._selected_device.name} at {host}:{port}",
+                    self.tr("Connection Failed"),
+                    self.tr(f"Could not connect to {self._selected_device.name} at {host}:{port}"),
                 )
         except Exception as e:
             logger.log.exception("Test connection failed: %s", e)
-            QMessageBox.critical(self, "Error", f"Connection test failed: {e}")
+            QMessageBox.critical(self, self.tr("Error"), self.tr(f"Connection test failed: {e}"))
         finally:
             self._set_busy(False)
 
@@ -1495,15 +1547,15 @@ class DeviceManagerDialog(QDialog):
         if not devices:
             QMessageBox.information(
                 self,
-                "No Devices",
-                "No trusted devices are currently online.",
+                self.tr("No Devices"),
+                self.tr("No trusted devices are currently online."),
             )
             return
 
         result = QMessageBox.question(
             self,
-            "Sync All",
-            f"Sync with {len(devices)} trusted online device(s)?\n\n"
+            self.tr("Sync All"),
+            self.tr(f"Sync with {len(devices)} trusted online device(s)?\n\n")
             + "\n".join(f"  - {d.name}" for d in devices),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
@@ -1548,8 +1600,10 @@ class DeviceManagerDialog(QDialog):
 
         QMessageBox.information(
             self,
-            "Sync All Complete",
-            f"Synced with {success_count} device(s).\n{fail_count} failed." if fail_count else "",
+            self.tr("Sync All Complete"),
+            self.tr(f"Synced with {success_count} device(s).\n{fail_count} failed.")
+            if fail_count
+            else "",
         )
 
     @asyncSlot()
@@ -1577,15 +1631,15 @@ class DeviceManagerDialog(QDialog):
         if not online_devices:
             QMessageBox.information(
                 self,
-                "No Online Devices",
-                f"No devices in '{group_name}' are currently online.",
+                self.tr("No Online Devices"),
+                self.tr(f"No devices in '{group_name}' are currently online."),
             )
             return
 
         result = QMessageBox.question(
             self,
-            "Sync Group",
-            f"Sync with {len(online_devices)} online device(s) in '{group_name}'?\n\n"
+            self.tr("Sync Group"),
+            self.tr(f"Sync with {len(online_devices)} online device(s) in '{group_name}'?\n\n")
             + "\n".join(f"  - {d.name}" for d in online_devices),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
@@ -1638,7 +1692,7 @@ class DeviceManagerDialog(QDialog):
         msg = f"Synced with {success_count} device(s) in '{group_name}'."
         if fail_count:
             msg += f"\n{fail_count} failed."
-        QMessageBox.information(self, "Sync Group Complete", msg)
+        QMessageBox.information(self, self.tr("Sync Group Complete"), msg)
 
     # ------------------------------------------------------------------ #
     # Group actions (business logic — unchanged)
@@ -1649,13 +1703,17 @@ class DeviceManagerDialog(QDialog):
         if self._storage is None:
             return
 
-        name, ok = QInputDialog.getText(self, "New Sync Group", "Enter group name:")
+        name, ok = QInputDialog.getText(
+            self, self.tr("New Sync Group"), self.tr("Enter group name:")
+        )
         if not ok or not name.strip():
             return
 
         # Check for duplicate
         if self._storage.get_sync_group_by_name(name.strip()):
-            QMessageBox.warning(self, "Duplicate Name", f"A group named '{name}' already exists.")
+            QMessageBox.warning(
+                self, self.tr("Duplicate Name"), self.tr(f"A group named '{name}' already exists.")
+            )
             return
 
         group = create_sync_group(name.strip())
@@ -1675,8 +1733,8 @@ class DeviceManagerDialog(QDialog):
 
         name, ok = QInputDialog.getText(
             self,
-            "Rename Group",
-            "Enter new name:",
+            self.tr("Rename Group"),
+            self.tr("Enter new name:"),
             text=group.name,
         )
         if not ok or not name.strip():
@@ -1685,7 +1743,9 @@ class DeviceManagerDialog(QDialog):
         # Check for duplicate
         existing = self._storage.get_sync_group_by_name(name.strip())
         if existing and existing.id != group.id:
-            QMessageBox.warning(self, "Duplicate Name", f"A group named '{name}' already exists.")
+            QMessageBox.warning(
+                self, self.tr("Duplicate Name"), self.tr(f"A group named '{name}' already exists.")
+            )
             return
 
         group.name = name.strip()
@@ -1712,8 +1772,8 @@ class DeviceManagerDialog(QDialog):
 
         result = QMessageBox.question(
             self,
-            "Delete Group",
-            f"Delete sync group '{group.name}'?{device_warning}",
+            self.tr("Delete Group"),
+            self.tr(f"Delete sync group '{group.name}'?{device_warning}"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
 
@@ -1745,8 +1805,8 @@ class DeviceManagerDialog(QDialog):
         if not all_devices:
             QMessageBox.information(
                 self,
-                "No Devices",
-                "No devices available to add to the group.",
+                self.tr("No Devices"),
+                self.tr("No devices available to add to the group."),
             )
             return
 
@@ -1754,12 +1814,12 @@ class DeviceManagerDialog(QDialog):
         from PyQt6.QtWidgets import QCheckBox, QScrollArea
 
         dialog = QDialog(self)
-        dialog.setWindowTitle(f"Edit Members: {group.name}")
+        dialog.setWindowTitle(self.tr(f"Edit Members: {group.name}"))
         dialog.setMinimumWidth(300)
         dialog.setMinimumHeight(300)
 
         layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel(f"Select devices for '{group.name}':"))
+        layout.addWidget(QLabel(self.tr(f"Select devices for '{group.name}':")))
 
         # Scroll area for checkboxes
         scroll = QScrollArea()
@@ -1782,10 +1842,10 @@ class DeviceManagerDialog(QDialog):
         # Buttons
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(self.tr("Cancel"))
         cancel_btn.clicked.connect(dialog.reject)
         btn_layout.addWidget(cancel_btn)
-        save_btn = QPushButton("Save")
+        save_btn = QPushButton(self.tr("Save"))
         save_btn.clicked.connect(dialog.accept)
         btn_layout.addWidget(save_btn)
         layout.addLayout(btn_layout)
@@ -1823,8 +1883,8 @@ class DeviceManagerDialog(QDialog):
         if not all_groups:
             QMessageBox.information(
                 self,
-                "No Groups",
-                "No sync groups exist. Create a group first.",
+                self.tr("No Groups"),
+                self.tr("No sync groups exist. Create a group first."),
             )
             return
 
@@ -1832,11 +1892,11 @@ class DeviceManagerDialog(QDialog):
         from PyQt6.QtWidgets import QCheckBox, QScrollArea
 
         dialog = QDialog(self)
-        dialog.setWindowTitle(f"Edit Groups: {self._selected_device.name}")
+        dialog.setWindowTitle(self.tr(f"Edit Groups: {self._selected_device.name}"))
         dialog.setMinimumWidth(300)
 
         layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel(f"Select groups for '{self._selected_device.name}':"))
+        layout.addWidget(QLabel(self.tr(f"Select groups for '{self._selected_device.name}':")))
 
         # Scroll area for checkboxes
         scroll = QScrollArea()
@@ -1859,10 +1919,10 @@ class DeviceManagerDialog(QDialog):
         # Buttons
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(self.tr("Cancel"))
         cancel_btn.clicked.connect(dialog.reject)
         btn_layout.addWidget(cancel_btn)
-        save_btn = QPushButton("Save")
+        save_btn = QPushButton(self.tr("Save"))
         save_btn.clicked.connect(dialog.accept)
         btn_layout.addWidget(save_btn)
         layout.addLayout(btn_layout)
@@ -1993,14 +2053,14 @@ class DeviceManagerDialog(QDialog):
         self._sync_group_menu.clear()
 
         if self._storage is None:
-            action = self._sync_group_menu.addAction("No groups")
+            action = self._sync_group_menu.addAction(self.tr("No groups"))
             if action:
                 action.setEnabled(False)
             return
 
         groups = self._storage.get_all_sync_groups()
         if not groups:
-            action = self._sync_group_menu.addAction("No groups created")
+            action = self._sync_group_menu.addAction(self.tr("No groups created"))
             if action:
                 action.setEnabled(False)
             return
@@ -2043,10 +2103,10 @@ class DeviceManagerDialog(QDialog):
 
         if busy:
             self.status_label.setText(message)
-            self.setWindowTitle(f"Device & Sync Manager - {message}")
+            self.setWindowTitle(self.tr(f"Device & Sync Manager - {message}"))
         else:
             self.status_label.setText("")
-            self.setWindowTitle("Device & Sync Manager")
+            self.setWindowTitle(self.tr("Device & Sync Manager"))
 
     def closeEvent(self, a0) -> None:  # noqa: N802
         """Handle dialog close."""

@@ -53,7 +53,7 @@ class SyncDialog(QDialog):
         self._last_host: str = ""
         self._last_port: int = 0
 
-        title = "Sync Pull" if operation == "pull" else "Sync Push"
+        title = self.tr("Sync Pull") if operation == "pull" else self.tr("Sync Push")
         self.setWindowTitle(title)
         self.setMinimumWidth(400)
 
@@ -66,25 +66,25 @@ class SyncDialog(QDialog):
 
         # Operation description
         if self._operation == "pull":
-            desc = "Pull to-do lists from a remote host."
+            desc = self.tr("Pull to-do lists from a remote host.")
         else:
-            desc = "Push your to-do lists to a remote host."
+            desc = self.tr("Push your to-do lists to a remote host.")
         desc_label = QLabel(desc)
         desc_label.setWordWrap(True)
         layout.addWidget(desc_label)
 
         # Connection group
-        conn_group = QGroupBox("Remote Host")
+        conn_group = QGroupBox(self.tr("Remote Host"))
         conn_layout = QFormLayout(conn_group)
 
         self.host_edit = QLineEdit()
-        self.host_edit.setPlaceholderText("hostname or IP address")
-        conn_layout.addRow("Host:", self.host_edit)
+        self.host_edit.setPlaceholderText(self.tr("hostname or IP address"))
+        conn_layout.addRow(self.tr("Host:"), self.host_edit)
 
         self.port_spin = QSpinBox()
         self.port_spin.setRange(1024, 65535)
         self.port_spin.setValue(5364)
-        conn_layout.addRow("Port:", self.port_spin)
+        conn_layout.addRow(self.tr("Port:"), self.port_spin)
 
         layout.addWidget(conn_group)
 
@@ -103,7 +103,7 @@ class SyncDialog(QDialog):
         )
         ok_btn = self.button_box.button(QDialogButtonBox.StandardButton.Ok)
         if ok_btn:
-            ok_btn.setText("Pull" if self._operation == "pull" else "Push")
+            ok_btn.setText(self.tr("Pull") if self._operation == "pull" else self.tr("Push"))
         self.button_box.accepted.connect(self._on_sync)
         self.button_box.rejected.connect(self.reject)
         layout.addWidget(self.button_box)
@@ -118,7 +118,9 @@ class SyncDialog(QDialog):
         """Handle sync button click."""
         host = self.host_edit.text().strip()
         if not host:
-            QMessageBox.warning(self, "Validation Error", "Please enter a hostname or IP address.")
+            QMessageBox.warning(
+                self, self.tr("Validation Error"), self.tr("Please enter a hostname or IP address.")
+            )
             self.host_edit.setFocus()
             return
 
@@ -127,7 +129,7 @@ class SyncDialog(QDialog):
         # Show progress
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # Indeterminate
-        self.status_label.setText(f"Connecting to {host}:{port}...")
+        self.status_label.setText(self.tr(f"Connecting to {host}:{port}..."))
         self.button_box.setEnabled(False)
 
         self._last_host = host
@@ -140,8 +142,8 @@ class SyncDialog(QDialog):
                 await self._do_push(host, port)
         except Exception as e:
             logger.log.exception("Sync failed: %s", e)
-            self.status_label.setText(f"Error: {e}")
-            QMessageBox.critical(self, "Sync Error", f"Sync failed: {e}")
+            self.status_label.setText(self.tr(f"Error: {e}"))
+            QMessageBox.critical(self, self.tr("Sync Error"), self.tr(f"Sync failed: {e}"))
         finally:
             self.progress_bar.setRange(0, 1)
             self.progress_bar.setValue(1)
@@ -149,46 +151,50 @@ class SyncDialog(QDialog):
 
     async def _do_pull(self, host: str, port: int) -> None:
         """Perform sync pull operation."""
-        self.status_label.setText(f"Pulling from {host}:{port}...")
+        self.status_label.setText(self.tr(f"Pulling from {host}:{port}..."))
 
         success, data = await self._client.sync_pull(host, port)
         if success:
             self._sync_result = data
-            self.status_label.setText(f"Pulled {len(data)} bytes")
+            self.status_label.setText(self.tr(f"Pulled {len(data)} bytes"))
             QMessageBox.information(
                 self,
-                "Sync Complete",
-                f"Successfully pulled {len(data)} bytes from {host}:{port}",
+                self.tr("Sync Complete"),
+                self.tr(f"Successfully pulled {len(data)} bytes from {host}:{port}"),
             )
             logger.log.info("Sync pull successful: %d bytes from %s:%d", len(data), host, port)
             self.accept()
         else:
-            self.status_label.setText("Pull failed")
-            QMessageBox.warning(self, "Sync Failed", f"Could not pull from {host}:{port}")
+            self.status_label.setText(self.tr("Pull failed"))
+            QMessageBox.warning(
+                self, self.tr("Sync Failed"), self.tr(f"Could not pull from {host}:{port}")
+            )
 
     async def _do_push(self, host: str, port: int) -> None:
         """Perform sync push operation (excludes private lists)."""
         if self._database is None:
-            QMessageBox.warning(self, "Error", "No database available for push")
+            QMessageBox.warning(self, self.tr("Error"), self.tr("No database available for push"))
             return
 
-        self.status_label.setText(f"Pushing to {host}:{port}...")
+        self.status_label.setText(self.tr(f"Pushing to {host}:{port}..."))
 
         data = json.dumps(self._database.to_dict_for_sync()).encode("utf-8")
         success = await self._client.sync_push(host, port, data)
 
         if success:
-            self.status_label.setText(f"Pushed {len(data)} bytes")
+            self.status_label.setText(self.tr(f"Pushed {len(data)} bytes"))
             QMessageBox.information(
                 self,
-                "Sync Complete",
-                f"Successfully pushed {len(data)} bytes to {host}:{port}",
+                self.tr("Sync Complete"),
+                self.tr(f"Successfully pushed {len(data)} bytes to {host}:{port}"),
             )
             logger.log.info("Sync push successful: %d bytes to %s:%d", len(data), host, port)
             self.accept()
         else:
-            self.status_label.setText("Push failed")
-            QMessageBox.warning(self, "Sync Failed", f"Could not push to {host}:{port}")
+            self.status_label.setText(self.tr("Push failed"))
+            QMessageBox.warning(
+                self, self.tr("Sync Failed"), self.tr(f"Could not push to {host}:{port}")
+            )
 
     def get_host(self) -> str:
         """Get the entered host."""

@@ -134,10 +134,10 @@ class TimeComboBox(QComboBox):
         # Placeholder and tooltip to aid discoverability
         line_edit = self.lineEdit()
         if line_edit:
-            line_edit.setPlaceholderText("e.g. 2:30 PM")
+            line_edit.setPlaceholderText(self.tr("e.g. 2:30 PM"))
             # Allow Enter to confirm without closing parent dialog
             line_edit.returnPressed.disconnect()
-        self.setToolTip("Click arrow for presets or type a time (e.g. 2:30 PM)")
+        self.setToolTip(self.tr("Click arrow for presets or type a time (e.g. 2:30 PM)"))
 
         # Scroll to selection when dropdown opens
         view = self.view()

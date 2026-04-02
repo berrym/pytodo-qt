@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from PyQt6.QtCore import QMimeData, QPoint, Qt, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QMimeData, QPoint, Qt, pyqtSignal
 from PyQt6.QtGui import QDrag, QKeyEvent, QMouseEvent
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -111,12 +111,13 @@ def _format_due(due_date: date, due_time: time | None, time_format: str) -> str:
     """Format a due date for display on a card."""
     today = date.today()
     delta = (due_date - today).days
+    _tr = QCoreApplication.translate
     if delta == 0:
-        label = "Today"
+        label = _tr("KanbanCardWidget", "Today")
     elif delta == 1:
-        label = "Tomorrow"
+        label = _tr("KanbanCardWidget", "Tomorrow")
     elif delta == -1:
-        label = "Yesterday"
+        label = _tr("KanbanCardWidget", "Yesterday")
     elif 0 < delta <= 6:
         label = due_date.strftime("%A")
     else:
@@ -246,7 +247,7 @@ class KanbanCardWidget(QFrame):
         row1.addWidget(dot)
 
         # Reminder label
-        reminder_label = QLabel(item.reminder or "(no text)")
+        reminder_label = QLabel(item.reminder or self.tr("(no text)"))
         reminder_label.setWordWrap(True)
         reminder_label.setStyleSheet(
             f"color: {text_color}; border: none; font-size: 13px;"
@@ -325,9 +326,9 @@ class KanbanCardWidget(QFrame):
                 row2.addWidget(rec_label)
 
                 if item.missed_recurrences > 0:
-                    missed_label = QLabel(f"{item.missed_recurrences} missed")
+                    missed_label = QLabel(self.tr(f"{item.missed_recurrences} missed"))
                     missed_label.setToolTip(
-                        f"{item.missed_recurrences} occurrence(s) auto-advanced"
+                        self.tr(f"{item.missed_recurrences} occurrence(s) auto-advanced")
                     )
                     missed_label.setStyleSheet(
                         f"color: {colors['due_today']}; font-size: 10px;"
@@ -385,7 +386,7 @@ class KanbanCardWidget(QFrame):
         if self._subtasks:
             done = sum(1 for s in self._subtasks if s.complete)
             total = len(self._subtasks)
-            self._subtask_badge = QPushButton(f"\u2630 {done}/{total} subtasks")
+            self._subtask_badge = QPushButton(self.tr(f"\u2630 {done}/{total} subtasks"))
             badge_color = colors["due_soon"] if done == total else colors["completed_text"]
             self._subtask_badge.setStyleSheet(
                 f"color: {badge_color}; font-size: 11px; "
@@ -456,7 +457,7 @@ class KanbanCardWidget(QFrame):
             chip.setStyleSheet(chip_style)
             layout.addWidget(chip)
 
-        edit_btn = QPushButton("Edit...")
+        edit_btn = QPushButton(self.tr("Edit..."))
         edit_btn.setFixedHeight(20)
         edit_btn.setStyleSheet("font-size: 10px; padding: 1px 6px;")
         edit_btn.clicked.connect(lambda: self._on_popup_edit(popup))
@@ -610,12 +611,14 @@ class KanbanColumnWidget(QFrame):
         # Column role indicator
         if is_first:
             inbox_icon = QLabel("\U0001f4e5")  # 📥
-            inbox_icon.setToolTip("Inbox column — new items land here")
+            inbox_icon.setToolTip(self.tr("Inbox column — new items land here"))
             inbox_icon.setStyleSheet("border: none; font-size: 12px;")
             header.addWidget(inbox_icon)
         elif is_last:
             check_icon = QLabel("\u2705")  # ✅
-            check_icon.setToolTip("Completion column — items moved here are marked complete")
+            check_icon.setToolTip(
+                self.tr("Completion column — items moved here are marked complete")
+            )
             check_icon.setStyleSheet("border: none; font-size: 12px;")
             header.addWidget(check_icon)
         self._title_label = QLabel(column_name)
@@ -659,7 +662,7 @@ class KanbanColumnWidget(QFrame):
         col_layout.addWidget(scroll, 1)
 
         # Add item button
-        add_btn = QPushButton("+ Add item")
+        add_btn = QPushButton(self.tr("+ Add item"))
         add_btn.setStyleSheet(
             f"color: {colors['completed_text']}; border: none; "
             "text-align: left; padding: 4px; background: transparent; font-size: 12px;"
@@ -714,13 +717,13 @@ class KanbanColumnWidget(QFrame):
         """Show the column header context menu."""
         menu = QMenu(self)
 
-        rename_action = menu.addAction("Rename Column...")
+        rename_action = menu.addAction(self.tr("Rename Column..."))
         if rename_action:
             rename_action.triggered.connect(lambda: self.rename_requested.emit(self._column_name))
 
         # WIP limit only makes sense for middle columns (not inbox or completion)
         if not self._is_first and not self._is_last:
-            wip_action = menu.addAction("Set WIP Limit...")
+            wip_action = menu.addAction(self.tr("Set WIP Limit..."))
             if wip_action:
                 wip_action.triggered.connect(
                     lambda: self.set_wip_limit_requested.emit(self._column_name)
@@ -728,7 +731,7 @@ class KanbanColumnWidget(QFrame):
 
             menu.addSeparator()
 
-            delete_action = menu.addAction("Delete Column")
+            delete_action = menu.addAction(self.tr("Delete Column"))
             if delete_action:
                 delete_action.triggered.connect(
                     lambda: self.delete_requested_col.emit(self._column_name)
@@ -1148,7 +1151,9 @@ class KanbanBoardWidget(QWidget):
         item = self._todo_list.get_item(item_id)
         if not item:
             return
-        text, ok = QInputDialog.getText(self, "Edit Reminder", "Reminder:", text=item.reminder)
+        text, ok = QInputDialog.getText(
+            self, self.tr("Edit Reminder"), self.tr("Reminder:"), text=item.reminder
+        )
         if ok and text != item.reminder:
             self.item_reminder_changed.emit(item_id, text)
 
@@ -1163,9 +1168,9 @@ class KanbanBoardWidget(QWidget):
         menu = QMenu(self)
 
         # Set Priority submenu
-        priority_menu = menu.addMenu("Set Priority")
+        priority_menu = menu.addMenu(self.tr("Set Priority"))
         if priority_menu:
-            priority_labels = {1: "High", 2: "Normal", 3: "Low"}
+            priority_labels = {1: self.tr("High"), 2: self.tr("Normal"), 3: self.tr("Low")}
             for pval, plabel in priority_labels.items():
                 prefix = "\u2713 " if item.priority == pval else "   "
                 p_action = priority_menu.addAction(f"{prefix}{plabel}")
@@ -1175,33 +1180,33 @@ class KanbanBoardWidget(QWidget):
                     )
 
         # Edit Reminder
-        edit_action = menu.addAction("Edit Reminder...")
+        edit_action = menu.addAction(self.tr("Edit Reminder..."))
         if edit_action:
             edit_action.triggered.connect(lambda: self._edit_reminder_for(item_id))
 
         # Edit Tags
-        tags_action = menu.addAction("Edit Tags...")
+        tags_action = menu.addAction(self.tr("Edit Tags..."))
         if tags_action:
             tags_action.triggered.connect(lambda: self.edit_tags_requested.emit(item_id))
 
         # Edit Due Date
-        due_action = menu.addAction("Edit Due Date...")
+        due_action = menu.addAction(self.tr("Edit Due Date..."))
         if due_action:
             due_action.triggered.connect(lambda: self._edit_due_date_for(item_id))
 
         # Edit Recurrence
-        rec_action = menu.addAction("Edit Recurrence...")
+        rec_action = menu.addAction(self.tr("Edit Recurrence..."))
         if rec_action:
             rec_action.triggered.connect(lambda: self._bridge_recurrence(item_id))
 
         # Start Focus
-        focus_action = menu.addAction("Start Focus Session")
+        focus_action = menu.addAction(self.tr("Start Focus Session"))
         if focus_action:
             focus_action.triggered.connect(lambda: self.focus_requested.emit(item_id))
 
         # Add Subtask (top-level only)
         if item.parent_id is None:
-            sub_action = menu.addAction("Add Subtask...")
+            sub_action = menu.addAction(self.tr("Add Subtask..."))
             if sub_action:
                 sub_action.triggered.connect(lambda: self.add_subtask_requested.emit(item_id))
 
@@ -1210,7 +1215,7 @@ class KanbanBoardWidget(QWidget):
         # Move to Column submenu
         columns = self._todo_list.board_columns if self._todo_list else []
         if len(columns) > 1:
-            move_menu = menu.addMenu("Move to Column")
+            move_menu = menu.addMenu(self.tr("Move to Column"))
             if move_menu:
                 for col in columns:
                     if col != item.board_column:
@@ -1224,13 +1229,13 @@ class KanbanBoardWidget(QWidget):
         menu.addSeparator()
 
         # Toggle Complete
-        toggle_text = "Mark Incomplete" if item.complete else "Mark Complete"
+        toggle_text = self.tr("Mark Incomplete") if item.complete else self.tr("Mark Complete")
         toggle_action = menu.addAction(toggle_text)
         if toggle_action:
             toggle_action.triggered.connect(lambda: self._bridge_toggle(item_id))
 
         # Delete
-        del_action = menu.addAction("Delete")
+        del_action = menu.addAction(self.tr("Delete"))
         if del_action:
             del_action.triggered.connect(lambda: self._bridge_delete(item_id))
 
@@ -1243,7 +1248,9 @@ class KanbanBoardWidget(QWidget):
         item = self._todo_list.get_item(item_id)
         if not item:
             return
-        text, ok = QInputDialog.getText(self, "Edit Reminder", "Reminder:", text=item.reminder)
+        text, ok = QInputDialog.getText(
+            self, self.tr("Edit Reminder"), self.tr("Reminder:"), text=item.reminder
+        )
         if ok and text != item.reminder:
             self.item_reminder_changed.emit(item_id, text)
 
@@ -1310,7 +1317,9 @@ class KanbanBoardWidget(QWidget):
 
     def _on_column_rename(self, column_name: str) -> None:
         """Handle column rename request — prompt for new name."""
-        new_name, ok = QInputDialog.getText(self, "Rename Column", "New name:", text=column_name)
+        new_name, ok = QInputDialog.getText(
+            self, self.tr("Rename Column"), self.tr("New name:"), text=column_name
+        )
         if not ok or not new_name.strip() or new_name == column_name:
             return
         new_name = new_name.strip()
@@ -1327,8 +1336,8 @@ class KanbanBoardWidget(QWidget):
             current = self._todo_list.get_wip_limit(column_name)
         limit, ok = QInputDialog.getInt(
             self,
-            "WIP Limit",
-            f"WIP limit for '{column_name}' (0 = no limit):",
+            self.tr("WIP Limit"),
+            self.tr(f"WIP limit for '{column_name}' (0 = no limit):"),
             current,
             0,
             99,

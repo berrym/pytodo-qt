@@ -61,7 +61,7 @@ class BatchDueDateDialog(QDialog):
 
     def __init__(self, items: list[TodoItem], parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Edit Due Dates")
+        self.setWindowTitle(self.tr("Edit Due Dates"))
         self.setMinimumWidth(550)
         self.setMinimumHeight(300)
         self._items = items
@@ -72,7 +72,7 @@ class BatchDueDateDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # --- "Set all to..." section ---
-        all_group = QGroupBox("Set All To")
+        all_group = QGroupBox(self.tr("Set All To"))
         all_layout = QHBoxLayout(all_group)
 
         self._all_date = QDateEdit()
@@ -80,7 +80,7 @@ class BatchDueDateDialog(QDialog):
         self._all_date.setDate(QDate.currentDate())
         all_layout.addWidget(self._all_date)
 
-        self._all_time_check = QCheckBox("Time")
+        self._all_time_check = QCheckBox(self.tr("Time"))
         self._all_time_check.stateChanged.connect(self._on_all_time_toggled)
         all_layout.addWidget(self._all_time_check)
 
@@ -89,14 +89,14 @@ class BatchDueDateDialog(QDialog):
         self._all_time.default_to_next_hour()
         all_layout.addWidget(self._all_time)
 
-        apply_btn = QPushButton("Apply to All")
+        apply_btn = QPushButton(self.tr("Apply to All"))
         apply_btn.clicked.connect(self._on_apply_all)
         all_layout.addWidget(apply_btn)
 
         layout.addWidget(all_group)
 
         # --- Per-item list ---
-        items_group = QGroupBox("Individual Items")
+        items_group = QGroupBox(self.tr("Individual Items"))
         items_outer = QVBoxLayout(items_group)
 
         scroll = QScrollArea()
@@ -120,7 +120,7 @@ class BatchDueDateDialog(QDialog):
                 date_edit.setDate(QDate.currentDate())
             row_layout.addWidget(date_edit)
 
-            time_check = QCheckBox("Time")
+            time_check = QCheckBox(self.tr("Time"))
             time_edit = TimeComboBox()
             time_edit.setEnabled(False)
             if item.due_time:
@@ -134,7 +134,7 @@ class BatchDueDateDialog(QDialog):
             row_layout.addWidget(time_check)
             row_layout.addWidget(time_edit)
 
-            clear_btn = QPushButton("Clear")
+            clear_btn = QPushButton(self.tr("Clear"))
             clear_btn.setFixedWidth(50)
             clear_btn.clicked.connect(
                 lambda _, de=date_edit, tc=time_check: self._on_clear_row(de, tc)
@@ -166,11 +166,11 @@ class BatchDueDateDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
 
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(self.tr("Cancel"))
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(cancel_btn)
 
-        ok_btn = QPushButton("OK")
+        ok_btn = QPushButton(self.tr("OK"))
         ok_btn.setDefault(True)
         ok_btn.clicked.connect(self.accept)
         btn_layout.addWidget(ok_btn)

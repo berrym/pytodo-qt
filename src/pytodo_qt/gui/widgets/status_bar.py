@@ -62,7 +62,7 @@ class DailyGoalRingWidget(QWidget):
     def update_goal(self, completed: int, goal: int) -> None:
         self._completed = completed
         self._goal = goal
-        self.setToolTip(f"Today: {completed}/{goal} sessions" if goal > 0 else "")
+        self.setToolTip(self.tr(f"Today: {completed}/{goal} sessions") if goal > 0 else "")
         self.setVisible(goal > 0)
         self.update()
 
@@ -129,7 +129,7 @@ class StatusBarWidget(QStatusBar):
         self.progress_bar.setMinimumWidth(130)
         self.progress_bar.setMaximumWidth(200)
         self.progress_bar.setTextVisible(True)
-        self.progress_bar.setFormat("%p% complete")
+        self.progress_bar.setFormat(self.tr("%p% complete"))
 
         self.list_count_label = QLabel()
         self._pomodoro_icon_label = QLabel()
@@ -246,9 +246,9 @@ class StatusBarWidget(QStatusBar):
         total_completed: int,
     ) -> None:
         """Update statistics display."""
-        self.list_count_label.setText(f"Lists: {list_count}")
-        self.item_count_label.setText(f"Current: {completed_count}/{item_count}")
-        self.total_label.setText(f"Total: {total_completed}/{total_items}")
+        self.list_count_label.setText(self.tr(f"Lists: {list_count}"))
+        self.item_count_label.setText(self.tr(f"Current: {completed_count}/{item_count}"))
+        self.total_label.setText(self.tr(f"Total: {total_completed}/{total_items}"))
 
         # Show global total only when multiple lists exist
         show_total = list_count > 1
@@ -270,10 +270,10 @@ class StatusBarWidget(QStatusBar):
     def set_server_status(self, running: bool, address: str = "", port: int = 0) -> None:
         """Set the server status display."""
         if running:
-            self.server_status_label.setText(f"Server: {address}:{port}")
+            self.server_status_label.setText(self.tr(f"Server: {address}:{port}"))
             self.server_status_label.setStyleSheet("color: green;")
         else:
-            self.server_status_label.setText("Server: Off")
+            self.server_status_label.setText(self.tr("Server: Off"))
             self.server_status_label.setStyleSheet("color: gray;")
 
     def set_web_status(self, running: bool, port: int = 0, pin: str = "") -> None:
@@ -285,9 +285,9 @@ class StatusBarWidget(QStatusBar):
             self.web_status_label.setText(text)
             self.web_status_label.setStyleSheet("color: green;")
             self.web_status_label.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.web_status_label.setToolTip("Click to show connection QR code")
+            self.web_status_label.setToolTip(self.tr("Click to show connection QR code"))
         else:
-            self.web_status_label.setText("Web: Off")
+            self.web_status_label.setText(self.tr("Web: Off"))
             self.web_status_label.setStyleSheet("color: gray;")
             self.web_status_label.setToolTip("")
             self.web_status_label.unsetCursor()
@@ -309,7 +309,7 @@ class StatusBarWidget(QStatusBar):
             auto: True if this is an auto-sync operation
         """
         if state == "syncing":
-            self.sync_status_label.setText("Syncing")
+            self.sync_status_label.setText(self.tr("Syncing"))
             self.sync_status_label.setStyleSheet("color: #4A90D9;")  # Blue
         elif state == "success":
             self._last_sync_time = datetime.now()
@@ -317,24 +317,24 @@ class StatusBarWidget(QStatusBar):
             self._update_sync_time_display()
             self.sync_status_label.setStyleSheet("color: green;")
         elif state == "error":
-            self.sync_status_label.setText("Sync failed")
+            self.sync_status_label.setText(self.tr("Sync failed"))
             self.sync_status_label.setStyleSheet("color: red;")
         else:  # idle
             if self._last_sync_time:
                 self._update_sync_time_display()
                 self.sync_status_label.setStyleSheet("")
             else:
-                self.sync_status_label.setText("Not synced")
+                self.sync_status_label.setText(self.tr("Not synced"))
                 self.sync_status_label.setStyleSheet("color: gray;")
 
     def _update_sync_time_display(self) -> None:
         """Update the sync time display with relative time."""
         if self._last_sync_time:
             time_ago = _format_time_ago(self._last_sync_time)
-            prefix = "Auto-synced" if self._last_auto_sync else "Synced"
+            prefix = self.tr("Auto-synced") if self._last_auto_sync else self.tr("Synced")
             self.sync_status_label.setText(f"{prefix} {time_ago}")
         else:
-            self.sync_status_label.setText("Not synced")
+            self.sync_status_label.setText(self.tr("Not synced"))
 
     def update_pomodoro_display(self, state: str, time_str: str = "") -> None:
         """Update the Pomodoro/stopwatch timer display in the status bar.
@@ -411,9 +411,11 @@ class StatusBarWidget(QStatusBar):
             count: Number of pending syncs across all devices
         """
         if count > 0:
-            self.pending_sync_label.setText(f"Queued: {count}")
+            self.pending_sync_label.setText(self.tr(f"Queued: {count}"))
             self.pending_sync_label.setStyleSheet("color: orange;")
-            self.pending_sync_label.setToolTip(f"{count} sync(s) queued for offline devices")
+            self.pending_sync_label.setToolTip(
+                self.tr(f"{count} sync(s) queued for offline devices")
+            )
             self.pending_sync_label.setVisible(True)
         else:
             self.pending_sync_label.setText("")

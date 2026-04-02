@@ -32,7 +32,7 @@ class AddListDialog(QDialog):
 
     def __init__(self, parent=None, database: Database | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Add List")
+        self.setWindowTitle(self.tr("Add List"))
         self.setMinimumWidth(350)
 
         self._database = database
@@ -48,11 +48,11 @@ class AddListDialog(QDialog):
 
         # Name input
         self.name_edit = QLineEdit()
-        self.name_edit.setPlaceholderText("Enter list name...")
-        form.addRow("Name:", self.name_edit)
+        self.name_edit.setPlaceholderText(self.tr("Enter list name..."))
+        form.addRow(self.tr("Name:"), self.name_edit)
 
         # Private checkbox
-        self.private_checkbox = QCheckBox("Private (won't sync)")
+        self.private_checkbox = QCheckBox(self.tr("Private (won't sync)"))
         form.addRow("", self.private_checkbox)
 
         layout.addLayout(form)
@@ -72,12 +72,16 @@ class AddListDialog(QDialog):
         """Handle OK button."""
         name = self.name_edit.text().strip()
         if not name:
-            QMessageBox.warning(self, "Validation Error", "Please enter a list name.")
+            QMessageBox.warning(
+                self, self.tr("Validation Error"), self.tr("Please enter a list name.")
+            )
             self.name_edit.setFocus()
             return
 
         if self._database and self._database.get_list_by_name(name):
-            QMessageBox.warning(self, "Duplicate", f'A list named "{name}" already exists.')
+            QMessageBox.warning(
+                self, self.tr("Duplicate"), self.tr(f'A list named "{name}" already exists.')
+            )
             self.name_edit.setFocus()
             return
 

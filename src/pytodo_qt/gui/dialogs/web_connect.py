@@ -193,6 +193,7 @@ def _pin_widget(pin: str) -> QLabel:
 
 def _browser_warning_visual(ip: str) -> QFrame:
     """Create a mock browser security warning with step-by-step guidance."""
+    _tr = QApplication.translate
     frame = QFrame()
     frame.setStyleSheet(
         "QFrame { background: palette(window); border: 1px solid palette(mid);"
@@ -202,7 +203,7 @@ def _browser_warning_visual(ip: str) -> QFrame:
     layout.setSpacing(6)
     layout.setContentsMargins(10, 8, 10, 8)
 
-    warning_bar = QLabel("\u26a0 Your connection is not private")
+    warning_bar = QLabel(_tr("MobileAccessWizard", "\u26a0 Your connection is not private"))
     warning_bar.setStyleSheet(
         "font-weight: bold; font-size: 12px; color: palette(windowText);"
         " border: none; background: none;"
@@ -210,8 +211,8 @@ def _browser_warning_visual(ip: str) -> QFrame:
     layout.addWidget(warning_bar)
 
     steps = [
-        '1. Look for "Advanced" or "Show Details" at the bottom',
-        f'2. Tap "Proceed to {ip}" or "Visit this website"',
+        _tr("MobileAccessWizard", '1. Look for "Advanced" or "Show Details" at the bottom'),
+        _tr("MobileAccessWizard", f'2. Tap "Proceed to {ip}" or "Visit this website"'),
     ]
     for step in steps:
         step_lbl = QLabel(step)
@@ -219,9 +220,12 @@ def _browser_warning_visual(ip: str) -> QFrame:
         layout.addWidget(step_lbl)
 
     reassurance = QLabel(
-        "This warning appears because the certificate was created by "
-        "your own computer, not a commercial authority. "
-        "Your connection is fully encrypted."
+        _tr(
+            "MobileAccessWizard",
+            "This warning appears because the certificate was created by "
+            "your own computer, not a commercial authority. "
+            "Your connection is fully encrypted.",
+        )
     )
     reassurance.setWordWrap(True)
     reassurance.setStyleSheet(
@@ -234,17 +238,18 @@ def _browser_warning_visual(ip: str) -> QFrame:
 
 def _time_ago(timestamp_ms: int) -> str:
     """Format a millisecond timestamp as a human-readable relative time."""
+    _tr = QApplication.translate
     diff = time.time() - timestamp_ms / 1000
     if diff < 60:
-        return "just now"
+        return _tr("MobileAccessWizard", "just now")
     if diff < 3600:
         m = int(diff / 60)
-        return f"{m} min{'s' if m != 1 else ''} ago"
+        return _tr("MobileAccessWizard", f"{m} min{'s' if m != 1 else ''} ago")
     if diff < 86400:
         h = int(diff / 3600)
-        return f"{h} hour{'s' if h != 1 else ''} ago"
+        return _tr("MobileAccessWizard", f"{h} hour{'s' if h != 1 else ''} ago")
     d = int(diff / 86400)
-    return f"{d} day{'s' if d != 1 else ''} ago"
+    return _tr("MobileAccessWizard", f"{d} day{'s' if d != 1 else ''} ago")
 
 
 class _MethodCard(QFrame):
@@ -272,7 +277,7 @@ class _MethodCard(QFrame):
         layout.setSpacing(8)
 
         if recommended:
-            ribbon = QLabel("Recommended")
+            ribbon = QLabel(self.tr("Recommended"))
             ribbon.setStyleSheet(
                 "background: palette(highlight); color: white; font-size: 9px;"
                 " font-weight: bold; border-radius: 4px; padding: 2px 8px;"
@@ -307,7 +312,7 @@ class _MethodCard(QFrame):
         badge_row.addStretch()
         layout.addLayout(badge_row)
 
-        btn = QPushButton("Start \u2192")
+        btn = QPushButton(self.tr("Start \u2192"))
         btn.setStyleSheet(
             "QPushButton { background: palette(highlight); color: white; border: none;"
             " border-radius: 6px; padding: 8px 16px; font-weight: bold; font-size: 13px; }"
@@ -346,7 +351,7 @@ class _DeviceRow(QFrame):
         dot = QLabel("\u2022")
         dot.setFixedWidth(14)
         dot.setStyleSheet(f"font-size: 18px; color: {dot_color}; border: none; background: none;")
-        dot.setToolTip("Active" if recently_seen else "Not seen recently")
+        dot.setToolTip(self.tr("Active") if recently_seen else self.tr("Not seen recently"))
         row.addWidget(dot, 0, Qt.AlignmentFlag.AlignVCenter)
 
         # Device name + details
@@ -354,7 +359,7 @@ class _DeviceRow(QFrame):
         info.setSpacing(2)
         display_name = device.device_name
         if not display_name or display_name == "Unknown device":
-            display_name = "Mobile device"
+            display_name = self.tr("Mobile device")
         name_lbl = QLabel(display_name)
         name_lbl.setStyleSheet(
             "font-weight: bold; font-size: 13px; border: none; background: none;"
@@ -362,10 +367,12 @@ class _DeviceRow(QFrame):
         info.addWidget(name_lbl)
 
         detail_parts = []
-        method_label = "Trusted" if device.pairing_method == "trusted" else "Quick"
+        method_label = (
+            self.tr("Trusted") if device.pairing_method == "trusted" else self.tr("Quick")
+        )
         detail_parts.append(method_label)
-        detail_parts.append(f"paired {_time_ago(device.paired_at)}")
-        detail_parts.append(f"last seen {_time_ago(device.last_seen)}")
+        detail_parts.append(self.tr(f"paired {_time_ago(device.paired_at)}"))
+        detail_parts.append(self.tr(f"last seen {_time_ago(device.last_seen)}"))
         detail_lbl = QLabel(" \u2022 ".join(detail_parts))
         detail_lbl.setStyleSheet(
             "font-size: 10px; color: palette(placeholderText); border: none; background: none;"
@@ -373,14 +380,14 @@ class _DeviceRow(QFrame):
         info.addWidget(detail_lbl)
 
         if is_stale:
-            stale_lbl = QLabel("\u26a0 Needs certificate reinstall")
+            stale_lbl = QLabel(self.tr("\u26a0 Needs certificate reinstall"))
             stale_lbl.setStyleSheet(
                 "font-size: 10px; color: #e67e22; font-weight: bold;"
                 " border: none; background: none;"
             )
             info.addWidget(stale_lbl)
         elif not recently_seen:
-            hint_lbl = QLabel("May need to reconnect")
+            hint_lbl = QLabel(self.tr("May need to reconnect"))
             hint_lbl.setStyleSheet(
                 "font-size: 10px; color: palette(placeholderText);"
                 " font-style: italic; border: none; background: none;"
@@ -394,7 +401,7 @@ class _DeviceRow(QFrame):
         btn_col.setSpacing(4)
 
         if on_reconnect:
-            reconnect_btn = QPushButton("Reconnect")
+            reconnect_btn = QPushButton(self.tr("Reconnect"))
             reconnect_btn.setFixedWidth(72)
             reconnect_btn.setStyleSheet(
                 "QPushButton { color: palette(highlight); font-size: 11px;"
@@ -405,7 +412,7 @@ class _DeviceRow(QFrame):
             reconnect_btn.clicked.connect(on_reconnect)
             btn_col.addWidget(reconnect_btn)
 
-        forget_btn = QPushButton("Forget")
+        forget_btn = QPushButton(self.tr("Forget"))
         forget_btn.setFixedWidth(72)
         forget_btn.setStyleSheet(
             "QPushButton { color: #c0392b; font-size: 11px; border: 1px solid #c0392b;"
@@ -437,7 +444,7 @@ class MobileAccessWizard(QDialog):
 
     def __init__(self, parent: MainWindow | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Mobile Access")
+        self.setWindowTitle(self.tr("Mobile Access"))
         self.setMinimumSize(500, 580)
 
         self._main_window: MainWindow | None = parent
@@ -523,12 +530,12 @@ class MobileAccessWizard(QDialog):
         bottom_layout = QHBoxLayout(bottom)
         bottom_layout.setContentsMargins(16, 8, 16, 8)
 
-        self._back_btn = QPushButton("\u2190 Back")
+        self._back_btn = QPushButton(self.tr("\u2190 Back"))
         self._back_btn.clicked.connect(self._on_back)
         self._back_btn.setVisible(False)
         bottom_layout.addWidget(self._back_btn)
 
-        self._change_link = QPushButton("Change method")
+        self._change_link = QPushButton(self.tr("Change method"))
         self._change_link.setFlat(True)
         self._change_link.setStyleSheet("color: palette(highlight); font-size: 11px;")
         self._change_link.clicked.connect(self._on_change_method)
@@ -538,11 +545,11 @@ class MobileAccessWizard(QDialog):
         bottom_layout.addStretch()
 
         if self._url:
-            copy_btn = QPushButton("Copy URL")
+            copy_btn = QPushButton(self.tr("Copy URL"))
             copy_btn.clicked.connect(self._copy_url)
             bottom_layout.addWidget(copy_btn)
 
-        done_btn = QPushButton("Done")
+        done_btn = QPushButton(self.tr("Done"))
         done_btn.setDefault(True)
         done_btn.clicked.connect(self._on_done)
         bottom_layout.addWidget(done_btn)
@@ -571,14 +578,16 @@ class MobileAccessWizard(QDialog):
         layout.setContentsMargins(24, 16, 24, 16)
         layout.setSpacing(12)
 
-        title = QLabel("Connected Devices")
+        title = QLabel(self.tr("Connected Devices"))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size: 17px; font-weight: 600;")
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "Devices currently paired to this app."
-            " Open the wizard again any time to add more or reconnect."
+            self.tr(
+                "Devices currently paired to this app."
+                " Open the wizard again any time to add more or reconnect."
+            )
         )
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)
@@ -594,7 +603,7 @@ class MobileAccessWizard(QDialog):
             ca_gen = 0
 
         if not devices:
-            empty = QLabel("No devices connected yet.")
+            empty = QLabel(self.tr("No devices connected yet."))
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
             empty.setStyleSheet("font-size: 13px; color: palette(mid); padding: 20px;")
             layout.addWidget(empty)
@@ -603,7 +612,7 @@ class MobileAccessWizard(QDialog):
                 is_stale = device.ca_generation < ca_gen
                 display_name = device.device_name
                 if not display_name or display_name == "Unknown device":
-                    display_name = "Mobile device"
+                    display_name = self.tr("Mobile device")
                 row = _DeviceRow(
                     device,
                     is_stale=is_stale,
@@ -615,7 +624,7 @@ class MobileAccessWizard(QDialog):
                 layout.addWidget(row)
 
         # Add another device button
-        add_btn = QPushButton("+ Add another device")
+        add_btn = QPushButton(self.tr("+ Add another device"))
         add_btn.setStyleSheet(
             "QPushButton { background: palette(highlight); color: white; border: none;"
             " border-radius: 6px; padding: 10px 20px; font-weight: bold; font-size: 13px; }"
@@ -624,7 +633,7 @@ class MobileAccessWizard(QDialog):
         layout.addWidget(add_btn)
 
         if devices:
-            revoke_btn = QPushButton("Forget all devices")
+            revoke_btn = QPushButton(self.tr("Forget all devices"))
             revoke_btn.setFlat(True)
             revoke_btn.setStyleSheet("color: #c0392b; font-size: 11px; padding: 4px;")
             revoke_btn.clicked.connect(self._on_revoke_all)
@@ -645,7 +654,9 @@ class MobileAccessWizard(QDialog):
 
         if self._url is None:
             error = QLabel(
-                "Could not detect network address.\nEnsure you are connected to a local network."
+                self.tr(
+                    "Could not detect network address.\nEnsure you are connected to a local network."
+                )
             )
             error.setAlignment(Qt.AlignmentFlag.AlignCenter)
             error.setWordWrap(True)
@@ -654,12 +665,12 @@ class MobileAccessWizard(QDialog):
             layout.addStretch()
             return page
 
-        title = QLabel("Connect a Mobile Device")
+        title = QLabel(self.tr("Connect a Mobile Device"))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size: 18px; font-weight: bold;")
         layout.addWidget(title)
 
-        subtitle = QLabel("Choose how to connect your phone, tablet, or other device")
+        subtitle = QLabel(self.tr("Choose how to connect your phone, tablet, or other device"))
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)
         subtitle.setStyleSheet("font-size: 12px;")
@@ -672,13 +683,13 @@ class MobileAccessWizard(QDialog):
 
         quick_card = _MethodCard(
             icon_text="\u26a1",
-            title="Quick Connect",
-            subtitle="Fastest setup \u2014 scan and go",
-            description=(
+            title=self.tr("Quick Connect"),
+            subtitle=self.tr("Fastest setup \u2014 scan and go"),
+            description=self.tr(
                 "Your browser will show a one-time security warning."
                 " All traffic is still fully encrypted."
             ),
-            badge_text="\U0001f512 Encrypted",
+            badge_text=self.tr("\U0001f512 Encrypted"),
             badge_color="#4CAF50",
         )
         quick_card.start_button.clicked.connect(lambda: self._go_to_page(self.PAGE_QUICK))
@@ -686,14 +697,14 @@ class MobileAccessWizard(QDialog):
 
         trusted_card = _MethodCard(
             icon_text="\U0001f6e1",
-            title="Trusted Connect",
-            subtitle="One-time setup \u2014 seamless after that",
-            description=(
+            title=self.tr("Trusted Connect"),
+            subtitle=self.tr("One-time setup \u2014 seamless after that"),
+            description=self.tr(
                 "Install a security certificate on your device."
                 " No browser warnings until your network address"
                 " or certificate changes."
             ),
-            badge_text="\U0001f512 Encrypted + Trusted",
+            badge_text=self.tr("\U0001f512 Encrypted + Trusted"),
             badge_color="#1976D2",
             recommended=True,
         )
@@ -703,7 +714,7 @@ class MobileAccessWizard(QDialog):
         layout.addLayout(cards_row)
         layout.addSpacing(4)
 
-        self._remember_check = QCheckBox("Remember my choice")
+        self._remember_check = QCheckBox(self.tr("Remember my choice"))
         mw = self._main_window
         if mw:
             self._remember_check.setChecked(bool(mw._config.web.connect_method))
@@ -728,7 +739,7 @@ class MobileAccessWizard(QDialog):
         layout.setContentsMargins(24, 16, 24, 16)
         layout.setSpacing(12)
 
-        header = QLabel("Quick Connect")
+        header = QLabel(self.tr("Quick Connect"))
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header.setStyleSheet("font-size: 16px; font-weight: bold;")
         layout.addWidget(header)
@@ -746,7 +757,7 @@ class MobileAccessWizard(QDialog):
             qr_layout.addWidget(qr)
             qr_layout.addWidget(url_lbl)
             layout.addWidget(
-                _step_row(1, "Scan this QR code with your device camera", "", qr_container)
+                _step_row(1, self.tr("Scan this QR code with your device camera"), "", qr_container)
             )
 
             # Step 2: Accept warning
@@ -754,11 +765,13 @@ class MobileAccessWizard(QDialog):
             layout.addWidget(
                 _step_row(
                     2,
-                    "Accept the security warning",
-                    "Your browser will show a certificate warning."
-                    " If you previously used Trusted Connect, you may"
-                    " need to clear this site's data in your browser"
-                    " settings first.",
+                    self.tr("Accept the security warning"),
+                    self.tr(
+                        "Your browser will show a certificate warning."
+                        " If you previously used Trusted Connect, you may"
+                        " need to clear this site's data in your browser"
+                        " settings first."
+                    ),
                     warning_visual,
                 )
             )
@@ -788,7 +801,7 @@ class MobileAccessWizard(QDialog):
         layout.setContentsMargins(24, 16, 24, 16)
         layout.setSpacing(12)
 
-        header = QLabel("Trusted Connect")
+        header = QLabel(self.tr("Trusted Connect"))
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header.setStyleSheet("font-size: 16px; font-weight: bold;")
         layout.addWidget(header)
@@ -825,7 +838,7 @@ class MobileAccessWizard(QDialog):
                 lbl.setStyleSheet("font-size: 11px; padding: 4px 0;")
                 ios_layout.addWidget(lbl)
             ios_layout.addStretch()
-            tabs.addTab(ios_widget, "iOS / iPadOS")
+            tabs.addTab(ios_widget, self.tr("iOS / iPadOS"))
 
             android_widget = QWidget()
             android_layout = QVBoxLayout(android_widget)
@@ -845,14 +858,16 @@ class MobileAccessWizard(QDialog):
                 android_layout.addWidget(lbl)
 
             android_caveat = QLabel(
-                "Steps vary by manufacturer and Android version."
-                ' If these don\'t match, search Settings for "certificate".'
+                self.tr(
+                    "Steps vary by manufacturer and Android version."
+                    ' If these don\'t match, search Settings for "certificate".'
+                )
             )
             android_caveat.setWordWrap(True)
             android_caveat.setStyleSheet("font-size: 10px; font-style: italic; padding: 4px 0;")
             android_layout.addWidget(android_caveat)
             android_layout.addStretch()
-            tabs.addTab(android_widget, "Android")
+            tabs.addTab(android_widget, self.tr("Android"))
 
             cert_container = QWidget()
             cert_layout = QVBoxLayout(cert_container)
@@ -863,9 +878,11 @@ class MobileAccessWizard(QDialog):
             layout.addWidget(
                 _step_row(
                     1,
-                    "Install the security certificate",
-                    "One-time setup per device. Allows encrypted connections"
-                    " without browser warnings.",
+                    self.tr("Install the security certificate"),
+                    self.tr(
+                        "One-time setup per device. Allows encrypted connections"
+                        " without browser warnings."
+                    ),
                     cert_container,
                 )
             )
@@ -875,8 +892,8 @@ class MobileAccessWizard(QDialog):
             layout.addWidget(
                 _step_row(
                     2,
-                    "Open the app \u2014 no warning this time",
-                    "Scan this QR code to open the web app.",
+                    self.tr("Open the app \u2014 no warning this time"),
+                    self.tr("Scan this QR code to open the web app."),
                     app_qr,
                 )
             )
@@ -889,7 +906,7 @@ class MobileAccessWizard(QDialog):
             layout.addWidget(self._build_install_step(4))
 
             # Regenerate certificate option
-            regen_btn = QPushButton("Regenerate certificate")
+            regen_btn = QPushButton(self.tr("Regenerate certificate"))
             regen_btn.setFlat(True)
             regen_btn.setStyleSheet("color: palette(highlight); font-size: 11px;")
             regen_btn.clicked.connect(self._on_regenerate_certs)
@@ -927,17 +944,19 @@ class MobileAccessWizard(QDialog):
         layout.setContentsMargins(24, 16, 24, 16)
         layout.setSpacing(12)
 
-        title = QLabel("\u26a0 Certificate Changed")
+        title = QLabel(self.tr("\u26a0 Certificate Changed"))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size: 18px; font-weight: bold; color: #e67e22;")
         layout.addWidget(title)
 
         explanation = QLabel(
-            "The security certificate was regenerated. Devices that used"
-            " Trusted Connect need to install the new certificate to"
-            " reconnect without browser warnings.\n\n"
-            "Quick Connect devices can reconnect by accepting the new"
-            " browser warning \u2014 no action needed."
+            self.tr(
+                "The security certificate was regenerated. Devices that used"
+                " Trusted Connect need to install the new certificate to"
+                " reconnect without browser warnings.\n\n"
+                "Quick Connect devices can reconnect by accepting the new"
+                " browser warning \u2014 no action needed."
+            )
         )
         explanation.setWordWrap(True)
         explanation.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -969,7 +988,7 @@ class MobileAccessWizard(QDialog):
                     layout.addWidget(row)
 
             # Action buttons
-            reinstall_btn = QPushButton("Show certificate install steps")
+            reinstall_btn = QPushButton(self.tr("Show certificate install steps"))
             reinstall_btn.setStyleSheet(
                 "QPushButton { background: #1976D2; color: white; border: none;"
                 " border-radius: 6px; padding: 10px 20px; font-weight: bold; }"
@@ -1001,13 +1020,15 @@ class MobileAccessWizard(QDialog):
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(16)
 
-        title = QLabel(f"Reconnect {self._reconnect_device_name}")
+        title = QLabel(self.tr(f"Reconnect {self._reconnect_device_name}"))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size: 17px; font-weight: 600;")
         title.setWordWrap(True)
         layout.addWidget(title)
 
-        instruction = QLabel("Scan this QR code on the device to reconnect.\nNo re-pairing needed.")
+        instruction = QLabel(
+            self.tr("Scan this QR code on the device to reconnect.\nNo re-pairing needed.")
+        )
         instruction.setAlignment(Qt.AlignmentFlag.AlignCenter)
         instruction.setWordWrap(True)
         instruction.setStyleSheet(
@@ -1027,7 +1048,7 @@ class MobileAccessWizard(QDialog):
 
             # Show IP fallback if using .local
             if self._url_ip and self._url_ip != self._url:
-                fallback_lbl = QLabel(f"IP address: {self._url_ip}")
+                fallback_lbl = QLabel(self.tr(f"IP address: {self._url_ip}"))
                 fallback_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 fallback_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
                 fallback_lbl.setStyleSheet("font-size: 10px; color: palette(placeholderText);")
@@ -1042,23 +1063,27 @@ class MobileAccessWizard(QDialog):
         pin_layout = QVBoxLayout(pin_container)
         pin_layout.setContentsMargins(0, 0, 0, 0)
         pin_layout.addWidget(_pin_widget(self._pairing_pin))
-        pin_hint = QLabel("PIN expires in 5 minutes \u2022 Auto-submits at 6 digits")
+        pin_hint = QLabel(self.tr("PIN expires in 5 minutes \u2022 Auto-submits at 6 digits"))
         pin_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         pin_hint.setStyleSheet("font-size: 10px; border: none; background: none;")
         pin_layout.addWidget(pin_hint)
-        return _step_row(step_number, "Enter this PIN on the login page", "", pin_container)
+        return _step_row(
+            step_number, self.tr("Enter this PIN on the login page"), "", pin_container
+        )
 
     def _build_install_step(self, step_number: int) -> QFrame:
         """Build the reusable PWA install step."""
         install_info = QLabel(
-            "iOS: Tap Share \u2192 Add to Home Screen\n"
-            "Android: Tap browser menu (\u22ee) \u2192 Install app"
+            self.tr(
+                "iOS: Tap Share \u2192 Add to Home Screen\n"
+                "Android: Tap browser menu (\u22ee) \u2192 Install app"
+            )
         )
         install_info.setStyleSheet("font-size: 11px; border: none; background: none;")
         return _step_row(
             step_number,
-            "Add to Home Screen (optional)",
-            "For quick access without scanning the QR code again.",
+            self.tr("Add to Home Screen (optional)"),
+            self.tr("For quick access without scanning the QR code again."),
             install_info,
         )
 
@@ -1145,9 +1170,11 @@ class MobileAccessWizard(QDialog):
         if (
             QMessageBox.question(
                 self,
-                "Forget All Devices",
-                "This will disconnect all phones and tablets.\n"
-                "They will need to re-pair using a new PIN.\n\nContinue?",
+                self.tr("Forget All Devices"),
+                self.tr(
+                    "This will disconnect all phones and tablets.\n"
+                    "They will need to re-pair using a new PIN.\n\nContinue?"
+                ),
             )
             != QMessageBox.StandardButton.Yes
         ):
@@ -1177,13 +1204,15 @@ class MobileAccessWizard(QDialog):
             mw._web_server.regenerate_certs()
             QMessageBox.information(
                 self,
-                "Certificate Regenerated",
-                "A new certificate has been generated.\n"
-                "Devices using Trusted Connect will need to\n"
-                "install the new certificate to reconnect\n"
-                "without browser warnings.\n\n"
-                "Quick Connect devices just need to accept\n"
-                "the new browser warning.",
+                self.tr("Certificate Regenerated"),
+                self.tr(
+                    "A new certificate has been generated.\n"
+                    "Devices using Trusted Connect will need to\n"
+                    "install the new certificate to reconnect\n"
+                    "without browser warnings.\n\n"
+                    "Quick Connect devices just need to accept\n"
+                    "the new browser warning."
+                ),
             )
             # Check if any devices are now stale
             if mw._web_server.get_paired_devices():

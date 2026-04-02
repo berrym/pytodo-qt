@@ -46,7 +46,7 @@ class AddTodoDialog(QDialog):
 
     def __init__(self, parent=None, *, known_tags: list[str] | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Add To-Do")
+        self.setWindowTitle(self.tr("Add To-Do"))
         self.setMinimumWidth(720)
 
         self._item: TodoItem | None = None
@@ -69,7 +69,7 @@ class AddTodoDialog(QDialog):
         layout.addWidget(self._smart_input)
 
         # Advanced toggle
-        self._advanced_toggle = QLabel('<a href="#">Advanced ▶</a>')
+        self._advanced_toggle = QLabel(self.tr('<a href="#">Advanced ▶</a>'))
         self._advanced_toggle.setTextFormat(Qt.TextFormat.RichText)
         self._advanced_toggle.linkActivated.connect(self._on_toggle_advanced)
         layout.addWidget(self._advanced_toggle)
@@ -90,21 +90,21 @@ class AddTodoDialog(QDialog):
 
         # Reminder input
         self.reminder_edit = QLineEdit()
-        self.reminder_edit.setPlaceholderText("Enter reminder text...")
-        form.addRow("Reminder:", self.reminder_edit)
+        self.reminder_edit.setPlaceholderText(self.tr("Enter reminder text..."))
+        form.addRow(self.tr("Reminder:"), self.reminder_edit)
 
         # Priority combo
         self.priority_combo = QComboBox()
-        self.priority_combo.addItem("High", 1)
-        self.priority_combo.addItem("Normal", 2)
-        self.priority_combo.addItem("Low", 3)
+        self.priority_combo.addItem(self.tr("High"), 1)
+        self.priority_combo.addItem(self.tr("Normal"), 2)
+        self.priority_combo.addItem(self.tr("Low"), 3)
         self.priority_combo.setCurrentIndex(1)  # Default to Normal
-        form.addRow("Priority:", self.priority_combo)
+        form.addRow(self.tr("Priority:"), self.priority_combo)
 
         # Due date with checkbox
         due_date_layout = QHBoxLayout()
 
-        self.due_date_checkbox = QCheckBox("Set due date")
+        self.due_date_checkbox = QCheckBox(self.tr("Set due date"))
         self.due_date_checkbox.stateChanged.connect(self._on_due_date_toggled)
 
         self.due_date_edit = QDateEdit()
@@ -114,12 +114,12 @@ class AddTodoDialog(QDialog):
 
         due_date_layout.addWidget(self.due_date_checkbox)
         due_date_layout.addWidget(self.due_date_edit, 1)
-        form.addRow("Due Date:", due_date_layout)
+        form.addRow(self.tr("Due Date:"), due_date_layout)
 
         # Due time with checkbox
         due_time_layout = QHBoxLayout()
 
-        self.due_time_checkbox = QCheckBox("Set due time")
+        self.due_time_checkbox = QCheckBox(self.tr("Set due time"))
         self.due_time_checkbox.setEnabled(False)
         self.due_time_checkbox.stateChanged.connect(self._on_due_time_toggled)
 
@@ -129,69 +129,73 @@ class AddTodoDialog(QDialog):
 
         due_time_layout.addWidget(self.due_time_checkbox)
         due_time_layout.addWidget(self.due_time_edit, 1)
-        form.addRow("Due Time:", due_time_layout)
+        form.addRow(self.tr("Due Time:"), due_time_layout)
 
         # Tags input
         self.tags_edit = QLineEdit()
-        self.tags_edit.setPlaceholderText("e.g. @work, @errands, @quick")
-        self.tags_edit.setToolTip("Comma-separated tags (@ prefix added automatically)")
-        form.addRow("Tags:", self.tags_edit)
+        self.tags_edit.setPlaceholderText(self.tr("e.g. @work, @errands, @quick"))
+        self.tags_edit.setToolTip(self.tr("Comma-separated tags (@ prefix added automatically)"))
+        form.addRow(self.tr("Tags:"), self.tags_edit)
 
         # Estimated focus sessions
         self.estimated_pomodoros_spin = QSpinBox()
         self.estimated_pomodoros_spin.setRange(0, 99)
         self.estimated_pomodoros_spin.setValue(0)
-        self.estimated_pomodoros_spin.setSpecialValueText("None")
-        self.estimated_pomodoros_spin.setToolTip("Estimated number of focus sessions to complete")
-        form.addRow("Estimated Sessions:", self.estimated_pomodoros_spin)
+        self.estimated_pomodoros_spin.setSpecialValueText(self.tr("None"))
+        self.estimated_pomodoros_spin.setToolTip(
+            self.tr("Estimated number of focus sessions to complete")
+        )
+        form.addRow(self.tr("Estimated Sessions:"), self.estimated_pomodoros_spin)
 
         # Estimated time (minutes) for stopwatch users
         self.estimated_minutes_spin = QSpinBox()
         self.estimated_minutes_spin.setRange(0, 9999)
         self.estimated_minutes_spin.setValue(0)
-        self.estimated_minutes_spin.setSuffix(" min")
-        self.estimated_minutes_spin.setSpecialValueText("None")
+        self.estimated_minutes_spin.setSuffix(self.tr(" min"))
+        self.estimated_minutes_spin.setSpecialValueText(self.tr("None"))
         self.estimated_minutes_spin.setToolTip(
-            "Estimated time to complete (for stopwatch tracking)"
+            self.tr("Estimated time to complete (for stopwatch tracking)")
         )
-        form.addRow("Estimated Time:", self.estimated_minutes_spin)
+        form.addRow(self.tr("Estimated Time:"), self.estimated_minutes_spin)
 
         # Per-task pomodoro durations (optional overrides)
         self.task_work_duration_spin = QSpinBox()
         self.task_work_duration_spin.setRange(0, 120)
         self.task_work_duration_spin.setValue(0)
-        self.task_work_duration_spin.setSuffix(" min")
-        self.task_work_duration_spin.setSpecialValueText("Default")
+        self.task_work_duration_spin.setSuffix(self.tr(" min"))
+        self.task_work_duration_spin.setSpecialValueText(self.tr("Default"))
         self.task_work_duration_spin.setToolTip(
-            "Override work session length (0 = use global setting)"
+            self.tr("Override work session length (0 = use global setting)")
         )
-        form.addRow("Session Length:", self.task_work_duration_spin)
+        form.addRow(self.tr("Session Length:"), self.task_work_duration_spin)
 
         self.task_break_duration_spin = QSpinBox()
         self.task_break_duration_spin.setRange(0, 30)
         self.task_break_duration_spin.setValue(0)
-        self.task_break_duration_spin.setSuffix(" min")
-        self.task_break_duration_spin.setSpecialValueText("Default")
+        self.task_break_duration_spin.setSuffix(self.tr(" min"))
+        self.task_break_duration_spin.setSpecialValueText(self.tr("Default"))
         self.task_break_duration_spin.setToolTip(
-            "Override short break length (0 = use global setting)"
+            self.tr("Override short break length (0 = use global setting)")
         )
-        form.addRow("Break Length:", self.task_break_duration_spin)
+        form.addRow(self.tr("Break Length:"), self.task_break_duration_spin)
 
         self.task_long_break_spin = QSpinBox()
         self.task_long_break_spin.setRange(0, 60)
         self.task_long_break_spin.setValue(0)
-        self.task_long_break_spin.setSuffix(" min")
-        self.task_long_break_spin.setSpecialValueText("Default")
-        self.task_long_break_spin.setToolTip("Override long break length (0 = use global setting)")
-        form.addRow("Long Break:", self.task_long_break_spin)
+        self.task_long_break_spin.setSuffix(self.tr(" min"))
+        self.task_long_break_spin.setSpecialValueText(self.tr("Default"))
+        self.task_long_break_spin.setToolTip(
+            self.tr("Override long break length (0 = use global setting)")
+        )
+        form.addRow(self.tr("Long Break:"), self.task_long_break_spin)
 
         # Recurrence section
-        self.recurrence_checkbox = QCheckBox("Repeat")
+        self.recurrence_checkbox = QCheckBox(self.tr("Repeat"))
         # Recurrence always available — auto-sets due_date=today if needed
         self.recurrence_checkbox.stateChanged.connect(self._on_recurrence_toggled)
 
         recurrence_layout = QHBoxLayout()
-        recurrence_layout.addWidget(QLabel("Every"))
+        recurrence_layout.addWidget(QLabel(self.tr("Every")))
 
         self.interval_spin = QSpinBox()
         self.interval_spin.setRange(1, 99)
@@ -200,11 +204,11 @@ class AddTodoDialog(QDialog):
         recurrence_layout.addWidget(self.interval_spin)
 
         self.type_combo = QComboBox()
-        self.type_combo.addItem("Minute(s)", "minutely")
-        self.type_combo.addItem("Day(s)", "daily")
-        self.type_combo.addItem("Week(s)", "weekly")
-        self.type_combo.addItem("Month(s)", "monthly")
-        self.type_combo.addItem("Year(s)", "yearly")
+        self.type_combo.addItem(self.tr("Minute(s)"), "minutely")
+        self.type_combo.addItem(self.tr("Day(s)"), "daily")
+        self.type_combo.addItem(self.tr("Week(s)"), "weekly")
+        self.type_combo.addItem(self.tr("Month(s)"), "monthly")
+        self.type_combo.addItem(self.tr("Year(s)"), "yearly")
         self.type_combo.setCurrentIndex(1)  # Default to daily
         self.type_combo.setEnabled(False)
         recurrence_layout.addWidget(self.type_combo)
@@ -215,13 +219,13 @@ class AddTodoDialog(QDialog):
         recurrence_row_layout.addWidget(self.recurrence_checkbox)
         recurrence_row_layout.addLayout(recurrence_layout)
         recurrence_row_layout.addStretch()
-        form.addRow("Recurrence:", recurrence_row)
+        form.addRow(self.tr("Recurrence:"), recurrence_row)
 
         # End condition
-        self.end_never_radio = QRadioButton("Never")
+        self.end_never_radio = QRadioButton(self.tr("Never"))
         self.end_never_radio.setChecked(True)
-        self.end_date_radio = QRadioButton("On date")
-        self.end_count_radio = QRadioButton("After")
+        self.end_date_radio = QRadioButton(self.tr("On date"))
+        self.end_count_radio = QRadioButton(self.tr("After"))
 
         end_group = QButtonGroup(self)
         end_group.addButton(self.end_never_radio)
@@ -245,13 +249,13 @@ class AddTodoDialog(QDialog):
         end_layout.addWidget(self.end_date_edit)
         end_layout.addWidget(self.end_count_radio)
         end_layout.addWidget(self.end_count_spin)
-        end_layout.addWidget(QLabel("times"))
+        end_layout.addWidget(QLabel(self.tr("times")))
         end_layout.addStretch()
 
         self.end_widget = QWidget()
         self.end_widget.setLayout(end_layout)
         self.end_widget.setEnabled(False)
-        form.addRow("Ends:", self.end_widget)
+        form.addRow(self.tr("Ends:"), self.end_widget)
 
         layout.addWidget(self._advanced_scroll, 1)  # stretch factor for scroll area
 
@@ -271,7 +275,7 @@ class AddTodoDialog(QDialog):
         self._advanced_shown = not self._advanced_shown
         self._advanced_scroll.setVisible(self._advanced_shown)
         arrow = "\u25bc" if self._advanced_shown else "\u25b6"
-        self._advanced_toggle.setText(f'<a href="#">Advanced {arrow}</a>')
+        self._advanced_toggle.setText(self.tr(f'<a href="#">Advanced {arrow}</a>'))
         # Populate fields from current parse result when opening advanced
         if self._advanced_shown:
             result = self._smart_input.get_parse_result()
@@ -426,7 +430,9 @@ class AddTodoDialog(QDialog):
             result = self._smart_input.get_parse_result()
             reminder = result.reminder.strip()
             if not reminder:
-                QMessageBox.warning(self, "Validation Error", "Please enter a reminder.")
+                QMessageBox.warning(
+                    self, self.tr("Validation Error"), self.tr("Please enter a reminder.")
+                )
                 self._smart_input.set_focus()
                 return
 
@@ -459,7 +465,9 @@ class AddTodoDialog(QDialog):
             # Build item from discrete fields
             reminder = self.reminder_edit.text().strip()
             if not reminder:
-                QMessageBox.warning(self, "Validation Error", "Please enter a reminder.")
+                QMessageBox.warning(
+                    self, self.tr("Validation Error"), self.tr("Please enter a reminder.")
+                )
                 self.reminder_edit.setFocus()
                 return
 

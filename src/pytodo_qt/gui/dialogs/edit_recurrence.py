@@ -34,7 +34,7 @@ class EditRecurrenceDialog(QDialog):
 
     def __init__(self, item: TodoItem, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Edit Recurrence")
+        self.setWindowTitle(self.tr("Edit Recurrence"))
         self.setMinimumWidth(400)
 
         self._result: tuple[str | None, int, date | None, int | None] | None = None
@@ -47,7 +47,7 @@ class EditRecurrenceDialog(QDialog):
 
         # Type and interval
         recurrence_layout = QHBoxLayout()
-        recurrence_layout.addWidget(QLabel("Every"))
+        recurrence_layout.addWidget(QLabel(self.tr("Every")))
 
         self.interval_spin = QSpinBox()
         self.interval_spin.setRange(1, 99)
@@ -55,11 +55,11 @@ class EditRecurrenceDialog(QDialog):
         recurrence_layout.addWidget(self.interval_spin)
 
         self.type_combo = QComboBox()
-        self.type_combo.addItem("Minute(s)", "minutely")
-        self.type_combo.addItem("Day(s)", "daily")
-        self.type_combo.addItem("Week(s)", "weekly")
-        self.type_combo.addItem("Month(s)", "monthly")
-        self.type_combo.addItem("Year(s)", "yearly")
+        self.type_combo.addItem(self.tr("Minute(s)"), "minutely")
+        self.type_combo.addItem(self.tr("Day(s)"), "daily")
+        self.type_combo.addItem(self.tr("Week(s)"), "weekly")
+        self.type_combo.addItem(self.tr("Month(s)"), "monthly")
+        self.type_combo.addItem(self.tr("Year(s)"), "yearly")
         if item.recurrence_type:
             type_index = self.type_combo.findData(item.recurrence_type)
             if type_index >= 0:
@@ -67,12 +67,12 @@ class EditRecurrenceDialog(QDialog):
         recurrence_layout.addWidget(self.type_combo)
         recurrence_layout.addStretch()
 
-        form.addRow("Repeat:", recurrence_layout)
+        form.addRow(self.tr("Repeat:"), recurrence_layout)
 
         # End condition
-        self.end_never_radio = QRadioButton("Never")
-        self.end_date_radio = QRadioButton("On date")
-        self.end_count_radio = QRadioButton("After")
+        self.end_never_radio = QRadioButton(self.tr("Never"))
+        self.end_date_radio = QRadioButton(self.tr("On date"))
+        self.end_count_radio = QRadioButton(self.tr("After"))
 
         end_group = QButtonGroup(self)
         end_group.addButton(self.end_never_radio)
@@ -118,19 +118,19 @@ class EditRecurrenceDialog(QDialog):
         end_layout.addWidget(self.end_date_edit)
         end_layout.addWidget(self.end_count_radio)
         end_layout.addWidget(self.end_count_spin)
-        end_layout.addWidget(QLabel("times"))
+        end_layout.addWidget(QLabel(self.tr("times")))
         end_layout.addStretch()
 
         end_widget = QWidget()
         end_widget.setLayout(end_layout)
-        form.addRow("Ends:", end_widget)
+        form.addRow(self.tr("Ends:"), end_widget)
 
         layout.addLayout(form)
 
         # Buttons
         button_layout = QHBoxLayout()
 
-        remove_btn = QPushButton("Remove Recurrence")
+        remove_btn = QPushButton(self.tr("Remove Recurrence"))
         remove_btn.clicked.connect(self._on_remove)
         button_layout.addWidget(remove_btn)
 

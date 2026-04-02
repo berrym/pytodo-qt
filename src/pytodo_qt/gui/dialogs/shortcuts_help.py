@@ -58,7 +58,7 @@ class ShortcutsHelpDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Keyboard Shortcuts")
+        self.setWindowTitle(self.tr("Keyboard Shortcuts"))
         self.setMinimumSize(450, 400)
         self._setup_ui()
 
@@ -67,14 +67,16 @@ class ShortcutsHelpDialog(QDialog):
 
         table = QTableWidget()
         table.setColumnCount(3)
-        table.setHorizontalHeaderLabels(["Category", "Shortcut", "Action"])
+        table.setHorizontalHeaderLabels(
+            [self.tr("Category"), self.tr("Shortcut"), self.tr("Action")]
+        )
         table.setRowCount(len(_SHORTCUTS))
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         table.setAlternatingRowColors(True)
 
         for row, (category, shortcut, description) in enumerate(_SHORTCUTS):
-            cat_item = QTableWidgetItem(category)
+            cat_item = QTableWidgetItem(self.tr(category))
             cat_item.setFlags(cat_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             table.setItem(row, 0, cat_item)
 
@@ -82,7 +84,7 @@ class ShortcutsHelpDialog(QDialog):
             key_item.setFlags(key_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             table.setItem(row, 1, key_item)
 
-            desc_item = QTableWidgetItem(description)
+            desc_item = QTableWidgetItem(self.tr(description))
             desc_item.setFlags(desc_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             table.setItem(row, 2, desc_item)
 
