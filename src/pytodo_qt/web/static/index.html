@@ -1,322 +1,610 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#2196F3" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#1a1a2e" media="(prefers-color-scheme: dark)">
-  <title>PyTodo-Qt</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <link rel="manifest" href="/static/manifest.json">
-  <link rel="apple-touch-icon" href="/static/icon-192.png">
-</head>
-<body>
-  <!-- Login screen (shown when no valid token) -->
-  <div id="login-screen" class="hidden">
-    <div class="login-card">
-      <h1>PyTodo-Qt</h1>
-      <p>Enter the 6-digit PIN shown in your desktop app.</p>
-      <p class="login-hint">Desktop &rarr; Settings &rarr; Web Server</p>
-      <input id="login-pin-input" type="text" inputmode="numeric" pattern="[0-9]*"
-             maxlength="6" placeholder="000000" autocomplete="off">
-      <button id="login-btn">Connect</button>
-      <div id="login-error" class="login-error"></div>
-    </div>
-  </div>
-
-  <div id="app-container">
-  <div id="offline-banner" class="hidden">Offline — changes will sync when reconnected</div>
-
-  <div id="install-banner" class="hidden">
-    <span id="install-text"></span>
-    <button id="install-dismiss" aria-label="Dismiss">&times;</button>
-  </div>
-
-  <!-- Header -->
-  <header id="header">
-    <div class="header-top">
-      <h1 id="header-title">PyTodo-Qt</h1>
-      <div id="connection-info">
-        <div id="connection-dot" class="dot online" title="Connected"></div>
-        <span id="last-synced"></span>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta
+      name="theme-color"
+      content="#2196F3"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="theme-color"
+      content="#1a1a2e"
+      media="(prefers-color-scheme: dark)"
+    />
+    <title>PyTodo-Qt</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="manifest" href="/static/manifest.json" />
+    <link rel="apple-touch-icon" href="/static/icon-192.png" />
+  </head>
+  <body>
+    <!-- Login screen (shown when no valid token) -->
+    <div id="login-screen" class="hidden">
+      <div class="login-card">
+        <h1>PyTodo-Qt</h1>
+        <p>Enter the 6-digit PIN shown in your desktop app.</p>
+        <p class="login-hint">Desktop &rarr; Settings &rarr; Web Server</p>
+        <input
+          id="login-pin-input"
+          type="text"
+          inputmode="numeric"
+          pattern="[0-9]*"
+          maxlength="6"
+          placeholder="000000"
+          autocomplete="off"
+        />
+        <button id="login-btn">Connect</button>
+        <div id="login-error" class="login-error"></div>
       </div>
     </div>
-    <div class="header-controls">
-      <button id="list-picker-btn" class="list-picker-btn" aria-label="Select list">
-        <span id="list-picker-name">Loading...</span>
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,4.5 6,7.5 9,4.5"/></svg>
-      </button>
-      <div id="view-toggle" class="view-toggle hidden">
-        <button class="view-btn active" data-view="list" aria-label="List view">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="3" y1="4" x2="15" y2="4"/><line x1="3" y1="9" x2="15" y2="9"/><line x1="3" y1="14" x2="15" y2="14"/>
+
+    <div id="app-container">
+      <div id="offline-banner" class="hidden">
+        Offline — changes will sync when reconnected
+      </div>
+
+      <div id="install-banner" class="hidden">
+        <span id="install-text"></span>
+        <button id="install-dismiss" aria-label="Dismiss">&times;</button>
+      </div>
+
+      <!-- Header -->
+      <header id="header">
+        <div class="header-top">
+          <h1 id="header-title">PyTodo-Qt</h1>
+          <div id="connection-info">
+            <div id="connection-dot" class="dot online" title="Connected"></div>
+            <span id="last-synced"></span>
+          </div>
+        </div>
+        <div class="header-controls">
+          <button
+            id="list-picker-btn"
+            class="list-picker-btn"
+            aria-label="Select list"
+          >
+            <span id="list-picker-name">Loading...</span>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <polyline points="3,4.5 6,7.5 9,4.5" />
+            </svg>
+          </button>
+          <div id="view-toggle" class="view-toggle hidden">
+            <button
+              class="view-btn active"
+              data-view="list"
+              aria-label="List view"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 18 18"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <line x1="3" y1="4" x2="15" y2="4" />
+                <line x1="3" y1="9" x2="15" y2="9" />
+                <line x1="3" y1="14" x2="15" y2="14" />
+              </svg>
+            </button>
+            <button class="view-btn" data-view="board" aria-label="Board view">
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 18 18"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <rect x="1" y="2" width="4" height="14" rx="1" />
+                <rect x="7" y="2" width="4" height="10" rx="1" />
+                <rect x="13" y="2" width="4" height="12" rx="1" />
+              </svg>
+            </button>
+          </div>
+          <div id="undo-redo" class="undo-redo">
+            <button
+              id="undo-btn"
+              class="undo-btn"
+              disabled
+              aria-label="Undo"
+              title="Undo"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 18 18"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M4 7h7a4 4 0 0 1 0 8H9" />
+                <polyline points="7,4 4,7 7,10" />
+              </svg>
+            </button>
+            <button
+              id="redo-btn"
+              class="undo-btn"
+              disabled
+              aria-label="Redo"
+              title="Redo"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 18 18"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M14 7H7a4 4 0 0 0 0 8h2" />
+                <polyline points="11,4 14,7 11,10" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <!-- Views container -->
+      <main id="main">
+        <!-- Home view: list + board modes -->
+        <div id="view-home" class="view active">
+          <!-- Pull to refresh indicator -->
+          <div id="ptr-indicator" class="ptr-indicator">
+            <span class="ptr-spinner"></span> Refreshing...
+          </div>
+          <!-- List mode -->
+          <div id="list-view" class="view-mode active">
+            <div id="sort-bar" class="sort-bar">
+              <button id="sort-btn" class="sort-btn" aria-label="Sort settings">
+                Sort: Completion ↑
+              </button>
+            </div>
+            <div id="items-container"></div>
+            <p id="empty-msg" class="hidden">
+              No items yet — tap + to add your first task
+            </p>
+          </div>
+
+          <!-- Board mode -->
+          <div id="board-view" class="view-mode">
+            <div class="sort-bar">
+              <button
+                id="board-layout-btn"
+                class="sort-btn"
+                aria-label="Board layout presets"
+              >
+                Layout
+              </button>
+            </div>
+            <div id="board-container" class="board-container"></div>
+            <p id="board-empty-msg" class="hidden">No columns configured</p>
+          </div>
+        </div>
+
+        <!-- Search view -->
+        <div id="view-search" class="view">
+          <div class="search-header">
+            <input
+              type="text"
+              id="search-input"
+              placeholder="Search items..."
+              autocomplete="off"
+              aria-label="Search"
+            />
+          </div>
+          <div id="search-filters" class="search-filters">
+            <div class="filter-group">
+              <label>Priority</label>
+              <div class="filter-chips">
+                <button class="chip" data-filter="priority" data-value="1">
+                  High
+                </button>
+                <button class="chip" data-filter="priority" data-value="2">
+                  Normal
+                </button>
+                <button class="chip" data-filter="priority" data-value="3">
+                  Low
+                </button>
+              </div>
+            </div>
+            <div class="filter-group">
+              <label>Status</label>
+              <div class="filter-chips">
+                <button
+                  class="chip active"
+                  data-filter="status"
+                  data-value="all"
+                >
+                  All
+                </button>
+                <button class="chip" data-filter="status" data-value="active">
+                  Active
+                </button>
+                <button
+                  class="chip"
+                  data-filter="status"
+                  data-value="completed"
+                >
+                  Completed
+                </button>
+              </div>
+            </div>
+            <div class="filter-group">
+              <label>Due</label>
+              <div class="filter-chips">
+                <button class="chip" data-filter="due" data-value="overdue">
+                  Overdue
+                </button>
+                <button class="chip" data-filter="due" data-value="today">
+                  Today
+                </button>
+                <button class="chip" data-filter="due" data-value="week">
+                  This week
+                </button>
+                <button class="chip" data-filter="due" data-value="none">
+                  No date
+                </button>
+              </div>
+            </div>
+            <div id="search-tag-filters" class="filter-group hidden">
+              <label>Tags</label>
+              <div id="search-tag-chips" class="filter-chips"></div>
+            </div>
+          </div>
+          <div id="search-results"></div>
+          <p id="search-empty" class="hidden">No results found</p>
+        </div>
+
+        <!-- Settings view -->
+        <div id="view-settings" class="view">
+          <div class="settings-section">
+            <h2>Connection</h2>
+            <div id="settings-connection" class="settings-info">
+              <div class="settings-row">
+                <span>Status</span>
+                <span id="settings-conn-status" class="settings-value"></span>
+              </div>
+              <div class="settings-row">
+                <span>Server</span>
+                <span
+                  class="settings-value text-secondary"
+                  id="settings-server-url"
+                ></span>
+              </div>
+            </div>
+          </div>
+          <div class="settings-section">
+            <h2>Data</h2>
+            <div id="settings-status" class="settings-info"></div>
+            <div
+              class="settings-row"
+              id="settings-offline-row"
+              style="display: none"
+            >
+              <span>Pending offline changes</span>
+              <span class="settings-value" id="settings-offline-count">0</span>
+            </div>
+            <div id="settings-queue-section" style="display: none">
+              <div id="settings-queue-list" class="queue-list"></div>
+              <button
+                type="button"
+                id="settings-clear-queue"
+                class="settings-clear-btn"
+              >
+                Clear all pending changes
+              </button>
+            </div>
+          </div>
+          <div class="settings-section">
+            <h2>Display</h2>
+            <div class="settings-row">
+              <span>Theme</span>
+              <span
+                class="settings-value text-secondary"
+                id="settings-theme"
+              ></span>
+            </div>
+            <div class="settings-row">
+              <span>View mode</span>
+              <span
+                class="settings-value text-secondary"
+                id="settings-view-mode"
+              ></span>
+            </div>
+          </div>
+          <div class="settings-section">
+            <h2>Recently Deleted</h2>
+            <p class="text-secondary" id="trash-empty">
+              No recently deleted items
+            </p>
+            <div id="trash-list" class="trash-list"></div>
+          </div>
+          <div class="settings-section">
+            <h2>About</h2>
+            <p class="text-secondary">
+              PyTodo-Qt — Privacy-first, self-hosted todo manager
+            </p>
+            <p class="text-secondary" id="version-text"></p>
+            <p class="text-secondary">
+              LAN-first with P2P sync. No cloud required.
+            </p>
+          </div>
+        </div>
+      </main>
+
+      <!-- List picker sheet -->
+      <div
+        id="list-sheet"
+        class="sheet hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-label="List picker"
+      >
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-content">
+          <div class="sheet-header">
+            <h2>Lists</h2>
+            <button
+              id="list-sheet-close"
+              class="sheet-close"
+              aria-label="Close"
+            >
+              &times;
+            </button>
+          </div>
+          <div id="list-sheet-body"></div>
+          <div class="list-create-row">
+            <input
+              type="text"
+              id="list-create-input"
+              placeholder="New list name..."
+              autocomplete="off"
+            />
+            <button type="button" id="list-create-btn" class="btn-small">
+              +
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Smart add sheet -->
+      <div
+        id="add-sheet"
+        class="sheet hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Add task"
+      >
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-content">
+          <div class="sheet-header">
+            <h2>Add Task</h2>
+            <button id="add-sheet-close" class="sheet-close" aria-label="Close">
+              &times;
+            </button>
+          </div>
+          <form id="add-form">
+            <textarea
+              id="add-input"
+              placeholder="What needs to be done?"
+              rows="2"
+              autocomplete="off"
+            ></textarea>
+            <div id="add-entities" class="entity-chips"></div>
+            <div class="add-meta-row">
+              <select id="add-list-select" aria-label="Target list"></select>
+            </div>
+            <button type="submit" id="add-submit" class="btn-primary">
+              Add
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Item detail sheet -->
+      <div
+        id="detail-sheet"
+        class="sheet hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Item details"
+      >
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-content">
+          <div class="sheet-header">
+            <h2>Item Details</h2>
+            <button id="detail-close" class="sheet-close" aria-label="Close">
+              &times;
+            </button>
+          </div>
+          <div id="detail-body"></div>
+        </div>
+      </div>
+
+      <!-- Sort configuration sheet -->
+      <div
+        id="sort-sheet"
+        class="sheet hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Sort settings"
+      >
+        <div class="sheet-backdrop"></div>
+        <div class="sheet-content">
+          <div class="sheet-header">
+            <h2>Sort Order</h2>
+            <button
+              id="sort-sheet-close"
+              class="sheet-close"
+              aria-label="Close"
+            >
+              &times;
+            </button>
+          </div>
+          <div id="sort-sheet-body" class="sort-sheet-body">
+            <div class="sort-tier-row">
+              <label>Primary</label>
+              <select
+                class="sort-tier-select"
+                data-tier="0"
+                aria-label="Primary sort dimension"
+              >
+                <option value="completion">Completion</option>
+                <option value="due_date">Due Date</option>
+                <option value="priority">Priority</option>
+              </select>
+              <button
+                class="sort-dir-btn"
+                data-tier="0"
+                aria-label="Toggle primary sort direction"
+                title="Toggle direction"
+              >
+                &#8593;
+              </button>
+            </div>
+            <div class="sort-tier-row">
+              <label>Secondary</label>
+              <select
+                class="sort-tier-select"
+                data-tier="1"
+                aria-label="Secondary sort dimension"
+              >
+                <option value="completion">Completion</option>
+                <option value="due_date">Due Date</option>
+                <option value="priority">Priority</option>
+              </select>
+              <button
+                class="sort-dir-btn"
+                data-tier="1"
+                aria-label="Toggle secondary sort direction"
+                title="Toggle direction"
+              >
+                &#8593;
+              </button>
+            </div>
+            <div class="sort-tier-row">
+              <label>Tertiary</label>
+              <select
+                class="sort-tier-select"
+                data-tier="2"
+                aria-label="Tertiary sort dimension"
+              >
+                <option value="completion">Completion</option>
+                <option value="due_date">Due Date</option>
+                <option value="priority">Priority</option>
+              </select>
+              <button
+                class="sort-dir-btn"
+                data-tier="2"
+                aria-label="Toggle tertiary sort direction"
+                title="Toggle direction"
+              >
+                &#8593;
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Toast container (ARIA live for screen readers) -->
+      <div
+        id="toast-container"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      ></div>
+
+      <!-- Bottom navigation -->
+      <nav id="bottom-nav">
+        <button class="nav-btn active" data-view="home" aria-label="Home">
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path d="M3 12l9-9 9 9" />
+            <path
+              d="M5 10v10a1 1 0 001 1h3m10-11v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001 1h4a1 1 0 001-1v-5a1 1 0 011-1h2"
+            />
+          </svg>
+          <span>Home</span>
+        </button>
+        <button class="nav-btn add-btn" id="nav-add" aria-label="Add task">
+          <svg
+            width="28"
+            height="28"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+          >
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
         </button>
-        <button class="view-btn" data-view="board" aria-label="Board view">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="1" y="2" width="4" height="14" rx="1"/><rect x="7" y="2" width="4" height="10" rx="1"/><rect x="13" y="2" width="4" height="12" rx="1"/>
+        <button class="nav-btn" data-view="search" aria-label="Search">
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <circle cx="11" cy="11" r="7" />
+            <line x1="16.5" y1="16.5" x2="21" y2="21" />
           </svg>
+          <span>Search</span>
         </button>
-      </div>
-      <div id="undo-redo" class="undo-redo">
-        <button id="undo-btn" class="undo-btn" disabled aria-label="Undo" title="Undo">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h7a4 4 0 0 1 0 8H9"/><polyline points="7,4 4,7 7,10"/></svg>
+        <button class="nav-btn" data-view="settings" aria-label="Settings">
+          <span class="nav-icon-wrap">
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <circle cx="12" cy="12" r="3" />
+              <path
+                d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"
+              />
+            </svg>
+            <span id="nav-pending-badge" class="nav-badge hidden">0</span>
+          </span>
+          <span>More</span>
         </button>
-        <button id="redo-btn" class="undo-btn" disabled aria-label="Redo" title="Redo">
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 7H7a4 4 0 0 0 0 8h2"/><polyline points="11,4 14,7 11,10"/></svg>
-        </button>
-      </div>
+      </nav>
     </div>
-  </header>
+    <!-- /app-container -->
 
-  <!-- Views container -->
-  <main id="main">
-    <!-- Home view: list + board modes -->
-    <div id="view-home" class="view active">
-      <!-- Pull to refresh indicator -->
-      <div id="ptr-indicator" class="ptr-indicator">
-        <span class="ptr-spinner"></span> Refreshing...
-      </div>
-      <!-- List mode -->
-      <div id="list-view" class="view-mode active">
-        <div id="sort-bar" class="sort-bar">
-          <button id="sort-btn" class="sort-btn" aria-label="Sort settings">Sort: Completion ↑</button>
-        </div>
-        <div id="items-container"></div>
-        <p id="empty-msg" class="hidden">No items yet — tap + to add your first task</p>
-      </div>
-
-      <!-- Board mode -->
-      <div id="board-view" class="view-mode">
-        <div class="sort-bar">
-          <button id="board-layout-btn" class="sort-btn" aria-label="Board layout presets">Layout</button>
-        </div>
-        <div id="board-container" class="board-container"></div>
-        <p id="board-empty-msg" class="hidden">No columns configured</p>
-      </div>
-    </div>
-
-    <!-- Search view -->
-    <div id="view-search" class="view">
-      <div class="search-header">
-        <input type="text" id="search-input" placeholder="Search items..." autocomplete="off" aria-label="Search">
-      </div>
-      <div id="search-filters" class="search-filters">
-        <div class="filter-group">
-          <label>Priority</label>
-          <div class="filter-chips">
-            <button class="chip" data-filter="priority" data-value="1">High</button>
-            <button class="chip" data-filter="priority" data-value="2">Normal</button>
-            <button class="chip" data-filter="priority" data-value="3">Low</button>
-          </div>
-        </div>
-        <div class="filter-group">
-          <label>Status</label>
-          <div class="filter-chips">
-            <button class="chip active" data-filter="status" data-value="all">All</button>
-            <button class="chip" data-filter="status" data-value="active">Active</button>
-            <button class="chip" data-filter="status" data-value="completed">Completed</button>
-          </div>
-        </div>
-        <div class="filter-group">
-          <label>Due</label>
-          <div class="filter-chips">
-            <button class="chip" data-filter="due" data-value="overdue">Overdue</button>
-            <button class="chip" data-filter="due" data-value="today">Today</button>
-            <button class="chip" data-filter="due" data-value="week">This week</button>
-            <button class="chip" data-filter="due" data-value="none">No date</button>
-          </div>
-        </div>
-        <div id="search-tag-filters" class="filter-group hidden">
-          <label>Tags</label>
-          <div id="search-tag-chips" class="filter-chips"></div>
-        </div>
-      </div>
-      <div id="search-results"></div>
-      <p id="search-empty" class="hidden">No results found</p>
-    </div>
-
-    <!-- Settings view -->
-    <div id="view-settings" class="view">
-      <div class="settings-section">
-        <h2>Connection</h2>
-        <div id="settings-connection" class="settings-info">
-          <div class="settings-row">
-            <span>Status</span>
-            <span id="settings-conn-status" class="settings-value"></span>
-          </div>
-          <div class="settings-row">
-            <span>Server</span>
-            <span class="settings-value text-secondary" id="settings-server-url"></span>
-          </div>
-        </div>
-      </div>
-      <div class="settings-section">
-        <h2>Data</h2>
-        <div id="settings-status" class="settings-info"></div>
-        <div class="settings-row" id="settings-offline-row" style="display:none">
-          <span>Pending offline changes</span>
-          <span class="settings-value" id="settings-offline-count">0</span>
-        </div>
-        <div id="settings-queue-section" style="display:none">
-          <div id="settings-queue-list" class="queue-list"></div>
-          <button type="button" id="settings-clear-queue" class="settings-clear-btn">Clear all pending changes</button>
-        </div>
-      </div>
-      <div class="settings-section">
-        <h2>Display</h2>
-        <div class="settings-row">
-          <span>Theme</span>
-          <span class="settings-value text-secondary" id="settings-theme"></span>
-        </div>
-        <div class="settings-row">
-          <span>View mode</span>
-          <span class="settings-value text-secondary" id="settings-view-mode"></span>
-        </div>
-      </div>
-      <div class="settings-section">
-        <h2>Recently Deleted</h2>
-        <p class="text-secondary" id="trash-empty">No recently deleted items</p>
-        <div id="trash-list" class="trash-list"></div>
-      </div>
-      <div class="settings-section">
-        <h2>About</h2>
-        <p class="text-secondary">PyTodo-Qt — Privacy-first, self-hosted todo manager</p>
-        <p class="text-secondary" id="version-text"></p>
-        <p class="text-secondary">LAN-first with P2P sync. No cloud required.</p>
-      </div>
-    </div>
-  </main>
-
-  <!-- List picker sheet -->
-  <div id="list-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-label="List picker">
-    <div class="sheet-backdrop"></div>
-    <div class="sheet-content">
-      <div class="sheet-header">
-        <h2>Lists</h2>
-        <button id="list-sheet-close" class="sheet-close" aria-label="Close">&times;</button>
-      </div>
-      <div id="list-sheet-body"></div>
-      <div class="list-create-row">
-        <input type="text" id="list-create-input" placeholder="New list name..." autocomplete="off">
-        <button type="button" id="list-create-btn" class="btn-small">+</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Smart add sheet -->
-  <div id="add-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-label="Add task">
-    <div class="sheet-backdrop"></div>
-    <div class="sheet-content">
-      <div class="sheet-header">
-        <h2>Add Task</h2>
-        <button id="add-sheet-close" class="sheet-close" aria-label="Close">&times;</button>
-      </div>
-      <form id="add-form">
-        <textarea id="add-input" placeholder="What needs to be done?" rows="2" autocomplete="off"></textarea>
-        <div id="add-entities" class="entity-chips"></div>
-        <div class="add-meta-row">
-          <select id="add-list-select" aria-label="Target list"></select>
-        </div>
-        <button type="submit" id="add-submit" class="btn-primary">Add</button>
-      </form>
-    </div>
-  </div>
-
-  <!-- Item detail sheet -->
-  <div id="detail-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-label="Item details">
-    <div class="sheet-backdrop"></div>
-    <div class="sheet-content">
-      <div class="sheet-header">
-        <h2>Item Details</h2>
-        <button id="detail-close" class="sheet-close" aria-label="Close">&times;</button>
-      </div>
-      <div id="detail-body"></div>
-    </div>
-  </div>
-
-  <!-- Sort configuration sheet -->
-  <div id="sort-sheet" class="sheet hidden" role="dialog" aria-modal="true" aria-label="Sort settings">
-    <div class="sheet-backdrop"></div>
-    <div class="sheet-content">
-      <div class="sheet-header">
-        <h2>Sort Order</h2>
-        <button id="sort-sheet-close" class="sheet-close" aria-label="Close">&times;</button>
-      </div>
-      <div id="sort-sheet-body" class="sort-sheet-body">
-        <div class="sort-tier-row">
-          <label>Primary</label>
-          <select class="sort-tier-select" data-tier="0" aria-label="Primary sort dimension">
-            <option value="completion">Completion</option>
-            <option value="due_date">Due Date</option>
-            <option value="priority">Priority</option>
-          </select>
-          <button class="sort-dir-btn" data-tier="0" aria-label="Toggle primary sort direction" title="Toggle direction">&#8593;</button>
-        </div>
-        <div class="sort-tier-row">
-          <label>Secondary</label>
-          <select class="sort-tier-select" data-tier="1" aria-label="Secondary sort dimension">
-            <option value="completion">Completion</option>
-            <option value="due_date">Due Date</option>
-            <option value="priority">Priority</option>
-          </select>
-          <button class="sort-dir-btn" data-tier="1" aria-label="Toggle secondary sort direction" title="Toggle direction">&#8593;</button>
-        </div>
-        <div class="sort-tier-row">
-          <label>Tertiary</label>
-          <select class="sort-tier-select" data-tier="2" aria-label="Tertiary sort dimension">
-            <option value="completion">Completion</option>
-            <option value="due_date">Due Date</option>
-            <option value="priority">Priority</option>
-          </select>
-          <button class="sort-dir-btn" data-tier="2" aria-label="Toggle tertiary sort direction" title="Toggle direction">&#8593;</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Toast container (ARIA live for screen readers) -->
-  <div id="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>
-
-  <!-- Bottom navigation -->
-  <nav id="bottom-nav">
-    <button class="nav-btn active" data-view="home" aria-label="Home">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M3 12l9-9 9 9"/><path d="M5 10v10a1 1 0 001 1h3m10-11v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001 1h4a1 1 0 001-1v-5a1 1 0 011-1h2"/>
-      </svg>
-      <span>Home</span>
-    </button>
-    <button class="nav-btn add-btn" id="nav-add" aria-label="Add task">
-      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-      </svg>
-    </button>
-    <button class="nav-btn" data-view="search" aria-label="Search">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/>
-      </svg>
-      <span>Search</span>
-    </button>
-    <button class="nav-btn" data-view="settings" aria-label="Settings">
-      <span class="nav-icon-wrap">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
-        </svg>
-        <span id="nav-pending-badge" class="nav-badge hidden">0</span>
-      </span>
-      <span>More</span>
-    </button>
-  </nav>
-
-  </div><!-- /app-container -->
-
-  <script src="/static/app.js"></script>
-  <script>
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(function (err) {
-        console.warn("SW registration failed:", err);
-      });
-    }
-  </script>
-</body>
+    <script src="/static/app.js"></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("/sw.js").catch(function (err) {
+          console.warn("SW registration failed:", err);
+        });
+      }
+    </script>
+  </body>
 </html>

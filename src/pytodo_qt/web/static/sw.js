@@ -2,18 +2,31 @@
 
 // Refuse to run over insecure HTTP — unregister and clear caches
 if (self.location.protocol === "http:") {
-  self.addEventListener("install", function () { self.skipWaiting(); });
+  self.addEventListener("install", function () {
+    self.skipWaiting();
+  });
   self.addEventListener("activate", function (event) {
     event.waitUntil(
-      caches.keys().then(function (names) {
-        return Promise.all(names.map(function (n) { return caches.delete(n); }));
-      }).then(function () {
-        return self.registration.unregister();
-      }).then(function () {
-        return self.clients.matchAll();
-      }).then(function (clients) {
-        clients.forEach(function (c) { c.postMessage({ type: "http-upgrade-needed" }); });
-      })
+      caches
+        .keys()
+        .then(function (names) {
+          return Promise.all(
+            names.map(function (n) {
+              return caches.delete(n);
+            }),
+          );
+        })
+        .then(function () {
+          return self.registration.unregister();
+        })
+        .then(function () {
+          return self.clients.matchAll();
+        })
+        .then(function (clients) {
+          clients.forEach(function (c) {
+            c.postMessage({ type: "http-upgrade-needed" });
+          });
+        }),
     );
   });
   // Stop here — do not register caches for HTTP origins
@@ -26,7 +39,7 @@ var STATIC_ASSETS = [
   "/",
   "/static/style.css",
   "/static/app.js",
-  "/static/manifest.json"
+  "/static/manifest.json",
 ];
 
 // --- Install: pre-cache static assets ---
@@ -34,7 +47,7 @@ self.addEventListener("install", function (event) {
   event.waitUntil(
     caches.open(CACHE_NAME).then(function (cache) {
       return cache.addAll(STATIC_ASSETS);
-    })
+    }),
   );
   self.skipWaiting();
 });
@@ -45,10 +58,14 @@ self.addEventListener("activate", function (event) {
     caches.keys().then(function (names) {
       return Promise.all(
         names
-          .filter(function (name) { return name !== CACHE_NAME; })
-          .map(function (name) { return caches.delete(name); })
+          .filter(function (name) {
+            return name !== CACHE_NAME;
+          })
+          .map(function (name) {
+            return caches.delete(name);
+          }),
       );
-    })
+    }),
   );
   self.clients.claim();
 });
@@ -94,9 +111,12 @@ async function networkFirst(request) {
     return response;
   } catch (_) {
     var cached = await caches.match(request);
-    return cached || new Response(
-      JSON.stringify({ error: "Offline", status: 503 }),
-      { status: 503, headers: { "Content-Type": "application/json" } }
+    return (
+      cached ||
+      new Response(JSON.stringify({ error: "Offline", status: 503 }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      })
     );
   }
 }
