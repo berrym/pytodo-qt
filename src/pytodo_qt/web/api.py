@@ -239,6 +239,7 @@ def setup_routes(app: web.Application) -> None:
     # Authentication & device management
     app.router.add_post("/api/auth", handle_pair)
     app.router.add_get("/api/devices", handle_get_devices)
+    app.router.add_patch("/api/devices/{device_id}", handle_rename_device)
     app.router.add_delete("/api/devices/{device_id}", handle_remove_device)
     app.router.add_get("/ca.pem", handle_ca_cert_download)
 
@@ -1577,6 +1578,24 @@ async def handle_get_devices(request: web.Request) -> web.Response:
             ]
         }
     )
+
+
+async def handle_rename_device(request: web.Request) -> web.Response:
+    """PATCH /api/devices/{device_id} — Rename a paired device."""
+    store = request.app.get(device_store_key)
+    if store is None:
+        return _error(503, "Not available")
+    try:
+        body = await request.json()
+    except Exception:
+        return _error(400, "Invalid JSON body")
+    name = body.get("device_name", "").strip()
+    if not name:
+        return _error(400, "Device name is required")
+    device_id = request.match_info["device_id"]
+    if store.rename_device(device_id, name):
+        return web.json_response({"ok": True, "device_name": name})
+    return _error(404, "Device not found")
 
 
 async def handle_remove_device(request: web.Request) -> web.Response:

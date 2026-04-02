@@ -214,6 +214,20 @@ class TestWebDeviceStore:
         assert store.get_active_tokens() == set()
         store.close()
 
+    def test_rename_device(self, tmp_path: Path):
+        store = self._make_store(tmp_path)
+        device = store.add_device("Old Name", "ua", "quick", 0)
+        assert store.rename_device(device.id, "New Name")
+        updated = store.get_device_by_token(device.token)
+        assert updated is not None
+        assert updated.device_name == "New Name"
+        store.close()
+
+    def test_rename_device_not_found(self, tmp_path: Path):
+        store = self._make_store(tmp_path)
+        assert not store.rename_device("nonexistent", "Name")
+        store.close()
+
     def test_remove_inactive_devices(self, tmp_path: Path):
         store = self._make_store(tmp_path)
         # Add a device and manually backdate its last_seen

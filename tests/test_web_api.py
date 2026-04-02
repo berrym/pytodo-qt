@@ -3499,6 +3499,67 @@ class TestDeviceRevocation:
         finally:
             await client.close()
 
+    @pytest.mark.asyncio
+    async def test_rename_device_endpoint(self):
+        ws, token = _make_authed_client()
+        devices = ws.get_paired_devices()
+        device_id = devices[0].id
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
+            resp = await client.patch(
+                f"/api/devices/{device_id}",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"device_name": "My iPad"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["ok"] is True
+            assert data["device_name"] == "My iPad"
+
+            # Verify via GET
+            resp2 = await client.get(
+                "/api/devices",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            data2 = await resp2.json()
+            names = [d["device_name"] for d in data2["devices"]]
+            assert "My iPad" in names
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_rename_device_not_found(self):
+        ws, token = _make_authed_client()
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
+            resp = await client.patch(
+                "/api/devices/nonexistent-id",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"device_name": "Test"},
+            )
+            assert resp.status == 404
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_rename_device_empty_name(self):
+        ws, token = _make_authed_client()
+        devices = ws.get_paired_devices()
+        device_id = devices[0].id
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
+            resp = await client.patch(
+                f"/api/devices/{device_id}",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"device_name": "  "},
+            )
+            assert resp.status == 400
+        finally:
+            await client.close()
+
 
 class TestSecurityHeaders:
     @pytest.mark.asyncio

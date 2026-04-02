@@ -270,6 +270,16 @@ class WebDeviceStore:
         self._conn.commit()
         return cursor.rowcount
 
+    def rename_device(self, device_id: str, new_name: str) -> bool:
+        """Rename a device. Returns True if a device was updated."""
+        assert self._conn is not None
+        cursor = self._conn.execute(
+            "UPDATE paired_devices SET device_name = ? WHERE id = ?",
+            (new_name, device_id),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
     def update_last_seen(self, device_id: str) -> None:
         """Update the last_seen timestamp for a device."""
         assert self._conn is not None
