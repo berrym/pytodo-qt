@@ -742,12 +742,12 @@ class _TimelineTasksWidget(QWidget):
         self._col_highlight = QColor(c.get("highlight", "#0078d4"))
 
     def set_data(self, items: list, current_date: date, todo_list=None) -> None:
-        from ...core.config import ConfigManager
+        from ...core.config import get_config
 
         self._items = [i for i in items if i.parent_id is None]
 
         try:
-            sort_tiers = ConfigManager().load().database.sort_tiers()
+            sort_tiers = get_config().database.sort_tiers()
         except Exception:
             sort_tiers = [("completion", False), ("due_date", False), ("priority", False)]
 

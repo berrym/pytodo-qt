@@ -563,10 +563,10 @@ class TodoTableWidget(QTableWidget):
         colors = get_colors()
 
         # Load config once for sort order and time format
-        from ...core.config import ConfigManager
+        from ...core.config import get_config
 
         try:
-            config = ConfigManager().load()
+            config = get_config()
             sort_tiers = config.database.sort_tiers()
             time_fmt = config.appearance.time_format
         except Exception:
