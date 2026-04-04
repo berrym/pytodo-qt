@@ -829,7 +829,7 @@ class TodoTableWidget(QTableWidget):
 
             self.setCellWidget(row, 2, due_widget)
 
-        logger.log.info("Refreshed table with %d items", len(display_items))
+        logger.log.debug("Refreshed table with %d items", len(display_items))
         # Defer ellipsis check until cell widgets have been laid out and sized
         QTimer.singleShot(50, self._update_ellipsis_visibility)
 
