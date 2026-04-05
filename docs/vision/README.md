@@ -30,6 +30,10 @@ A comprehensive analysis of potential future directions that were considered dur
 
 Detailed security considerations and implementation guidance for each development phase. Covers threat modeling, specific security implementations needed, and testing strategies.
 
+### [Remote Access Strategy](./remote-access-strategy.md)
+
+Current reality for cross-network mobile access, why LAN-only is deliberate, what works today (Tailscale and similar user-installed tunnels), and what's coming in the 0.4.x server mode. Addresses the common "I tried to use mobile access on public wifi and it didn't work" scenario with a clear forward path.
+
 ## Core Principles
 
 As pytodo-qt evolves, these principles guide development decisions:

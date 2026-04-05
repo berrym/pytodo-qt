@@ -1,5 +1,7 @@
 # Mobile Access for pytodo-qt
 
+> **See also:** [Remote Access Strategy](../vision/remote-access-strategy.md) — for cross-network scenarios (public wifi, cellular, corporate networks), the current LAN-first limitations, what works today (Tailscale), and the 0.4.x server-mode plan.
+
 ## The Problem
 
 pytodo-qt is built with PyQt6, which provides an excellent cross-platform desktop experience (Linux, macOS, Windows). While **PyQt6/PySide6 have experimental mobile support** (iOS via static builds, Android via Qt for Android), this support is limited and not well-documented for Python bindings.
