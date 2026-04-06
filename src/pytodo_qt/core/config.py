@@ -120,6 +120,25 @@ class StopwatchConfig:
 
 
 @dataclass
+class TimeBlockConfig:
+    """Configurable time block boundaries for named time windows.
+
+    Users say "morning", "evening", etc. These define what hours
+    those words map to. early_X/late_X are derived as first/second
+    halves of the parent range.
+    """
+
+    morning_start: int = 6  # hour (0-23)
+    morning_end: int = 12
+    afternoon_start: int = 12
+    afternoon_end: int = 17
+    evening_start: int = 17
+    evening_end: int = 21
+    night_start: int = 21
+    night_end: int = 6  # crosses midnight
+
+
+@dataclass
 class AppearanceConfig:
     """UI appearance settings."""
 
@@ -138,6 +157,7 @@ class AppConfig:
     security: SecurityConfig = field(default_factory=SecurityConfig)
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     appearance: AppearanceConfig = field(default_factory=AppearanceConfig)
+    time_blocks: TimeBlockConfig = field(default_factory=TimeBlockConfig)
     pomodoro: PomodoroConfig = field(default_factory=PomodoroConfig)
     stopwatch: StopwatchConfig = field(default_factory=StopwatchConfig)
     web: WebConfig = field(default_factory=WebConfig)
@@ -191,6 +211,18 @@ class AppConfig:
         lines.append(f'time_format = "{self.appearance.time_format}"')
         lines.append(f"close_to_tray = {str(self.appearance.close_to_tray).lower()}")
         lines.append(f'font = "{self.appearance.font}"')
+        lines.append("")
+
+        # Time blocks section
+        lines.append("[time_blocks]")
+        lines.append(f"morning_start = {self.time_blocks.morning_start}")
+        lines.append(f"morning_end = {self.time_blocks.morning_end}")
+        lines.append(f"afternoon_start = {self.time_blocks.afternoon_start}")
+        lines.append(f"afternoon_end = {self.time_blocks.afternoon_end}")
+        lines.append(f"evening_start = {self.time_blocks.evening_start}")
+        lines.append(f"evening_end = {self.time_blocks.evening_end}")
+        lines.append(f"night_start = {self.time_blocks.night_start}")
+        lines.append(f"night_end = {self.time_blocks.night_end}")
         lines.append("")
 
         # Pomodoro section
@@ -309,6 +341,19 @@ class AppConfig:
                 idle_timeout=sw.get("idle_timeout", 0),
                 show_in_status_bar=sw.get("show_in_status_bar", True),
                 sound_on_stop=sw.get("sound_on_stop", False),
+            )
+
+        if "time_blocks" in data:
+            tb = data["time_blocks"]
+            config.time_blocks = TimeBlockConfig(
+                morning_start=tb.get("morning_start", 6),
+                morning_end=tb.get("morning_end", 12),
+                afternoon_start=tb.get("afternoon_start", 12),
+                afternoon_end=tb.get("afternoon_end", 17),
+                evening_start=tb.get("evening_start", 17),
+                evening_end=tb.get("evening_end", 21),
+                night_start=tb.get("night_start", 21),
+                night_end=tb.get("night_end", 6),
             )
 
         if "web" in data:
