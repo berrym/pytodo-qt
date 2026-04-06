@@ -139,6 +139,17 @@ class TimeBlockConfig:
 
 
 @dataclass
+class NotificationConfig:
+    """Task reminder notification settings."""
+
+    enabled: bool = True  # Desktop notifications for due/overdue items
+    upcoming_days: int = 3  # Show items due within N days in Upcoming
+    check_hour: int = 9  # Hour (0-23) for daily notification check
+    notify_overdue: bool = True  # Notify about overdue items
+    notify_due_today: bool = True  # Notify about items due today
+
+
+@dataclass
 class AppearanceConfig:
     """UI appearance settings."""
 
@@ -158,6 +169,7 @@ class AppConfig:
     discovery: DiscoveryConfig = field(default_factory=DiscoveryConfig)
     appearance: AppearanceConfig = field(default_factory=AppearanceConfig)
     time_blocks: TimeBlockConfig = field(default_factory=TimeBlockConfig)
+    notifications: NotificationConfig = field(default_factory=NotificationConfig)
     pomodoro: PomodoroConfig = field(default_factory=PomodoroConfig)
     stopwatch: StopwatchConfig = field(default_factory=StopwatchConfig)
     web: WebConfig = field(default_factory=WebConfig)
@@ -223,6 +235,15 @@ class AppConfig:
         lines.append(f"evening_end = {self.time_blocks.evening_end}")
         lines.append(f"night_start = {self.time_blocks.night_start}")
         lines.append(f"night_end = {self.time_blocks.night_end}")
+        lines.append("")
+
+        # Notifications section
+        lines.append("[notifications]")
+        lines.append(f"enabled = {str(self.notifications.enabled).lower()}")
+        lines.append(f"upcoming_days = {self.notifications.upcoming_days}")
+        lines.append(f"check_hour = {self.notifications.check_hour}")
+        lines.append(f"notify_overdue = {str(self.notifications.notify_overdue).lower()}")
+        lines.append(f"notify_due_today = {str(self.notifications.notify_due_today).lower()}")
         lines.append("")
 
         # Pomodoro section
@@ -341,6 +362,16 @@ class AppConfig:
                 idle_timeout=sw.get("idle_timeout", 0),
                 show_in_status_bar=sw.get("show_in_status_bar", True),
                 sound_on_stop=sw.get("sound_on_stop", False),
+            )
+
+        if "notifications" in data:
+            n = data["notifications"]
+            config.notifications = NotificationConfig(
+                enabled=n.get("enabled", True),
+                upcoming_days=n.get("upcoming_days", 3),
+                check_hour=n.get("check_hour", 9),
+                notify_overdue=n.get("notify_overdue", True),
+                notify_due_today=n.get("notify_due_today", True),
             )
 
         if "time_blocks" in data:

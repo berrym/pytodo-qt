@@ -201,6 +201,9 @@ class MainWindow(QMainWindow):
         self.show()
         logger.log.info("Main window created")
 
+        # Check for due/overdue items and notify (after window shown so tray is ready)
+        QTimer.singleShot(2000, self._check_due_notifications)
+
     def _setup_window(self) -> None:
         """Configure the main window."""
         self.setWindowTitle(self.tr("PyTodo-Qt"))
@@ -1766,6 +1769,81 @@ class MainWindow(QMainWindow):
             self.status_bar_widget.set_web_status(
                 True, port=self._config.web.port, pin=self._web_server.pairing_pin
             )
+
+        # Periodic notification check (piggyback on the 60s timer)
+        self._check_due_notifications()
+
+    def _check_due_notifications(self) -> None:
+        """Send desktop notifications for due-today and overdue items.
+
+        Checks all lists for items that are due today or overdue,
+        and sends a system tray notification if the item hasn't been
+        notified today. Updates notified_at to prevent re-alerting.
+        """
+        from datetime import date as _date
+        from datetime import datetime as _datetime
+
+        from ..core.models import is_due_today, is_overdue
+
+        notif_config = self._config.notifications
+        if not notif_config.enabled or self.tray_icon is None:
+            return
+
+        today = _date.today()
+        today_start_ms = int(_datetime(today.year, today.month, today.day).timestamp() * 1000)
+
+        overdue_items: list[str] = []
+        due_today_items: list[str] = []
+
+        for lst in self._database.lists.values():
+            if lst.deleted or lst.private:
+                continue
+            for item in lst.active_items():
+                if item.complete:
+                    continue
+                # Skip if already notified today
+                if item.notified_at >= today_start_ms:
+                    continue
+                if notif_config.notify_overdue and is_overdue(item.due_date, item.due_time):
+                    overdue_items.append(item.reminder)
+                    item.notified_at = int(_datetime.now().timestamp() * 1000)
+                    item.mark_updated()
+                elif notif_config.notify_due_today and is_due_today(item.due_date):
+                    due_today_items.append(item.reminder)
+                    item.notified_at = int(_datetime.now().timestamp() * 1000)
+                    item.mark_updated()
+
+        if not overdue_items and not due_today_items:
+            return
+
+        # Build notification message
+        lines: list[str] = []
+        if overdue_items:
+            lines.append(
+                self.tr("Overdue (%n item(s))", "", len(overdue_items))
+                + ": "
+                + ", ".join(overdue_items[:5])
+            )
+            if len(overdue_items) > 5:
+                lines[-1] += f" (+{len(overdue_items) - 5} more)"
+        if due_today_items:
+            lines.append(
+                self.tr("Due today (%n item(s))", "", len(due_today_items))
+                + ": "
+                + ", ".join(due_today_items[:5])
+            )
+            if len(due_today_items) > 5:
+                lines[-1] += f" (+{len(due_today_items) - 5} more)"
+
+        self.tray_icon.showMessage(
+            self.tr("PyTodo-Qt Reminders"),
+            "\n".join(lines),
+            QSystemTrayIcon.MessageIcon.Information,
+            10000,
+        )
+
+        # Save the notified_at updates
+        self._save_database()
 
         # IP change detection
         from ..core.network import get_lan_ip as _get_current_ip
