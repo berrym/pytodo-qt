@@ -193,6 +193,56 @@ def _token_to_number(token_text: str) -> int | None:
     return intents["number_words"].get(token_text)
 
 
+def _tokens_to_number(tokens: list[_Token], start: int) -> tuple[int | float | None, int]:
+    """Compose a multi-token number starting at index *start*.
+
+    Handles:
+        "forty five" → 45, "ninety" → 90, "one hundred" → 100,
+        "two and a half" → 2.5, "one hour and thirty minutes" (via caller),
+        "15" → 15
+
+    Returns (value_or_None, last_token_index_consumed).
+    If nothing matched, returns (None, start - 1).
+    """
+    n = len(tokens)
+    if start >= n:
+        return None, start - 1
+
+    first = _token_to_number(tokens[start].text)
+    if first is None:
+        return None, start - 1
+
+    idx = start
+
+    # "X and a half" → X + 0.5
+    if (
+        idx + 3 < n
+        and tokens[idx + 1].text == "and"
+        and tokens[idx + 2].text == "a"
+        and tokens[idx + 3].text == "half"
+    ):
+        return first + 0.5, idx + 3
+
+    # "X hundred" → X * 100, optionally followed by "and Y"
+    if idx + 1 < n and tokens[idx + 1].text == "hundred":
+        total = first * 100
+        idx += 1
+        # "X hundred and Y"
+        if idx + 2 < n and tokens[idx + 1].text == "and":
+            addon = _token_to_number(tokens[idx + 2].text)
+            if addon is not None:
+                return total + addon, idx + 2
+        return total, idx
+
+    # Two-word composition: tens + ones ("forty five" → 45, "twenty one" → 21)
+    if idx + 1 < n and first >= 20:
+        second = _token_to_number(tokens[idx + 1].text)
+        if second is not None and 1 <= second <= 9:
+            return first + second, idx + 1
+
+    return first, idx
+
+
 # ---------------------------------------------------------------------------
 # Input sanitization
 # ---------------------------------------------------------------------------
@@ -818,16 +868,53 @@ def _extract_estimated_minutes(tokens: list[_Token], tracker: _SpanTracker) -> i
             continue
         if i + 2 >= len(tokens):
             continue
-        num = _token_to_number(tokens[i + 1].text)
+        num, num_end = _tokens_to_number(tokens, i + 1)
         if num is None:
             continue
-        unit_tok = tokens[i + 2]
-        if unit_tok.text in time_units and tracker.is_free(tok.start, unit_tok.end):
-            total = num * time_units[unit_tok.text]
-            tracker.reserve(
-                EntitySpan(tok.start, unit_tok.end, EntityKind.ESTIMATE, _make_display(total))
-            )
-            return total
+        unit_idx = num_end + 1
+        if unit_idx < len(tokens):
+            unit_tok = tokens[unit_idx]
+            if unit_tok.text in time_units and tracker.is_free(tok.start, unit_tok.end):
+                total = int(num * time_units[unit_tok.text])
+                tracker.reserve(
+                    EntitySpan(tok.start, unit_tok.end, EntityKind.ESTIMATE, _make_display(total))
+                )
+                return total
+
+    # Pattern 4: bare N unit(s) [and M unit(s)] without prefix
+    # "thirty minutes", "ninety minutes", "one hour and thirty minutes", "two and a half hours"
+    # Guard: skip if preceded by "in" (relative time) or "length"/"session" (work duration)
+    _ESTIMATE_SKIP_PREV = {"in", "length", "session"}
+    for i, tok in enumerate(tokens):
+        if not tracker.is_free(tok.start, tok.end):
+            continue
+        if i > 0 and tokens[i - 1].text in _ESTIMATE_SKIP_PREV:
+            continue
+        num, num_end = _tokens_to_number(tokens, i)
+        if num is None or num <= 0:
+            continue
+        unit_idx = num_end + 1
+        if unit_idx >= len(tokens):
+            continue
+        unit_tok = tokens[unit_idx]
+        if unit_tok.text not in time_units:
+            continue
+        if not tracker.is_free(tok.start, unit_tok.end):
+            continue
+        total = int(num * time_units[unit_tok.text])
+        span_end = unit_tok.end
+
+        # Check for compound: "N hours and M minutes"
+        if unit_idx + 3 < len(tokens) and tokens[unit_idx + 1].text == "and":
+            num2, num2_end = _tokens_to_number(tokens, unit_idx + 2)
+            if num2 is not None and num2_end + 1 < len(tokens):
+                unit2_tok = tokens[num2_end + 1]
+                if unit2_tok.text in time_units and tracker.is_free(tok.start, unit2_tok.end):
+                    total += int(num2 * time_units[unit2_tok.text])
+                    span_end = unit2_tok.end
+
+        tracker.reserve(EntitySpan(tok.start, span_end, EntityKind.ESTIMATE, _make_display(total)))
+        return total
 
     return None
 
