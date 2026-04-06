@@ -40,6 +40,9 @@ class EntityKind(Enum):
     POMODORO = "pomodoro"
     ESTIMATE = "estimate"
     WORK_DURATION = "work_duration"
+    TIME_BLOCK = "time_block"
+    EVENT_DATE = "event_date"
+    CONDITION = "condition"
 
 
 @dataclass
@@ -61,6 +64,8 @@ class ParseResult:
     reminder: str
     due_date: date | None = None
     due_time: time | None = None
+    due_time_end: time | None = None  # End of ad-hoc time range
+    due_time_block: str | None = None  # Canonical named time block
     priority: int | None = None
     tags: list[str] = field(default_factory=list)
     recurrence_type: str | None = None
@@ -70,6 +75,8 @@ class ParseResult:
     pomodoro_estimate: int | None = None
     estimated_minutes: int | None = None
     work_duration: int | None = None
+    event_date: date | None = None  # Target period for scheduling tasks
+    conditions: list[dict[str, str]] = field(default_factory=list)  # Structured conditions
     spans: list[EntitySpan] = field(default_factory=list)
 
 

@@ -58,6 +58,13 @@ class TodoItem:
     deleted: bool = False  # Tombstone for sync
     parent_id: UUID | None = None  # None = top-level item
     board_column: str = ""  # Kanban column assignment
+    due_time_end: time | None = None  # End of ad-hoc time range (schema v18)
+    due_time_block: str | None = None  # Canonical named time block (schema v18)
+    event_date: date | None = None  # Target period for scheduling tasks (schema v18)
+    remind_before_days: int = 0  # Pre-deadline reminder days (0 = disabled)
+    reminder_cadence: str = "none"  # none/once/daily_until_due
+    notified_at: int = 0  # Last notification timestamp in ms (0 = never)
+    conditions: list[dict[str, str]] | None = None  # Structured conditions (JSON)
 
     @property
     def is_subtask(self) -> bool:
@@ -113,6 +120,13 @@ class TodoItem:
             "deleted": self.deleted,
             "parent_id": str(self.parent_id) if self.parent_id else None,
             "board_column": self.board_column,
+            "due_time_end": self.due_time_end.isoformat() if self.due_time_end else None,
+            "due_time_block": self.due_time_block,
+            "event_date": self.event_date.isoformat() if self.event_date else None,
+            "remind_before_days": self.remind_before_days,
+            "reminder_cadence": self.reminder_cadence,
+            "notified_at": self.notified_at,
+            "conditions": self.conditions,
         }
 
     @classmethod
@@ -126,6 +140,10 @@ class TodoItem:
         recurrence_end_date = date.fromisoformat(end_date_str) if end_date_str else None
         parent_id_str = data.get("parent_id")
         parent_id = UUID(parent_id_str) if parent_id_str else None
+        due_time_end_str = data.get("due_time_end")
+        due_time_end = time.fromisoformat(due_time_end_str) if due_time_end_str else None
+        event_date_str = data.get("event_date")
+        event_date = date.fromisoformat(event_date_str) if event_date_str else None
         return cls(
             id=UUID(data["id"]) if isinstance(data["id"], str) else data["id"],
             reminder=data.get("reminder", ""),
@@ -152,6 +170,13 @@ class TodoItem:
             deleted=data.get("deleted", False),
             parent_id=parent_id,
             board_column=data.get("board_column", ""),
+            due_time_end=due_time_end,
+            due_time_block=data.get("due_time_block"),
+            event_date=event_date,
+            remind_before_days=data.get("remind_before_days", 0),
+            reminder_cadence=data.get("reminder_cadence", "none"),
+            notified_at=data.get("notified_at", 0),
+            conditions=data.get("conditions"),
         )
 
     @classmethod
