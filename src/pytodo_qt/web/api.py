@@ -172,6 +172,13 @@ def _item_to_json(item: TodoItem) -> dict[str, Any]:
         "updated_at": item.updated_at,
         "recurrence_display": format_recurrence_short(item),
         "recurrence_display_full": format_recurrence(item),
+        "due_time_end": item.due_time_end.isoformat() if item.due_time_end else None,
+        "due_time_block": item.due_time_block,
+        "event_date": item.event_date.isoformat() if item.event_date else None,
+        "remind_before_days": item.remind_before_days,
+        "reminder_cadence": item.reminder_cadence,
+        "notified_at": item.notified_at,
+        "conditions": item.conditions,
     }
 
 
@@ -656,6 +663,23 @@ def _apply_item_fields(item: TodoItem, body: dict[str, Any], lst: TodoList | Non
     if "recurrence_end_count" in body:
         val = body["recurrence_end_count"]
         item.recurrence_end_count = int(val) if val is not None else None
+    if "due_time_end" in body:
+        val = body["due_time_end"]
+        item.due_time_end = time.fromisoformat(val) if val else None
+    if "due_time_block" in body:
+        val = body["due_time_block"]
+        item.due_time_block = str(val) if val else None
+    if "event_date" in body:
+        val = body["event_date"]
+        item.event_date = date.fromisoformat(val) if val else None
+    if "remind_before_days" in body:
+        item.remind_before_days = max(0, int(body["remind_before_days"]))
+    if "reminder_cadence" in body:
+        val = str(body["reminder_cadence"])
+        if val in ("none", "once", "daily_until_due"):
+            item.reminder_cadence = val
+    if "conditions" in body:
+        item.conditions = body["conditions"] if body["conditions"] else None
 
 
 async def handle_create_item(request: web.Request) -> web.Response:
@@ -1095,6 +1119,10 @@ async def handle_parse(request: web.Request) -> web.Response:
             "pomodoro_estimate": result.pomodoro_estimate,
             "estimated_minutes": result.estimated_minutes,
             "work_duration": result.work_duration,
+            "due_time_end": result.due_time_end.isoformat() if result.due_time_end else None,
+            "due_time_block": result.due_time_block,
+            "event_date": result.event_date.isoformat() if result.event_date else None,
+            "conditions": result.conditions if result.conditions else [],
             "spans": [
                 {
                     "start": s.start,
