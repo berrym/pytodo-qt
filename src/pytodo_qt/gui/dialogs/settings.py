@@ -72,6 +72,8 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self._create_sync_tab(), self.tr("Sync"))
         self.tabs.addTab(self._create_appearance_tab(), self.tr("Appearance"))
         self.tabs.addTab(self._create_pomodoro_tab(), self.tr("Focus Timer"))
+        self.tabs.addTab(self._create_time_blocks_tab(), self.tr("Time Blocks"))
+        self.tabs.addTab(self._create_notifications_tab(), self.tr("Notifications"))
         self.tabs.addTab(self._create_web_tab(), self.tr("Web UI"))
 
         # Button box
@@ -487,6 +489,99 @@ class SettingsDialog(QDialog):
 
         return widget
 
+    def _create_time_blocks_tab(self) -> QWidget:
+        """Create the Time Blocks settings tab."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        group = QGroupBox(self.tr("Canonical Time Block Ranges"))
+        form = QFormLayout(group)
+
+        self._tb_morning_start = QSpinBox()
+        self._tb_morning_start.setRange(0, 23)
+        self._tb_morning_start.setSuffix(":00")
+        form.addRow(self.tr("Morning starts:"), self._tb_morning_start)
+
+        self._tb_morning_end = QSpinBox()
+        self._tb_morning_end.setRange(0, 23)
+        self._tb_morning_end.setSuffix(":00")
+        form.addRow(self.tr("Morning ends:"), self._tb_morning_end)
+
+        self._tb_afternoon_start = QSpinBox()
+        self._tb_afternoon_start.setRange(0, 23)
+        self._tb_afternoon_start.setSuffix(":00")
+        form.addRow(self.tr("Afternoon starts:"), self._tb_afternoon_start)
+
+        self._tb_afternoon_end = QSpinBox()
+        self._tb_afternoon_end.setRange(0, 23)
+        self._tb_afternoon_end.setSuffix(":00")
+        form.addRow(self.tr("Afternoon ends:"), self._tb_afternoon_end)
+
+        self._tb_evening_start = QSpinBox()
+        self._tb_evening_start.setRange(0, 23)
+        self._tb_evening_start.setSuffix(":00")
+        form.addRow(self.tr("Evening starts:"), self._tb_evening_start)
+
+        self._tb_evening_end = QSpinBox()
+        self._tb_evening_end.setRange(0, 23)
+        self._tb_evening_end.setSuffix(":00")
+        form.addRow(self.tr("Evening ends:"), self._tb_evening_end)
+
+        self._tb_night_start = QSpinBox()
+        self._tb_night_start.setRange(0, 23)
+        self._tb_night_start.setSuffix(":00")
+        form.addRow(self.tr("Night starts:"), self._tb_night_start)
+
+        self._tb_night_end = QSpinBox()
+        self._tb_night_end.setRange(0, 23)
+        self._tb_night_end.setSuffix(":00")
+        form.addRow(self.tr("Night ends:"), self._tb_night_end)
+
+        layout.addWidget(group)
+
+        note = QLabel(
+            self.tr(
+                "Early/late subdivisions are derived automatically as halves.\n"
+                "Noon (11:30-12:30) and midnight (23:30-00:30) are fixed."
+            )
+        )
+        note.setStyleSheet("color: gray; font-style: italic;")
+        layout.addWidget(note)
+
+        layout.addStretch()
+        return widget
+
+    def _create_notifications_tab(self) -> QWidget:
+        """Create the Notifications settings tab."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        group = QGroupBox(self.tr("Task Reminders"))
+        form = QFormLayout(group)
+
+        self._notif_enabled = QCheckBox(self.tr("Enable desktop notifications"))
+        form.addRow(self._notif_enabled)
+
+        self._notif_overdue = QCheckBox(self.tr("Notify about overdue items"))
+        form.addRow(self._notif_overdue)
+
+        self._notif_due_today = QCheckBox(self.tr("Notify about items due today"))
+        form.addRow(self._notif_due_today)
+
+        self._notif_check_hour = QSpinBox()
+        self._notif_check_hour.setRange(0, 23)
+        self._notif_check_hour.setSuffix(":00")
+        form.addRow(self.tr("Daily check time:"), self._notif_check_hour)
+
+        self._notif_upcoming_days = QSpinBox()
+        self._notif_upcoming_days.setRange(1, 30)
+        self._notif_upcoming_days.setSuffix(self.tr(" days"))
+        form.addRow(self.tr("Upcoming window:"), self._notif_upcoming_days)
+
+        layout.addWidget(group)
+        layout.addStretch()
+        return widget
+
     def _create_web_tab(self) -> QWidget:
         """Create the Web UI settings tab."""
         widget = QWidget()
@@ -694,6 +789,23 @@ class SettingsDialog(QDialog):
         self.sw_status_bar_check.setChecked(config.stopwatch.show_in_status_bar)
         self.sw_sound_check.setChecked(config.stopwatch.sound_on_stop)
 
+        # Time blocks
+        self._tb_morning_start.setValue(config.time_blocks.morning_start)
+        self._tb_morning_end.setValue(config.time_blocks.morning_end)
+        self._tb_afternoon_start.setValue(config.time_blocks.afternoon_start)
+        self._tb_afternoon_end.setValue(config.time_blocks.afternoon_end)
+        self._tb_evening_start.setValue(config.time_blocks.evening_start)
+        self._tb_evening_end.setValue(config.time_blocks.evening_end)
+        self._tb_night_start.setValue(config.time_blocks.night_start)
+        self._tb_night_end.setValue(config.time_blocks.night_end)
+
+        # Notifications
+        self._notif_enabled.setChecked(config.notifications.enabled)
+        self._notif_overdue.setChecked(config.notifications.notify_overdue)
+        self._notif_due_today.setChecked(config.notifications.notify_due_today)
+        self._notif_check_hour.setValue(config.notifications.check_hour)
+        self._notif_upcoming_days.setValue(config.notifications.upcoming_days)
+
         # Web
         self.web_enabled_check.setChecked(config.web.enabled)
         self.web_port_spin.setValue(config.web.port)
@@ -783,6 +895,23 @@ class SettingsDialog(QDialog):
         config.stopwatch.idle_timeout = self.sw_idle_timeout_spin.value()
         config.stopwatch.show_in_status_bar = self.sw_status_bar_check.isChecked()
         config.stopwatch.sound_on_stop = self.sw_sound_check.isChecked()
+
+        # Time blocks
+        config.time_blocks.morning_start = self._tb_morning_start.value()
+        config.time_blocks.morning_end = self._tb_morning_end.value()
+        config.time_blocks.afternoon_start = self._tb_afternoon_start.value()
+        config.time_blocks.afternoon_end = self._tb_afternoon_end.value()
+        config.time_blocks.evening_start = self._tb_evening_start.value()
+        config.time_blocks.evening_end = self._tb_evening_end.value()
+        config.time_blocks.night_start = self._tb_night_start.value()
+        config.time_blocks.night_end = self._tb_night_end.value()
+
+        # Notifications
+        config.notifications.enabled = self._notif_enabled.isChecked()
+        config.notifications.notify_overdue = self._notif_overdue.isChecked()
+        config.notifications.notify_due_today = self._notif_due_today.isChecked()
+        config.notifications.check_hour = self._notif_check_hour.value()
+        config.notifications.upcoming_days = self._notif_upcoming_days.value()
 
         # Web
         config.web.enabled = self.web_enabled_check.isChecked()
