@@ -784,6 +784,9 @@ def _extract_pomodoro(tokens: list[_Token], tracker: _SpanTracker) -> int | None
         if num is None:
             continue
         unit_tok = tokens[i + 2]
+        # Skip if unit is an am/pm marker (e.g., "around three pm" is a time, not pomodoro)
+        if unit_tok.text in ("am", "pm", "a.m.", "p.m."):
+            continue
         if tracker.is_free(unit_tok.start, unit_tok.end) and _fuzzy_match_token(
             unit_tok.text, list(pom_units), threshold
         ):
@@ -899,6 +902,11 @@ def _extract_estimated_minutes(tokens: list[_Token], tracker: _SpanTracker) -> i
         unit_tok = tokens[unit_idx]
         if unit_tok.text not in time_units:
             continue
+        # Guard: "a m" after a number word 1-12 is likely am/pm, not "1 minute"
+        if tok.text == "a" and unit_tok.text == "m" and i > 0:
+            prev_num = _token_to_number(tokens[i - 1].text)
+            if prev_num is not None and 1 <= prev_num <= 12:
+                continue
         if not tracker.is_free(tok.start, unit_tok.end):
             continue
         total = int(num * time_units[unit_tok.text])
@@ -1332,12 +1340,13 @@ def _extract_dates_and_times(
             _set_time(tod[tok.text], tok.start, tok.end)
 
     # --- Phase 3: Time patterns (at 3pm, by 5:00, 10am, etc.) ---
+    _time_prefixes = {"at", "by", "before"} | intents["approximation_prefixes"]
     for j, tok in enumerate(tokens):
         if not tracker.is_free(tok.start, tok.end):
             continue
 
-        # "at/by/before <time>" with prefix
-        if tok.text in ("at", "by", "before") and j + 1 < len(tokens):
+        # "at/by/before/around/about <time>" with prefix
+        if tok.text in _time_prefixes and j + 1 < len(tokens):
             time_tok = tokens[j + 1]
             t = _parse_time_token(time_tok.text)
             if t is not None:
@@ -1539,26 +1548,39 @@ def _parse_spoken_time(tokens: list[_Token], start_idx: int) -> tuple[time | Non
     if hour is not None and 1 <= hour <= 12:
         end = i
 
-        # Check for minute word: "two thirty", "seven fifteen"
-        minute = _word_num(i + 1) if i + 1 < n else None
+        # Check for "a m" / "p m" BEFORE minute-word lookup
+        # (prevents "a" being consumed as number_words["a"]=1)
+        ampm_early = _is_am_pm(i + 1) if i + 1 < n else None
+        if ampm_early is not None:
+            end = _am_pm_end(i + 1)
+            return time(_apply_ampm(hour, ampm_early), 0), end
+
+        # Check for minute word(s): "two thirty", "seven fifteen", "three forty five"
+        minute: int | float | None = None
+        minute_end = i
+        if i + 1 < n:
+            minute, minute_end = _tokens_to_number(tokens, i + 1)
+            # Reject if minute consumed token is an am/pm trigger
+            if minute is not None and not (0 <= int(minute) <= 59):
+                minute = None
 
         # "oh five" pattern — "eleven oh five"
         if minute is None and i + 2 < n and tokens[i + 1].text in ("oh", "o"):
             minute = _word_num(i + 2)
             if minute is not None and 0 <= minute <= 9:
-                end = i + 2
+                minute_end = i + 2
             else:
                 minute = None
 
-        if minute is not None and 0 <= minute <= 59:
-            end = max(end, i + 1)
+        if minute is not None and 0 <= int(minute) <= 59:
+            end = minute_end
             # Check for am/pm after minute
             ampm = _is_am_pm(end + 1) if end + 1 < n else None
             if ampm:
                 end = _am_pm_end(end + 1)
-            return time(_apply_ampm(hour, ampm), minute), end
+            return time(_apply_ampm(hour, ampm), int(minute)), end
 
-        # Bare hour: "at eight", "at nine a m"
+        # Bare hour: "at eight" (am/pm already checked above)
         ampm = _is_am_pm(i + 1) if i + 1 < n else None
         if ampm:
             end = _am_pm_end(i + 1)

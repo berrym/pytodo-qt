@@ -175,9 +175,6 @@ class TestSpelledOutTimes:
         assert r.due_time.hour == 11
         assert r.due_time.minute == 5
 
-    @pytest.mark.xfail(
-        reason="Compound minutes 'forty five' composes to 45 but exceeds spoken-time minute check"
-    )
     def test_22_three_forty_five(self) -> None:
         r = parse("pick up kids at three forty five", today=TODAY)
         assert r.due_time is not None
@@ -189,7 +186,6 @@ class TestSpelledOutTimes:
         assert r.due_time is not None
         assert r.due_time.hour == 8
 
-    @pytest.mark.xfail(reason="'nine a m' — 'a' consumed as number word 1 before am/pm detection")
     def test_24_nine_a_m(self) -> None:
         r = parse("standup at nine a m", today=TODAY)
         assert r.due_time is not None
@@ -488,7 +484,6 @@ class TestApproximations:
         assert r.estimated_minutes is not None
         assert 25 <= r.estimated_minutes <= 35
 
-    @pytest.mark.xfail(reason="'around' not recognized as time-context qualifier")
     def test_65_around_three_pm(self) -> None:
         r = parse("call around three pm", today=TODAY)
         assert "call" in r.reminder.lower()
