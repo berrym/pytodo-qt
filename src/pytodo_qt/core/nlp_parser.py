@@ -1228,6 +1228,25 @@ def _extract_dates_and_times(
                 if t is not None:
                     _set_time(t, tok.start, tokens[j + 2].end)
                     continue
+            # Spelled-out time: "at two thirty", "at half past three", "at eight"
+            spoken_t, spoken_end = _parse_spoken_time(tokens, j + 1)
+            if spoken_t is not None and tracker.is_free(tok.start, tokens[spoken_end].end):
+                _set_time(spoken_t, tok.start, tokens[spoken_end].end)
+                continue
+
+        # Standalone spelled-out time without prefix: "six thirty pm", "nine a m"
+        # Only match if the word is a number word in the 1-12 range
+        if due_time is None:
+            intents_num = _get_intents()["number_words"]
+            if tok.text in intents_num and 1 <= intents_num[tok.text] <= 12:
+                spoken_t, spoken_end = _parse_spoken_time(tokens, j)
+                if spoken_t is not None and tracker.is_free(tok.start, tokens[spoken_end].end):
+                    # Only claim if followed by am/pm or a minute word — avoid false positives
+                    # on bare number words in the middle of reminder text
+                    consumed_count = spoken_end - j + 1
+                    if consumed_count >= 2:  # Must have consumed at least hour + something
+                        _set_time(spoken_t, tok.start, tokens[spoken_end].end)
+                        continue
 
         # Two-token time: "10 am", "3 pm", "5:30 pm" (no prefix)
         if j + 1 < len(tokens) and (tok.text.isdigit() or ":" in tok.text):
@@ -1295,6 +1314,128 @@ def _extract_dates_and_times(
             logger.log.debug("dateparser search_dates failed", exc_info=True)
 
     return due_date, due_time
+
+
+def _parse_spoken_time(tokens: list[_Token], start_idx: int) -> tuple[time | None, int]:
+    """Parse spelled-out time from tokens starting at start_idx.
+
+    Handles:
+        "two thirty" → 14:30, "six thirty pm" → 18:30, "seven fifteen am" → 07:15,
+        "half past three" → 15:30, "quarter to four" → 15:45, "quarter past twelve" → 12:15,
+        "eleven oh five" → 11:05, "eight" → 08:00, "nine a m" → 09:00
+
+    Returns (time_or_None, last_token_index_consumed).
+    last_token_index_consumed is start_idx - 1 if nothing matched.
+    """
+    n = len(tokens)
+    if start_idx >= n:
+        return None, start_idx - 1
+
+    intents = _get_intents()
+    number_words = intents["number_words"]
+
+    def _word_num(idx: int) -> int | None:
+        if idx >= n:
+            return None
+        t = tokens[idx].text
+        if t.isdigit():
+            return int(t)
+        return number_words.get(t)
+
+    def _is_am_pm(idx: int) -> str | None:
+        if idx >= n:
+            return None
+        t = tokens[idx].text
+        if t in ("am", "a.m.", "a"):
+            # "a" alone only if followed by "m"
+            if t == "a" and idx + 1 < n and tokens[idx + 1].text == "m":
+                return "am"
+            if t != "a":
+                return "am"
+        if t in ("pm", "p.m.", "p"):
+            if t == "p" and idx + 1 < n and tokens[idx + 1].text == "m":
+                return "pm"
+            if t != "p":
+                return "pm"
+        return None
+
+    def _am_pm_end(idx: int) -> int:
+        """Return the token index AFTER consuming am/pm (handles 'a m' as two tokens)."""
+        t = tokens[idx].text
+        if t in ("a", "p") and idx + 1 < n and tokens[idx + 1].text == "m":
+            return idx + 1
+        return idx
+
+    def _apply_ampm(hour: int, ampm: str | None) -> int:
+        if ampm == "pm" and hour < 12:
+            return hour + 12
+        if ampm == "am" and hour == 12:
+            return 0
+        if ampm is None and 1 <= hour <= 6:
+            # Assume PM for ambiguous small numbers without am/pm
+            return hour + 12
+        return hour
+
+    i = start_idx
+
+    # --- "half past X" ---
+    if tokens[i].text == "half" and i + 2 < n and tokens[i + 1].text == "past":
+        hour = _word_num(i + 2)
+        if hour is not None and 1 <= hour <= 12:
+            end = i + 2
+            ampm = _is_am_pm(i + 3) if i + 3 < n else None
+            if ampm:
+                end = _am_pm_end(i + 3)
+            return time(_apply_ampm(hour, ampm), 30), end
+
+    # --- "quarter to/past X" ---
+    if tokens[i].text == "quarter" and i + 2 < n:
+        direction = tokens[i + 1].text
+        hour = _word_num(i + 2)
+        if hour is not None and 1 <= hour <= 12:
+            end = i + 2
+            ampm = _is_am_pm(i + 3) if i + 3 < n else None
+            if ampm:
+                end = _am_pm_end(i + 3)
+            if direction == "past":
+                return time(_apply_ampm(hour, ampm), 15), end
+            if direction in ("to", "til", "till", "before"):
+                h = _apply_ampm(hour, ampm)
+                # "quarter to four" = 3:45
+                h = h - 1 if h > 0 else 23
+                return time(h, 45), end
+
+    # --- Number-based: "two thirty", "six thirty pm", "eleven oh five", "eight" ---
+    hour = _word_num(i)
+    if hour is not None and 1 <= hour <= 12:
+        end = i
+
+        # Check for minute word: "two thirty", "seven fifteen"
+        minute = _word_num(i + 1) if i + 1 < n else None
+
+        # "oh five" pattern — "eleven oh five"
+        if minute is None and i + 2 < n and tokens[i + 1].text in ("oh", "o"):
+            minute = _word_num(i + 2)
+            if minute is not None and 0 <= minute <= 9:
+                end = i + 2
+            else:
+                minute = None
+
+        if minute is not None and 0 <= minute <= 59:
+            end = max(end, i + 1)
+            # Check for am/pm after minute
+            ampm = _is_am_pm(end + 1) if end + 1 < n else None
+            if ampm:
+                end = _am_pm_end(end + 1)
+            return time(_apply_ampm(hour, ampm), minute), end
+
+        # Bare hour: "at eight", "at nine a m"
+        ampm = _is_am_pm(i + 1) if i + 1 < n else None
+        if ampm:
+            end = _am_pm_end(i + 1)
+        return time(_apply_ampm(hour, ampm), 0), end
+
+    return None, start_idx - 1
 
 
 def _parse_time_token(text: str) -> time | None:
