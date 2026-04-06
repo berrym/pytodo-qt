@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -80,6 +80,13 @@ CREATE TABLE IF NOT EXISTS items (
     deleted INTEGER NOT NULL DEFAULT 0,
     parent_id TEXT,
     board_column TEXT NOT NULL DEFAULT '',
+    due_time_end TEXT,
+    due_time_block TEXT,
+    event_date TEXT,
+    remind_before_days INTEGER NOT NULL DEFAULT 0,
+    reminder_cadence TEXT NOT NULL DEFAULT 'none',
+    notified_at INTEGER NOT NULL DEFAULT 0,
+    conditions TEXT,
     FOREIGN KEY (list_id) REFERENCES lists(id)
 )
 """
@@ -295,6 +302,7 @@ class DatabaseStorage:
         self._migrate_schema_14_to_15()
         self._migrate_schema_15_to_16()
         self._migrate_schema_16_to_17()
+        self._migrate_schema_17_to_18()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -574,6 +582,31 @@ class DatabaseStorage:
 
         self.set_schema_version(17)
 
+    def _migrate_schema_17_to_18(self) -> None:
+        """Migrate schema from version 17 to 18 (time blocks, event_date, notifications, conditions)."""
+        current_version = self.get_schema_version()
+        if current_version >= 18:
+            return
+
+        columns = [row[1] for row in self.connection.execute("PRAGMA table_info(items)")]
+        new_columns = {
+            "due_time_end": "TEXT",
+            "due_time_block": "TEXT",
+            "event_date": "TEXT",
+            "remind_before_days": "INTEGER NOT NULL DEFAULT 0",
+            "reminder_cadence": "TEXT NOT NULL DEFAULT 'none'",
+            "notified_at": "INTEGER NOT NULL DEFAULT 0",
+            "conditions": "TEXT",
+        }
+        for col, col_type in new_columns.items():
+            if col not in columns:
+                self.connection.execute(f"ALTER TABLE items ADD COLUMN {col} {col_type}")
+        logger.log.info(
+            "Migrated schema 17->18: added time blocks, event_date, notifications, conditions"
+        )
+
+        self.set_schema_version(18)
+
     def get_schema_version(self) -> int:
         """Get current schema version."""
         cursor = self.connection.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
@@ -774,51 +807,56 @@ class DatabaseStorage:
     def save_item(self, list_id: UUID, item: TodoItem) -> None:
         """Save an item to the database (insert or update).
 
+        Uses named parameters for clarity and safe extensibility.
+
         Args:
             list_id: UUID of the list this item belongs to
             item: TodoItem to save
         """
         import json
 
-        self.connection.execute(
-            """
-            INSERT OR REPLACE INTO items
-            (id, list_id, reminder, priority, complete, due_date, due_time, tags,
-             recurrence_type, recurrence_interval, recurrence_end_date,
-             recurrence_end_count, recurrence_count, missed_recurrences,
-             time_spent, pomodoro_count, estimated_pomodoros, estimated_minutes,
-             work_duration, break_duration, long_break_duration,
-             created_at, updated_at, deleted, parent_id, board_column)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                str(item.id),
-                str(list_id),
-                item.reminder,
-                item.priority,
-                1 if item.complete else 0,
-                item.due_date.isoformat() if item.due_date else None,
-                item.due_time.isoformat() if item.due_time else None,
-                json.dumps(item.tags) if item.tags else None,
-                item.recurrence_type,
-                item.recurrence_interval,
-                item.recurrence_end_date.isoformat() if item.recurrence_end_date else None,
-                item.recurrence_end_count,
-                item.recurrence_count,
-                item.missed_recurrences,
-                item.time_spent,
-                item.pomodoro_count,
-                item.estimated_pomodoros,
-                item.estimated_minutes,
-                item.work_duration,
-                item.break_duration,
-                item.long_break_duration,
-                item.created_at,
-                item.updated_at,
-                1 if item.deleted else 0,
-                str(item.parent_id) if item.parent_id else None,
-                item.board_column,
+        params = {
+            "id": str(item.id),
+            "list_id": str(list_id),
+            "reminder": item.reminder,
+            "priority": item.priority,
+            "complete": 1 if item.complete else 0,
+            "due_date": item.due_date.isoformat() if item.due_date else None,
+            "due_time": item.due_time.isoformat() if item.due_time else None,
+            "tags": json.dumps(item.tags) if item.tags else None,
+            "recurrence_type": item.recurrence_type,
+            "recurrence_interval": item.recurrence_interval,
+            "recurrence_end_date": (
+                item.recurrence_end_date.isoformat() if item.recurrence_end_date else None
             ),
+            "recurrence_end_count": item.recurrence_end_count,
+            "recurrence_count": item.recurrence_count,
+            "missed_recurrences": item.missed_recurrences,
+            "time_spent": item.time_spent,
+            "pomodoro_count": item.pomodoro_count,
+            "estimated_pomodoros": item.estimated_pomodoros,
+            "estimated_minutes": item.estimated_minutes,
+            "work_duration": item.work_duration,
+            "break_duration": item.break_duration,
+            "long_break_duration": item.long_break_duration,
+            "created_at": item.created_at,
+            "updated_at": item.updated_at,
+            "deleted": 1 if item.deleted else 0,
+            "parent_id": str(item.parent_id) if item.parent_id else None,
+            "board_column": item.board_column,
+            "due_time_end": item.due_time_end.isoformat() if item.due_time_end else None,
+            "due_time_block": item.due_time_block,
+            "event_date": item.event_date.isoformat() if item.event_date else None,
+            "remind_before_days": item.remind_before_days,
+            "reminder_cadence": item.reminder_cadence,
+            "notified_at": item.notified_at,
+            "conditions": json.dumps(item.conditions) if item.conditions else None,
+        }
+        columns = ", ".join(params.keys())
+        placeholders = ", ".join(f":{k}" for k in params)
+        self.connection.execute(
+            f"INSERT OR REPLACE INTO items ({columns}) VALUES ({placeholders})",
+            params,
         )
 
     def delete_item(self, item_id: UUID) -> bool:
@@ -932,6 +970,39 @@ class DatabaseStorage:
         except (KeyError, IndexError):
             board_column = ""
 
+        # Handle v18+ columns (time blocks, event_date, notifications, conditions)
+        try:
+            due_time_end_str = row["due_time_end"]
+            due_time_end = time.fromisoformat(due_time_end_str) if due_time_end_str else None
+        except (KeyError, IndexError):
+            due_time_end = None
+        try:
+            due_time_block = row["due_time_block"]
+        except (KeyError, IndexError):
+            due_time_block = None
+        try:
+            event_date_str = row["event_date"]
+            event_date = date.fromisoformat(event_date_str) if event_date_str else None
+        except (KeyError, IndexError):
+            event_date = None
+        try:
+            remind_before_days = row["remind_before_days"] or 0
+        except (KeyError, IndexError):
+            remind_before_days = 0
+        try:
+            reminder_cadence = row["reminder_cadence"] or "none"
+        except (KeyError, IndexError):
+            reminder_cadence = "none"
+        try:
+            notified_at = row["notified_at"] or 0
+        except (KeyError, IndexError):
+            notified_at = 0
+        try:
+            conditions_str = row["conditions"]
+            conditions = json.loads(conditions_str) if conditions_str else None
+        except (KeyError, IndexError):
+            conditions = None
+
         return TodoItem(
             id=UUID(row["id"]),
             reminder=row["reminder"],
@@ -958,6 +1029,13 @@ class DatabaseStorage:
             deleted=bool(row["deleted"]),
             parent_id=parent_id,
             board_column=board_column,
+            due_time_end=due_time_end,
+            due_time_block=due_time_block,
+            event_date=event_date,
+            remind_before_days=remind_before_days,
+            reminder_cadence=reminder_cadence,
+            notified_at=notified_at,
+            conditions=conditions,
         )
 
     # Bulk operations (for sync and migration)

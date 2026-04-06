@@ -91,14 +91,14 @@ class TestSchemaV14Migration:
     """Tests for schema migration from v13 to v14."""
 
     def test_schema_version_is_14(self):
-        assert SCHEMA_VERSION == 17
+        assert SCHEMA_VERSION == 18
 
     def test_fresh_database_has_board_columns(self, tmp_path: Path):
         """A new database should have board_column on items and board_columns on lists."""
         storage = DatabaseStorage(tmp_path / "test.db")
         storage.open()
 
-        assert storage.get_schema_version() == 17
+        assert storage.get_schema_version() == 18
 
         # Check items table has board_column
         cursor = storage.connection.execute("PRAGMA table_info(items)")
@@ -190,7 +190,7 @@ class TestSchemaV14Migration:
         storage = DatabaseStorage(db_path)
         storage.open()
 
-        assert storage.get_schema_version() == 17
+        assert storage.get_schema_version() == 18
 
         # Verify columns exist
         cursor = storage.connection.execute("PRAGMA table_info(items)")

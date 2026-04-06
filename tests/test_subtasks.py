@@ -317,7 +317,7 @@ class TestDatabaseSubtasks:
         # Open with DatabaseStorage which should migrate
         storage = DatabaseStorage(db_path)
         storage.open()
-        assert storage.get_schema_version() == 17
+        assert storage.get_schema_version() == 18
 
         # Verify parent_id column exists
         cursor = storage.connection.execute("PRAGMA table_info(items)")
