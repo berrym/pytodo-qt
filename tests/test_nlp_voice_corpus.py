@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from datetime import date, time, timedelta
 
-import pytest
-
 from pytodo_qt.core.nlp_parser import parse
 
 # Fixed "today" for deterministic results: Sunday, 2026-04-05
@@ -57,7 +55,6 @@ class TestBaselineCaptures:
         assert "finish report" in r.reminder.lower()
         assert r.due_date == UPCOMING_FRIDAY
 
-    @pytest.mark.xfail(reason="'rent' fuzzy-matched as priority — Phase 5 span boundary fix")
     def test_04_on_the_first(self) -> None:
         r = parse("pay rent on the first", today=TODAY)
         assert "pay rent" in r.reminder.lower()
@@ -69,7 +66,6 @@ class TestBaselineCaptures:
         assert "walk the dog" in r.reminder.lower()
         assert r.due_time == time(17, 0)
 
-    @pytest.mark.xfail(reason="Priority span consumes adjacent reminder words")
     def test_06_high_priority(self) -> None:
         r = parse("high priority fix the bug", today=TODAY)
         assert "fix the bug" in r.reminder.lower()
@@ -232,7 +228,6 @@ class TestCompoundDateTime:
         assert "birthday party" in r.reminder.lower()
         assert r.due_date == UPCOMING_SATURDAY
 
-    @pytest.mark.xfail(reason="'morning' consumed as time_of_day before 'at six' gets parsed")
     def test_30_monday_morning_at_six(self) -> None:
         r = parse("early flight monday morning at six", today=TODAY)
         assert "flight" in r.reminder.lower()
@@ -290,9 +285,6 @@ class TestCrossUnitDurations:
         assert "deep work" in r.reminder.lower()
         assert r.estimated_minutes == 90 or r.work_duration == 90
 
-    @pytest.mark.xfail(
-        reason="Multi-word number 'forty five' not composed in recurrence extraction"
-    )
     def test_39_every_forty_five_minutes(self) -> None:
         r = parse("stand up break every forty five minutes", today=TODAY)
         assert r.recurrence_type == "minutely"
@@ -367,7 +359,6 @@ class TestCapitalization:
         # Article "The" prevents tag extraction
         assert "store" in r.reminder.lower()
 
-    @pytest.mark.xfail(reason="Priority span consumes adjacent reminder words when capitalized")
     def test_50_caps_priority_today(self) -> None:
         r = parse("High Priority Fix The Bug Today", today=TODAY)
         assert "fix the bug" in r.reminder.lower()
@@ -388,9 +379,6 @@ class TestCapitalization:
 class TestRunOnInputs:
     """Section G: Multiple intents in a single utterance."""
 
-    @pytest.mark.xfail(
-        reason="Run-on input: preamble 'remind me' and metadata extraction lose reminder words"
-    )
     def test_52_full_run_on(self) -> None:
         r = parse("remind me tomorrow at three to call mom high priority", today=TODAY)
         assert "call mom" in r.reminder.lower()
@@ -529,7 +517,6 @@ class TestRelativeTime:
         r = parse("check on it in a few hours", today=TODAY)
         assert "check on it" in r.reminder.lower()
 
-    @pytest.mark.xfail(reason="'half an hour' not parsed as 30-minute relative time")
     def test_72_half_an_hour(self) -> None:
         r = parse("lunch in half an hour", today=TODAY)
         assert "lunch" in r.reminder.lower()
@@ -585,7 +572,6 @@ class TestAdHocRanges:
 class TestTimeBlocks:
     """Section K2: Named time windows. Schema v18 feature — most will fail baseline."""
 
-    @pytest.mark.xfail(reason="'tonight' does not infer due_date=today")
     def test_73_dinner_tonight(self) -> None:
         r = parse("dinner tonight", today=TODAY)
         assert "dinner" in r.reminder.lower()
@@ -601,7 +587,6 @@ class TestTimeBlocks:
         assert "dinner with parents" in r.reminder.lower()
         assert r.due_date == UPCOMING_FRIDAY
 
-    @pytest.mark.xfail(reason="'this afternoon' does not infer due_date=today")
     def test_79_this_afternoon(self) -> None:
         r = parse("call back this afternoon", today=TODAY)
         assert "call back" in r.reminder.lower()

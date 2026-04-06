@@ -336,7 +336,9 @@ def _extract_priority(text: str, tokens: list[_Token], tracker: _SpanTracker) ->
             result_priority = 1
 
     # Multi-token phrase matching FIRST (catches "not important", "high priority", etc.)
-    for window_size in (3, 2):
+    # Build a set of phrase word-counts so we only try matching windows of the right size.
+    _phrase_word_counts = {len(p.split()) for p in priority_phrases}
+    for window_size in sorted(_phrase_word_counts, reverse=True):
         for i in range(len(tokens) - window_size + 1):
             phrase_tokens = tokens[i : i + window_size]
             start = phrase_tokens[0].start
@@ -353,23 +355,28 @@ def _extract_priority(text: str, tokens: list[_Token], tracker: _SpanTracker) ->
                 result_priority = val
                 continue
 
-            # Fuzzy phrase match (stricter threshold to avoid false positives)
-            match = _fuzzy_match_phrase(phrase, priority_phrases, threshold + 5)
-            if match is not None:
-                matched_phrase, confidence = match
-                val = priority_phrases[matched_phrase]
-                tracker.unreserve_kind(EntityKind.PRIORITY)
-                tracker.reserve(
-                    EntitySpan(
-                        start,
-                        end,
-                        EntityKind.PRIORITY,
-                        priority_display[val],
-                        confidence,
-                        matched_phrase,
+            # Fuzzy phrase match — only against phrases of the SAME word count
+            # (prevents "high priority fix" matching "high priority" at 86%)
+            same_len_phrases = {
+                p: v for p, v in priority_phrases.items() if len(p.split()) == window_size
+            }
+            if same_len_phrases:
+                match = _fuzzy_match_phrase(phrase, same_len_phrases, threshold + 5)
+                if match is not None:
+                    matched_phrase, confidence = match
+                    val = same_len_phrases[matched_phrase]
+                    tracker.unreserve_kind(EntityKind.PRIORITY)
+                    tracker.reserve(
+                        EntitySpan(
+                            start,
+                            end,
+                            EntityKind.PRIORITY,
+                            priority_display[val],
+                            confidence,
+                            matched_phrase,
+                        )
                     )
-                )
-                result_priority = val
+                    result_priority = val
 
     # Single-token exact matches (AFTER phrases so "not important" beats "important")
     for tok in tokens:
@@ -385,7 +392,36 @@ def _extract_priority(text: str, tokens: list[_Token], tracker: _SpanTracker) ->
 
     # Single-token fuzzy match (for typos like "importnt", "urgnt")
     # Exclude common words that aren't priority-related
-    _priority_exclude = {"three", "there", "through", "throw", "high", "low", "normal"}
+    _priority_exclude = {
+        "three",
+        "there",
+        "through",
+        "throw",
+        "high",
+        "low",
+        "normal",
+        "rent",
+        "rest",
+        "recent",
+        "event",
+        "front",
+        "print",
+        "point",
+        "part",
+        "port",
+        "sort",
+        "sport",
+        "report",
+        "import",
+        "apart",
+        "early",
+        "every",
+        "entry",
+        "extra",
+        "after",
+        "later",
+        "other",
+    }
     for tok in tokens:
         if not tracker.is_free(tok.start, tok.end):
             continue
@@ -467,20 +503,20 @@ def _extract_recurrence(
                     i += 3
                     continue
 
-            # "every N <unit>" or "every <number_word> <unit>"
-            num = _token_to_number(next_tok.text)
-            if num is not None and i + 2 < len(tokens):
-                unit_tok = tokens[i + 2]
+            # "every N <unit>" or "every <number_word> <unit>" or "every forty five minutes"
+            num, num_end = _tokens_to_number(tokens, i + 1)
+            if num is not None and num_end + 1 < len(tokens):
+                unit_tok = tokens[num_end + 1]
                 unit_match = _fuzzy_match_token(unit_tok.text, list(unit_map.keys()), threshold)
                 if unit_match:
                     matched_unit, _ = unit_match
                     rec_type = unit_map[matched_unit]
-                    rec_interval = num
+                    rec_interval = int(num)
                     if matched_unit in unit_multiplier:
-                        rec_interval = unit_multiplier[matched_unit] * num
+                        rec_interval = unit_multiplier[matched_unit] * int(num)
                     rec_span_start = tok.start
                     rec_span_end = unit_tok.end
-                    i += 3
+                    i = num_end + 2
                     continue
 
             # "every <unit>" (including morning/night/evening/weekday)
@@ -556,6 +592,10 @@ def _extract_recurrence(
             continue
 
         # Fuzzy single-token frequency match (strict threshold, min 4 chars)
+        _rec_exclude = {"early", "every", "really", "nearly", "easily", "mainly"}
+        if tok.text in _rec_exclude:
+            i += 1
+            continue
         match = _fuzzy_match_token(tok.text, list(rec_tokens.keys()), threshold + 5)
         if match and len(tok.text) >= 4:
             matched_word, confidence = match
@@ -887,7 +927,7 @@ def _extract_estimated_minutes(tokens: list[_Token], tracker: _SpanTracker) -> i
     # Pattern 4: bare N unit(s) [and M unit(s)] without prefix
     # "thirty minutes", "ninety minutes", "one hour and thirty minutes", "two and a half hours"
     # Guard: skip if preceded by "in" (relative time) or "length"/"session" (work duration)
-    _ESTIMATE_SKIP_PREV = {"in", "length", "session"}
+    _ESTIMATE_SKIP_PREV = {"in", "length", "session", "half", "every"}
     for i, tok in enumerate(tokens):
         if not tracker.is_free(tok.start, tok.end):
             continue
@@ -1170,6 +1210,23 @@ def _extract_dates_and_times(
         # "in N days/weeks/months" or "in a week/month" or "in a couple/few days"
         elif tok.text == "in" and i + 1 < len(tokens):
             next_tok = tokens[i + 1]
+
+            # "in half an hour" / "in half a hour" → now + 30 minutes
+            if (
+                next_tok.text == "half"
+                and i + 3 < len(tokens)
+                and tokens[i + 2].text in ("an", "a")
+                and tokens[i + 3].text == "hour"
+            ):
+                from datetime import datetime as _dt_now
+
+                now = _dt_now.now()
+                future = now + timedelta(minutes=30)
+                _set_time(time(future.hour, future.minute), tok.start, tokens[i + 3].end)
+                due_date = today  # Set directly — span already reserved for time
+                i += 4
+                continue
+
             num = _token_to_number(next_tok.text)
 
             # "in a couple of days", "in a few days"
@@ -1321,6 +1378,8 @@ def _extract_dates_and_times(
     # --- Phase 2: Time-of-day keywords ---
     tod = intents["time_of_day"]
     tod_phrases = intents["time_of_day_phrases"]
+    _today_implying_phrases = {"this morning", "this afternoon", "this evening"}
+    _today_implying_words = {"tonight"}
 
     for window_size in (3, 2):
         for j in range(len(tokens) - window_size + 1):
@@ -1332,12 +1391,30 @@ def _extract_dates_and_times(
             phrase = " ".join(t.text for t in phrase_tokens)
             if phrase in tod_phrases:
                 _set_time(tod_phrases[phrase], start, end)
+                # "this morning/afternoon/evening" implies due_date=today
+                # (set directly — span is already reserved for time)
+                if phrase in _today_implying_phrases and due_date is None:
+                    due_date = today
 
-    for tok in tokens:
+    # Track whether Phase 2 skipped "morning"/"evening" for AM/PM context in Phase 3
+    _skipped_tod_context: str | None = None
+
+    for j, tok in enumerate(tokens):
         if not tracker.is_free(tok.start, tok.end):
             continue
         if tok.text in tod:
+            # Skip single-word time_of_day if followed by "at"/"by"/"before" + potential time
+            # ("monday morning at six" → let Phase 3 handle "at six", keep "morning" for AM context)
+            if j + 2 < len(tokens) and tokens[j + 1].text in ("at", "by", "before"):
+                _skipped_tod_context = tok.text
+                continue
+            # Don't override a time already set by Phase 1 relative expressions ("in half an hour")
+            if due_time is not None:
+                continue
             _set_time(tod[tok.text], tok.start, tok.end)
+            # "tonight" implies due_date=today (set directly — span is already reserved for time)
+            if tok.text in _today_implying_words and due_date is None:
+                due_date = today
 
     # --- Phase 3: Time patterns (at 3pm, by 5:00, 10am, etc.) ---
     _time_prefixes = {"at", "by", "before"} | intents["approximation_prefixes"]
@@ -1367,7 +1444,13 @@ def _extract_dates_and_times(
                     _set_time(t, tok.start, tokens[j + 2].end)
                     continue
             # Spelled-out time: "at two thirty", "at half past three", "at eight"
-            spoken_t, spoken_end = _parse_spoken_time(tokens, j + 1)
+            # Pass AM/PM context from a skipped time_of_day word ("morning" → am)
+            _am_context = None
+            if _skipped_tod_context in ("morning", "dawn", "sunrise"):
+                _am_context = "am"
+            elif _skipped_tod_context in ("evening", "night", "tonight", "dusk", "sunset"):
+                _am_context = "pm"
+            spoken_t, spoken_end = _parse_spoken_time(tokens, j + 1, ampm_hint=_am_context)
             if spoken_t is not None and tracker.is_free(tok.start, tokens[spoken_end].end):
                 _set_time(spoken_t, tok.start, tokens[spoken_end].end)
                 continue
@@ -1454,13 +1537,18 @@ def _extract_dates_and_times(
     return due_date, due_time
 
 
-def _parse_spoken_time(tokens: list[_Token], start_idx: int) -> tuple[time | None, int]:
+def _parse_spoken_time(
+    tokens: list[_Token], start_idx: int, ampm_hint: str | None = None
+) -> tuple[time | None, int]:
     """Parse spelled-out time from tokens starting at start_idx.
 
     Handles:
         "two thirty" → 14:30, "six thirty pm" → 18:30, "seven fifteen am" → 07:15,
         "half past three" → 15:30, "quarter to four" → 15:45, "quarter past twelve" → 12:15,
         "eleven oh five" → 11:05, "eight" → 08:00, "nine a m" → 09:00
+
+    Args:
+        ampm_hint: "am" or "pm" context from a skipped time_of_day word (e.g., "morning" → "am").
 
     Returns (time_or_None, last_token_index_consumed).
     last_token_index_consumed is start_idx - 1 if nothing matched.
@@ -1505,12 +1593,16 @@ def _parse_spoken_time(tokens: list[_Token], start_idx: int) -> tuple[time | Non
         return idx
 
     def _apply_ampm(hour: int, ampm: str | None) -> int:
-        if ampm == "pm" and hour < 12:
+        # Use explicit am/pm first, fall back to hint, then default heuristic
+        effective = ampm or ampm_hint
+        if effective == "pm" and hour < 12:
             return hour + 12
-        if ampm == "am" and hour == 12:
+        if effective == "am" and hour == 12:
             return 0
-        if ampm is None and 1 <= hour <= 6:
-            # Assume PM for ambiguous small numbers without am/pm
+        if effective == "am":
+            return hour  # Morning context — keep as-is
+        if ampm is None and ampm_hint is None and 1 <= hour <= 6:
+            # No context at all — assume PM for ambiguous small numbers
             return hour + 12
         return hour
 
