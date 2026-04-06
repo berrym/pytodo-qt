@@ -1392,6 +1392,18 @@ body {
   background: rgba(106, 27, 154, 0.12);
   color: var(--entity-pomodoro);
 }
+.entity-chip.time_block {
+  background: rgba(21, 101, 192, 0.12);
+  color: var(--entity-date);
+}
+.entity-chip.event_date {
+  background: rgba(124, 58, 237, 0.12);
+  color: #7c3aed;
+}
+.entity-chip.condition {
+  background: rgba(220, 38, 38, 0.12);
+  color: #dc2626;
+}
 
 .add-meta-row {
   display: flex;

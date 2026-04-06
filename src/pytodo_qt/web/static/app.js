@@ -2220,13 +2220,25 @@
   // Date formatting helpers
   // ====================================================================
 
-  function formatDueDate(dateStr, timeStr, complete) {
+  function formatDueDate(dateStr, timeStr, complete, timeEndStr, timeBlock) {
     if (!dateStr) return null;
     var today = new Date();
     today.setHours(0, 0, 0, 0);
     var due = new Date(dateStr + "T00:00:00");
     var diff = Math.floor((due - today) / 86400000);
-    var timeSuffix = timeStr ? " " + timeStr.substring(0, 5) : "";
+
+    // Build time suffix: block label, range, or specific time
+    var timeSuffix = "";
+    if (timeBlock) {
+      var label = timeBlock.replace(/_/g, " ");
+      label = label.charAt(0).toUpperCase() + label.slice(1);
+      timeSuffix = " (" + label + ")";
+    } else if (timeStr && timeEndStr) {
+      timeSuffix =
+        " " + timeStr.substring(0, 5) + "-" + timeEndStr.substring(0, 5);
+    } else if (timeStr) {
+      timeSuffix = " " + timeStr.substring(0, 5);
+    }
 
     if (complete) {
       return { text: dateStr.substring(5) + timeSuffix, cls: "" };
@@ -2361,7 +2373,13 @@
     var meta = document.createElement("div");
     meta.className = "item-meta";
 
-    var dueInfo = formatDueDate(item.due_date, item.due_time, item.complete);
+    var dueInfo = formatDueDate(
+      item.due_date,
+      item.due_time,
+      item.complete,
+      item.due_time_end,
+      item.due_time_block,
+    );
     if (dueInfo) {
       var due = document.createElement("span");
       due.className = "item-due " + dueInfo.cls;
@@ -2610,7 +2628,13 @@
     var meta = document.createElement("div");
     meta.className = "board-card-meta";
 
-    var dueInfo = formatDueDate(item.due_date, item.due_time, item.complete);
+    var dueInfo = formatDueDate(
+      item.due_date,
+      item.due_time,
+      item.complete,
+      item.due_time_end,
+      item.due_time_block,
+    );
     if (dueInfo) {
       var due = document.createElement("span");
       due.className = "item-due " + dueInfo.cls;
