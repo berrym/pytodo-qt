@@ -107,8 +107,16 @@ def _is_overdue(due_date: date | None, due_time: time | None) -> bool:
     return False
 
 
-def _format_due(due_date: date, due_time: time | None, time_format: str) -> str:
+def _format_due(
+    due_date: date,
+    due_time: time | None,
+    time_format: str,
+    due_time_end: time | None = None,
+    due_time_block: str | None = None,
+) -> str:
     """Format a due date for display on a card."""
+    from ...core.models import _format_time_window
+
     today = date.today()
     delta = (due_date - today).days
     _tr = QCoreApplication.translate
@@ -122,13 +130,7 @@ def _format_due(due_date: date, due_time: time | None, time_format: str) -> str:
         label = due_date.strftime("%A")
     else:
         label = due_date.strftime("%b %d")
-    if due_time is not None:
-        if time_format == "12h":
-            label += due_time.strftime(" %I:%M %p").replace(" 0", " ")
-        elif time_format == "24h":
-            label += due_time.strftime(" %H:%M")
-        else:
-            label += due_time.strftime(" %I:%M %p").replace(" 0", " ")
+    label += _format_time_window(due_time, due_time_end, due_time_block, time_format)
     return label
 
 
@@ -289,7 +291,13 @@ class KanbanCardWidget(QFrame):
             row2.setSpacing(6)
 
             if has_due and item.due_date is not None:
-                due_text = _format_due(item.due_date, item.due_time, time_format)
+                due_text = _format_due(
+                    item.due_date,
+                    item.due_time,
+                    time_format,
+                    item.due_time_end,
+                    item.due_time_block,
+                )
                 overdue = _is_overdue(item.due_date, item.due_time) and not item.complete
                 if overdue:
                     due_text = f"\u26a0 {due_text}"  # ⚠ prefix

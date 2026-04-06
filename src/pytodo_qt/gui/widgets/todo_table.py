@@ -183,11 +183,15 @@ class DueDateLabel(QWidget):
         recurring: bool = False,
         due_time: time | None = None,
         time_format: str = "system",
+        due_time_end: time | None = None,
+        due_time_block: str | None = None,
         parent=None,
     ):
         super().__init__(parent)
         self._due_date = due_date
         self._due_time = due_time
+        self._due_time_end = due_time_end
+        self._due_time_block = due_time_block
         self._complete = complete
         self._recurring = recurring
         self._time_format = time_format
@@ -218,7 +222,14 @@ class DueDateLabel(QWidget):
                 layout.addWidget(icon_label)
 
         self.label = QLabel(
-            format_due_date(self._due_date, self._complete, self._due_time, self._time_format)
+            format_due_date(
+                self._due_date,
+                self._complete,
+                self._due_time,
+                self._time_format,
+                self._due_time_end,
+                self._due_time_block,
+            )
         )
         self.label.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.label)
@@ -246,7 +257,14 @@ class DueDateLabel(QWidget):
             self._due_date = new_date
             self._due_time = new_time
             self.label.setText(
-                format_due_date(self._due_date, self._complete, self._due_time, self._time_format)
+                format_due_date(
+                    self._due_date,
+                    self._complete,
+                    self._due_time,
+                    self._time_format,
+                    self._due_time_end,
+                    self._due_time_block,
+                )
             )
             if new_date != old_date:
                 self.date_changed.emit(self._due_date)
@@ -808,6 +826,8 @@ class TodoTableWidget(QTableWidget):
                 recurring=item.is_recurring,
                 due_time=item.due_time,
                 time_format=time_fmt,
+                due_time_end=item.due_time_end,
+                due_time_block=item.due_time_block,
             )
             due_widget.date_changed.connect(lambda d, r=row: self._on_due_date_changed(r, d))
             due_widget.time_changed.connect(lambda t, r=row: self._on_due_time_changed(r, t))

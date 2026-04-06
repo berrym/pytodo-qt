@@ -45,6 +45,9 @@ _ENTITY_COLORS: dict[Theme, dict[EntityKind, str]] = {
         EntityKind.POMODORO: "#8B5CF6",
         EntityKind.ESTIMATE: "#D97706",
         EntityKind.WORK_DURATION: "#9333EA",
+        EntityKind.TIME_BLOCK: "#4A90D9",
+        EntityKind.EVENT_DATE: "#7C3AED",
+        EntityKind.CONDITION: "#DC2626",
     },
     Theme.DARK: {
         EntityKind.DATE: "#6AB0F3",
@@ -55,6 +58,9 @@ _ENTITY_COLORS: dict[Theme, dict[EntityKind, str]] = {
         EntityKind.POMODORO: "#A78BFA",
         EntityKind.ESTIMATE: "#FBBF24",
         EntityKind.WORK_DURATION: "#C084FC",
+        EntityKind.TIME_BLOCK: "#6AB0F3",
+        EntityKind.EVENT_DATE: "#A78BFA",
+        EntityKind.CONDITION: "#F87171",
     },
 }
 

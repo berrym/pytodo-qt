@@ -829,11 +829,57 @@ def _format_overdue_delta(due_date: date, due_time: time | None = None) -> str:
         return f"Overdue ({max(minutes, 1)}m)"
 
 
+def _format_time_window(
+    due_time: time | None,
+    due_time_end: time | None,
+    due_time_block: str | None,
+    time_format: str,
+) -> str:
+    """Format a time window for display: specific time, range, or named block."""
+    if due_time_block:
+        # Named block with resolved range from config
+        from .config import get_config
+
+        block_label = due_time_block.replace("_", " ").title()
+        try:
+            tb = get_config().time_blocks
+            block_ranges = {
+                "morning": (tb.morning_start, tb.morning_end),
+                "afternoon": (tb.afternoon_start, tb.afternoon_end),
+                "evening": (tb.evening_start, tb.evening_end),
+                "night": (tb.night_start, tb.night_end),
+            }
+            # Derive early/late from parent
+            parent = due_time_block.removeprefix("early_").removeprefix("late_")
+            if parent in block_ranges:
+                start_h, end_h = block_ranges[parent]
+                if due_time_block.startswith("early_"):
+                    end_h = (start_h + end_h) // 2
+                elif due_time_block.startswith("late_"):
+                    start_h = (start_h + end_h) // 2
+            elif due_time_block in block_ranges:
+                start_h, end_h = block_ranges[due_time_block]
+            else:
+                return f" ({block_label})"
+            start_t = _format_time(time(start_h, 0), time_format)
+            end_t = _format_time(time(end_h % 24, 0), time_format)
+            return f" ({block_label}, {start_t}-{end_t})"
+        except Exception:
+            return f" ({block_label})"
+    if due_time and due_time_end:
+        return f" {_format_time(due_time, time_format)}-{_format_time(due_time_end, time_format)}"
+    if due_time:
+        return f" {_format_time(due_time, time_format)}"
+    return ""
+
+
 def format_due_date(
     due_date: date | None,
     complete: bool = False,
     due_time: time | None = None,
     time_format: str = "system",
+    due_time_end: time | None = None,
+    due_time_block: str | None = None,
 ) -> str:
     """Format due date for display: 'Today', 'Tomorrow', 'Overdue (2d)', 'Jan 15'.
 
@@ -844,11 +890,13 @@ def format_due_date(
         due_time: Optional time-of-day. When set, appended to date strings and
             enables sub-day overdue granularity.
         time_format: Time display format — "system", "12h", or "24h".
+        due_time_end: Optional end of time range.
+        due_time_block: Optional canonical time block name.
     """
     if due_date is None:
         return ""
     today = date.today()
-    time_suffix = f" {_format_time(due_time, time_format)}" if due_time else ""
+    time_suffix = _format_time_window(due_time, due_time_end, due_time_block, time_format)
     if complete:
         if due_date.year == today.year:
             return due_date.strftime("%b %d") + time_suffix
