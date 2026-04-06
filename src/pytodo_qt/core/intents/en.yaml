@@ -311,6 +311,134 @@ priority_display:
   3: Low
 
 # ---------------------------------------------------------------------------
+# Ordinal words — spelled-out ordinals to day-of-month integers (1-31)
+# ---------------------------------------------------------------------------
+
+ordinal_words:
+  first: 1
+  second: 2
+  third: 3
+  fourth: 4
+  fifth: 5
+  sixth: 6
+  seventh: 7
+  eighth: 8
+  ninth: 9
+  tenth: 10
+  eleventh: 11
+  twelfth: 12
+  thirteenth: 13
+  fourteenth: 14
+  fifteenth: 15
+  sixteenth: 16
+  seventeenth: 17
+  eighteenth: 18
+  nineteenth: 19
+  twentieth: 20
+  twenty-first: 21
+  twenty-second: 22
+  twenty-third: 23
+  twenty-fourth: 24
+  twenty-fifth: 25
+  twenty-sixth: 26
+  twenty-seventh: 27
+  twenty-eighth: 28
+  twenty-ninth: 29
+  thirtieth: 30
+  thirty-first: 31
+
+# ---------------------------------------------------------------------------
+# Preamble patterns — common voice dictation starters to strip
+# Matched from the beginning of the input only.
+# ---------------------------------------------------------------------------
+
+preamble_patterns:
+  - "remind me to"
+  - "remind me"
+  - "i need to"
+  - "i want to"
+  - "i have to"
+  - "i should"
+  - "please"
+  - "so"
+  - "okay"
+  - "ok"
+
+# ---------------------------------------------------------------------------
+# Scheduling verbs — verbs that signal "for <period>" is a target, not recurrence
+# ---------------------------------------------------------------------------
+
+scheduling_verbs:
+  - schedule
+  - book
+  - arrange
+  - plan
+  - reserve
+  - "set up"
+  - "make appointment"
+  - "make an appointment"
+
+# ---------------------------------------------------------------------------
+# Conditional keywords — recognized as structured conditions
+# ---------------------------------------------------------------------------
+
+conditional_keywords:
+  "if": "if"
+  "only if": "only_if"
+  "unless": "unless"
+  "except if": "unless"
+  "not if": "unless"
+  "when": "when"
+  "provided": "if"
+  "otherwise": "fallback"
+  "if not": "fallback"
+  "else": "fallback"
+  "or else": "fallback"
+  "failing that": "fallback"
+
+# ---------------------------------------------------------------------------
+# Constraint keywords — deadline/window constraint markers
+# ---------------------------------------------------------------------------
+
+constraint_keywords:
+  - "no later than"
+  - "prior to"
+  - "as long as"
+  - "while"
+  - "during"
+
+# ---------------------------------------------------------------------------
+# Availability words — calendar query signals
+# ---------------------------------------------------------------------------
+
+availability_words:
+  - open
+  - available
+  - free
+  - "has room"
+  - "has opening"
+
+# ---------------------------------------------------------------------------
+# Time block words — map natural phrases to canonical block names
+# ---------------------------------------------------------------------------
+
+time_block_words:
+  morning: morning
+  afternoon: afternoon
+  evening: evening
+  night: night
+  tonight: evening
+  "early morning": early_morning
+  "late morning": late_morning
+  "early afternoon": early_afternoon
+  "late afternoon": late_afternoon
+  "early evening": early_evening
+  "late evening": late_evening
+  "late night": late_night
+  "first thing": early_morning
+  "end of day": evening
+
+# ---------------------------------------------------------------------------
 # Global fuzzy matching threshold (can be overridden per entity above)
 # ---------------------------------------------------------------------------
 

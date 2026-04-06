@@ -82,6 +82,15 @@ def load_intents(lang: str = "en") -> dict[str, Any]:
     # --- Lists ---
     result["tag_voice_prefixes"] = list(raw["tag_voice_prefixes"])
 
+    # --- New vocabulary sections (Phase 1) ---
+    result["ordinal_words"] = dict(raw.get("ordinal_words", {}))
+    result["preamble_patterns"] = list(raw.get("preamble_patterns", []))
+    result["scheduling_verbs"] = list(raw.get("scheduling_verbs", []))
+    result["conditional_keywords"] = dict(raw.get("conditional_keywords", {}))
+    result["constraint_keywords"] = list(raw.get("constraint_keywords", []))
+    result["availability_words"] = list(raw.get("availability_words", []))
+    result["time_block_words"] = dict(raw.get("time_block_words", {}))
+
     # --- Scalars ---
     result["fuzzy_threshold"] = int(raw["fuzzy_threshold"])
 

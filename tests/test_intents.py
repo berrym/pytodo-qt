@@ -253,3 +253,109 @@ class TestValues:
         assert d["priority_display"][1] == "High"
         assert d["priority_display"][2] == "Normal"
         assert d["priority_display"][3] == "Low"
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: New vocabulary sections
+# ---------------------------------------------------------------------------
+
+
+class TestOrdinalWords:
+    def test_ordinals_loaded(self) -> None:
+        d = load_intents("en")
+        assert "ordinal_words" in d
+        assert len(d["ordinal_words"]) >= 31
+
+    def test_ordinal_values(self) -> None:
+        d = load_intents("en")
+        assert d["ordinal_words"]["first"] == 1
+        assert d["ordinal_words"]["fifteenth"] == 15
+        assert d["ordinal_words"]["thirty-first"] == 31
+        assert d["ordinal_words"]["twentieth"] == 20
+
+    def test_ordinal_range(self) -> None:
+        d = load_intents("en")
+        values = set(d["ordinal_words"].values())
+        for i in range(1, 32):
+            assert i in values, f"Missing ordinal for day {i}"
+
+
+class TestPreamblePatterns:
+    def test_preamble_loaded(self) -> None:
+        d = load_intents("en")
+        assert "preamble_patterns" in d
+        assert isinstance(d["preamble_patterns"], list)
+        assert len(d["preamble_patterns"]) >= 8
+
+    def test_preamble_values(self) -> None:
+        d = load_intents("en")
+        assert "remind me to" in d["preamble_patterns"]
+        assert "please" in d["preamble_patterns"]
+        assert "okay" in d["preamble_patterns"]
+
+
+class TestSchedulingVerbs:
+    def test_scheduling_verbs_loaded(self) -> None:
+        d = load_intents("en")
+        assert "scheduling_verbs" in d
+        assert isinstance(d["scheduling_verbs"], list)
+        assert len(d["scheduling_verbs"]) >= 6
+
+    def test_scheduling_verb_values(self) -> None:
+        d = load_intents("en")
+        assert "schedule" in d["scheduling_verbs"]
+        assert "book" in d["scheduling_verbs"]
+        assert "reserve" in d["scheduling_verbs"]
+
+
+class TestConditionalKeywords:
+    def test_conditional_loaded(self) -> None:
+        d = load_intents("en")
+        assert "conditional_keywords" in d
+        assert isinstance(d["conditional_keywords"], dict)
+        assert len(d["conditional_keywords"]) >= 10
+
+    def test_conditional_values(self) -> None:
+        d = load_intents("en")
+        assert d["conditional_keywords"]["if"] == "if"
+        assert d["conditional_keywords"]["unless"] == "unless"
+        assert d["conditional_keywords"]["otherwise"] == "fallback"
+        assert d["conditional_keywords"]["only if"] == "only_if"
+
+
+class TestConstraintKeywords:
+    def test_constraint_loaded(self) -> None:
+        d = load_intents("en")
+        assert "constraint_keywords" in d
+        assert isinstance(d["constraint_keywords"], list)
+        assert len(d["constraint_keywords"]) >= 4
+
+    def test_constraint_values(self) -> None:
+        d = load_intents("en")
+        assert "no later than" in d["constraint_keywords"]
+        assert "while" in d["constraint_keywords"]
+
+
+class TestAvailabilityWords:
+    def test_availability_loaded(self) -> None:
+        d = load_intents("en")
+        assert "availability_words" in d
+        assert isinstance(d["availability_words"], list)
+        assert "available" in d["availability_words"]
+        assert "free" in d["availability_words"]
+
+
+class TestTimeBlockWords:
+    def test_time_blocks_loaded(self) -> None:
+        d = load_intents("en")
+        assert "time_block_words" in d
+        assert isinstance(d["time_block_words"], dict)
+        assert len(d["time_block_words"]) >= 12
+
+    def test_time_block_values(self) -> None:
+        d = load_intents("en")
+        assert d["time_block_words"]["morning"] == "morning"
+        assert d["time_block_words"]["tonight"] == "evening"
+        assert d["time_block_words"]["first thing"] == "early_morning"
+        assert d["time_block_words"]["end of day"] == "evening"
+        assert d["time_block_words"]["late afternoon"] == "late_afternoon"
