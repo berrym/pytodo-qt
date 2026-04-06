@@ -988,6 +988,41 @@ def _add_months(d: date, months: int) -> date:
     return date(year, month, min(d.day, max_day))
 
 
+def _ordinal_to_day(token_text: str, next_token_text: str | None = None) -> tuple[int | None, int]:
+    """Convert token(s) to a day-of-month (1-31) from digit ordinals or ordinal words.
+
+    Handles: "1st", "2nd", "15th", "first", "fifteenth", "twenty-first",
+    and two-token "twenty first" (voice dictation, no hyphen).
+
+    Returns (day_number_or_None, tokens_consumed). tokens_consumed is 1 or 2.
+    """
+    intents = _get_intents()
+    ordinals = intents["ordinal_words"]
+
+    # Digit-based: strip suffix
+    stripped = (
+        token_text.removesuffix("st").removesuffix("nd").removesuffix("rd").removesuffix("th")
+    )
+    if stripped.isdigit():
+        num = int(stripped)
+        if 1 <= num <= 31:
+            return num, 1
+
+    # Single word ordinal: "first", "fifteenth", "twentieth"
+    val = ordinals.get(token_text)
+    if val is not None:
+        return val, 1
+
+    # Two-token compound: "twenty first" → look up "twenty-first" (hyphenated form)
+    if next_token_text is not None:
+        hyphenated = f"{token_text}-{next_token_text}"
+        val = ordinals.get(hyphenated)
+        if val is not None:
+            return val, 2
+
+    return None, 0
+
+
 def _extract_dates_and_times(
     text: str, tokens: list[_Token], tracker: _SpanTracker, today: date
 ) -> tuple[date | None, time | None]:
@@ -1012,8 +1047,9 @@ def _extract_dates_and_times(
 
     def _set_date(d: date, start: int, end: int) -> None:
         nonlocal due_date
-        # Check for prefix word before the date tokens
+        # Check for prefix word(s) before the date tokens
         prefix_start = start
+        # Single-word prefixes: "due", "by", "on", "before"
         for ptok in tokens:
             if (
                 ptok.end <= start
@@ -1022,6 +1058,22 @@ def _extract_dates_and_times(
             ):
                 prefix_start = ptok.start
                 break
+        # Multi-word constraint prefixes: "no later than", "prior to", etc.
+        for phrase in intents.get("constraint_keywords", []):
+            phrase_words = phrase.split()
+            phrase_len = len(phrase_words)
+            for ti in range(len(tokens)):
+                if tokens[ti].start >= start:
+                    break
+                if ti + phrase_len <= len(tokens):
+                    candidate = " ".join(tokens[ti + j].text for j in range(phrase_len))
+                    if (
+                        candidate == phrase
+                        and tokens[ti + phrase_len - 1].end <= start
+                        and start - tokens[ti + phrase_len - 1].end <= 1
+                    ):
+                        prefix_start = min(prefix_start, tokens[ti].start)
+                        break
         if tracker.is_free(prefix_start, end):
             tracker.unreserve_kind(EntityKind.DATE)
             due_date = d
@@ -1185,70 +1237,60 @@ def _extract_dates_and_times(
         elif tok.text in day_names:
             _set_date(_resolve_day_name(tok.text, today), tok.start, tok.end)
 
-        # "the 15th" or "the 15th of <month>"
+        # "the 15th" / "the first" / "the fifteenth" / "the twenty first" or "... of <month>"
         elif tok.text == "the" and i + 1 < len(tokens):
-            next_text = tokens[i + 1].text
-            # Strip ordinal suffix
-            day_num_str = (
-                next_text.removesuffix("st")
-                .removesuffix("nd")
-                .removesuffix("rd")
-                .removesuffix("th")
-            )
-            if day_num_str.isdigit():
-                day_num = int(day_num_str)
-                if 1 <= day_num <= 31:
-                    # Check for "of <month>"
-                    if (
-                        i + 3 < len(tokens)
-                        and tokens[i + 2].text == "of"
-                        and tokens[i + 3].text in month_names
-                    ):
-                        m = month_names[tokens[i + 3].text]
-                        try:
-                            d = date(today.year, m, day_num)
-                            if d < today:
-                                d = date(today.year + 1, m, day_num)
-                            _set_date(d, tok.start, tokens[i + 3].end)
-                        except ValueError:
-                            pass
-                        i += 3
-                    else:
-                        # Just "the 15th" — this month or next
-                        try:
-                            d = date(today.year, today.month, day_num)
-                            if d <= today:
-                                d = _add_months(d, 1)
-                            _set_date(d, tok.start, tokens[i + 1].end)
-                        except ValueError:
-                            pass
-                        i += 1
+            next2 = tokens[i + 2].text if i + 2 < len(tokens) else None
+            day_num, ord_consumed = _ordinal_to_day(tokens[i + 1].text, next2)
+            if day_num is not None:
+                ord_end_idx = i + ord_consumed  # index of last ordinal token
+                # Check for "of <month>" after the ordinal
+                of_idx = ord_end_idx + 1
+                if (
+                    of_idx + 1 < len(tokens)
+                    and tokens[of_idx].text == "of"
+                    and tokens[of_idx + 1].text in month_names
+                ):
+                    m = month_names[tokens[of_idx + 1].text]
+                    try:
+                        d = date(today.year, m, day_num)
+                        if d < today:
+                            d = date(today.year + 1, m, day_num)
+                        _set_date(d, tok.start, tokens[of_idx + 1].end)
+                    except ValueError:
+                        pass
+                    i = of_idx + 1
+                else:
+                    # Just "the 15th" / "the first" — this month or next
+                    try:
+                        d = date(today.year, today.month, day_num)
+                        if d <= today:
+                            d = _add_months(d, 1)
+                        _set_date(d, tok.start, tokens[ord_end_idx].end)
+                    except ValueError:
+                        pass
+                    i = ord_end_idx
 
         # Month name + day: "March 20", "March 20 2027"
         elif tok.text in month_names:
             m = month_names[tok.text]
             if i + 1 < len(tokens):
-                day_text = (
-                    tokens[i + 1]
-                    .text.rstrip(",")
-                    .removesuffix("st")
-                    .removesuffix("nd")
-                    .removesuffix("rd")
-                    .removesuffix("th")
+                next2_month = tokens[i + 2].text if i + 2 < len(tokens) else None
+                day_num, ord_consumed_m = _ordinal_to_day(
+                    tokens[i + 1].text.rstrip(","), next2_month
                 )
-                if day_text.isdigit():
-                    day_num = int(day_text)
+                if day_num is not None:
                     year = today.year
-                    end_idx = i + 1
+                    end_idx = i + ord_consumed_m
                     invalid_date = False
-                    # Check for year
+                    # Check for year after ordinal
+                    year_idx = end_idx + 1
                     if (
-                        i + 2 < len(tokens)
-                        and tokens[i + 2].text.isdigit()
-                        and len(tokens[i + 2].text) == 4
+                        year_idx < len(tokens)
+                        and tokens[year_idx].text.isdigit()
+                        and len(tokens[year_idx].text) == 4
                     ):
-                        year = int(tokens[i + 2].text)
-                        end_idx = i + 2
+                        year = int(tokens[year_idx].text)
+                        end_idx = year_idx
                     else:
                         try:
                             d = date(year, m, day_num)

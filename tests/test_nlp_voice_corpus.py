@@ -57,7 +57,7 @@ class TestBaselineCaptures:
         assert "finish report" in r.reminder.lower()
         assert r.due_date == UPCOMING_FRIDAY
 
-    @pytest.mark.xfail(reason="Ordinal word 'first' not parsed as day-of-month")
+    @pytest.mark.xfail(reason="'rent' fuzzy-matched as priority — Phase 5 span boundary fix")
     def test_04_on_the_first(self) -> None:
         r = parse("pay rent on the first", today=TODAY)
         assert "pay rent" in r.reminder.lower()
@@ -97,7 +97,6 @@ class TestBaselineCaptures:
         assert "at work" in r.reminder.lower()
         assert "@work" not in [t.lower() for t in r.tags]
 
-    @pytest.mark.xfail(reason="Ordinal word 'fifteenth' not parsed as day 15")
     def test_11_april_fifteenth(self) -> None:
         r = parse("submit taxes by april fifteenth", today=TODAY)
         assert "submit taxes" in r.reminder.lower()
@@ -224,7 +223,6 @@ class TestCompoundDateTime:
         assert r.due_date == NEXT_FRIDAY
         assert r.due_time is not None
 
-    @pytest.mark.xfail(reason="Ordinal word 'fifteenth' not parsed as day 15")
     def test_28_fifteenth_at_two_pm(self) -> None:
         r = parse("dentist on the fifteenth at two pm", today=TODAY)
         assert "dentist" in r.reminder.lower()
@@ -681,7 +679,6 @@ class TestConditionalExpressions:
         assert "call plumber" in r.reminder.lower()
         assert r.due_date is not None
 
-    @pytest.mark.xfail(reason="'no later than april fourteenth' — ordinal words not parsed")
     def test_96_no_later_than(self) -> None:
         r = parse("finish taxes no later than april fourteenth", today=TODAY)
         assert "finish taxes" in r.reminder.lower()
