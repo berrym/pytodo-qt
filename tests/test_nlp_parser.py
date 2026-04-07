@@ -1756,3 +1756,76 @@ class TestConditions:
         r = parse("submit report otherwise email it", today=TODAY)
         assert "otherwise" not in r.reminder.lower()
         assert "email" not in r.reminder.lower()
+
+
+# ---------------------------------------------------------------------------
+# TestSubtaskExtraction
+# ---------------------------------------------------------------------------
+
+
+class TestSubtaskExtraction:
+    """Inline subtask creation from delimiter patterns."""
+
+    # -- Colon delimiter --
+
+    def test_colon_basic(self) -> None:
+        r = parse("buy groceries: milk, bread, eggs", today=TODAY)
+        assert r.reminder == "buy groceries"
+        assert r.subtask_reminders == ["milk", "bread", "eggs"]
+
+    def test_colon_oxford_comma(self) -> None:
+        r = parse("buy groceries: milk, bread, and eggs", today=TODAY)
+        assert r.subtask_reminders == ["milk", "bread", "eggs"]
+
+    def test_colon_and_connector(self) -> None:
+        r = parse("pack: clothes, charger and passport", today=TODAY)
+        assert r.subtask_reminders == ["clothes", "charger", "passport"]
+
+    def test_colon_single_item(self) -> None:
+        r = parse("errand: pick up dry cleaning", today=TODAY)
+        assert r.reminder == "errand"
+        assert r.subtask_reminders == ["pick up dry cleaning"]
+
+    # -- "with tasks" / "with subtasks" delimiter --
+
+    def test_with_tasks(self) -> None:
+        r = parse("project X with tasks design, implement, test", today=TODAY)
+        assert r.reminder == "project X"
+        assert r.subtask_reminders == ["design", "implement", "test"]
+
+    def test_with_subtasks(self) -> None:
+        r = parse("launch plan with subtasks research, draft, review", today=TODAY)
+        assert r.reminder == "launch plan"
+        assert r.subtask_reminders == ["research", "draft", "review"]
+
+    # -- "including" delimiter --
+
+    def test_including(self) -> None:
+        r = parse("meeting prep including slides, handouts, agenda", today=TODAY)
+        assert r.reminder == "meeting prep"
+        assert r.subtask_reminders == ["slides", "handouts", "agenda"]
+
+    # -- No subtasks --
+
+    def test_no_delimiter_no_subtasks(self) -> None:
+        r = parse("buy groceries tomorrow", today=TODAY)
+        assert r.subtask_reminders == []
+
+    def test_colon_no_items(self) -> None:
+        """Colon at end with no items should not create empty subtasks."""
+        r = parse("note:", today=TODAY)
+        assert r.subtask_reminders == []
+
+    # -- Metadata preserved alongside subtasks --
+
+    def test_metadata_with_subtasks(self) -> None:
+        r = parse("buy groceries tomorrow : milk, bread, eggs", today=TODAY)
+        assert r.due_date is not None
+        assert "groceries" in r.reminder.lower()
+        assert r.subtask_reminders == ["milk", "bread", "eggs"]
+
+    # -- Two-word "and" only (no commas) --
+
+    def test_and_only(self) -> None:
+        r = parse("errands: laundry and dishes", today=TODAY)
+        assert r.subtask_reminders == ["laundry", "dishes"]

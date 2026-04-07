@@ -78,6 +78,7 @@ class ParseResult:
     work_duration: int | None = None
     event_date: date | None = None  # Target period for scheduling tasks
     conditions: list[dict[str, str]] = field(default_factory=list)  # Structured conditions
+    subtask_reminders: list[str] = field(default_factory=list)  # Inline subtask items
     spans: list[EntitySpan] = field(default_factory=list)
 
 
@@ -2075,6 +2076,61 @@ def _build_reminder(text: str, spans: list[EntitySpan]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Subtask extraction
+# ---------------------------------------------------------------------------
+
+
+def _extract_subtasks(reminder: str) -> tuple[str, list[str]]:
+    """Extract inline subtask items from delimiter patterns in reminder text.
+
+    Patterns: colon ("buy groceries: milk, bread, eggs"),
+    "with tasks/subtasks", "including".
+
+    Returns (parent_reminder, subtask_reminders). If no delimiter found,
+    returns (reminder, []).
+    """
+    _delimiters = [": ", " with tasks ", " with subtasks ", " including "]
+
+    lower = reminder.lower()
+    for delim in _delimiters:
+        idx = lower.find(delim)
+        if idx == -1:
+            continue
+        parent = reminder[:idx].strip()
+        items_text = reminder[idx + len(delim) :].strip()
+        if not parent or not items_text:
+            continue
+        items = _split_list_items(items_text)
+        if items:
+            return parent, items
+
+    return reminder, []
+
+
+def _split_list_items(text: str) -> list[str]:
+    """Split comma/and-separated text into individual items.
+
+    Handles: "a, b, c", "a, b, and c", "a and b", "a, b and c".
+    """
+    parts = [p.strip() for p in text.split(",")]
+    result: list[str] = []
+    for part in parts:
+        if not part:
+            continue
+        # Strip leading "and " from Oxford comma segments ("a, b, and c")
+        if part.lower().startswith("and "):
+            part = part[4:].strip()
+        if not part:
+            continue
+        # Split on " and " within each segment ("charger and passport")
+        for sub in part.split(" and "):
+            sub = sub.strip()
+            if sub:
+                result.append(sub)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Condition extraction
 # ---------------------------------------------------------------------------
 
@@ -2210,6 +2266,9 @@ def parse(text: str, today: date | None = None) -> ParseResult:
     elif times_anno:
         reminder = times_anno
 
+    # 9. Subtask extraction from reminder text
+    reminder, subtask_reminders = _extract_subtasks(reminder)
+
     return ParseResult(
         reminder=reminder,
         due_date=due_date,
@@ -2227,5 +2286,6 @@ def parse(text: str, today: date | None = None) -> ParseResult:
         work_duration=work_duration,
         event_date=event_date,
         conditions=conditions,
+        subtask_reminders=subtask_reminders,
         spans=tracker.spans,
     )
