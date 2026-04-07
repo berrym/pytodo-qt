@@ -576,30 +576,36 @@ class TestTimeBlocks:
         r = parse("dinner tonight", today=TODAY)
         assert "dinner" in r.reminder.lower()
         assert r.due_date == TODAY
+        assert r.due_time_block == "evening"
 
     def test_74_breakfast_tomorrow(self) -> None:
         r = parse("breakfast tomorrow", today=TODAY)
         assert "breakfast" in r.reminder.lower()
         assert r.due_date == TOMORROW
+        assert r.due_time_block == "morning"
 
     def test_77_friday_night(self) -> None:
         r = parse("dinner with parents friday night", today=TODAY)
         assert "dinner with parents" in r.reminder.lower()
         assert r.due_date == UPCOMING_FRIDAY
+        assert r.due_time_block == "night"
 
     def test_79_this_afternoon(self) -> None:
         r = parse("call back this afternoon", today=TODAY)
         assert "call back" in r.reminder.lower()
         assert r.due_date == TODAY
+        assert r.due_time_block == "afternoon"
 
     def test_83_first_thing(self) -> None:
         r = parse("take meds first thing", today=TODAY)
         assert "take meds" in r.reminder.lower()
+        assert r.due_time_block == "early_morning"
 
     def test_84_daily_late_afternoon(self) -> None:
         r = parse("late afternoon snack daily", today=TODAY)
         assert "snack" in r.reminder.lower()
         assert r.recurrence_type == "daily"
+        assert r.due_time_block == "late_afternoon"
 
 
 # ===========================================================================

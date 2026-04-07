@@ -437,6 +437,10 @@ time_block_words:
   "late night": late_night
   "first thing": early_morning
   "end of day": evening
+  breakfast: morning
+  lunch: afternoon
+  dinner: evening
+  supper: evening
 
 # ---------------------------------------------------------------------------
 # Global fuzzy matching threshold (can be overridden per entity above)

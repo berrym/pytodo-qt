@@ -1080,7 +1080,7 @@ def _ordinal_to_day(token_text: str, next_token_text: str | None = None) -> tupl
 
 def _extract_dates_and_times(
     text: str, tokens: list[_Token], tracker: _SpanTracker, today: date
-) -> tuple[date | None, time | None]:
+) -> tuple[date | None, time | None, str | None]:
     """Extract dates and times: token-based for common patterns, dateparser for complex ones."""
     import calendar as _cal
 
@@ -1385,9 +1385,12 @@ def _extract_dates_and_times(
     # --- Phase 2: Time-of-day keywords ---
     tod = intents["time_of_day"]
     tod_phrases = intents["time_of_day_phrases"]
+    time_block_words = intents.get("time_block_words", {})
     _today_implying_phrases = {"this morning", "this afternoon", "this evening"}
     _today_implying_words = {"tonight"}
+    due_time_block: str | None = None
 
+    # Multi-word time_of_day phrases first ("this morning", "this afternoon", etc.)
     for window_size in (3, 2):
         for j in range(len(tokens) - window_size + 1):
             phrase_tokens = tokens[j : j + window_size]
@@ -1398,10 +1401,23 @@ def _extract_dates_and_times(
             phrase = " ".join(t.text for t in phrase_tokens)
             if phrase in tod_phrases:
                 _set_time(tod_phrases[phrase], start, end)
-                # "this morning/afternoon/evening" implies due_date=today
-                # (set directly — span is already reserved for time)
                 if phrase in _today_implying_phrases and due_date is None:
                     due_date = today
+                # Derive time_block from tod_phrase (e.g., "this afternoon" → "afternoon")
+                if due_time_block is None:
+                    last_word = phrase_tokens[-1].text
+                    if last_word in time_block_words:
+                        due_time_block = time_block_words[last_word]
+            # Multi-word time block phrases ("late afternoon", "early morning", "first thing")
+            if phrase in time_block_words and due_time_block is None:
+                due_time_block = time_block_words[phrase]
+                if not tracker.is_free(start, end):
+                    continue  # Already reserved by tod_phrases above — that's fine
+                tracker.reserve(
+                    EntitySpan(
+                        start, end, EntityKind.TIME_BLOCK, due_time_block.replace("_", " ").title()
+                    )
+                )
 
     # Track whether Phase 2 skipped "morning"/"evening" for AM/PM context in Phase 3
     _skipped_tod_context: str | None = None
@@ -1411,17 +1427,57 @@ def _extract_dates_and_times(
             continue
         if tok.text in tod:
             # Skip single-word time_of_day if followed by "at"/"by"/"before" + potential time
-            # ("monday morning at six" → let Phase 3 handle "at six", keep "morning" for AM context)
             if j + 2 < len(tokens) and tokens[j + 1].text in ("at", "by", "before"):
                 _skipped_tod_context = tok.text
                 continue
-            # Don't override a time already set by Phase 1 relative expressions ("in half an hour")
+            # Don't override a time already set by Phase 1 relative expressions
             if due_time is not None:
                 continue
             _set_time(tod[tok.text], tok.start, tok.end)
-            # "tonight" implies due_date=today (set directly — span is already reserved for time)
+            # Set time_block from single-word matches (morning, evening, tonight, etc.)
+            if tok.text in time_block_words and due_time_block is None:
+                due_time_block = time_block_words[tok.text]
             if tok.text in _today_implying_words and due_date is None:
                 due_date = today
+
+    # --- Phase 2b: Time block words not in time_of_day (night, breakfast, dinner, etc.) ---
+    # Meal words set the block but stay in the reminder (they're meaningful content).
+    # Explicit time words (night, evening) take precedence over meal words (dinner, lunch).
+    _meal_words = {"breakfast", "lunch", "dinner", "supper", "lunchtime"}
+    if due_time_block is None:
+        _meal_fallback: str | None = None
+        for window_size in (2, 1):
+            for j in range(len(tokens) - window_size + 1):
+                phrase_tokens = tokens[j : j + window_size]
+                start = phrase_tokens[0].start
+                end = phrase_tokens[-1].end
+                if not tracker.is_free(start, end):
+                    continue
+                phrase = (
+                    " ".join(t.text for t in phrase_tokens) if window_size > 1 else tokens[j].text
+                )
+                if phrase in time_block_words:
+                    block = time_block_words[phrase]
+                    if phrase in _meal_words:
+                        if _meal_fallback is None:
+                            _meal_fallback = block
+                    else:
+                        # Explicit time word — use it and reserve span
+                        due_time_block = block
+                        tracker.reserve(
+                            EntitySpan(
+                                start,
+                                end,
+                                EntityKind.TIME_BLOCK,
+                                block.replace("_", " ").title(),
+                            )
+                        )
+                        break
+            if due_time_block is not None:
+                break
+        # Fall back to meal-derived block if no explicit time word found
+        if due_time_block is None and _meal_fallback is not None:
+            due_time_block = _meal_fallback
 
     # --- Phase 3: Time patterns (at 3pm, by 5:00, 10am, etc.) ---
     _time_prefixes = {"at", "by", "before"} | intents["approximation_prefixes"]
@@ -1541,7 +1597,7 @@ def _extract_dates_and_times(
         except Exception:
             logger.log.debug("dateparser search_dates failed", exc_info=True)
 
-    return due_date, due_time
+    return due_date, due_time, due_time_block
 
 
 def _parse_spoken_time(
@@ -1800,7 +1856,7 @@ def parse(text: str, today: date | None = None) -> ParseResult:
     work_duration = _extract_work_duration(tokens, tracker)
 
     # 7. Dates and times (via dateparser)
-    due_date, due_time = _extract_dates_and_times(text, tokens, tracker, today)
+    due_date, due_time, due_time_block = _extract_dates_and_times(text, tokens, tracker, today)
 
     # Apply recurrence time hint (e.g., "every morning" → 9:00)
     if rec_time is not None and due_time is None:
@@ -1823,6 +1879,7 @@ def parse(text: str, today: date | None = None) -> ParseResult:
         reminder=reminder,
         due_date=due_date,
         due_time=due_time,
+        due_time_block=due_time_block,
         priority=priority,
         tags=tags,
         recurrence_type=rec_type,
