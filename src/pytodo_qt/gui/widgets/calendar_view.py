@@ -630,6 +630,7 @@ class _TimelineTasksWidget(QWidget):
         self._pom_bar: pg.BarGraphItem | None = None
         self._sw_bar: pg.BarGraphItem | None = None
         self._overflow_bar: pg.BarGraphItem | None = None
+        self._event_bar: pg.BarGraphItem | None = None
         self._today_line: pg.InfiniteLine | None = None
 
         # Base data arrays (N items)
@@ -736,6 +737,11 @@ class _TimelineTasksWidget(QWidget):
         of_c = QColor(c.get("chart_overflow_actual", "#ff6e76"))
         of_c.setAlpha(int(c.get("chart_overflow_actual_alpha", "80")))
         self._overflow_brush = QBrush(of_c)
+
+        # Event date
+        ev_c = QColor("#9333EA")
+        ev_c.setAlpha(120)
+        self._event_brush = QBrush(ev_c)
 
         self._col_text = QColor(c.get("text", "#e0e0e0"))
         self._col_border = QColor(c.get("border", "#3c3c3c"))
@@ -861,6 +867,7 @@ class _TimelineTasksWidget(QWidget):
         self._pom_bar = None
         self._sw_bar = None
         self._overflow_bar = None
+        self._event_bar = None
         self._today_line = None
         self._item_indices = {}
 
@@ -909,6 +916,11 @@ class _TimelineTasksWidget(QWidget):
         of_y0 = np.zeros(n)
         of_w = np.zeros(n)
         of_h = np.full(n, bar_h)
+
+        ev_x0 = np.zeros(n)
+        ev_y0 = np.zeros(n)
+        ev_w = np.zeros(n)
+        ev_h = np.full(n, span_h)
 
         y_ticks = []
 
@@ -1003,6 +1015,16 @@ class _TimelineTasksWidget(QWidget):
             else:
                 of_y0[i] = actual_y0
 
+            # Event date (target period bar above span)
+            if hasattr(item, "event_date") and item.event_date is not None:
+                ev_start = self._date_to_days(item.event_date)
+                ev_end = ev_start + 1.0  # Show as 1-day marker
+                ev_x0[i] = ev_start
+                ev_y0[i] = y_base + 0.40
+                ev_w[i] = max(0.5, ev_end - ev_start)
+            else:
+                ev_y0[i] = y_base + 0.40
+
         # Store arrays for real-time updates
         self._pom_widths = pom_w
         self._pom_x0s = pom_x0
@@ -1073,6 +1095,17 @@ class _TimelineTasksWidget(QWidget):
         )
         plot.addItem(self._overflow_bar)
 
+        # Event date bar (light purple)
+        self._event_bar = pg.BarGraphItem(
+            x0=ev_x0,
+            y0=ev_y0,
+            width=ev_w,
+            height=ev_h,
+            brush=self._event_brush,
+            pen=pg.mkPen(None),
+        )
+        plot.addItem(self._event_bar)
+
         # Today line (persistent)
         today_x = self._date_to_days(today)
         self._today_line = pg.InfiniteLine(
@@ -1118,6 +1151,7 @@ class _TimelineTasksWidget(QWidget):
             (c.get("chart_estimate", "#3D4147"), _tr("CalendarViewWidget", "Estimated")),
             (c.get("chart_pomodoro", "#D55E00"), _tr("CalendarViewWidget", "Pomodoro")),
             (c.get("chart_stopwatch", "#0072B2"), _tr("CalendarViewWidget", "Stopwatch")),
+            ("#9333EA", _tr("CalendarViewWidget", "Event Date")),
         ]:
             lbl = QLabel(
                 f'<span style="color:{hex_c};">\u25a0</span> '
@@ -1182,6 +1216,11 @@ class _TimelineTasksWidget(QWidget):
 
         if item.tags:
             parts.append(f"Tags: {', '.join(item.tags)}")
+        if hasattr(item, "event_date") and item.event_date:
+            parts.append(f"Event: {item.event_date.strftime('%b %d, %Y')}")
+        if hasattr(item, "due_time_block") and item.due_time_block:
+            block_label = item.due_time_block.replace("_", " ").title()
+            parts.append(f"Time block: {block_label}")
         if item.complete:
             parts.insert(1, "<i>Completed</i>")
 
