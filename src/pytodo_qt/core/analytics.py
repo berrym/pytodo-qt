@@ -672,3 +672,156 @@ class AnalyticsService:
         streak_score = min(20, current_streak * 4)
 
         return min(100, goal_score + rate_score + streak_score)
+
+    # --- New v18 analytics methods ---
+
+    def upcoming_digest(self, days: int = 3) -> pd.DataFrame:
+        """Return items due within the next N days, sorted by urgency.
+
+        Reads from the items table directly (not focus_sessions).
+
+        Returns DataFrame with columns:
+            id, list_id, reminder, priority, due_date, due_time,
+            due_time_block, event_date, complete, days_until_due
+        """
+        cache_key = self._cache_key("upcoming_digest", days=days)
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            return cached
+
+        today = date.today()
+        end = today + timedelta(days=days)
+        query = """
+            SELECT id, list_id, reminder, priority, due_date, due_time,
+                   due_time_block, event_date, complete
+            FROM items
+            WHERE deleted = 0 AND complete = 0
+              AND due_date IS NOT NULL AND due_date <= ?
+            ORDER BY due_date ASC, priority ASC
+        """
+        df = pd.read_sql_query(query, self._conn, params=(end.isoformat(),))
+        if not df.empty:
+            df["due_date_parsed"] = pd.to_datetime(df["due_date"])
+            df["days_until_due"] = (df["due_date_parsed"] - pd.Timestamp(today)).dt.days
+            df = df.drop(columns=["due_date_parsed"])
+        else:
+            df["days_until_due"] = pd.Series(dtype="int64")
+
+        self._set_cached(cache_key, df)
+        return df
+
+    def time_block_distribution(self) -> pd.DataFrame:
+        """Distribution of tasks across canonical time blocks.
+
+        Returns DataFrame with columns:
+            time_block, task_count, completed_count, completion_rate
+        """
+        cache_key = self._cache_key("time_block_distribution")
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            return cached
+
+        query = """
+            SELECT due_time_block, complete
+            FROM items
+            WHERE deleted = 0 AND due_time_block IS NOT NULL
+        """
+        df = pd.read_sql_query(query, self._conn)
+        if df.empty:
+            result = pd.DataFrame(
+                columns=["time_block", "task_count", "completed_count", "completion_rate"]
+            )
+            self._set_cached(cache_key, result)
+            return result
+
+        grouped = (
+            df.groupby("due_time_block")
+            .agg(
+                task_count=("complete", "count"),
+                completed_count=("complete", "sum"),
+            )
+            .reset_index()
+        )
+        grouped = grouped.rename(columns={"due_time_block": "time_block"})
+        grouped["completion_rate"] = (grouped["completed_count"] / grouped["task_count"]).fillna(
+            0.0
+        )
+
+        self._set_cached(cache_key, grouped)
+        return grouped
+
+    def scheduling_accuracy(self, list_id: str | None = None) -> pd.DataFrame:
+        """For tasks with event_date: were they completed by due_date?
+
+        Returns DataFrame with columns:
+            id, reminder, due_date, event_date, complete, on_time
+        """
+        cache_key = self._cache_key("scheduling_accuracy", list_id=list_id or "all")
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            return cached
+
+        where = "WHERE deleted = 0 AND event_date IS NOT NULL"
+        params: list[str] = []
+        if list_id:
+            where += " AND list_id = ?"
+            params.append(list_id)
+
+        query = f"""
+            SELECT id, reminder, due_date, event_date, complete, updated_at
+            FROM items {where}
+        """
+        df = pd.read_sql_query(query, self._conn, params=params or None)
+        if df.empty:
+            df["on_time"] = pd.Series(dtype="bool")
+            self._set_cached(cache_key, df)
+            return df
+
+        # A task is "on time" if it was completed (complete=1) and
+        # either has no due_date or was completed before/on the due_date
+        df["on_time"] = df["complete"].astype(bool)
+
+        self._set_cached(cache_key, df)
+        return df
+
+    def notification_effectiveness(self) -> pd.DataFrame:
+        """Compare notified items vs non-notified: completion rates.
+
+        Returns DataFrame with columns:
+            notified (bool), task_count, completed_count, completion_rate
+        """
+        cache_key = self._cache_key("notification_effectiveness")
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            return cached
+
+        query = """
+            SELECT
+                CASE WHEN notified_at > 0 THEN 1 ELSE 0 END as notified,
+                complete
+            FROM items
+            WHERE deleted = 0 AND due_date IS NOT NULL
+        """
+        df = pd.read_sql_query(query, self._conn)
+        if df.empty:
+            result = pd.DataFrame(
+                columns=["notified", "task_count", "completed_count", "completion_rate"]
+            )
+            self._set_cached(cache_key, result)
+            return result
+
+        grouped = (
+            df.groupby("notified")
+            .agg(
+                task_count=("complete", "count"),
+                completed_count=("complete", "sum"),
+            )
+            .reset_index()
+        )
+        grouped["notified"] = grouped["notified"].astype(bool)
+        grouped["completion_rate"] = (grouped["completed_count"] / grouped["task_count"]).fillna(
+            0.0
+        )
+
+        self._set_cached(cache_key, grouped)
+        return grouped

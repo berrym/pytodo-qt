@@ -48,7 +48,14 @@ def db():
             break_duration INTEGER NOT NULL DEFAULT 0,
             long_break_duration INTEGER NOT NULL DEFAULT 0,
             complete INTEGER NOT NULL DEFAULT 0,
-            deleted INTEGER NOT NULL DEFAULT 0
+            deleted INTEGER NOT NULL DEFAULT 0,
+            priority INTEGER NOT NULL DEFAULT 2,
+            due_date TEXT,
+            due_time TEXT,
+            due_time_block TEXT,
+            event_date TEXT,
+            notified_at INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL DEFAULT 0
         )"""
     )
     yield conn
@@ -87,23 +94,42 @@ def _insert_item(
     *,
     item_id=None,
     list_id=None,
+    reminder="test item",
     time_spent=0,
     pomodoro_count=0,
     estimated_pomodoros=0,
     estimated_minutes=0,
+    work_duration=0,
+    complete=0,
+    due_date=None,
+    due_time_block=None,
+    event_date=None,
+    notified_at=0,
+    priority=2,
 ):
     item_id = item_id or str(uuid4())
     list_id = list_id or str(uuid4())
     db.execute(
-        "INSERT INTO items VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 0)",
+        """INSERT INTO items (id, list_id, reminder, time_spent, pomodoro_count,
+           estimated_pomodoros, estimated_minutes, work_duration, break_duration,
+           long_break_duration, complete, deleted, priority, due_date, due_time,
+           due_time_block, event_date, notified_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, ?, ?, NULL, ?, ?, ?, 0)""",
         (
             item_id,
             list_id,
-            "test item",
+            reminder,
             time_spent,
             pomodoro_count,
             estimated_pomodoros,
             estimated_minutes,
+            work_duration,
+            complete,
+            priority,
+            due_date,
+            due_time_block,
+            event_date,
+            notified_at,
         ),
     )
     return item_id, list_id
@@ -536,3 +562,84 @@ class TestCache:
         svc.set_work_duration(50)
         df2 = svc.sessions()
         assert df1 is not df2
+
+
+# ---------------------------------------------------------------------------
+# v18 analytics methods
+# ---------------------------------------------------------------------------
+
+
+class TestUpcomingDigest:
+    def test_empty(self, db, svc):
+        df = svc.upcoming_digest(days=3)
+        assert len(df) == 0
+
+    def test_returns_due_items(self, db, svc):
+        today = date.today()
+        _insert_item(db, reminder="Due today", due_date=today.isoformat())
+        _insert_item(db, reminder="Due tomorrow", due_date=(today + timedelta(days=1)).isoformat())
+        _insert_item(db, reminder="Far away", due_date=(today + timedelta(days=30)).isoformat())
+        df = svc.upcoming_digest(days=3)
+        assert len(df) == 2
+        assert "Due today" in df["reminder"].values
+        assert "Due tomorrow" in df["reminder"].values
+
+    def test_excludes_completed(self, db, svc):
+        today = date.today()
+        _insert_item(db, reminder="Done", due_date=today.isoformat(), complete=1)
+        df = svc.upcoming_digest(days=3)
+        assert len(df) == 0
+
+    def test_includes_overdue(self, db, svc):
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        _insert_item(db, reminder="Overdue", due_date=yesterday)
+        df = svc.upcoming_digest(days=3)
+        assert len(df) == 1
+
+
+class TestTimeBlockDistribution:
+    def test_empty(self, db, svc):
+        df = svc.time_block_distribution()
+        assert len(df) == 0
+
+    def test_counts_by_block(self, db, svc):
+        _insert_item(db, reminder="Morning 1", due_time_block="morning")
+        _insert_item(db, reminder="Morning 2", due_time_block="morning", complete=1)
+        _insert_item(db, reminder="Evening 1", due_time_block="evening")
+        df = svc.time_block_distribution()
+        assert len(df) == 2
+        morning = df[df["time_block"] == "morning"]
+        assert morning.iloc[0]["task_count"] == 2
+        assert morning.iloc[0]["completed_count"] == 1
+        assert morning.iloc[0]["completion_rate"] == 0.5
+
+
+class TestSchedulingAccuracy:
+    def test_empty(self, db, svc):
+        df = svc.scheduling_accuracy()
+        assert len(df) == 0
+
+    def test_returns_event_date_items(self, db, svc):
+        _insert_item(db, reminder="Dentist", event_date="2026-05-01", complete=1)
+        _insert_item(db, reminder="No event", due_date="2026-04-10")
+        df = svc.scheduling_accuracy()
+        assert len(df) == 1
+        assert df.iloc[0]["reminder"] == "Dentist"
+        assert bool(df.iloc[0]["on_time"]) is True
+
+
+class TestNotificationEffectiveness:
+    def test_empty(self, db, svc):
+        df = svc.notification_effectiveness()
+        assert len(df) == 0
+
+    def test_groups_notified_vs_not(self, db, svc):
+        today = date.today().isoformat()
+        _insert_item(db, reminder="Notified done", due_date=today, notified_at=1000, complete=1)
+        _insert_item(db, reminder="Notified not done", due_date=today, notified_at=1000)
+        _insert_item(db, reminder="Not notified done", due_date=today, complete=1)
+        df = svc.notification_effectiveness()
+        assert len(df) == 2
+        notified = df[df["notified"] == True]  # noqa: E712
+        assert notified.iloc[0]["task_count"] == 2
+        assert notified.iloc[0]["completed_count"] == 1
