@@ -26,6 +26,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt6.QtWidgets import (
     QButtonGroup,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -44,7 +45,7 @@ from ..core.config import get_config, get_config_manager
 from ..core.database import DatabaseStorage
 from ..core.logger import Logger
 from ..core.migration import MigrationError, migrate_json_to_sqlite, needs_migration
-from ..core.models import Database, Device, PendingSync, TodoList
+from ..core.models import Database, Device, PendingSync, TodoItem, TodoList
 from ..core.offline_queue import OfflineQueue
 from ..crypto.keyring_storage import get_or_create_identity
 from ..net.client import AsyncClient
@@ -1972,17 +1973,37 @@ class MainWindow(QMainWindow):
                 self._database.set_active_list_by_name(list_name)
 
         known_tags = self._collect_known_tags()
-        item = AddTodoDialog.create_item(self, known_tags=known_tags)
-        if item is not None and self._database.active_list is not None:
-            # Assign default board column for kanban view consistency
-            if not item.board_column:
-                cols = self._database.active_list.board_columns
-                if cols:
-                    item.board_column = cols[0]
-            from .commands import AddItemCommand
+        dialog = AddTodoDialog(self, known_tags=known_tags)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        item = dialog.get_item()
+        if item is None or self._database.active_list is None:
+            return
 
-            cmd = AddItemCommand(self, self._database.active_list.id, item)
-            self._undo_stack.push(cmd)
+        # Assign default board column for kanban view consistency
+        if not item.board_column:
+            cols = self._database.active_list.board_columns
+            if cols:
+                item.board_column = cols[0]
+
+        from .commands import AddItemCommand
+
+        list_id = self._database.active_list.id
+        cmd = AddItemCommand(self, list_id, item)
+        self._undo_stack.push(cmd)
+
+        # Create child items from inline subtask syntax ("task: a, b, c")
+        for sub_text in dialog.get_subtask_reminders():
+            child = TodoItem(
+                reminder=sub_text,
+                priority=item.priority,
+                due_date=item.due_date,
+                due_time=item.due_time,
+                parent_id=item.id,
+                board_column=item.board_column,
+            )
+            sub_cmd = AddItemCommand(self, list_id, child)
+            self._undo_stack.push(sub_cmd)
 
     def _on_add_subtask(self, parent_id: UUID | None = None) -> None:
         """Handle add subtask action."""

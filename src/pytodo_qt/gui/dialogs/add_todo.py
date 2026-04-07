@@ -50,6 +50,7 @@ class AddTodoDialog(QDialog):
         self.setMinimumWidth(720)
 
         self._item: TodoItem | None = None
+        self._subtask_reminders: list[str] = []
         self._advanced_shown = False
         self._syncing = False
         self._setup_ui()
@@ -454,13 +455,20 @@ class AddTodoDialog(QDialog):
                 priority=result.priority or 2,
                 due_date=due_date,
                 due_time=due_time,
+                due_time_end=result.due_time_end,
+                due_time_block=result.due_time_block,
                 tags=result.tags,
                 recurrence_type=result.recurrence_type,
                 recurrence_interval=result.recurrence_interval,
                 recurrence_end_date=result.recurrence_end_date,
                 recurrence_end_count=result.recurrence_end_count,
                 estimated_pomodoros=result.pomodoro_estimate or 0,
+                estimated_minutes=result.estimated_minutes or 0,
+                work_duration=result.work_duration or 0,
+                event_date=result.event_date,
+                conditions=result.conditions or None,
             )
+            self._subtask_reminders = result.subtask_reminders
         else:
             # Build item from discrete fields
             reminder = self.reminder_edit.text().strip()
@@ -542,6 +550,10 @@ class AddTodoDialog(QDialog):
     def get_item(self) -> TodoItem | None:
         """Get the created to-do item, or None if cancelled."""
         return self._item
+
+    def get_subtask_reminders(self) -> list[str]:
+        """Get subtask reminder texts parsed from inline syntax (e.g. 'task: a, b, c')."""
+        return self._subtask_reminders
 
     @classmethod
     def create_item(

@@ -164,6 +164,66 @@ class TestAddTodoDialogSmartMode:
         assert dialog.due_date_checkbox.isChecked()
         assert "@errands" in dialog.tags_edit.text()
 
+    def test_accept_with_estimated_minutes(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Write report ~90m")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.estimated_minutes == 90
+
+    def test_accept_with_time_range(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("meeting from 2 to 4 pm")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_time == time(14, 0)
+        assert item.due_time_end == time(16, 0)
+
+    def test_accept_with_time_block(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("dinner tonight")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_time_block == "evening"
+
+    def test_accept_with_event_date(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("schedule dentist for next month")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.event_date is not None
+
+    def test_accept_with_conditions(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("go running unless it rains")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.conditions is not None
+        assert len(item.conditions) >= 1
+
+    def test_accept_with_subtasks(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("buy groceries: milk, bread, eggs")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.reminder == "buy groceries"
+        subtasks = dialog.get_subtask_reminders()
+        assert subtasks == ["milk", "bread", "eggs"]
+
+    def test_accept_with_work_duration(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("focus session length 45 minutes")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.work_duration == 45
+
 
 # ---------------------------------------------------------------------------
 # TestAddTodoDialog — Advanced mode toggle
