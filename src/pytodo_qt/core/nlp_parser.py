@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import date, time, timedelta
 from datetime import datetime as _datetime
 from enum import Enum
-from typing import Any
+from typing import Any, NamedTuple
 
 from .logger import Logger
 
@@ -78,6 +78,20 @@ class ParseResult:
     event_date: date | None = None  # Target period for scheduling tasks
     conditions: list[dict[str, str]] = field(default_factory=list)  # Structured conditions
     spans: list[EntitySpan] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Internal result types
+# ---------------------------------------------------------------------------
+
+
+class _DateTimeResult(NamedTuple):
+    """Structured return from _extract_dates_and_times."""
+
+    due_date: date | None
+    due_time: time | None
+    due_time_end: time | None
+    due_time_block: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -1080,13 +1094,14 @@ def _ordinal_to_day(token_text: str, next_token_text: str | None = None) -> tupl
 
 def _extract_dates_and_times(
     text: str, tokens: list[_Token], tracker: _SpanTracker, today: date
-) -> tuple[date | None, time | None, str | None]:
+) -> _DateTimeResult:
     """Extract dates and times: token-based for common patterns, dateparser for complex ones."""
     import calendar as _cal
 
     intents = _get_intents()
     due_date: date | None = None
     due_time: time | None = None
+    due_time_end: time | None = None
     skip_dateparser = False
 
     day_names = {}
@@ -1426,8 +1441,15 @@ def _extract_dates_and_times(
         if not tracker.is_free(tok.start, tok.end):
             continue
         if tok.text in tod:
-            # Skip single-word time_of_day if followed by "at"/"by"/"before" + potential time
-            if j + 2 < len(tokens) and tokens[j + 1].text in ("at", "by", "before"):
+            # Skip single-word time_of_day if followed by a time-introducing word + potential time
+            if j + 2 < len(tokens) and tokens[j + 1].text in (
+                "at",
+                "by",
+                "before",
+                "after",
+                "between",
+                "from",
+            ):
                 _skipped_tod_context = tok.text
                 continue
             # Don't override a time already set by Phase 1 relative expressions
@@ -1479,8 +1501,150 @@ def _extract_dates_and_times(
         if due_time_block is None and _meal_fallback is not None:
             due_time_block = _meal_fallback
 
-    # --- Phase 3: Time patterns (at 3pm, by 5:00, 10am, etc.) ---
-    _time_prefixes = {"at", "by", "before"} | intents["approximation_prefixes"]
+    # --- Time ranges (between X and Y, from X to Y, X-Y) ---
+    _range_closers_between = {"and"}
+    _range_closers_from = {"to", "through", "till", "until"}
+    _ampm_tokens = {"am", "pm", "a.m.", "p.m.", "a", "p"}
+    number_words = intents["number_words"]
+
+    def _range_hour(idx: int) -> tuple[int | None, int | None, int]:
+        """Parse a simple time value for a range endpoint. No AM/PM application.
+
+        Returns (hour, minute, last_consumed_idx) or (None, None, idx - 1).
+        """
+        if idx >= len(tokens):
+            return None, None, idx - 1
+        t = tokens[idx]
+        h: int | None = None
+        if t.text.isdigit():
+            h = int(t.text)
+        else:
+            h = number_words.get(t.text)
+        # Colon form: "3:30", "10:15"
+        if h is None and ":" in t.text:
+            parts = t.text.split(":")
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                hh, mm = int(parts[0]), int(parts[1])
+                if 0 <= hh <= 23 and 0 <= mm <= 59:
+                    return hh, mm, idx
+            return None, None, idx - 1
+        if h is None or not (1 <= h <= 12):
+            return None, None, idx - 1
+        # Check for minute word after hour — don't consume connectors or am/pm
+        _no_consume = _range_closers_between | _range_closers_from | _ampm_tokens
+        if idx + 1 < len(tokens) and tokens[idx + 1].text not in _no_consume:
+            mv = _token_to_number(tokens[idx + 1].text)
+            if mv is not None and 0 <= mv <= 59:
+                return h, mv, idx + 1
+        return h, 0, idx
+
+    def _check_ampm_at(idx: int) -> tuple[str | None, int]:
+        """Check for am/pm at token index. Returns (ampm, last_consumed_idx)."""
+        if idx >= len(tokens):
+            return None, idx - 1
+        t = tokens[idx].text
+        if t in ("am", "a.m."):
+            return "am", idx
+        if t in ("pm", "p.m."):
+            return "pm", idx
+        if t == "a" and idx + 1 < len(tokens) and tokens[idx + 1].text == "m":
+            return "am", idx + 1
+        if t == "p" and idx + 1 < len(tokens) and tokens[idx + 1].text == "m":
+            return "pm", idx + 1
+        return None, idx - 1
+
+    def _apply_range_ampm(hour: int, ampm: str | None) -> int:
+        """Apply AM/PM to a raw hour, falling back to skipped time-of-day context."""
+        effective = ampm
+        if effective is None and _skipped_tod_context is not None:
+            if _skipped_tod_context in ("morning", "dawn", "sunrise"):
+                effective = "am"
+            elif _skipped_tod_context in ("evening", "night", "tonight", "dusk", "sunset"):
+                effective = "pm"
+        if effective == "pm" and hour < 12:
+            return hour + 12
+        if effective == "am" and hour == 12:
+            return 0
+        if effective == "am":
+            return hour
+        # No context — assume PM for ambiguous small numbers
+        if ampm is None and effective is None and 1 <= hour <= 6:
+            return hour + 12
+        return hour
+
+    def _adjust_range_pair(sh: int, eh: int, ampm: str | None) -> tuple[int, int]:
+        """Apply AM/PM to both hours, correcting for noon-crossing ranges."""
+        sh_adj = _apply_range_ampm(sh, ampm)
+        eh_adj = _apply_range_ampm(eh, ampm)
+        # "from 10 to 2 pm" — 10 PM > 2 PM, so start must be AM
+        if sh_adj > eh_adj and ampm is not None:
+            if ampm == "pm" and sh_adj >= 12:
+                sh_adj -= 12
+            elif ampm == "am" and sh_adj < 12:
+                sh_adj += 12
+        return sh_adj, eh_adj
+
+    def _set_time_range(t_start: time, t_end: time, span_start: int, span_end: int) -> None:
+        nonlocal due_time, due_time_end
+        if tracker.is_free(span_start, span_end):
+            tracker.unreserve_kind(EntityKind.TIME)
+            due_time = t_start
+            due_time_end = t_end
+            d_s = t_start.strftime("%I:%M %p").lstrip("0")
+            d_e = t_end.strftime("%I:%M %p").lstrip("0")
+            tracker.reserve(EntitySpan(span_start, span_end, EntityKind.TIME, f"{d_s}\u2013{d_e}"))
+
+    for j, tok in enumerate(tokens):
+        if due_time_end is not None:
+            break  # Already found a range
+        if not tracker.is_free(tok.start, tok.end):
+            continue
+
+        # Opener patterns: "between X and Y [am/pm]", "from X to/through/till Y [am/pm]"
+        if tok.text in ("between", "from"):
+            closers = _range_closers_between if tok.text == "between" else _range_closers_from
+            sh, sm, se = _range_hour(j + 1)
+            if sh is None:
+                continue
+            ci = se + 1
+            if ci >= len(tokens) or tokens[ci].text not in closers:
+                continue
+            eh, em, ee = _range_hour(ci + 1)
+            if eh is None:
+                continue
+            ampm, ampm_end = _check_ampm_at(ee + 1)
+            span_end_pos = tokens[ampm_end].end if ampm else tokens[ee].end
+            sh_adj, eh_adj = _adjust_range_pair(sh, eh, ampm)
+            _set_time_range(time(sh_adj, sm), time(eh_adj, em), tok.start, span_end_pos)
+            continue
+
+        # Dash pattern: "2-4" [am/pm]
+        if "-" in tok.text and not tok.text.startswith("-") and not tok.text.endswith("-"):
+            parts = tok.text.split("-")
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                sh, eh = int(parts[0]), int(parts[1])
+                if 1 <= sh <= 12 and 1 <= eh <= 12:
+                    ampm, ampm_end = _check_ampm_at(j + 1)
+                    span_end_pos = tokens[ampm_end].end if ampm else tok.end
+                    sh_adj, eh_adj = _adjust_range_pair(sh, eh, ampm)
+                    _set_time_range(time(sh_adj, 0), time(eh_adj, 0), tok.start, span_end_pos)
+                    continue
+
+        # Bare connector: "3 to 5", "six till eight pm"
+        sh, sm, se = _range_hour(j)
+        if sh is not None and se + 1 < len(tokens):
+            ci = se + 1
+            if tokens[ci].text in _range_closers_from:
+                eh, em, ee = _range_hour(ci + 1)
+                if eh is not None:
+                    ampm, ampm_end = _check_ampm_at(ee + 1)
+                    span_end_pos = tokens[ampm_end].end if ampm else tokens[ee].end
+                    sh_adj, eh_adj = _adjust_range_pair(sh, eh, ampm)
+                    _set_time_range(time(sh_adj, sm), time(eh_adj, em), tok.start, span_end_pos)
+                    continue
+
+    # --- Explicit time patterns (at 3pm, by 5:00, after 10am, etc.) ---
+    _time_prefixes = {"at", "by", "before", "after"} | intents["approximation_prefixes"]
     for j, tok in enumerate(tokens):
         if not tracker.is_free(tok.start, tok.end):
             continue
@@ -1597,7 +1761,7 @@ def _extract_dates_and_times(
         except Exception:
             logger.log.debug("dateparser search_dates failed", exc_info=True)
 
-    return due_date, due_time, due_time_block
+    return _DateTimeResult(due_date, due_time, due_time_end, due_time_block)
 
 
 def _parse_spoken_time(
@@ -1855,8 +2019,12 @@ def parse(text: str, today: date | None = None) -> ParseResult:
     # 6. Work duration ("session length N minutes")
     work_duration = _extract_work_duration(tokens, tracker)
 
-    # 7. Dates and times (via dateparser)
-    due_date, due_time, due_time_block = _extract_dates_and_times(text, tokens, tracker, today)
+    # 7. Dates and times
+    dt_result = _extract_dates_and_times(text, tokens, tracker, today)
+    due_date = dt_result.due_date
+    due_time = dt_result.due_time
+    due_time_end = dt_result.due_time_end
+    due_time_block = dt_result.due_time_block
 
     # Apply recurrence time hint (e.g., "every morning" → 9:00)
     if rec_time is not None and due_time is None:
@@ -1879,6 +2047,7 @@ def parse(text: str, today: date | None = None) -> ParseResult:
         reminder=reminder,
         due_date=due_date,
         due_time=due_time,
+        due_time_end=due_time_end,
         due_time_block=due_time_block,
         priority=priority,
         tags=tags,

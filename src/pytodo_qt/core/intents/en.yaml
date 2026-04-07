@@ -228,6 +228,7 @@ date_prefixes:
   - by
   - on
   - before
+  - after
 
 # ---------------------------------------------------------------------------
 # Approximation prefixes — quantity modifiers for estimates/pomodoro

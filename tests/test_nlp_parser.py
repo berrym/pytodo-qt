@@ -1403,3 +1403,142 @@ class TestApproximationSynonyms:
         r = parse("Task about 4 hours", today=TODAY)
         assert r.estimated_minutes == 240
         assert r.recurrence_type is None
+
+
+# ---------------------------------------------------------------------------
+# TestTimeRanges
+# ---------------------------------------------------------------------------
+
+
+class TestTimeRanges:
+    """Ad-hoc time range extraction — due_time + due_time_end."""
+
+    # -- Opener patterns --
+
+    def test_between_and_with_pm(self) -> None:
+        r = parse("call between three and five pm", today=TODAY)
+        assert r.due_time == time(15, 0)
+        assert r.due_time_end == time(17, 0)
+        assert "call" in r.reminder.lower()
+
+    def test_between_and_with_am(self) -> None:
+        r = parse("jog between six and seven am", today=TODAY)
+        assert r.due_time == time(6, 0)
+        assert r.due_time_end == time(7, 0)
+
+    def test_from_to_with_pm(self) -> None:
+        r = parse("meeting from 2 to 4 pm", today=TODAY)
+        assert r.due_time == time(14, 0)
+        assert r.due_time_end == time(16, 0)
+
+    def test_from_through(self) -> None:
+        r = parse("study from nine through eleven", today=TODAY)
+        assert r.due_time == time(9, 0)
+        assert r.due_time_end == time(11, 0)
+
+    def test_from_till(self) -> None:
+        r = parse("practice from two till four pm", today=TODAY)
+        assert r.due_time == time(14, 0)
+        assert r.due_time_end == time(16, 0)
+
+    def test_from_to_crossing_noon(self) -> None:
+        """Range crossing AM→PM with explicit PM on end."""
+        r = parse("work from 10 to 2 pm", today=TODAY)
+        assert r.due_time == time(10, 0)
+        assert r.due_time_end == time(14, 0)
+
+    # -- Bare connector patterns --
+
+    def test_bare_to_digits(self) -> None:
+        r = parse("call 3 to 5", today=TODAY)
+        assert r.due_time == time(15, 0)
+        assert r.due_time_end == time(17, 0)
+
+    def test_bare_till_words_with_pm(self) -> None:
+        r = parse("focus block six till eight pm", today=TODAY)
+        assert r.due_time == time(18, 0)
+        assert r.due_time_end == time(20, 0)
+
+    def test_bare_through_words(self) -> None:
+        r = parse("read ten through twelve", today=TODAY)
+        assert r.due_time == time(10, 0)
+        assert r.due_time_end == time(12, 0)
+
+    # -- Dash pattern --
+
+    def test_dash_with_pm(self) -> None:
+        r = parse("meeting 2-4 pm", today=TODAY)
+        assert r.due_time == time(14, 0)
+        assert r.due_time_end == time(16, 0)
+
+    def test_dash_with_am(self) -> None:
+        r = parse("run 6-7 am", today=TODAY)
+        assert r.due_time == time(6, 0)
+        assert r.due_time_end == time(7, 0)
+
+    def test_dash_no_ampm(self) -> None:
+        r = parse("meeting 9-11", today=TODAY)
+        assert r.due_time == time(9, 0)
+        assert r.due_time_end == time(11, 0)
+
+    # -- AM/PM propagation --
+
+    def test_ampm_propagates_to_both(self) -> None:
+        """Single am/pm after end time applies to both endpoints."""
+        r = parse("between 1 and 3 pm", today=TODAY)
+        assert r.due_time == time(13, 0)
+        assert r.due_time_end == time(15, 0)
+
+    def test_no_ampm_small_numbers_assume_pm(self) -> None:
+        """Numbers 1-6 without am/pm context default to PM."""
+        r = parse("available 2 to 4", today=TODAY)
+        assert r.due_time == time(14, 0)
+        assert r.due_time_end == time(16, 0)
+
+    def test_no_ampm_large_numbers_stay_am(self) -> None:
+        """Numbers 7-12 without context stay as-is (AM)."""
+        r = parse("available 9 to 11", today=TODAY)
+        assert r.due_time == time(9, 0)
+        assert r.due_time_end == time(11, 0)
+
+    # -- Context from time-of-day words --
+
+    def test_morning_context_forces_am(self) -> None:
+        r = parse("morning between nine and eleven", today=TODAY)
+        assert r.due_time == time(9, 0)
+        assert r.due_time_end == time(11, 0)
+
+    def test_evening_context_forces_pm(self) -> None:
+        r = parse("evening from five to seven", today=TODAY)
+        assert r.due_time == time(17, 0)
+        assert r.due_time_end == time(19, 0)
+
+    # -- Colon-form endpoints --
+
+    def test_colon_form_range(self) -> None:
+        r = parse("from 9:30 to 11:00", today=TODAY)
+        assert r.due_time == time(9, 30)
+        assert r.due_time_end == time(11, 0)
+
+    # -- No range → due_time_end stays None --
+
+    def test_single_time_no_range(self) -> None:
+        r = parse("call at 3pm", today=TODAY)
+        assert r.due_time == time(15, 0)
+        assert r.due_time_end is None
+
+    # -- Reminder preservation --
+
+    def test_reminder_preserved_with_range(self) -> None:
+        r = parse("dentist appointment from 2 to 4 pm", today=TODAY)
+        assert "dentist appointment" in r.reminder.lower()
+        assert r.due_time == time(14, 0)
+        assert r.due_time_end == time(16, 0)
+
+    # -- "after" as time prefix --
+
+    def test_after_time_prefix(self) -> None:
+        r = parse("clean up after 5pm", today=TODAY)
+        assert r.due_time == time(17, 0)
+        assert r.due_time_end is None
+        assert "clean up" in r.reminder.lower()

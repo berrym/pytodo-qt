@@ -528,40 +528,55 @@ class TestRelativeTime:
 
 
 class TestAdHocRanges:
-    """Section K1: Explicit time windows. Schema v18 feature — most will fail baseline."""
+    """Section K1: Explicit time windows — due_time + due_time_end extraction."""
 
     def test_73a_between_three_and_five(self) -> None:
         r = parse("call between three and five pm", today=TODAY)
         assert "call" in r.reminder.lower()
-        # due_time_end doesn't exist yet — audit baseline
+        assert r.due_time == time(15, 0)
+        assert r.due_time_end == time(17, 0)
 
     def test_73b_from_two_to_four(self) -> None:
         r = parse("meeting from 2 to 4 pm", today=TODAY)
         assert "meeting" in r.reminder.lower()
+        assert r.due_time == time(14, 0)
+        assert r.due_time_end == time(16, 0)
 
     def test_73e_meds_between_nine_and_ten(self) -> None:
         r = parse("give meds between nine and ten am", today=TODAY)
         assert "meds" in r.reminder.lower()
+        assert r.due_time == time(9, 0)
+        assert r.due_time_end == time(10, 0)
 
     def test_73h_morning_between_nine_eleven(self) -> None:
         r = parse("tomorrow morning between nine and eleven", today=TODAY)
         assert r.due_date == TOMORROW
+        assert r.due_time == time(9, 0)
+        assert r.due_time_end == time(11, 0)
 
     def test_73i_bare_to_connector(self) -> None:
         r = parse("call 3 to 5", today=TODAY)
         assert "call" in r.reminder.lower()
+        assert r.due_time == time(15, 0)
+        assert r.due_time_end == time(17, 0)
 
     def test_73j_dash_form(self) -> None:
         r = parse("meeting 2-4 pm", today=TODAY)
         assert "meeting" in r.reminder.lower()
+        assert r.due_time == time(14, 0)
+        assert r.due_time_end == time(16, 0)
 
     def test_73k_through_connector(self) -> None:
         r = parse("work session from nine through eleven", today=TODAY)
         assert "work session" in r.reminder.lower()
+        assert r.due_time == time(9, 0)
+        assert r.due_time_end == time(11, 0)
 
     def test_73m_till_connector(self) -> None:
         r = parse("focus block six till eight pm", today=TODAY)
         assert "focus block" in r.reminder.lower()
+        assert r.due_time == time(18, 0)
+        assert r.due_time_end == time(20, 0)
 
 
 # ===========================================================================
