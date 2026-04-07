@@ -658,22 +658,29 @@ class TestPriorityUrgency:
 
 
 class TestConditionalExpressions:
-    """Section M: Conditions and constraints. Schema v18+ — will fail baseline.
-    These tests verify the parser at minimum does not crash on complex input
-    and preserves the reminder text. Full condition extraction tested after
-    schema v18 implementation."""
+    """Section M: Conditions, constraints, and event dates."""
 
-    def test_89_before_deadline(self) -> None:
+    def test_89_event_date_scheduling(self) -> None:
         r = parse("schedule dentist for next month before the twentieth", today=TODAY)
-        assert "schedule dentist" in r.reminder.lower() or "dentist" in r.reminder.lower()
+        assert "dentist" in r.reminder.lower()
+        assert r.event_date is not None
+        assert r.event_date.month == (TODAY.month % 12) + 1
+        assert r.due_date is not None
+        assert r.due_date.day == 20
 
     def test_90_if_calendar_open(self) -> None:
         r = parse("book hotel if calendar is open next weekend", today=TODAY)
         assert "book hotel" in r.reminder.lower() or "hotel" in r.reminder.lower()
+        assert len(r.conditions) >= 1
+        assert r.conditions[0]["type"] == "if"
+        assert "calendar" in r.conditions[0]["expression"]
 
     def test_94_otherwise_fallback(self) -> None:
         r = parse("dentist appointment next month otherwise the month after", today=TODAY)
         assert "dentist" in r.reminder.lower()
+        assert r.due_date is not None
+        assert len(r.conditions) >= 1
+        assert r.conditions[0]["type"] == "fallback"
 
     def test_95_before_at_the_latest(self) -> None:
         r = parse("call plumber before friday at the latest", today=TODAY)
@@ -689,4 +696,6 @@ class TestConditionalExpressions:
 
     def test_98_only_if(self) -> None:
         r = parse("only schedule meeting if both tuesday and thursday are free", today=TODAY)
-        assert "schedule meeting" in r.reminder.lower() or "meeting" in r.reminder.lower()
+        assert "meeting" in r.reminder.lower()
+        assert len(r.conditions) >= 1
+        assert r.conditions[0]["type"] == "if"

@@ -1542,3 +1542,124 @@ class TestTimeRanges:
         assert r.due_time == time(17, 0)
         assert r.due_time_end is None
         assert "clean up" in r.reminder.lower()
+
+
+# ---------------------------------------------------------------------------
+# TestNow
+# ---------------------------------------------------------------------------
+
+
+class TestNow:
+    """'now' and 'right now' as dynamic current-time values."""
+
+    def test_now_standalone(self) -> None:
+        r = parse("start working now", today=TODAY)
+        assert r.due_time is not None
+        assert r.due_date == TODAY
+        assert "start working" in r.reminder.lower()
+
+    def test_right_now(self) -> None:
+        r = parse("call boss right now", today=TODAY)
+        assert r.due_time is not None
+        assert r.due_date == TODAY
+        assert "call boss" in r.reminder.lower()
+
+    def test_now_in_range(self) -> None:
+        """'from now to 5 pm' sets both due_time and due_time_end."""
+        r = parse("from now to 5 pm", today=TODAY)
+        assert r.due_time is not None
+        assert r.due_time_end == time(17, 0)
+
+    def test_now_does_not_override_explicit_time(self) -> None:
+        """Explicit time takes precedence — 'now' is ignored."""
+        r = parse("call at 3pm now", today=TODAY)
+        assert r.due_time == time(15, 0)
+
+    def test_no_now_means_no_time(self) -> None:
+        r = parse("buy groceries", today=TODAY)
+        assert r.due_time is None
+
+
+# ---------------------------------------------------------------------------
+# TestEventDate
+# ---------------------------------------------------------------------------
+
+
+class TestEventDate:
+    """Event date extraction from scheduling verb + 'for' + date."""
+
+    def test_schedule_for_next_month(self) -> None:
+        r = parse("schedule dentist for next month", today=TODAY)
+        assert r.event_date is not None
+        assert r.event_date.month == (TODAY.month % 12) + 1
+        assert "dentist" in r.reminder.lower()
+
+    def test_book_for_friday(self) -> None:
+        r = parse("book appointment for friday", today=TODAY)
+        assert r.event_date is not None
+        assert "appointment" in r.reminder.lower()
+
+    def test_reserve_for_next_week(self) -> None:
+        r = parse("reserve table for next week", today=TODAY)
+        assert r.event_date is not None
+        assert "table" in r.reminder.lower()
+
+    def test_plan_for_tomorrow(self) -> None:
+        r = parse("plan meeting for tomorrow", today=TODAY)
+        assert r.event_date is not None
+        assert r.event_date == TODAY + __import__("datetime").timedelta(days=1)
+
+    def test_no_scheduling_verb_no_event_date(self) -> None:
+        """'for' without a scheduling verb is not an event date trigger."""
+        r = parse("study for the exam", today=TODAY)
+        assert r.event_date is None
+
+    def test_event_date_with_separate_due_date(self) -> None:
+        """Scheduling verb claims 'for' as event_date; other dates become due_date."""
+        r = parse("schedule dentist for next month before the twentieth", today=TODAY)
+        assert r.event_date is not None
+        assert r.due_date is not None
+        assert r.due_date.day == 20
+
+
+# ---------------------------------------------------------------------------
+# TestConditions
+# ---------------------------------------------------------------------------
+
+
+class TestConditions:
+    """Conditional expression extraction."""
+
+    def test_if_condition(self) -> None:
+        r = parse("book hotel if calendar is open", today=TODAY)
+        assert len(r.conditions) >= 1
+        assert r.conditions[0]["type"] == "if"
+        assert "calendar" in r.conditions[0]["expression"]
+
+    def test_unless_condition(self) -> None:
+        r = parse("go running unless it rains", today=TODAY)
+        assert len(r.conditions) >= 1
+        assert r.conditions[0]["type"] == "unless"
+        assert "rains" in r.conditions[0]["expression"]
+
+    def test_otherwise_fallback(self) -> None:
+        r = parse("eat lunch at the cafe otherwise at home", today=TODAY)
+        assert len(r.conditions) >= 1
+        assert r.conditions[0]["type"] == "fallback"
+        assert "home" in r.conditions[0]["expression"]
+
+    def test_when_condition(self) -> None:
+        r = parse("deploy when tests pass", today=TODAY)
+        assert len(r.conditions) >= 1
+        assert r.conditions[0]["type"] == "when"
+        assert "tests pass" in r.conditions[0]["expression"]
+
+    def test_no_condition_no_keyword(self) -> None:
+        r = parse("buy groceries tomorrow", today=TODAY)
+        assert len(r.conditions) == 0
+
+    def test_condition_removed_from_reminder(self) -> None:
+        """Condition keyword + expression should not appear in reminder."""
+        r = parse("submit report otherwise email it", today=TODAY)
+        assert "otherwise" not in r.reminder.lower()
+        assert "email" not in r.reminder.lower()

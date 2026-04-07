@@ -92,6 +92,7 @@ class _DateTimeResult(NamedTuple):
     due_time: time | None
     due_time_end: time | None
     due_time_block: str | None
+    event_date: date | None
 
 
 # ---------------------------------------------------------------------------
@@ -1158,7 +1159,77 @@ def _extract_dates_and_times(
                 EntitySpan(start, end, EntityKind.TIME, t.strftime("%I:%M %p").lstrip("0"))
             )
 
-    # --- Phase 1: Token-based date resolution (our semantics) ---
+    # --- Event date: scheduling verb + "for" + date expression ---
+    event_date: date | None = None
+    scheduling_verbs = intents.get("scheduling_verbs", [])
+    _single_sched = {v for v in scheduling_verbs if " " not in v}
+    _multi_sched = [v for v in scheduling_verbs if " " in v]
+
+    _has_sched_verb = any(
+        tok.text in _single_sched and tracker.is_free(tok.start, tok.end) for tok in tokens
+    )
+    if not _has_sched_verb:
+        for mv in _multi_sched:
+            words = mv.split()
+            for j in range(len(tokens) - len(words) + 1):
+                phrase = " ".join(tokens[j + k].text for k in range(len(words)))
+                if phrase == mv and tracker.is_free(
+                    tokens[j].start, tokens[j + len(words) - 1].end
+                ):
+                    _has_sched_verb = True
+                    break
+            if _has_sched_verb:
+                break
+
+    if _has_sched_verb:
+        for j, tok in enumerate(tokens):
+            if tok.text != "for" or not tracker.is_free(tok.start, tok.end):
+                continue
+            if j + 1 >= len(tokens):
+                continue
+            next_tok = tokens[j + 1]
+            resolved = intents["date_abbreviations"].get(next_tok.text, next_tok.text)
+            ed: date | None = None
+            ed_end = next_tok.end
+
+            if resolved == "tomorrow":
+                ed = today + timedelta(days=1)
+            elif next_tok.text == "next" and j + 2 < len(tokens):
+                target = tokens[j + 2]
+                ed_end = target.end
+                if target.text == "week":
+                    ed = today + timedelta(days=7)
+                elif target.text == "month":
+                    ed = _add_months(today, 1)
+                elif target.text in day_names:
+                    ed = _resolve_next_day_name(target.text, today)
+            elif next_tok.text in day_names:
+                ed = _resolve_day_name(next_tok.text, today)
+            elif next_tok.text in month_names and j + 2 < len(tokens):
+                m = month_names[next_tok.text]
+                day_tok = tokens[j + 2]
+                day_num = None
+                if day_tok.text.isdigit():
+                    day_num = int(day_tok.text)
+                else:
+                    day_num = _token_to_number(day_tok.text.rstrip(","))
+                if day_num is not None:
+                    import contextlib
+
+                    with contextlib.suppress(ValueError):
+                        ed = date(today.year, m, day_num)
+                        if ed < today:
+                            ed = date(today.year + 1, m, day_num)
+                        ed_end = day_tok.end
+
+            if ed is not None:
+                event_date = ed
+                tracker.reserve(
+                    EntitySpan(tok.start, ed_end, EntityKind.EVENT_DATE, ed.strftime("%b %d, %Y"))
+                )
+                break
+
+    # --- Token-based date resolution ---
     i = 0
     while i < len(tokens):
         tok = tokens[i]
@@ -1515,6 +1586,10 @@ def _extract_dates_and_times(
         if idx >= len(tokens):
             return None, None, idx - 1
         t = tokens[idx]
+        # "now" — dynamic current time, already 24-hour
+        if t.text == "now":
+            _now = _datetime.now()
+            return _now.hour, _now.minute, idx
         h: int | None = None
         if t.text.isdigit():
             h = int(t.text)
@@ -1643,6 +1718,29 @@ def _extract_dates_and_times(
                     _set_time_range(time(sh_adj, sm), time(eh_adj, em), tok.start, span_end_pos)
                     continue
 
+    # --- "now" / "right now" (after ranges so "from now to X" works) ---
+    if due_time is None and due_time_end is None:
+        for j, tok in enumerate(tokens):
+            if not tracker.is_free(tok.start, tok.end):
+                continue
+            if tok.text == "now":
+                _now = _datetime.now()
+                _set_time(time(_now.hour, _now.minute), tok.start, tok.end)
+                if due_date is None:
+                    due_date = today
+                break
+            if (
+                tok.text == "right"
+                and j + 1 < len(tokens)
+                and tokens[j + 1].text == "now"
+                and tracker.is_free(tokens[j + 1].start, tokens[j + 1].end)
+            ):
+                _now = _datetime.now()
+                _set_time(time(_now.hour, _now.minute), tok.start, tokens[j + 1].end)
+                if due_date is None:
+                    due_date = today
+                break
+
     # --- Explicit time patterns (at 3pm, by 5:00, after 10am, etc.) ---
     _time_prefixes = {"at", "by", "before", "after"} | intents["approximation_prefixes"]
     for j, tok in enumerate(tokens):
@@ -1761,7 +1859,7 @@ def _extract_dates_and_times(
         except Exception:
             logger.log.debug("dateparser search_dates failed", exc_info=True)
 
-    return _DateTimeResult(due_date, due_time, due_time_end, due_time_block)
+    return _DateTimeResult(due_date, due_time, due_time_end, due_time_block, event_date)
 
 
 def _parse_spoken_time(
@@ -1972,6 +2070,66 @@ def _build_reminder(text: str, spans: list[EntitySpan]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Condition extraction
+# ---------------------------------------------------------------------------
+
+
+def _extract_conditions(tokens: list[_Token], tracker: _SpanTracker) -> list[dict[str, str]]:
+    """Extract conditional expressions from unclaimed tokens.
+
+    Runs AFTER all other extraction so claimed spans define expression boundaries.
+    """
+    intents = _get_intents()
+    cond_keywords: dict[str, str] = intents.get("conditional_keywords", {})
+    conditions: list[dict[str, str]] = []
+
+    # Sort by phrase length (longest first) to match "only if" before "if"
+    sorted_phrases = sorted(cond_keywords.keys(), key=len, reverse=True)
+    matched_starts: set[int] = set()
+
+    for phrase in sorted_phrases:
+        words = phrase.split()
+        wlen = len(words)
+        for j in range(len(tokens) - wlen + 1):
+            if tokens[j].start in matched_starts:
+                continue
+            candidate = " ".join(tokens[j + k].text for k in range(wlen))
+            if candidate != phrase:
+                continue
+            kw_start = tokens[j].start
+            kw_end = tokens[j + wlen - 1].end
+            if not tracker.is_free(kw_start, kw_end):
+                continue
+
+            cond_type = cond_keywords[phrase]
+
+            # Expression: unclaimed tokens after keyword until next reserved span or end
+            expr_parts: list[str] = []
+            expr_end = kw_end
+            for k in range(j + wlen, len(tokens)):
+                if not tracker.is_free(tokens[k].start, tokens[k].end):
+                    break
+                expr_parts.append(tokens[k].original)
+                expr_end = tokens[k].end
+
+            expression = " ".join(expr_parts).strip()
+            if expression:
+                conditions.append({"type": cond_type, "expression": expression})
+                # Reserve keyword + expression so neither leaks into reminder
+                tracker.reserve(
+                    EntitySpan(
+                        kw_start,
+                        expr_end,
+                        EntityKind.CONDITION,
+                        f"{cond_type}: {expression}",
+                    )
+                )
+                matched_starts.add(kw_start)
+
+    return conditions
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -2025,6 +2183,7 @@ def parse(text: str, today: date | None = None) -> ParseResult:
     due_time = dt_result.due_time
     due_time_end = dt_result.due_time_end
     due_time_block = dt_result.due_time_block
+    event_date = dt_result.event_date
 
     # Apply recurrence time hint (e.g., "every morning" → 9:00)
     if rec_time is not None and due_time is None:
@@ -2033,6 +2192,9 @@ def parse(text: str, today: date | None = None) -> ParseResult:
     # Rule 4: Recurrence implies due date today
     if rec_type is not None and due_date is None:
         due_date = today
+
+    # 8. Conditions (after all other extraction so span boundaries are settled)
+    conditions = _extract_conditions(tokens, tracker)
 
     # Build reminder from unclaimed text
     reminder = _build_reminder(text, tracker.spans)
@@ -2058,5 +2220,7 @@ def parse(text: str, today: date | None = None) -> ParseResult:
         pomodoro_estimate=pomodoro,
         estimated_minutes=estimated_minutes,
         work_duration=work_duration,
+        event_date=event_date,
+        conditions=conditions,
         spans=tracker.spans,
     )
