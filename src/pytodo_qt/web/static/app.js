@@ -813,8 +813,11 @@
 
     var listView = document.getElementById("list-view");
     var boardView = document.getElementById("board-view");
+    var calendarView = document.getElementById("calendar-view");
     if (listView) listView.classList.toggle("active", mode === "list");
     if (boardView) boardView.classList.toggle("active", mode === "board");
+    if (calendarView)
+      calendarView.classList.toggle("active", mode === "calendar");
 
     viewBtns.forEach(function (btn) {
       btn.classList.toggle("active", btn.dataset.view === mode);
@@ -822,6 +825,8 @@
 
     if (mode === "board") {
       refreshBoard(true);
+    } else if (mode === "calendar") {
+      renderCalendar();
     } else {
       renderItems(cachedItems, true);
     }
@@ -837,7 +842,9 @@
   document.addEventListener("keydown", function (e) {
     if (e.ctrlKey && e.shiftKey && e.key === "B") {
       e.preventDefault();
-      setViewMode(viewMode === "list" ? "board" : "list");
+      var modes = ["list", "board", "calendar"];
+      var nextIdx = (modes.indexOf(viewMode) + 1) % modes.length;
+      setViewMode(modes[nextIdx]);
     }
   });
 
@@ -2750,6 +2757,301 @@
   }
 
   // ====================================================================
+  // ====================================================================
+  // Calendar view
+  // ====================================================================
+
+  var calSubView = "month";
+  var calDate = new Date();
+
+  // Wire up calendar toolbar
+  var calPrev = document.getElementById("cal-prev");
+  var calNext = document.getElementById("cal-next");
+  var calTitle = document.getElementById("cal-title");
+  var calContainer = document.getElementById("cal-container");
+  var calTabs = document.querySelectorAll(".cal-tab");
+
+  if (calPrev)
+    calPrev.addEventListener("click", function () {
+      navigateCalendar(-1);
+    });
+  if (calNext)
+    calNext.addEventListener("click", function () {
+      navigateCalendar(1);
+    });
+  calTabs.forEach(function (tab) {
+    tab.addEventListener("click", function () {
+      calSubView = tab.dataset.cal;
+      calTabs.forEach(function (t) {
+        t.classList.toggle("active", t === tab);
+      });
+      renderCalendar();
+    });
+  });
+
+  function navigateCalendar(dir) {
+    if (calSubView === "month") {
+      calDate.setMonth(calDate.getMonth() + dir);
+    } else if (calSubView === "week") {
+      calDate.setDate(calDate.getDate() + dir * 7);
+    } else {
+      calDate.setDate(calDate.getDate() + dir);
+    }
+    renderCalendar();
+  }
+
+  function renderCalendar() {
+    if (!calContainer) return;
+    if (calSubView === "month") renderMonthView();
+    else if (calSubView === "week") renderWeekView();
+    else renderDayView();
+  }
+
+  function _calItems() {
+    return cachedItems.filter(function (i) {
+      return i.due_date && !i.parent_id;
+    });
+  }
+
+  function _itemsByDate(items) {
+    var map = {};
+    items.forEach(function (item) {
+      var d = item.due_date;
+      if (!map[d]) map[d] = [];
+      map[d].push(item);
+    });
+    return map;
+  }
+
+  function _dayKey(d) {
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, "0");
+    var day = String(d.getDate()).padStart(2, "0");
+    return y + "-" + m + "-" + day;
+  }
+
+  function renderMonthView() {
+    var year = calDate.getFullYear();
+    var month = calDate.getMonth();
+    var monthNames = [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
+    ];
+    if (calTitle) calTitle.textContent = monthNames[month] + " " + year;
+
+    var items = _calItems();
+    var byDate = _itemsByDate(items);
+
+    var firstDay = new Date(year, month, 1).getDay();
+    var daysInMonth = new Date(year, month + 1, 0).getDate();
+    var todayKey = _dayKey(new Date());
+
+    var html = '<div class="cal-month-grid">';
+    html += '<div class="cal-dow">Sun</div><div class="cal-dow">Mon</div>';
+    html += '<div class="cal-dow">Tue</div><div class="cal-dow">Wed</div>';
+    html += '<div class="cal-dow">Thu</div><div class="cal-dow">Fri</div>';
+    html += '<div class="cal-dow">Sat</div>';
+
+    // Empty cells before first day
+    for (var e = 0; e < firstDay; e++) {
+      html += '<div class="cal-day empty"></div>';
+    }
+
+    for (var d = 1; d <= daysInMonth; d++) {
+      var key = _dayKey(new Date(year, month, d));
+      var isToday = key === todayKey;
+      var cls = "cal-day" + (isToday ? " today" : "");
+      html += '<div class="' + cls + '">';
+      html += '<span class="cal-day-num">' + d + "</span>";
+      var dayItems = byDate[key] || [];
+      for (var j = 0; j < Math.min(dayItems.length, 3); j++) {
+        var it = dayItems[j];
+        var pCls =
+          it.priority === 1
+            ? "priority-high"
+            : it.priority === 3
+              ? "priority-low"
+              : "";
+        html +=
+          '<div class="cal-item ' +
+          pCls +
+          (it.complete ? " completed" : "") +
+          '" data-id="' +
+          it.id +
+          '">' +
+          _escHtml(it.reminder.substring(0, 20)) +
+          "</div>";
+      }
+      if (dayItems.length > 3) {
+        html +=
+          '<div class="cal-item-more">+' +
+          (dayItems.length - 3) +
+          " more</div>";
+      }
+      html += "</div>";
+    }
+    html += "</div>";
+    calContainer.innerHTML = html;
+
+    // Click handlers for items
+    calContainer.querySelectorAll(".cal-item[data-id]").forEach(function (el) {
+      el.addEventListener("click", function () {
+        location.hash = "#/item/" + el.dataset.id;
+      });
+    });
+  }
+
+  function renderWeekView() {
+    var startOfWeek = new Date(calDate);
+    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+    var endLabel = new Date(startOfWeek);
+    endLabel.setDate(endLabel.getDate() + 6);
+    if (calTitle) {
+      calTitle.textContent =
+        startOfWeek.toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+        }) +
+        " \u2013 " +
+        endLabel.toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+    }
+
+    var items = _calItems();
+    var byDate = _itemsByDate(items);
+    var todayKey = _dayKey(new Date());
+    var dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+    var html = '<div class="cal-week-grid">';
+    for (var i = 0; i < 7; i++) {
+      var day = new Date(startOfWeek);
+      day.setDate(day.getDate() + i);
+      var key = _dayKey(day);
+      var isToday = key === todayKey;
+      html += '<div class="cal-week-col' + (isToday ? " today" : "") + '">';
+      html +=
+        '<div class="cal-week-header">' +
+        dayNames[i] +
+        " " +
+        day.getDate() +
+        "</div>";
+      var dayItems = byDate[key] || [];
+      dayItems.forEach(function (it) {
+        var pCls =
+          it.priority === 1
+            ? "priority-high"
+            : it.priority === 3
+              ? "priority-low"
+              : "";
+        html +=
+          '<div class="cal-item ' +
+          pCls +
+          (it.complete ? " completed" : "") +
+          '" data-id="' +
+          it.id +
+          '">';
+        html += _escHtml(it.reminder.substring(0, 25));
+        if (it.due_time)
+          html += " <small>" + it.due_time.substring(0, 5) + "</small>";
+        if (it.due_time_block)
+          html +=
+            " <small>(" + it.due_time_block.replace(/_/g, " ") + ")</small>";
+        html += "</div>";
+      });
+      html += "</div>";
+    }
+    html += "</div>";
+    calContainer.innerHTML = html;
+
+    calContainer.querySelectorAll(".cal-item[data-id]").forEach(function (el) {
+      el.addEventListener("click", function () {
+        location.hash = "#/item/" + el.dataset.id;
+      });
+    });
+  }
+
+  function renderDayView() {
+    if (calTitle) {
+      calTitle.textContent = calDate.toLocaleDateString(undefined, {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      });
+    }
+
+    var items = _calItems();
+    var key = _dayKey(calDate);
+    var dayItems = items.filter(function (i) {
+      return i.due_date === key;
+    });
+
+    var html = '<div class="cal-day-view">';
+    if (dayItems.length === 0) {
+      html += '<p class="cal-empty">No tasks scheduled for this day</p>';
+    } else {
+      dayItems.forEach(function (it) {
+        var pCls =
+          it.priority === 1
+            ? "priority-high"
+            : it.priority === 3
+              ? "priority-low"
+              : "";
+        html +=
+          '<div class="cal-day-item ' +
+          pCls +
+          (it.complete ? " completed" : "") +
+          '" data-id="' +
+          it.id +
+          '">';
+        html += '<div class="cal-day-item-time">';
+        if (it.due_time) html += it.due_time.substring(0, 5);
+        else if (it.due_time_block)
+          html += it.due_time_block.replace(/_/g, " ");
+        else html += "All day";
+        html += "</div>";
+        html += '<div class="cal-day-item-text">';
+        html += "<strong>" + _escHtml(it.reminder) + "</strong>";
+        if (it.tags && it.tags.length > 0) {
+          html += "<br>";
+          it.tags.forEach(function (tag) {
+            html += '<span class="tag">' + tag + "</span> ";
+          });
+        }
+        html += "</div></div>";
+      });
+    }
+    html += "</div>";
+    calContainer.innerHTML = html;
+
+    calContainer
+      .querySelectorAll(".cal-day-item[data-id]")
+      .forEach(function (el) {
+        el.addEventListener("click", function () {
+          location.hash = "#/item/" + el.dataset.id;
+        });
+      });
+  }
+
+  function _escHtml(str) {
+    var div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
   // Smart add sheet
   // ====================================================================
 
@@ -3532,8 +3834,10 @@
     // Display info
     updateThemeLabel();
     var viewModeEl = document.getElementById("settings-view-mode");
-    if (viewModeEl)
-      viewModeEl.textContent = viewMode === "board" ? "Board" : "List";
+    if (viewModeEl) {
+      var modeLabels = { list: "List", board: "Board", calendar: "Calendar" };
+      viewModeEl.textContent = modeLabels[viewMode] || viewMode;
+    }
 
     // Server data
     try {
