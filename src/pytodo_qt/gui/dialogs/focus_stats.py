@@ -419,4 +419,24 @@ class FocusStatsDialog(QDialog):
                 )
             )
 
+        # Longest streak
+        daily_goal = self._daily_goal if hasattr(self, "_daily_goal") else 0
+        goal = daily_goal if daily_goal > 0 else 1
+        longest = self._analytics.longest_streak(goal)
+        current = self._analytics.streak(goal)
+        if longest > 0:
+            _add(self.tr(f"Streak: {current} day(s) current, {longest} day(s) longest ever"))
+
+        # Overdue rate
+        od_rate = self._analytics.overdue_rate()
+        if od_rate > 0:
+            _add(self.tr(f"Overdue rate: {round(od_rate * 100)}% of due items are past deadline"))
+
+        # Improvement suggestions
+        suggestions = self._analytics.improvement_suggestions(daily_goal)
+        if suggestions:
+            _add(self.tr("<b>Suggestions:</b>"))
+            for s in suggestions:
+                _add(f"  \u2022 {s}")
+
         return group

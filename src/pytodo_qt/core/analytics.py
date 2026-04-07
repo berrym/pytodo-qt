@@ -825,3 +825,112 @@ class AnalyticsService:
 
         self._set_cached(cache_key, grouped)
         return grouped
+
+    def longest_streak(self, daily_goal: int = 1) -> int:
+        """Longest consecutive-day streak ever (not just current)."""
+        summary = self.daily_summary()
+        if summary.empty:
+            return 0
+
+        sorted_df = summary.sort_values("date")
+        threshold = max(1, daily_goal)
+        max_streak = 0
+        current = 0
+        prev_date = None
+
+        for _, row in sorted_df.iterrows():
+            d = row["date"]
+            if isinstance(d, pd.Timestamp):
+                d = d.date()
+            completed = int(row["completed_sessions"])
+            if completed >= threshold:
+                if prev_date is not None and (d - prev_date).days == 1:
+                    current += 1
+                else:
+                    current = 1
+                max_streak = max(max_streak, current)
+            else:
+                current = 0
+            prev_date = d
+
+        return max_streak
+
+    def overdue_rate(self) -> float:
+        """Fraction of incomplete items with due dates that are currently overdue (0.0-1.0)."""
+        today_str = date.today().isoformat()
+        query = """
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN due_date < ? THEN 1 ELSE 0 END) as overdue
+            FROM items
+            WHERE deleted = 0 AND complete = 0 AND due_date IS NOT NULL
+        """
+        row = self._conn.execute(query, (today_str,)).fetchone()
+        if row is None or row[0] == 0:
+            return 0.0
+        return row[1] / row[0]
+
+    def improvement_suggestions(self, daily_goal: int = 0) -> list[str]:
+        """Generate actionable improvement suggestions based on analytics data."""
+        suggestions: list[str] = []
+
+        # Best focus time suggestion
+        blocks = self.time_block_analysis()
+        qualified = blocks[blocks["session_count"] >= 3]
+        if not qualified.empty:
+            best = qualified.loc[qualified["completion_rate"].idxmax()]
+            if best["completion_rate"] >= 0.8:
+                suggestions.append(
+                    f"Your focus is best during {best['block_label']} "
+                    f"({round(best['completion_rate'] * 100)}% completion). "
+                    f"Schedule important tasks in this window."
+                )
+
+        # Interruption suggestion
+        all_sessions = self.sessions()
+        work = all_sessions[all_sessions["session_type"] != "break"]
+        if len(work) >= 5:
+            interrupted = work[~work["completed"]]
+            rate = len(interrupted) / len(work)
+            if rate > 0.3:
+                suggestions.append(
+                    f"You interrupted {len(interrupted)} of {len(work)} sessions. "
+                    f"Try shorter work durations or removing distractions."
+                )
+
+        # Overdue suggestion
+        od_rate = self.overdue_rate()
+        if od_rate > 0.2:
+            pct = round(od_rate * 100)
+            suggestions.append(
+                f"{pct}% of your tasks with due dates are overdue. "
+                f"Consider reviewing and rescheduling or breaking them into smaller tasks."
+            )
+
+        # Streak encouragement
+        goal = daily_goal if daily_goal > 0 else 1
+        current = self.streak(goal)
+        longest = self.longest_streak(goal)
+        if current > 0 and current == longest and current >= 3:
+            suggestions.append(f"You're on your longest streak ever ({current} days)! Keep it up.")
+        elif longest > current and longest > 3:
+            suggestions.append(
+                f"Your longest streak was {longest} days. "
+                f"Current: {current}. Build back to your record!"
+            )
+
+        # Notification effectiveness
+        notif = self.notification_effectiveness()
+        if len(notif) == 2:  # noqa: PLR2004
+            notified_row = notif[notif["notified"]]
+            not_notified_row = notif[~notif["notified"]]
+            if not notified_row.empty and not not_notified_row.empty:
+                n_rate = float(notified_row.iloc[0]["completion_rate"])
+                u_rate = float(not_notified_row.iloc[0]["completion_rate"])
+                if n_rate > u_rate + 0.1:
+                    suggestions.append(
+                        f"Notified tasks complete at {round(n_rate * 100)}% vs "
+                        f"{round(u_rate * 100)}% for non-notified. Notifications are helping!"
+                    )
+
+        return suggestions

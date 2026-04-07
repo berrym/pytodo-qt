@@ -643,3 +643,65 @@ class TestNotificationEffectiveness:
         notified = df[df["notified"] == True]  # noqa: E712
         assert notified.iloc[0]["task_count"] == 2
         assert notified.iloc[0]["completed_count"] == 1
+
+
+class TestLongestStreak:
+    def test_empty(self, db, svc):
+        assert svc.longest_streak() == 0
+
+    def test_consecutive_days(self, db, svc):
+        """5 consecutive days of sessions should produce longest_streak >= 5."""
+        # Use fixed dates far in the past so they're never "today"
+        for i in range(5):
+            d = f"2025-06-{10 + i:02d}"
+            _insert_session(db, day=d, start=f"{d}T10:00:00", end=f"{d}T10:25:00")
+        assert svc.longest_streak() >= 5
+
+    def test_gap_resets(self, db, svc):
+        """A gap in days resets the streak — longest should be 3, not 5."""
+        for d in ["2025-06-10", "2025-06-11", "2025-06-12", "2025-06-14", "2025-06-15"]:
+            _insert_session(db, day=d, start=f"{d}T10:00:00", end=f"{d}T10:25:00")
+        # 3 consecutive (10-12), gap on 13, then 2 consecutive (14-15)
+        assert svc.longest_streak() == 3
+
+
+class TestOverdueRate:
+    def test_empty(self, db, svc):
+        assert svc.overdue_rate() == 0.0
+
+    def test_all_future(self, db, svc):
+        """Items due far in the future have 0% overdue rate."""
+        _insert_item(db, reminder="Future 1", due_date="2099-12-31")
+        _insert_item(db, reminder="Future 2", due_date="2099-12-30")
+        assert svc.overdue_rate() == 0.0
+
+    def test_all_past(self, db, svc):
+        """Items due far in the past are 100% overdue."""
+        _insert_item(db, reminder="Old 1", due_date="2020-01-01")
+        _insert_item(db, reminder="Old 2", due_date="2020-01-02")
+        assert svc.overdue_rate() == 1.0
+
+    def test_mixed(self, db, svc):
+        """One past, one future = 50% overdue."""
+        _insert_item(db, reminder="Old", due_date="2020-01-01")
+        _insert_item(db, reminder="Future", due_date="2099-12-31")
+        rate = svc.overdue_rate()
+        assert abs(rate - 0.5) < 0.01
+
+    def test_completed_excluded(self, db, svc):
+        """Completed items are excluded even if past due."""
+        _insert_item(db, reminder="Done", due_date="2020-01-01", complete=1)
+        assert svc.overdue_rate() == 0.0
+
+
+class TestImprovementSuggestions:
+    def test_empty_returns_list(self, db, svc):
+        suggestions = svc.improvement_suggestions()
+        assert isinstance(suggestions, list)
+
+    def test_overdue_suggestion_triggers(self, db, svc):
+        """When >20% of tasks are overdue, a suggestion should mention it."""
+        for i in range(5):
+            _insert_item(db, reminder=f"Old {i}", due_date="2020-01-01")
+        suggestions = svc.improvement_suggestions()
+        assert any("overdue" in s.lower() for s in suggestions)
