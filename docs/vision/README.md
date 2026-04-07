@@ -34,6 +34,10 @@ Detailed security considerations and implementation guidance for each developmen
 
 Current reality for cross-network mobile access, why LAN-only is deliberate, what works today (Tailscale and similar user-installed tunnels), and what's coming in the 0.4.x server mode. Addresses the common "I tried to use mobile access on public wifi and it didn't work" scenario with a clear forward path.
 
+### [Universal Platform](./universal-platform.md)
+
+The project's identity as a universal planning and productivity platform. Covers the full scope spectrum (grocery lists to multi-year projects), time concepts (now to forever), NLP structural awareness, rich annotation roadmap, and design principles. This is the foundational document for what pytodo-qt is becoming.
+
 ## Core Principles
 
 As pytodo-qt evolves, these principles guide development decisions:
