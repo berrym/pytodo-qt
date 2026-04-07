@@ -1191,6 +1191,99 @@ class TestEstimatedMinutes:
         assert r.pomodoro_estimate == 3
         assert r.estimated_minutes is None or r.estimated_minutes == 0
 
+    # -- Extended duration units (days, weeks, months, years) --
+
+    def test_about_three_days(self) -> None:
+        r = parse("task about three days", today=TODAY)
+        assert r.estimated_minutes == 3 * 1440
+
+    def test_roughly_two_weeks(self) -> None:
+        r = parse("project roughly two weeks", today=TODAY)
+        assert r.estimated_minutes == 2 * 10080
+
+    def test_approximately_four_months(self) -> None:
+        r = parse("task approximately four months", today=TODAY)
+        assert r.estimated_minutes == 4 * 43200
+
+    def test_will_take_a_year(self) -> None:
+        r = parse("this will take a year", today=TODAY)
+        assert r.estimated_minutes == 525600
+
+    def test_tilde_3d(self) -> None:
+        r = parse("task ~3d", today=TODAY)
+        assert r.estimated_minutes == 3 * 1440
+
+    def test_tilde_2w(self) -> None:
+        r = parse("project ~2w", today=TODAY)
+        assert r.estimated_minutes == 2 * 10080
+
+    def test_display_natural_scale_days(self) -> None:
+        r = parse("task about three days", today=TODAY)
+        est_spans = [s for s in r.spans if s.kind == EntityKind.ESTIMATE]
+        assert len(est_spans) == 1
+        assert "3d" in est_spans[0].display
+
+    def test_display_natural_scale_weeks(self) -> None:
+        r = parse("project roughly two weeks", today=TODAY)
+        est_spans = [s for s in r.spans if s.kind == EntityKind.ESTIMATE]
+        assert len(est_spans) == 1
+        assert "2w" in est_spans[0].display
+
+    def test_display_natural_scale_months(self) -> None:
+        r = parse("task approximately four months", today=TODAY)
+        est_spans = [s for s in r.spans if s.kind == EntityKind.ESTIMATE]
+        assert len(est_spans) == 1
+        assert "4mo" in est_spans[0].display
+
+
+# ---------------------------------------------------------------------------
+# TestFormatDuration
+# ---------------------------------------------------------------------------
+
+
+class TestFormatDuration:
+    """Unit tests for format_duration utility."""
+
+    def test_minutes(self) -> None:
+        from pytodo_qt.core.models import format_duration
+
+        assert format_duration(30) == "~30m"
+
+    def test_hours(self) -> None:
+        from pytodo_qt.core.models import format_duration
+
+        assert format_duration(120) == "~2h"
+
+    def test_hours_and_minutes(self) -> None:
+        from pytodo_qt.core.models import format_duration
+
+        assert format_duration(90) == "~1h 30m"
+
+    def test_days(self) -> None:
+        from pytodo_qt.core.models import format_duration
+
+        assert format_duration(1440) == "~1d"
+
+    def test_days_and_hours(self) -> None:
+        from pytodo_qt.core.models import format_duration
+
+        assert format_duration(1440 + 120) == "~1d 2h"
+
+    def test_weeks(self) -> None:
+        from pytodo_qt.core.models import format_duration
+
+        assert format_duration(10080) == "~1w"
+
+    def test_months(self) -> None:
+        from pytodo_qt.core.models import format_duration
+
+        assert format_duration(43200) == "~1mo"
+
+    def test_years(self) -> None:
+        from pytodo_qt.core.models import format_duration
+
+        assert format_duration(525600) == "~1y"
+
 
 # ---------------------------------------------------------------------------
 # TestWorkDuration — "session length N minutes"

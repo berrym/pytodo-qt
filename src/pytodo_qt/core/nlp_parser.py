@@ -22,6 +22,7 @@ from enum import Enum
 from typing import Any, NamedTuple
 
 from .logger import Logger
+from .models import format_duration
 
 logger = Logger(__name__)
 
@@ -892,10 +893,7 @@ def _extract_estimated_minutes(tokens: list[_Token], tracker: _SpanTracker) -> i
         return total if found and total > 0 else None
 
     def _make_display(minutes: int) -> str:
-        if minutes < 60:
-            return f"~{minutes}m"
-        h, m = divmod(minutes, 60)
-        return f"~{h}h {m}m" if m else f"~{h}h"
+        return format_duration(minutes)
 
     # Pattern 1: ~NhNm / ~Nm / ~Nh in a single token
     for i, tok in enumerate(tokens):
@@ -954,6 +952,13 @@ def _extract_estimated_minutes(tokens: list[_Token], tracker: _SpanTracker) -> i
         if not tracker.is_free(tok.start, tok.end):
             continue
         if i > 0 and tokens[i - 1].text in _ESTIMATE_SKIP_PREV:
+            continue
+        # Check 2 tokens back through articles: "in a couple days"
+        if (
+            i > 1
+            and tokens[i - 1].text in ("a", "an")
+            and tokens[i - 2].text in _ESTIMATE_SKIP_PREV
+        ):
             continue
         num, num_end = _tokens_to_number(tokens, i)
         if num is None or num <= 0:

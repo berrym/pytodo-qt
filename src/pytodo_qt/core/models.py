@@ -829,6 +829,32 @@ def _format_overdue_delta(due_date: date, due_time: time | None = None) -> str:
         return f"Overdue ({max(minutes, 1)}m)"
 
 
+def format_duration(minutes: int) -> str:
+    """Format a duration in minutes at natural scale.
+
+    <60 → "~Xm", <1440 → "~Xh Ym", <10080 → "~Xd",
+    <43200 → "~Xw", <525600 → "~Xmo", else "~Xy".
+    """
+    if minutes < 60:
+        return f"~{minutes}m"
+    if minutes < 1440:
+        h, m = divmod(minutes, 60)
+        return f"~{h}h {m}m" if m else f"~{h}h"
+    if minutes < 10080:
+        d, rem = divmod(minutes, 1440)
+        h = rem // 60
+        return f"~{d}d {h}h" if h else f"~{d}d"
+    if minutes < 43200:
+        w, rem = divmod(minutes, 10080)
+        d = rem // 1440
+        return f"~{w}w {d}d" if d else f"~{w}w"
+    if minutes < 525600:
+        mo = minutes // 43200
+        return f"~{mo}mo"
+    y = minutes // 525600
+    return f"~{y}y"
+
+
 def _format_time_window(
     due_time: time | None,
     due_time_end: time | None,

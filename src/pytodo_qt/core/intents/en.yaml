@@ -132,6 +132,20 @@ time_estimate_units:
   hrs: 60
   hour: 60
   hours: 60
+  d: 1440
+  day: 1440
+  days: 1440
+  w: 10080
+  wk: 10080
+  wks: 10080
+  week: 10080
+  weeks: 10080
+  mo: 43200
+  month: 43200
+  months: 43200
+  yr: 525600
+  year: 525600
+  years: 525600
 
 # ---------------------------------------------------------------------------
 # Time of day — keyword to HH:MM
