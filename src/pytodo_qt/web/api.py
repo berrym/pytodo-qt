@@ -234,6 +234,10 @@ def setup_routes(app: web.Application) -> None:
     # Sort configuration
     app.router.add_get("/api/sort", handle_get_sort)
     app.router.add_put("/api/sort", handle_update_sort)
+    # Analytics
+    app.router.add_get("/api/analytics/upcoming", handle_analytics_upcoming)
+    app.router.add_get("/api/analytics/streak", handle_analytics_streak)
+    app.router.add_get("/api/analytics/insights", handle_analytics_insights)
     # Board layout presets
     app.router.add_get("/api/presets", handle_get_presets)
     app.router.add_post("/api/lists/{list_id}/apply-preset", handle_apply_preset)
@@ -1525,6 +1529,52 @@ async def handle_undo_state(request: web.Request) -> web.Response:
             "redo_text": stack.redoText(),
         }
     )
+
+
+def _get_analytics(request: web.Request):
+    """Get AnalyticsService from main window, or None."""
+    window = request.app.get(main_window_key)
+    if window is not None:
+        return getattr(window, "_analytics", None)
+    return None
+
+
+async def handle_analytics_upcoming(request: web.Request) -> web.Response:
+    """GET /api/analytics/upcoming?days=N — Items due within N days."""
+    analytics = _get_analytics(request)
+    if analytics is None:
+        return _error(503, "Analytics not available")
+    days = int(request.query.get("days", "3"))
+    df = analytics.upcoming_digest(days=days)
+    items = df.to_dict(orient="records") if not df.empty else []
+    return web.json_response({"items": items, "days": days})
+
+
+async def handle_analytics_streak(request: web.Request) -> web.Response:
+    """GET /api/analytics/streak — Current streak and focus score."""
+    analytics = _get_analytics(request)
+    if analytics is None:
+        return _error(503, "Analytics not available")
+    daily_goal = int(request.query.get("goal", "0"))
+    goal = daily_goal if daily_goal > 0 else 1
+    return web.json_response(
+        {
+            "streak": analytics.streak(goal),
+            "longest_streak": analytics.longest_streak(goal),
+            "focus_score": analytics.focus_score(daily_goal),
+            "overdue_rate": round(analytics.overdue_rate(), 3),
+        }
+    )
+
+
+async def handle_analytics_insights(request: web.Request) -> web.Response:
+    """GET /api/analytics/insights — Improvement suggestions."""
+    analytics = _get_analytics(request)
+    if analytics is None:
+        return _error(503, "Analytics not available")
+    daily_goal = int(request.query.get("goal", "0"))
+    suggestions = analytics.improvement_suggestions(daily_goal)
+    return web.json_response({"suggestions": suggestions})
 
 
 async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
