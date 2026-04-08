@@ -1082,8 +1082,127 @@ class TestUpdateItemExtended:
             await client.close()
 
 
+class TestUpdateV18Fields:
+    """Tests for v18 field CRUD via web API."""
+
+    @pytest.mark.asyncio
+    async def test_update_time_block(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/items/{item.id}",
+                json={"due_time_block": "evening"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["due_time_block"] == "evening"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_event_date(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/items/{item.id}",
+                json={"event_date": "2026-06-15"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["event_date"] == "2026-06-15"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_estimated_minutes(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/items/{item.id}",
+                json={"estimated_minutes": 120},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["estimated_minutes"] == 120
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_update_work_break_durations(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/items/{item.id}",
+                json={"work_duration": 45, "break_duration": 10, "long_break_duration": 20},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["work_duration"] == 45
+            assert data["break_duration"] == 10
+            assert data["long_break_duration"] == 20
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_clear_time_block(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_time_block = "morning"
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/items/{item.id}",
+                json={"due_time_block": None},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["due_time_block"] is None
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_v18_fields_in_get_response(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_time_block = "afternoon"
+        item.event_date = date(2026, 7, 1)
+        item.estimated_minutes = 90
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}")
+            assert resp.status == 200
+            data = await resp.json()
+            found = [i for i in data["items"] if i["id"] == str(item.id)]
+            assert len(found) == 1
+            assert found[0]["due_time_block"] == "afternoon"
+            assert found[0]["event_date"] == "2026-07-01"
+            assert found[0]["estimated_minutes"] == 90
+        finally:
+            await client.close()
+
+
 # ===========================================================================
-# Phase 1: Board endpoint
+# Board endpoint
 # ===========================================================================
 
 

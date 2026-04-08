@@ -3419,6 +3419,105 @@
       detailBody.appendChild(pomInfo);
     }
 
+    // --- v18 fields ---
+
+    // Time Block
+    var timeBlockOptions = [
+      ["", "None"],
+      ["early_morning", "Early Morning"],
+      ["morning", "Morning"],
+      ["late_morning", "Late Morning"],
+      ["noon", "Noon"],
+      ["early_afternoon", "Early Afternoon"],
+      ["afternoon", "Afternoon"],
+      ["late_afternoon", "Late Afternoon"],
+      ["early_evening", "Early Evening"],
+      ["evening", "Evening"],
+      ["late_evening", "Late Evening"],
+      ["night", "Night"],
+      ["late_night", "Late Night"],
+      ["midnight", "Midnight"],
+    ];
+    detailBody.appendChild(
+      makeSelect("Time Block", timeBlockOptions, item.due_time_block || "", function (val) {
+        saveItemField(itemId, { due_time_block: val || null });
+      }),
+    );
+
+    // Event Date
+    detailBody.appendChild(
+      makeField("Event Date", "date", item.event_date || "", function (val) {
+        saveItemField(itemId, { event_date: val || null });
+      }),
+    );
+
+    // Estimated Minutes
+    detailBody.appendChild(
+      makeField(
+        "Estimated Time (minutes)",
+        "number",
+        item.estimated_minutes || "",
+        function (val) {
+          saveItemField(itemId, { estimated_minutes: parseInt(val) || 0 });
+        },
+      ),
+    );
+
+    // Work Duration
+    detailBody.appendChild(
+      makeField(
+        "Session Length (min, 0 = default)",
+        "number",
+        item.work_duration || "",
+        function (val) {
+          saveItemField(itemId, { work_duration: parseInt(val) || 0 });
+        },
+      ),
+    );
+
+    // Break Duration
+    detailBody.appendChild(
+      makeField(
+        "Break Length (min, 0 = default)",
+        "number",
+        item.break_duration || "",
+        function (val) {
+          saveItemField(itemId, { break_duration: parseInt(val) || 0 });
+        },
+      ),
+    );
+
+    // Long Break Duration
+    detailBody.appendChild(
+      makeField(
+        "Long Break (min, 0 = default)",
+        "number",
+        item.long_break_duration || "",
+        function (val) {
+          saveItemField(itemId, { long_break_duration: parseInt(val) || 0 });
+        },
+      ),
+    );
+
+    // Conditions (read-only display)
+    if (item.conditions && item.conditions.length > 0) {
+      var condDiv = document.createElement("div");
+      condDiv.className = "detail-field";
+      var condLabel = document.createElement("label");
+      condLabel.textContent = "Conditions";
+      condDiv.appendChild(condLabel);
+      var condList = document.createElement("div");
+      condList.className = "detail-conditions";
+      item.conditions.forEach(function (cond) {
+        var chip = document.createElement("span");
+        chip.className = "condition-chip";
+        chip.textContent = cond.type + ": " + cond.expression;
+        condList.appendChild(chip);
+      });
+      condDiv.appendChild(condList);
+      detailBody.appendChild(condDiv);
+    }
+
     // Subtasks
     var subtaskDiv = document.createElement("div");
     subtaskDiv.className = "detail-field";
@@ -3550,6 +3649,27 @@
       });
     }
     div.appendChild(input);
+    return div;
+  }
+
+  function makeSelect(label, options, value, onChange) {
+    var div = document.createElement("div");
+    div.className = "detail-field";
+    var lbl = document.createElement("label");
+    lbl.textContent = label;
+    div.appendChild(lbl);
+    var select = document.createElement("select");
+    options.forEach(function (opt) {
+      var el = document.createElement("option");
+      el.value = opt[0];
+      el.textContent = opt[1];
+      if (opt[0] === value) el.selected = true;
+      select.appendChild(el);
+    });
+    select.addEventListener("change", function () {
+      onChange(select.value);
+    });
+    div.appendChild(select);
     return div;
   }
 

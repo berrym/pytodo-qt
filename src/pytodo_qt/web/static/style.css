@@ -1866,6 +1866,22 @@ body {
   min-height: 18px;
 }
 
+.detail-conditions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.condition-chip {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 13px;
+  background: var(--hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
 .detail-conflict {
   color: var(--danger, #c0392b);
   display: flex;
