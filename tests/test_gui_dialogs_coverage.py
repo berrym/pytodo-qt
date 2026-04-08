@@ -7,7 +7,7 @@ from datetime import date, time
 
 import pytest
 from PyQt6.QtCore import QDate
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QGroupBox
 
 from pytodo_qt.core.models import Database, TodoItem, create_todo_list
 from pytodo_qt.gui.dialogs.add_list import AddListDialog
@@ -450,6 +450,64 @@ class TestAddTodoDialogAdvancedMode:
         item = dialog.get_item()
         assert item is not None
         assert item.due_time == time(14, 30)
+
+    def test_time_block_combo(self, app):
+        dialog = _make_advanced_dialog()
+        dialog.reminder_edit.setText("Evening task")
+        idx = dialog.time_block_combo.findData("evening")
+        dialog.time_block_combo.setCurrentIndex(idx)
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_time_block == "evening"
+
+    def test_time_block_none(self, app):
+        dialog = _make_advanced_dialog()
+        dialog.reminder_edit.setText("No block")
+        dialog.time_block_combo.setCurrentIndex(0)  # None
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_time_block is None
+
+    def test_event_date_toggle_and_accept(self, app):
+        dialog = _make_advanced_dialog()
+        dialog.reminder_edit.setText("Scheduled event")
+        dialog.event_date_checkbox.setChecked(True)
+        assert dialog.event_date_edit.isEnabled()
+        dialog.event_date_edit.setDate(QDate(2026, 7, 1))
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.event_date == date(2026, 7, 1)
+
+    def test_duration_value_and_unit(self, app):
+        dialog = _make_advanced_dialog()
+        dialog.reminder_edit.setText("Long project")
+        dialog.duration_value_spin.setValue(2)
+        idx = dialog.duration_unit_combo.findData(10080)  # Weeks
+        dialog.duration_unit_combo.setCurrentIndex(idx)
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.estimated_minutes == 2 * 10080
+
+    def test_duration_from_minutes_sync(self, app):
+        """_set_duration_from_minutes converts raw minutes to natural scale."""
+        dialog = _make_advanced_dialog()
+        dialog._set_duration_from_minutes(120)
+        assert dialog.duration_value_spin.value() == 2
+        assert dialog.duration_unit_combo.currentData() == 60  # Hours
+
+    def test_groupbox_sections_exist(self, app):
+        """Advanced section uses QGroupBox for logical grouping."""
+        dialog = _make_advanced_dialog()
+        groups = dialog._advanced_container.findChildren(QGroupBox)
+        group_titles = {g.title() for g in groups}
+        assert "Scheduling" in group_titles
+        assert "Estimated Duration" in group_titles
+        assert "Focus Session" in group_titles
+        assert "Recurrence" in group_titles
 
 
 # ---------------------------------------------------------------------------

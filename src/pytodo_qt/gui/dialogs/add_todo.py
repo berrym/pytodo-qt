@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -85,114 +86,153 @@ class AddTodoDialog(QDialog):
         self._advanced_container = QWidget()
         self._advanced_scroll.setWidget(self._advanced_container)
 
-        # Form layout (inside advanced container)
-        form = QFormLayout(self._advanced_container)
-        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        # Main vertical layout inside advanced container
+        adv_layout = QVBoxLayout(self._advanced_container)
 
-        # Reminder input
+        # --- Top-level fields (no group) ---
+        top_form = QFormLayout()
+        top_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+
         self.reminder_edit = QLineEdit()
         self.reminder_edit.setPlaceholderText(self.tr("Enter reminder text..."))
-        form.addRow(self.tr("Reminder:"), self.reminder_edit)
+        top_form.addRow(self.tr("Reminder:"), self.reminder_edit)
 
-        # Priority combo
         self.priority_combo = QComboBox()
         self.priority_combo.addItem(self.tr("High"), 1)
         self.priority_combo.addItem(self.tr("Normal"), 2)
         self.priority_combo.addItem(self.tr("Low"), 3)
-        self.priority_combo.setCurrentIndex(1)  # Default to Normal
-        form.addRow(self.tr("Priority:"), self.priority_combo)
+        self.priority_combo.setCurrentIndex(1)
+        top_form.addRow(self.tr("Priority:"), self.priority_combo)
 
-        # Due date with checkbox
+        adv_layout.addLayout(top_form)
+
+        # --- Scheduling group ---
+        sched_group = QGroupBox(self.tr("Scheduling"))
+        sched_form = QFormLayout(sched_group)
+
         due_date_layout = QHBoxLayout()
-
         self.due_date_checkbox = QCheckBox(self.tr("Set due date"))
         self.due_date_checkbox.stateChanged.connect(self._on_due_date_toggled)
-
         self.due_date_edit = QDateEdit()
         self.due_date_edit.setCalendarPopup(True)
         self.due_date_edit.setDate(QDate.currentDate())
         self.due_date_edit.setEnabled(False)
-
         due_date_layout.addWidget(self.due_date_checkbox)
         due_date_layout.addWidget(self.due_date_edit, 1)
-        form.addRow(self.tr("Due Date:"), due_date_layout)
+        sched_form.addRow(self.tr("Due Date:"), due_date_layout)
 
-        # Due time with checkbox
         due_time_layout = QHBoxLayout()
-
         self.due_time_checkbox = QCheckBox(self.tr("Set due time"))
         self.due_time_checkbox.setEnabled(False)
         self.due_time_checkbox.stateChanged.connect(self._on_due_time_toggled)
-
         self.due_time_edit = TimeComboBox()
         self.due_time_edit.setEnabled(False)
         self.due_time_edit.default_to_next_hour()
-
         due_time_layout.addWidget(self.due_time_checkbox)
         due_time_layout.addWidget(self.due_time_edit, 1)
-        form.addRow(self.tr("Due Time:"), due_time_layout)
+        sched_form.addRow(self.tr("Due Time:"), due_time_layout)
 
-        # Tags input
-        self.tags_edit = QLineEdit()
-        self.tags_edit.setPlaceholderText(self.tr("e.g. @work, @errands, @quick"))
-        self.tags_edit.setToolTip(self.tr("Comma-separated tags (@ prefix added automatically)"))
-        form.addRow(self.tr("Tags:"), self.tags_edit)
+        self.time_block_combo = QComboBox()
+        self.time_block_combo.addItem(self.tr("None"), "")
+        for block_id, label in [
+            ("early_morning", "Early Morning"),
+            ("morning", "Morning"),
+            ("late_morning", "Late Morning"),
+            ("noon", "Noon"),
+            ("early_afternoon", "Early Afternoon"),
+            ("afternoon", "Afternoon"),
+            ("late_afternoon", "Late Afternoon"),
+            ("early_evening", "Early Evening"),
+            ("evening", "Evening"),
+            ("late_evening", "Late Evening"),
+            ("night", "Night"),
+            ("late_night", "Late Night"),
+            ("midnight", "Midnight"),
+        ]:
+            self.time_block_combo.addItem(self.tr(label), block_id)
+        sched_form.addRow(self.tr("Time Block:"), self.time_block_combo)
 
-        # Estimated focus sessions
+        event_date_layout = QHBoxLayout()
+        self.event_date_checkbox = QCheckBox(self.tr("Set event date"))
+        self.event_date_checkbox.stateChanged.connect(self._on_event_date_toggled)
+        self.event_date_edit = QDateEdit()
+        self.event_date_edit.setCalendarPopup(True)
+        self.event_date_edit.setDate(QDate.currentDate())
+        self.event_date_edit.setEnabled(False)
+        event_date_layout.addWidget(self.event_date_checkbox)
+        event_date_layout.addWidget(self.event_date_edit, 1)
+        sched_form.addRow(self.tr("Event Date:"), event_date_layout)
+
+        adv_layout.addWidget(sched_group)
+
+        # --- Estimated Duration group ---
+        dur_group = QGroupBox(self.tr("Estimated Duration"))
+        dur_form = QFormLayout(dur_group)
+
+        dur_layout = QHBoxLayout()
+        self.duration_value_spin = QSpinBox()
+        self.duration_value_spin.setRange(0, 9999)
+        self.duration_value_spin.setValue(0)
+        self.duration_value_spin.setSpecialValueText(self.tr("None"))
+        dur_layout.addWidget(self.duration_value_spin, 1)
+
+        self.duration_unit_combo = QComboBox()
+        self.duration_unit_combo.addItem(self.tr("Minutes"), 1)
+        self.duration_unit_combo.addItem(self.tr("Hours"), 60)
+        self.duration_unit_combo.addItem(self.tr("Days"), 1440)
+        self.duration_unit_combo.addItem(self.tr("Weeks"), 10080)
+        self.duration_unit_combo.addItem(self.tr("Months"), 43200)
+        self.duration_unit_combo.addItem(self.tr("Years"), 525600)
+        dur_layout.addWidget(self.duration_unit_combo)
+
+        dur_form.addRow(self.tr("Duration:"), dur_layout)
+
+        # Keep the raw spinbox for backward compat (hidden, used by sync logic)
+        self.estimated_minutes_spin = QSpinBox()
+        self.estimated_minutes_spin.setRange(0, 9999999)
+        self.estimated_minutes_spin.setValue(0)
+        self.estimated_minutes_spin.setVisible(False)
+
+        adv_layout.addWidget(dur_group)
+
+        # --- Focus Session group ---
+        focus_group = QGroupBox(self.tr("Focus Session"))
+        focus_form = QFormLayout(focus_group)
+
         self.estimated_pomodoros_spin = QSpinBox()
         self.estimated_pomodoros_spin.setRange(0, 99)
         self.estimated_pomodoros_spin.setValue(0)
         self.estimated_pomodoros_spin.setSpecialValueText(self.tr("None"))
-        self.estimated_pomodoros_spin.setToolTip(
-            self.tr("Estimated number of focus sessions to complete")
-        )
-        form.addRow(self.tr("Estimated Sessions:"), self.estimated_pomodoros_spin)
+        focus_form.addRow(self.tr("Sessions:"), self.estimated_pomodoros_spin)
 
-        # Estimated time (minutes) for stopwatch users
-        self.estimated_minutes_spin = QSpinBox()
-        self.estimated_minutes_spin.setRange(0, 9999)
-        self.estimated_minutes_spin.setValue(0)
-        self.estimated_minutes_spin.setSuffix(self.tr(" min"))
-        self.estimated_minutes_spin.setSpecialValueText(self.tr("None"))
-        self.estimated_minutes_spin.setToolTip(
-            self.tr("Estimated time to complete (for stopwatch tracking)")
-        )
-        form.addRow(self.tr("Estimated Time:"), self.estimated_minutes_spin)
-
-        # Per-task pomodoro durations (optional overrides)
         self.task_work_duration_spin = QSpinBox()
         self.task_work_duration_spin.setRange(0, 120)
         self.task_work_duration_spin.setValue(0)
         self.task_work_duration_spin.setSuffix(self.tr(" min"))
         self.task_work_duration_spin.setSpecialValueText(self.tr("Default"))
-        self.task_work_duration_spin.setToolTip(
-            self.tr("Override work session length (0 = use global setting)")
-        )
-        form.addRow(self.tr("Session Length:"), self.task_work_duration_spin)
+        focus_form.addRow(self.tr("Session Length:"), self.task_work_duration_spin)
 
         self.task_break_duration_spin = QSpinBox()
         self.task_break_duration_spin.setRange(0, 30)
         self.task_break_duration_spin.setValue(0)
         self.task_break_duration_spin.setSuffix(self.tr(" min"))
         self.task_break_duration_spin.setSpecialValueText(self.tr("Default"))
-        self.task_break_duration_spin.setToolTip(
-            self.tr("Override short break length (0 = use global setting)")
-        )
-        form.addRow(self.tr("Break Length:"), self.task_break_duration_spin)
+        focus_form.addRow(self.tr("Break:"), self.task_break_duration_spin)
 
         self.task_long_break_spin = QSpinBox()
         self.task_long_break_spin.setRange(0, 60)
         self.task_long_break_spin.setValue(0)
         self.task_long_break_spin.setSuffix(self.tr(" min"))
         self.task_long_break_spin.setSpecialValueText(self.tr("Default"))
-        self.task_long_break_spin.setToolTip(
-            self.tr("Override long break length (0 = use global setting)")
-        )
-        form.addRow(self.tr("Long Break:"), self.task_long_break_spin)
+        focus_form.addRow(self.tr("Long Break:"), self.task_long_break_spin)
 
-        # Recurrence section
+        adv_layout.addWidget(focus_group)
+
+        # --- Recurrence group ---
+        rec_group = QGroupBox(self.tr("Recurrence"))
+        rec_form = QFormLayout(rec_group)
+
         self.recurrence_checkbox = QCheckBox(self.tr("Repeat"))
-        # Recurrence always available — auto-sets due_date=today if needed
         self.recurrence_checkbox.stateChanged.connect(self._on_recurrence_toggled)
 
         recurrence_layout = QHBoxLayout()
@@ -210,7 +250,7 @@ class AddTodoDialog(QDialog):
         self.type_combo.addItem(self.tr("Week(s)"), "weekly")
         self.type_combo.addItem(self.tr("Month(s)"), "monthly")
         self.type_combo.addItem(self.tr("Year(s)"), "yearly")
-        self.type_combo.setCurrentIndex(1)  # Default to daily
+        self.type_combo.setCurrentIndex(1)
         self.type_combo.setEnabled(False)
         recurrence_layout.addWidget(self.type_combo)
 
@@ -220,9 +260,8 @@ class AddTodoDialog(QDialog):
         recurrence_row_layout.addWidget(self.recurrence_checkbox)
         recurrence_row_layout.addLayout(recurrence_layout)
         recurrence_row_layout.addStretch()
-        form.addRow(self.tr("Recurrence:"), recurrence_row)
+        rec_form.addRow(self.tr("Repeat:"), recurrence_row)
 
-        # End condition
         self.end_never_radio = QRadioButton(self.tr("Never"))
         self.end_never_radio.setChecked(True)
         self.end_date_radio = QRadioButton(self.tr("On date"))
@@ -256,7 +295,19 @@ class AddTodoDialog(QDialog):
         self.end_widget = QWidget()
         self.end_widget.setLayout(end_layout)
         self.end_widget.setEnabled(False)
-        form.addRow(self.tr("Ends:"), self.end_widget)
+        rec_form.addRow(self.tr("Ends:"), self.end_widget)
+
+        adv_layout.addWidget(rec_group)
+
+        # --- Tags (standalone) ---
+        tags_form = QFormLayout()
+        self.tags_edit = QLineEdit()
+        self.tags_edit.setPlaceholderText(self.tr("e.g. @work, @errands, @quick"))
+        self.tags_edit.setToolTip(self.tr("Comma-separated tags (@ prefix added automatically)"))
+        tags_form.addRow(self.tr("Tags:"), self.tags_edit)
+        adv_layout.addLayout(tags_form)
+
+        adv_layout.addStretch()
 
         layout.addWidget(self._advanced_scroll, 1)  # stretch factor for scroll area
 
@@ -359,11 +410,34 @@ class AddTodoDialog(QDialog):
             # Pomodoro
             self.estimated_pomodoros_spin.setValue(result.pomodoro_estimate or 0)
 
-            # Estimated time
-            self.estimated_minutes_spin.setValue(result.estimated_minutes or 0)
+            # Estimated duration — convert minutes to natural scale
+            est = result.estimated_minutes or 0
+            self.estimated_minutes_spin.setValue(est)
+            if est > 0:
+                self._set_duration_from_minutes(est)
+            else:
+                self.duration_value_spin.setValue(0)
+                self.duration_unit_combo.setCurrentIndex(0)
 
             # Per-task session length
             self.task_work_duration_spin.setValue(result.work_duration or 0)
+
+            # Time block
+            if result.due_time_block:
+                idx = self.time_block_combo.findData(result.due_time_block)
+                if idx >= 0:
+                    self.time_block_combo.setCurrentIndex(idx)
+            else:
+                self.time_block_combo.setCurrentIndex(0)
+
+            # Event date
+            if result.event_date is not None:
+                self.event_date_checkbox.setChecked(True)
+                self.event_date_edit.setDate(
+                    QDate(result.event_date.year, result.event_date.month, result.event_date.day)
+                )
+            else:
+                self.event_date_checkbox.setChecked(False)
 
             # Recurrence
             if result.recurrence_type is not None:
@@ -407,6 +481,41 @@ class AddTodoDialog(QDialog):
     def _on_due_time_toggled(self, state: int) -> None:
         """Handle due time checkbox toggle."""
         self.due_time_edit.setEnabled(state == Qt.CheckState.Checked.value)
+
+    def _on_event_date_toggled(self, state: int) -> None:
+        """Handle event date checkbox toggle."""
+        self.event_date_edit.setEnabled(state == Qt.CheckState.Checked.value)
+
+    def _set_duration_from_minutes(self, minutes: int) -> None:
+        """Set duration value/unit widgets from a raw minutes count."""
+        # Pick the largest unit that divides evenly, or the natural scale
+        for unit_idx, (_, mult) in reversed(
+            list(
+                enumerate(
+                    (
+                        ("min", 1),
+                        ("hr", 60),
+                        ("d", 1440),
+                        ("w", 10080),
+                        ("mo", 43200),
+                        ("y", 525600),
+                    )
+                )
+            )
+        ):
+            if minutes >= mult and minutes % mult == 0:
+                self.duration_value_spin.setValue(minutes // mult)
+                self.duration_unit_combo.setCurrentIndex(unit_idx)
+                return
+        # Fallback: raw minutes
+        self.duration_value_spin.setValue(minutes)
+        self.duration_unit_combo.setCurrentIndex(0)
+
+    def _get_duration_minutes(self) -> int:
+        """Read estimated duration as minutes from value + unit widgets."""
+        value = self.duration_value_spin.value()
+        multiplier = self.duration_unit_combo.currentData()
+        return value * (multiplier or 1)
 
     def _on_recurrence_toggled(self, state: int) -> None:
         """Handle recurrence checkbox toggle."""
@@ -526,13 +635,24 @@ class AddTodoDialog(QDialog):
                             tags.append(tag)
 
             estimated_pomodoros = self.estimated_pomodoros_spin.value()
-            estimated_minutes = self.estimated_minutes_spin.value()
+            estimated_minutes = self._get_duration_minutes()
+
+            # Time block
+            time_block = self.time_block_combo.currentData() or None
+
+            # Event date
+            event_date = None
+            if self.event_date_checkbox.isChecked():
+                qd = self.event_date_edit.date()
+                event_date = date(qd.year(), qd.month(), qd.day())
 
             self._item = TodoItem(
                 reminder=reminder,
                 priority=priority,
                 due_date=due_date,
                 due_time=due_time,
+                due_time_block=time_block,
+                event_date=event_date,
                 tags=tags,
                 recurrence_type=recurrence_type,
                 recurrence_interval=recurrence_interval,
