@@ -1173,6 +1173,28 @@ body {
   flex: 1;
   font-size: 14px;
 }
+.timeline-charts {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 16px;
+}
+.timeline-chart-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+.timeline-chart-box h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.timeline-chart-box canvas {
+  display: block;
+  max-width: 100%;
+}
 .cal-empty {
   text-align: center;
   color: var(--text-secondary);

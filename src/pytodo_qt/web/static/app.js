@@ -2804,6 +2804,7 @@
     if (!calContainer) return;
     if (calSubView === "month") renderMonthView();
     else if (calSubView === "week") renderWeekView();
+    else if (calSubView === "timeline") renderTimelineView();
     else renderDayView();
   }
 
@@ -3050,6 +3051,293 @@
     var div = document.createElement("div");
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  // Timeline charts (Canvas 2D)
+  // ====================================================================
+
+  function renderTimelineView() {
+    calContainer.innerHTML = "";
+    calTitle.textContent = "Timeline";
+    var items = _calItems();
+
+    var wrap = document.createElement("div");
+    wrap.className = "timeline-charts";
+
+    // 1. Gantt chart — tasks with due dates
+    wrap.appendChild(_chartGantt(items));
+    // 2. Daily activity — completed items per day (30 days)
+    wrap.appendChild(_chartDailyActivity(items));
+    // 3. Time block distribution — items per time block
+    wrap.appendChild(_chartTimeBlocks(items));
+    // 4. Estimate accuracy — estimated vs actual
+    wrap.appendChild(_chartAccuracy(items));
+
+    calContainer.appendChild(wrap);
+  }
+
+  function _chartCanvas(title, width, height) {
+    var div = document.createElement("div");
+    div.className = "timeline-chart-box";
+    var h3 = document.createElement("h3");
+    h3.textContent = title;
+    div.appendChild(h3);
+    var canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    canvas.style.width = "100%";
+    canvas.style.height = "auto";
+    div.appendChild(canvas);
+    return { container: div, canvas: canvas, ctx: canvas.getContext("2d") };
+  }
+
+  function _chartGantt(items) {
+    var dueItems = items.filter(function (i) {
+      return i.due_date && i.created_at;
+    });
+    dueItems.sort(function (a, b) {
+      return (a.due_date || "").localeCompare(b.due_date || "");
+    });
+    dueItems = dueItems.slice(0, 20);
+
+    var barH = 22;
+    var labelW = 140;
+    var W = 700;
+    var H = Math.max(100, dueItems.length * (barH + 4) + 40);
+    var ch = _chartCanvas("Tasks / Gantt", W, H);
+    var ctx = ch.ctx;
+
+    if (dueItems.length === 0) {
+      ctx.fillStyle = "var(--text-secondary, #888)";
+      ctx.font = "13px sans-serif";
+      ctx.fillText("No items with due dates", 20, 30);
+      return ch.container;
+    }
+
+    var allDates = [];
+    dueItems.forEach(function (i) {
+      allDates.push(new Date(i.created_at));
+      allDates.push(new Date(i.due_date));
+    });
+    var minDate = Math.min.apply(null, allDates);
+    var maxDate = Math.max.apply(null, allDates);
+    var range = Math.max(maxDate - minDate, 86400000);
+    var chartW = W - labelW - 20;
+
+    function xPos(d) {
+      return labelW + ((d - minDate) / range) * chartW;
+    }
+
+    var colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
+    dueItems.forEach(function (item, idx) {
+      var y = idx * (barH + 4) + 10;
+      var created = new Date(item.created_at).getTime();
+      var due = new Date(item.due_date).getTime();
+      var x1 = xPos(created);
+      var x2 = xPos(due);
+
+      ctx.fillStyle = colors[idx % colors.length];
+      ctx.globalAlpha = item.complete ? 0.4 : 0.8;
+      ctx.fillRect(x1, y, Math.max(x2 - x1, 3), barH);
+      ctx.globalAlpha = 1;
+
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--text") || "#333";
+      ctx.font = "11px sans-serif";
+      var label = (item.reminder || "").substring(0, 18);
+      ctx.fillText(label, 4, y + barH - 6);
+    });
+    return ch.container;
+  }
+
+  function _chartDailyActivity(items) {
+    var W = 700;
+    var H = 200;
+    var ch = _chartCanvas("Daily Activity (30 days)", W, H);
+    var ctx = ch.ctx;
+
+    var now = new Date();
+    var days = 30;
+    var buckets = {};
+    for (var d = 0; d < days; d++) {
+      var dt = new Date(now);
+      dt.setDate(dt.getDate() - (days - 1 - d));
+      buckets[_dayKey(dt)] = { high: 0, normal: 0, low: 0 };
+    }
+
+    items.forEach(function (i) {
+      if (!i.complete) return;
+      var key = (i.due_date || "").substring(0, 10);
+      if (!key) {
+        key = new Date(i.updated_at).toISOString().substring(0, 10);
+      }
+      if (buckets[key] !== undefined) {
+        if (i.priority === 1) buckets[key].high++;
+        else if (i.priority === 3) buckets[key].low++;
+        else buckets[key].normal++;
+      }
+    });
+
+    var keys = Object.keys(buckets).sort();
+    var maxVal = 1;
+    keys.forEach(function (k) {
+      var t = buckets[k].high + buckets[k].normal + buckets[k].low;
+      if (t > maxVal) maxVal = t;
+    });
+
+    var barW = Math.floor((W - 60) / keys.length);
+    var chartH = H - 40;
+    keys.forEach(function (k, idx) {
+      var x = 40 + idx * barW;
+      var b = buckets[k];
+      var total = b.high + b.normal + b.low;
+      var h = (total / maxVal) * chartH;
+
+      var y = H - 20 - h;
+      var seg = 0;
+      if (b.high > 0) {
+        var sh = (b.high / total) * h;
+        ctx.fillStyle = "#ef4444";
+        ctx.fillRect(x + 1, y + seg, barW - 2, sh);
+        seg += sh;
+      }
+      if (b.normal > 0) {
+        var sn = (b.normal / total) * h;
+        ctx.fillStyle = "#3b82f6";
+        ctx.fillRect(x + 1, y + seg, barW - 2, sn);
+        seg += sn;
+      }
+      if (b.low > 0) {
+        var sl = (b.low / total) * h;
+        ctx.fillStyle = "#10b981";
+        ctx.fillRect(x + 1, y + seg, barW - 2, sl);
+      }
+
+      if (idx % 5 === 0) {
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary") || "#888";
+        ctx.font = "9px sans-serif";
+        ctx.fillText(k.substring(5), x, H - 5);
+      }
+    });
+    return ch.container;
+  }
+
+  function _chartTimeBlocks(items) {
+    var W = 700;
+    var H = 180;
+    var ch = _chartCanvas("Time Block Distribution", W, H);
+    var ctx = ch.ctx;
+
+    var blocks = [
+      "early_morning", "morning", "late_morning", "noon",
+      "early_afternoon", "afternoon", "late_afternoon",
+      "early_evening", "evening", "late_evening",
+      "night", "late_night",
+    ];
+    var labels = [
+      "Early AM", "Morning", "Late AM", "Noon",
+      "Early PM", "Afternoon", "Late PM",
+      "Early Eve", "Evening", "Late Eve",
+      "Night", "Late Night",
+    ];
+    var counts = {};
+    blocks.forEach(function (b) { counts[b] = 0; });
+
+    items.forEach(function (i) {
+      if (i.due_time_block && counts[i.due_time_block] !== undefined) {
+        counts[i.due_time_block]++;
+      } else if (i.due_time) {
+        var hour = parseInt(i.due_time.substring(0, 2));
+        var idx = Math.min(Math.floor(hour / 2), 11);
+        counts[blocks[idx]]++;
+      }
+    });
+
+    var maxVal = 1;
+    blocks.forEach(function (b) { if (counts[b] > maxVal) maxVal = counts[b]; });
+
+    var barW = Math.floor((W - 60) / blocks.length);
+    var chartH = H - 40;
+    var gradient = ["#1e3a5f", "#1e4d7a", "#2563a0", "#3b82f6", "#60a5fa", "#93c5fd",
+                    "#fbbf24", "#f59e0b", "#d97706", "#7c3aed", "#4c1d95", "#1e1b4b"];
+
+    blocks.forEach(function (b, idx) {
+      var x = 40 + idx * barW;
+      var h = (counts[b] / maxVal) * chartH;
+      ctx.fillStyle = gradient[idx];
+      ctx.fillRect(x + 1, H - 20 - h, barW - 2, h);
+
+      ctx.save();
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary") || "#888";
+      ctx.font = "8px sans-serif";
+      ctx.translate(x + barW / 2, H - 5);
+      ctx.rotate(-Math.PI / 4);
+      ctx.fillText(labels[idx], 0, 0);
+      ctx.restore();
+    });
+    return ch.container;
+  }
+
+  function _chartAccuracy(items) {
+    var W = 400;
+    var H = 400;
+    var ch = _chartCanvas("Estimate Accuracy", W, H);
+    var ctx = ch.ctx;
+
+    var pts = [];
+    items.forEach(function (i) {
+      if (i.estimated_minutes > 0 && i.time_spent > 0) {
+        pts.push({ est: i.estimated_minutes, actual: i.time_spent / 60 });
+      }
+    });
+
+    if (pts.length === 0) {
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary") || "#888";
+      ctx.font = "13px sans-serif";
+      ctx.fillText("No items with both estimate and tracked time", 20, 30);
+      return ch.container;
+    }
+
+    var maxVal = 1;
+    pts.forEach(function (p) {
+      if (p.est > maxVal) maxVal = p.est;
+      if (p.actual > maxVal) maxVal = p.actual;
+    });
+    maxVal = Math.ceil(maxVal * 1.1);
+
+    var pad = 50;
+    var cW = W - pad * 2;
+    var cH = H - pad * 2;
+
+    // Reference line (perfect accuracy)
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--border") || "#ccc";
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(pad, H - pad);
+    ctx.lineTo(pad + cW, H - pad - cH);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Points
+    pts.forEach(function (p) {
+      var x = pad + (p.est / maxVal) * cW;
+      var y = H - pad - (p.actual / maxVal) * cH;
+      ctx.fillStyle = p.actual > p.est ? "#ef4444" : "#10b981";
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // Axis labels
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary") || "#888";
+    ctx.font = "11px sans-serif";
+    ctx.fillText("Estimated (min)", W / 2 - 40, H - 8);
+    ctx.save();
+    ctx.translate(12, H / 2 + 30);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText("Actual (min)", 0, 0);
+    ctx.restore();
+
+    return ch.container;
   }
 
   // Smart add sheet
