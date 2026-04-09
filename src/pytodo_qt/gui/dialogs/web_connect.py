@@ -549,6 +549,12 @@ class MobileAccessWizard(QDialog):
             copy_btn.clicked.connect(self._copy_url)
             bottom_layout.addWidget(copy_btn)
 
+        if self._url_ip and self._url_ip != self._url:
+            copy_ip_btn = QPushButton(self.tr("Copy IP URL"))
+            copy_ip_btn.setToolTip(self._url_ip)
+            copy_ip_btn.clicked.connect(self._copy_ip_url)
+            bottom_layout.addWidget(copy_ip_btn)
+
         done_btn = QPushButton(self.tr("Done"))
         done_btn.setDefault(True)
         done_btn.clicked.connect(self._on_done)
@@ -745,17 +751,49 @@ class MobileAccessWizard(QDialog):
         layout.addWidget(header)
 
         if self._url and self._lan_ip:
-            # Step 1: Scan QR
+            # Step 1: Scan QR (with IP fallback toggle)
+            qr_container = QWidget()
+            qr_layout = QVBoxLayout(qr_container)
+            qr_layout.setContentsMargins(0, 0, 0, 0)
+
             qr = _qr_widget(self._url, 260)
+            qr_layout.addWidget(qr)
+
             url_lbl = QLabel(self._url)
             url_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             url_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             url_lbl.setStyleSheet("font-size: 11px; border: none; background: none;")
-            qr_container = QWidget()
-            qr_layout = QVBoxLayout(qr_container)
-            qr_layout.setContentsMargins(0, 0, 0, 0)
-            qr_layout.addWidget(qr)
             qr_layout.addWidget(url_lbl)
+
+            if self._url_ip and self._url_ip != self._url:
+                ip_toggle = QPushButton(self.tr("QR not working? Use IP address instead"))
+                ip_toggle.setStyleSheet(
+                    "font-size: 10px; color: palette(highlight); "
+                    "border: none; background: none; text-decoration: underline;"
+                )
+                ip_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+
+                def _swap_qr(btn=ip_toggle, lbl=url_lbl, container=qr_layout) -> None:
+                    """Toggle between hostname and IP QR codes."""
+                    assert self._url_ip is not None
+                    using_ip = lbl.text() == self._url_ip
+                    target = self._url if using_ip else self._url_ip
+                    assert target is not None
+                    lbl.setText(target)
+                    new_qr = _qr_widget(target, 260)
+                    old_qr = container.itemAt(0).widget()
+                    if old_qr:
+                        container.replaceWidget(old_qr, new_qr)
+                        old_qr.deleteLater()
+                    btn.setText(
+                        self.tr("Switch back to .local hostname")
+                        if not using_ip
+                        else self.tr("QR not working? Use IP address instead")
+                    )
+
+                ip_toggle.clicked.connect(_swap_qr)
+                qr_layout.addWidget(ip_toggle)
+
             layout.addWidget(
                 _step_row(1, self.tr("Scan this QR code with your device camera"), "", qr_container)
             )
@@ -1224,3 +1262,10 @@ class MobileAccessWizard(QDialog):
         clipboard = QApplication.clipboard()
         if clipboard:
             clipboard.setText(self._url)
+
+    def _copy_ip_url(self) -> None:
+        if self._url_ip is None:
+            return
+        clipboard = QApplication.clipboard()
+        if clipboard:
+            clipboard.setText(self._url_ip)
