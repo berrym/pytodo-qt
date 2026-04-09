@@ -287,6 +287,8 @@ class TodoTableWidget(QTableWidget):
     edit_recurrence_requested = pyqtSignal()
     focus_requested = pyqtSignal(object)  # (item_id)
     add_subtask_requested = pyqtSignal(object)  # (parent_id)
+    set_time_block_requested = pyqtSignal(object)  # (item_id)
+    set_event_date_requested = pyqtSignal(object)  # (item_id)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -368,6 +370,18 @@ class TodoTableWidget(QTableWidget):
             edit_rec_action = QAction(self.tr("Edit Recurrence..."), self)
             edit_rec_action.triggered.connect(self.edit_recurrence_requested.emit)
             menu.addAction(edit_rec_action)
+
+            time_block_action = QAction(self.tr("Set Time Block..."), self)
+            time_block_action.triggered.connect(
+                lambda checked=False, iid=item_ids[0]: self.set_time_block_requested.emit(iid)
+            )
+            menu.addAction(time_block_action)
+
+            event_date_action = QAction(self.tr("Set Event Date..."), self)
+            event_date_action.triggered.connect(
+                lambda checked=False, iid=item_ids[0]: self.set_event_date_requested.emit(iid)
+            )
+            menu.addAction(event_date_action)
 
             focus_action = QAction(self.tr("Start Focus Session"), self)
             focus_action.triggered.connect(

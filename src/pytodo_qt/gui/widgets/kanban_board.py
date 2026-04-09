@@ -363,6 +363,34 @@ class KanbanCardWidget(QFrame):
 
             card_layout.addLayout(row2)
 
+        # Event date (secondary date label)
+        if item.event_date is not None:
+            evt_label = QLabel(f"\U0001f4c5 {item.event_date.strftime('%b %d')}")
+            evt_label.setStyleSheet(
+                f"color: {colors['highlight']}; font-size: 11px; font-style: italic; border: none;"
+            )
+            evt_label.setToolTip(
+                self.tr("Event date: ") + item.event_date.strftime("%A, %B %d, %Y")
+            )
+            card_layout.addWidget(evt_label)
+
+        # Conditions (compact badges)
+        if item.conditions:
+            cond_row = QHBoxLayout()
+            cond_row.setSpacing(4)
+            for cond in item.conditions[:3]:
+                badge = QLabel(cond.get("type", ""))
+                badge.setStyleSheet(
+                    f"background: {colors['alternate_base']}; "
+                    f"color: {colors['completed_text']}; "
+                    "border-radius: 4px; padding: 1px 4px; "
+                    "font-size: 10px; border: none;"
+                )
+                badge.setToolTip(f"{cond.get('type', '')}: {cond.get('expression', '')}")
+                cond_row.addWidget(badge)
+            cond_row.addStretch()
+            card_layout.addLayout(cond_row)
+
         # Row 3: Tags (if any)
         if item.tags:
             row3 = QHBoxLayout()

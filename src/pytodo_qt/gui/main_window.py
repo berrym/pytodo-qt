@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from PyQt6.QtCore import QTimer, pyqtSlot
+from PyQt6.QtCore import QDate, QTimer, pyqtSlot
 from PyQt6.QtGui import (
     QAction,
     QActionGroup,
@@ -779,6 +779,8 @@ class MainWindow(QMainWindow):
         self.todo_table.edit_recurrence_requested.connect(self._on_edit_recurrence)
         self.todo_table.focus_requested.connect(self._on_context_menu_focus)
         self.todo_table.add_subtask_requested.connect(self._on_add_subtask)
+        self.todo_table.set_time_block_requested.connect(self._on_set_time_block)
+        self.todo_table.set_event_date_requested.connect(self._on_set_event_date)
 
     def _connect_kanban_signals(self) -> None:
         """Connect KanbanBoardWidget signals to handlers (same as table)."""
@@ -2495,6 +2497,128 @@ class MainWindow(QMainWindow):
 
         if isinstance(item_id, _UUID):
             self._start_focus_on_item(item_id)
+
+    def _on_set_time_block(self, item_id: object) -> None:
+        """Handle 'Set Time Block...' from context menu."""
+        from uuid import UUID as _UUID
+
+        if not isinstance(item_id, _UUID):
+            return
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        item = active_list.get_item(item_id)
+        if item is None:
+            return
+
+        blocks = [
+            "None",
+            "Early Morning",
+            "Morning",
+            "Late Morning",
+            "Noon",
+            "Early Afternoon",
+            "Afternoon",
+            "Late Afternoon",
+            "Early Evening",
+            "Evening",
+            "Late Evening",
+            "Night",
+            "Late Night",
+            "Midnight",
+        ]
+        block_ids = [
+            "",
+            "early_morning",
+            "morning",
+            "late_morning",
+            "noon",
+            "early_afternoon",
+            "afternoon",
+            "late_afternoon",
+            "early_evening",
+            "evening",
+            "late_evening",
+            "night",
+            "late_night",
+            "midnight",
+        ]
+        current_idx = 0
+        if item.due_time_block and item.due_time_block in block_ids:
+            current_idx = block_ids.index(item.due_time_block)
+
+        choice, ok = QInputDialog.getItem(
+            self,
+            self.tr("Set Time Block"),
+            self.tr("Time block:"),
+            blocks,
+            current_idx,
+            False,
+        )
+        if ok:
+            idx = blocks.index(choice)
+            new_block = block_ids[idx] if block_ids[idx] else None
+            if new_block != item.due_time_block:
+                from .commands import SetFieldCommand
+
+                cmd = SetFieldCommand(self, active_list.id, item_id, "due_time_block", new_block)
+                self._undo_stack.push(cmd)
+
+    def _on_set_event_date(self, item_id: object) -> None:
+        """Handle 'Set Event Date...' from context menu."""
+        from uuid import UUID as _UUID
+
+        if not isinstance(item_id, _UUID):
+            return
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        item = active_list.get_item(item_id)
+        if item is None:
+            return
+
+        from datetime import date as _date
+
+        from PyQt6.QtWidgets import QDateEdit as _QDateEdit
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(self.tr("Set Event Date"))
+        lay = QVBoxLayout(dlg)
+        date_edit = _QDateEdit()
+        date_edit.setCalendarPopup(True)
+        if item.event_date:
+            date_edit.setDate(
+                QDate(item.event_date.year, item.event_date.month, item.event_date.day)
+            )
+        else:
+            date_edit.setDate(QDate.currentDate())
+        lay.addWidget(date_edit)
+
+        from PyQt6.QtWidgets import QDialogButtonBox as _QBB
+
+        btn_box = _QBB(
+            _QBB.StandardButton.Ok | _QBB.StandardButton.Cancel | _QBB.StandardButton.Reset
+        )
+        btn_box.accepted.connect(dlg.accept)
+        btn_box.rejected.connect(dlg.reject)
+        btn_box.button(_QBB.StandardButton.Reset).clicked.connect(lambda: dlg.done(2))
+        lay.addWidget(btn_box)
+
+        result = dlg.exec()
+        if result == QDialog.DialogCode.Accepted:
+            qd = date_edit.date()
+            new_date = _date(qd.year(), qd.month(), qd.day())
+            if new_date != item.event_date:
+                from .commands import SetFieldCommand
+
+                cmd = SetFieldCommand(self, active_list.id, item_id, "event_date", new_date)
+                self._undo_stack.push(cmd)
+        elif result == 2:
+            if item.event_date is not None:
+                from .commands import SetFieldCommand
+
+                cmd = SetFieldCommand(self, active_list.id, item_id, "event_date", None)
+                self._undo_stack.push(cmd)
 
     def _is_any_timer_active(self) -> bool:
         """Check if either pomodoro or stopwatch is active."""

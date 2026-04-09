@@ -1188,3 +1188,46 @@ class WebUpdateItemCommand(QUndoCommand):
         item.mark_updated()
         self._window._save_database()
         self._window._refresh_ui()
+
+
+class SetFieldCommand(QUndoCommand):
+    """Set a single field on a TodoItem (generic, undo-aware)."""
+
+    def __init__(
+        self,
+        window: MainWindow,
+        list_id: UUID,
+        item_id: UUID,
+        field_name: str,
+        new_value: object,
+    ) -> None:
+        super().__init__(f"Set {field_name}")
+        self._window = window
+        self._list_id = list_id
+        self._item_id = item_id
+        self._field_name = field_name
+        self._new_value = new_value
+        self._old_value: object = None
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if item:
+            self._old_value = getattr(item, self._field_name, None)
+            setattr(item, self._field_name, self._new_value)
+            item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if item:
+            setattr(item, self._field_name, self._old_value)
+            item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
