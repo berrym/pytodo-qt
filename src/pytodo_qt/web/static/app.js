@@ -2970,6 +2970,7 @@
         if (it.due_time_block)
           html +=
             " <small>(" + it.due_time_block.replace(/_/g, " ") + ")</small>";
+        html += _urgencyBarHtml(it);
         html += "</div>";
       });
       html += "</div>";
@@ -3026,6 +3027,7 @@
         html += "</div>";
         html += '<div class="cal-day-item-text">';
         html += "<strong>" + _escHtml(it.reminder) + "</strong>";
+        html += _urgencyBarHtml(it);
         if (it.tags && it.tags.length > 0) {
           html += "<br>";
           it.tags.forEach(function (tag) {
@@ -3052,6 +3054,103 @@
     div.textContent = str;
     return div.innerHTML;
   }
+
+  // --- Now-aware urgency bar for items due today ---
+
+  function _urgencyData(item) {
+    // Compute urgency state from item created_at + due_date + due_time.
+    if (!item.due_date || !item.due_time) return null;
+    var todayKey = _dayKey(new Date());
+    if (item.due_date !== todayKey) return null;
+    if (item.complete) return null;
+    var now = Date.now();
+    var dueDt = new Date(item.due_date + "T" + item.due_time);
+    var dueMs = dueDt.getTime();
+    var createdMs = item.created_at || dueMs - 24 * 3600 * 1000;
+    if (createdMs >= dueMs) createdMs = dueMs - 60 * 60 * 1000;
+    var totalSpan = dueMs - createdMs;
+    var elapsed = now - createdMs;
+    var fraction = Math.max(0, Math.min(1, elapsed / totalSpan));
+    var minsLeft = Math.round((dueMs - now) / 60000);
+
+    var color;
+    if (minsLeft < 0) color = "#ef4444"; // red — overdue
+    else if (minsLeft < 15) color = "#ef4444"; // red — final
+    else if (minsLeft < 60) color = "#f59e0b"; // amber
+    else color = "#10b981"; // green
+
+    var label;
+    if (minsLeft < 0) {
+      label = "Overdue " + _formatMins(-minsLeft);
+    } else {
+      label = _formatMins(minsLeft) + " left";
+    }
+    return {
+      fraction: fraction,
+      color: color,
+      label: label,
+      minsLeft: minsLeft,
+    };
+  }
+
+  function _formatMins(m) {
+    if (m < 60) return m + "m";
+    var h = Math.floor(m / 60);
+    var rem = m % 60;
+    return rem > 0 ? h + "h " + rem + "m" : h + "h";
+  }
+
+  function _urgencyBarHtml(item) {
+    var u = _urgencyData(item);
+    if (!u) return "";
+    var pct = Math.round(u.fraction * 100);
+    return (
+      '<div class="urgency-bar" data-urgency-id="' +
+      item.id +
+      '">' +
+      '<div class="urgency-fill" style="width:' +
+      pct +
+      "%;background:" +
+      u.color +
+      ';"></div>' +
+      '<div class="urgency-label" style="color:' +
+      u.color +
+      ';">' +
+      u.label +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function refreshUrgencyBars() {
+    // Refresh all urgency bars in place without re-rendering the calendar.
+    var bars = document.querySelectorAll(".urgency-bar[data-urgency-id]");
+    bars.forEach(function (bar) {
+      var id = bar.getAttribute("data-urgency-id");
+      var item = cachedItems.find(function (i) {
+        return i.id === id;
+      });
+      if (!item) return;
+      var u = _urgencyData(item);
+      if (!u) {
+        bar.style.display = "none";
+        return;
+      }
+      var fill = bar.querySelector(".urgency-fill");
+      var label = bar.querySelector(".urgency-label");
+      if (fill) {
+        fill.style.width = Math.round(u.fraction * 100) + "%";
+        fill.style.background = u.color;
+      }
+      if (label) {
+        label.textContent = u.label;
+        label.style.color = u.color;
+      }
+    });
+  }
+
+  // Tick urgency bars every 30 seconds
+  setInterval(refreshUrgencyBars, 30000);
 
   // Timeline charts (Canvas 2D)
   // ====================================================================

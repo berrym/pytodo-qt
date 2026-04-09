@@ -1173,6 +1173,37 @@ body {
   flex: 1;
   font-size: 14px;
 }
+.urgency-bar {
+  margin-top: 4px;
+  position: relative;
+  height: 18px;
+  background: var(--bg-secondary, rgba(0, 0, 0, 0.05));
+  border-radius: 9px;
+  overflow: hidden;
+}
+.urgency-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  opacity: 0.35;
+  transition: width 0.5s ease-out, background 0.3s ease-out;
+}
+.urgency-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  pointer-events: none;
+}
+
 .timeline-charts {
   display: flex;
   flex-direction: column;

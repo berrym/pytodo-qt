@@ -2624,6 +2624,144 @@ class _WeekDelegate(QStyledItemDelegate):
         return QSize(100, 40)
 
 
+class _NowOverlay(QWidget):
+    """Transparent overlay painted on top of week/day table viewports.
+
+    Paints a horizontal "now" line at the exact current-minute position in
+    today's column, plus translucent vertical spans from the now line down
+    to each item's due-time row. Color shifts green→amber→red as deadlines
+    approach. Updates every 30 seconds via QTimer. Mouse-transparent so the
+    underlying table receives clicks normally.
+    """
+
+    def __init__(self, table: QTableView) -> None:
+        super().__init__(table.viewport())
+        self._table = table
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        # Tick every 30 seconds for smooth-feeling updates without thrash
+        from PyQt6.QtCore import QTimer
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(30_000)
+        self._timer.timeout.connect(self.update)
+        self._timer.start()
+
+        # Track viewport so we resize with it
+        viewport = table.viewport()
+        if viewport is not None:
+            viewport.installEventFilter(self)
+
+        # Repaint on scroll
+        h_bar = table.horizontalScrollBar()
+        v_bar = table.verticalScrollBar()
+        if h_bar is not None:
+            h_bar.valueChanged.connect(self.update)
+        if v_bar is not None:
+            v_bar.valueChanged.connect(self.update)
+
+        self._sync_geometry()
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        from PyQt6.QtCore import QEvent
+
+        if event is not None and event.type() == QEvent.Type.Resize:
+            self._sync_geometry()
+        return False
+
+    def _sync_geometry(self) -> None:
+        viewport = self._table.viewport()
+        if viewport is not None:
+            self.setGeometry(viewport.rect())
+
+    def _urgency_color(self, minutes_remaining: float) -> QColor:
+        """Return a span color based on minutes until due."""
+        if minutes_remaining < 0:
+            return QColor(239, 68, 68)  # red — overdue
+        if minutes_remaining < 15:
+            return QColor(239, 68, 68)  # red — final stretch
+        if minutes_remaining < 60:
+            return QColor(245, 158, 11)  # amber — under an hour
+        return QColor(16, 185, 129)  # green — plenty of time
+
+    def paintEvent(self, a0) -> None:  # noqa: N802
+        from datetime import datetime as _dt
+
+        model = self._table.model()
+        if model is None:
+            return
+
+        now = _dt.now()
+        today = now.date()
+        current_hour = now.hour
+        minute_frac = now.minute / 60.0
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Iterate columns to find today's column(s)
+        col_count = model.columnCount()
+        for col in range(col_count):
+            if self._table.isColumnHidden(col):
+                continue
+            # Get the column's date from row 0 (which knows its date)
+            idx0 = model.index(0, col)
+            if not idx0.isValid():
+                continue
+            cell_date = idx0.data(_WEEK_DATE_ROLE)
+            if cell_date != today:
+                continue
+
+            # Find current hour cell rect (row = hour + 1, since row 0 is All-Day)
+            cur_row = current_hour + 1
+            cur_index = model.index(cur_row, col)
+            cur_rect = self._table.visualRect(cur_index)
+            if cur_rect.isEmpty():
+                continue
+
+            now_y = int(cur_rect.top() + minute_frac * cur_rect.height())
+
+            # --- Spans: from now-line down to each item's due-time row ---
+            # Collect items due later today with a due_time
+            for row in range(cur_row, model.rowCount()):
+                items = model.index(row, col).data(_WEEK_ITEMS_ROLE) or []
+                for item in items:
+                    if item.complete or item.due_time is None:
+                        continue
+                    item_dt = _dt.combine(today, item.due_time)
+                    delta_min = (item_dt - now).total_seconds() / 60.0
+                    if delta_min < 0:
+                        continue  # already past — skip span
+                    item_rect = self._table.visualRect(model.index(row, col))
+                    if item_rect.isEmpty():
+                        continue
+                    item_minute_frac = item.due_time.minute / 60.0
+                    item_y = int(item_rect.top() + item_minute_frac * item_rect.height())
+                    if item_y <= now_y:
+                        continue
+                    # Span rect: full column width, from now line to item time
+                    span_left = cur_rect.left() + 4
+                    span_right = cur_rect.right() - 4
+                    span_color = self._urgency_color(delta_min)
+                    span_color.setAlpha(40)
+                    painter.fillRect(
+                        span_left, now_y, span_right - span_left, item_y - now_y, span_color
+                    )
+
+            # --- Now line: bright red horizontal across today's column ---
+            line_color = QColor(239, 68, 68)
+            painter.setPen(QPen(line_color, 2))
+            painter.drawLine(cur_rect.left() + 1, now_y, cur_rect.right() - 1, now_y)
+
+            # Small dot on the left edge for emphasis
+            painter.setBrush(line_color)
+            painter.drawEllipse(cur_rect.left() - 2, now_y - 4, 8, 8)
+
+        painter.end()
+
+
 class _WeekTableView(QTableView):
     """Week grid with day columns and hour rows."""
 
@@ -3192,6 +3330,7 @@ class CalendarViewWidget(QWidget):
         # Hide columns 1-6, show only column 0 (the single day)
         for col in range(1, 7):
             self._day_table.setColumnHidden(col, True)
+        self._day_now_overlay = _NowOverlay(self._day_table)
         self._sub_stack.addWidget(self._day_table)  # 0
 
         # Week view — QTableView with hour rows and day columns
@@ -3205,6 +3344,7 @@ class CalendarViewWidget(QWidget):
         self._week_table.task_right_clicked.connect(self._on_task_right_clicked)
         self._week_table.task_dropped.connect(self._on_week_task_dropped)
         self._week_table.more_clicked.connect(self._on_more_clicked)
+        self._week_now_overlay = _NowOverlay(self._week_table)
         self._sub_stack.addWidget(self._week_table)  # 1
 
         # Month view — QTableView with custom model/delegate

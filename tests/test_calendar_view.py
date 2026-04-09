@@ -12,6 +12,7 @@ from datetime import date, timedelta
 from uuid import uuid4
 
 import pytest
+from PyQt6.QtCore import Qt
 
 from pytodo_qt.core.models import (
     create_todo_item,
@@ -561,6 +562,104 @@ class TestWeekModel:
         item = create_todo_item("Test")
         item.due_date = today
         model.set_items({today: [item]})
+
+
+# ---------------------------------------------------------------------------
+# _NowOverlay
+# ---------------------------------------------------------------------------
+
+
+class TestNowOverlay:
+    @pytest.fixture()
+    def table(self, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _WeekModel,
+            _WeekTableView,
+        )
+
+        view = _WeekTableView()
+        view.setModel(_WeekModel())
+        qtbot.addWidget(view)
+        view.resize(800, 600)
+        view.show()
+        return view
+
+    def test_construction(self, table):
+        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
+
+        overlay = _NowOverlay(table)
+        assert overlay.parent() is table.viewport()
+
+    def test_overlay_is_mouse_transparent(self, table):
+        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
+
+        overlay = _NowOverlay(table)
+        assert overlay.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def test_overlay_geometry_matches_viewport(self, table):
+        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
+
+        overlay = _NowOverlay(table)
+        viewport = table.viewport()
+        assert viewport is not None
+        assert overlay.geometry() == viewport.rect()
+
+    def test_paint_does_not_crash_with_no_items(self, table, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
+
+        overlay = _NowOverlay(table)
+        overlay.show()
+        qtbot.wait(50)
+        # Force a paint event
+        overlay.repaint()
+
+    def test_paint_with_items_due_today(self, table, qtbot):
+        from datetime import time
+
+        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
+
+        today = date.today()
+        item = create_todo_item("Test")
+        item.due_date = today
+        item.due_time = time(23, 0)  # later today
+        model = table.model()
+        model.set_items({today: [item]})
+
+        overlay = _NowOverlay(table)
+        overlay.show()
+        qtbot.wait(50)
+        overlay.repaint()
+
+    def test_urgency_color_overdue_red(self, table):
+        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
+
+        overlay = _NowOverlay(table)
+        c = overlay._urgency_color(-5)
+        assert c.red() > c.green()  # Red dominates
+
+    def test_urgency_color_under_15min_red(self, table):
+        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
+
+        overlay = _NowOverlay(table)
+        c = overlay._urgency_color(10)
+        assert c.red() > c.green()
+
+    def test_urgency_color_under_60min_amber(self, table):
+        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
+
+        overlay = _NowOverlay(table)
+        c = overlay._urgency_color(45)
+        # Amber: high red, high green, low blue
+        assert c.red() > 200
+        assert c.green() > 100
+
+    def test_urgency_color_plenty_green(self, table):
+        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
+
+        overlay = _NowOverlay(table)
+        c = overlay._urgency_color(180)
+        # Green dominates
+        assert c.green() > c.red()
 
 
 # ---------------------------------------------------------------------------
