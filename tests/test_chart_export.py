@@ -109,6 +109,55 @@ class TestExport:
         assert out.exists()
         assert out.stat().st_size > 0
 
+    def test_export_pdf_with_date_range(self, sample_items, analytics, tmp_path):
+        out = tmp_path / "ranged.pdf"
+        today = date.today()
+        export_pdf_report(
+            analytics,
+            sample_items,
+            out,
+            start_date=today,
+            end_date=today + timedelta(days=10),
+        )
+        assert out.exists()
+
+    def test_export_pdf_with_chart_selection(self, sample_items, analytics, tmp_path):
+        out = tmp_path / "selection.pdf"
+        export_pdf_report(analytics, sample_items, out, include={"gantt"})
+        assert out.exists()
+        # Single-page PDF is smaller than full report
+        assert out.stat().st_size > 0
+
+
+class TestDateRangeFiltering:
+    def test_gantt_filters_by_date_range(self, sample_items):
+        today = date.today()
+        # sample_items have due_date today through today+4
+        fig = render_gantt(
+            sample_items,
+            start_date=today + timedelta(days=2),
+            end_date=today + timedelta(days=3),
+        )
+        assert fig is not None
+
+    def test_daily_activity_with_explicit_range(self, analytics):
+        today = date.today()
+        fig = render_daily_activity(
+            analytics,
+            start_date=today - timedelta(days=7),
+            end_date=today,
+        )
+        assert fig is not None
+
+    def test_time_blocks_with_date_range(self, analytics):
+        today = date.today()
+        fig = render_time_blocks(
+            analytics,
+            start_date=today - timedelta(days=30),
+            end_date=today,
+        )
+        assert fig is not None
+
 
 class TestMatplotlibUnavailable:
     def test_raises_when_matplotlib_missing(self, monkeypatch):

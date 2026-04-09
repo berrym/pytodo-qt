@@ -3922,28 +3922,14 @@ class MainWindow(QMainWindow):
         self.status_bar_widget.show_message(self.tr(f"Exported {count} items to {Path(path).name}"))
 
     def _on_export_charts(self) -> None:
-        """Export analytics charts as PNG or PDF."""
+        """Open the Export Charts dialog with date range, selection, and live preview."""
         active_list = self._database.active_list
         if active_list is None:
             QMessageBox.warning(self, self.tr("Export Charts"), self.tr("No list selected."))
             return
 
-        path, selected_filter = QFileDialog.getSaveFileName(
-            self,
-            self.tr("Export Charts"),
-            f"{active_list.name}-charts.pdf",
-            self.tr("PDF Report (*.pdf);;PNG Image (*.png);;All Files (*)"),
-        )
-        if not path:
-            return
-
         try:
-            from ..core.chart_export import (
-                MatplotlibUnavailable,
-                export_pdf_report,
-                export_png,
-                render_gantt,
-            )
+            from .dialogs.export_charts import ExportChartsDialog
         except ImportError as e:
             QMessageBox.critical(
                 self,
@@ -3952,27 +3938,8 @@ class MainWindow(QMainWindow):
             )
             return
 
-        try:
-            items = list(active_list.active_items())
-            if path.lower().endswith(".pdf") or "PDF" in selected_filter:
-                export_pdf_report(self._analytics, items, path, list_id=active_list.id)
-            else:
-                fig = render_gantt(items)
-                export_png(fig, path)
-        except MatplotlibUnavailable as e:
-            QMessageBox.critical(
-                self,
-                self.tr("Export Error"),
-                self.tr(str(e)),
-            )
-            return
-        except Exception as e:
-            QMessageBox.critical(
-                self, self.tr("Export Error"), self.tr(f"Could not export charts:\n{e}")
-            )
-            return
-
-        self.status_bar_widget.show_message(self.tr(f"Exported charts to {Path(path).name}"))
+        dialog = ExportChartsDialog(self, active_list, self._analytics)
+        dialog.exec()
 
     def _on_print(self) -> None:
         """Handle print action."""

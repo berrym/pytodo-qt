@@ -5,6 +5,10 @@ Matplotlib-based chart rendering for PNG and PDF export.
 Provides publication-quality renders of the four timeline analytics charts:
 Tasks/Gantt, Daily Activity, Time Block Productivity, and Estimate Accuracy.
 
+All render functions accept optional start_date/end_date for filtering.
+Figures are created via matplotlib.figure.Figure (no pyplot), so they can
+be embedded in Qt widgets or saved headlessly without backend conflicts.
+
 Matplotlib is an optional dependency — install with `pytodo-qt[export]`.
 """
 
@@ -24,36 +28,60 @@ class MatplotlibUnavailable(RuntimeError):
 
 
 def _import_matplotlib():
-    """Import matplotlib lazily so it stays optional."""
+    """Import matplotlib lazily so it stays optional. Returns (Figure, PdfPages)."""
     try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
         from matplotlib.backends.backend_pdf import PdfPages
+        from matplotlib.figure import Figure
 
-        return matplotlib, plt, PdfPages
+        return Figure, PdfPages
     except ImportError as e:
         raise MatplotlibUnavailable(
             "matplotlib is not installed. Install with: pip install pytodo-qt[export]"
         ) from e
 
 
-def render_gantt(items: list[TodoItem], today: date | None = None):
+def _filter_items_by_date(
+    items: list[TodoItem],
+    start_date: date | None,
+    end_date: date | None,
+) -> list[TodoItem]:
+    """Keep items whose due_date falls within [start_date, end_date]."""
+    if start_date is None and end_date is None:
+        return items
+    out = []
+    for item in items:
+        if item.due_date is None:
+            continue
+        if start_date and item.due_date < start_date:
+            continue
+        if end_date and item.due_date > end_date:
+            continue
+        out.append(item)
+    return out
+
+
+def render_gantt(
+    items: list[TodoItem],
+    today: date | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+):
     """Render a Gantt chart of items with due dates.
 
     Returns a matplotlib Figure.
     """
-    _, plt, _ = _import_matplotlib()
+    Figure, _ = _import_matplotlib()
 
     if today is None:
         today = date.today()
 
     due_items = [i for i in items if i.due_date is not None]
+    due_items = _filter_items_by_date(due_items, start_date, end_date)
     due_items.sort(key=lambda i: i.due_date or date.max)
     due_items = due_items[:30]
 
-    fig, ax = plt.subplots(figsize=(10, max(4, len(due_items) * 0.3)))
+    fig = Figure(figsize=(10, max(4, len(due_items) * 0.3)))
+    ax = fig.add_subplot(111)
 
     if not due_items:
         ax.text(0.5, 0.5, "No items with due dates", ha="center", va="center", fontsize=12)
@@ -76,10 +104,14 @@ def render_gantt(items: list[TodoItem], today: date | None = None):
     ax.axvline(today.toordinal(), color="#ef4444", linestyle="--", linewidth=1, label="Today")
     ax.set_yticks([])
     ax.set_xlabel("Date")
-    ax.set_title("Tasks Timeline (Gantt)")
+    title = "Tasks Timeline (Gantt)"
+    if start_date or end_date:
+        s = start_date.isoformat() if start_date else "*"
+        e = end_date.isoformat() if end_date else "*"
+        title += f"  [{s} → {e}]"
+    ax.set_title(title)
     ax.legend(loc="upper right")
 
-    # Convert ordinal x-ticks back to readable dates
     xticks = ax.get_xticks()
     xtick_labels = []
     for t in xticks:
@@ -94,18 +126,27 @@ def render_gantt(items: list[TodoItem], today: date | None = None):
     return fig
 
 
-def render_daily_activity(analytics: AnalyticsService, days: int = 30):
+def render_daily_activity(
+    analytics: AnalyticsService,
+    days: int = 30,
+    start_date: date | None = None,
+    end_date: date | None = None,
+):
     """Render a stacked bar chart of daily focus activity (pomodoro + stopwatch).
 
+    If start_date/end_date are provided, they take precedence over `days`.
     Returns a matplotlib Figure.
     """
-    _, plt, _ = _import_matplotlib()
+    Figure, _ = _import_matplotlib()
 
-    end = date.today()
-    start = end - timedelta(days=days - 1)
-    df = analytics.daily_summary(start_date=start.isoformat(), end_date=end.isoformat())
+    if start_date is None or end_date is None:
+        end_date = end_date or date.today()
+        start_date = start_date or (end_date - timedelta(days=days - 1))
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+    df = analytics.daily_summary(start_date=start_date.isoformat(), end_date=end_date.isoformat())
+
+    fig = Figure(figsize=(10, 5))
+    ax = fig.add_subplot(111)
 
     if df.empty:
         ax.text(0.5, 0.5, "No focus session data", ha="center", va="center", fontsize=12)
@@ -122,23 +163,32 @@ def render_daily_activity(analytics: AnalyticsService, days: int = 30):
     ax.set_xticks(list(x))
     ax.set_xticklabels(dates, rotation=45, ha="right", fontsize=8)
     ax.set_ylabel("Minutes")
-    ax.set_title(f"Daily Activity (last {days} days)")
+    ax.set_title(f"Daily Activity ({start_date.isoformat()} → {end_date.isoformat()})")
     ax.legend(loc="upper left")
 
     fig.tight_layout()
     return fig
 
 
-def render_time_blocks(analytics: AnalyticsService):
+def render_time_blocks(
+    analytics: AnalyticsService,
+    start_date: date | None = None,
+    end_date: date | None = None,
+):
     """Render a productivity heatmap of 12 two-hour time blocks.
+
+    Note: time_block_analysis() uses all session data; date filter is
+    applied to the title only for now (analytics method does not yet
+    accept a date range).
 
     Returns a matplotlib Figure.
     """
-    _, plt, _ = _import_matplotlib()
+    Figure, _ = _import_matplotlib()
 
     df = analytics.time_block_analysis()
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig = Figure(figsize=(10, 5))
+    ax = fig.add_subplot(111)
 
     if df.empty:
         ax.text(0.5, 0.5, "No focus session data", ha="center", va="center", fontsize=12)
@@ -155,23 +205,34 @@ def render_time_blocks(analytics: AnalyticsService):
     ax.set_xticks(list(x))
     ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=8)
     ax.set_ylabel("Minutes")
-    ax.set_title("Productivity by Time of Day")
+    title = "Productivity by Time of Day"
+    if start_date or end_date:
+        s = start_date.isoformat() if start_date else "*"
+        e = end_date.isoformat() if end_date else "*"
+        title += f"  [{s} → {e}]"
+    ax.set_title(title)
     ax.legend(loc="upper right")
 
     fig.tight_layout()
     return fig
 
 
-def render_accuracy(analytics: AnalyticsService, list_id=None):
+def render_accuracy(
+    analytics: AnalyticsService,
+    list_id=None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+):
     """Render an estimate vs actual scatter plot with reference line.
 
     Returns a matplotlib Figure.
     """
-    _, plt, _ = _import_matplotlib()
+    Figure, _ = _import_matplotlib()
 
     df = analytics.estimate_accuracy(list_id=list_id)
 
-    fig, ax = plt.subplots(figsize=(7, 7))
+    fig = Figure(figsize=(7, 7))
+    ax = fig.add_subplot(111)
 
     if df.empty:
         ax.text(
@@ -192,11 +253,11 @@ def render_accuracy(analytics: AnalyticsService, list_id=None):
     colors = []
     for r in ratios:
         if r < 0.8:
-            colors.append("#ef4444")  # Overestimate
+            colors.append("#ef4444")
         elif r > 1.2:
-            colors.append("#f59e0b")  # Underestimate
+            colors.append("#f59e0b")
         else:
-            colors.append("#10b981")  # Accurate
+            colors.append("#10b981")
 
     ax.scatter(est, actual, c=colors, s=60, alpha=0.7, edgecolors="white")
 
@@ -205,7 +266,12 @@ def render_accuracy(analytics: AnalyticsService, list_id=None):
 
     ax.set_xlabel("Estimated (minutes)")
     ax.set_ylabel("Actual (minutes)")
-    ax.set_title("Estimate Accuracy")
+    title = "Estimate Accuracy"
+    if start_date or end_date:
+        s = start_date.isoformat() if start_date else "*"
+        e = end_date.isoformat() if end_date else "*"
+        title += f"  [{s} → {e}]"
+    ax.set_title(title)
     ax.legend(loc="upper left")
     ax.set_xlim(0, max_val)
     ax.set_ylim(0, max_val)
@@ -224,17 +290,41 @@ def export_pdf_report(
     items: list[TodoItem],
     path: str | Path,
     list_id=None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    include: set[str] | None = None,
 ) -> None:
-    """Export a multi-page PDF report containing all four charts."""
-    _, plt, PdfPages = _import_matplotlib()
+    """Export a multi-page PDF report containing the selected charts.
+
+    `include` is a set of chart keys to include: {"gantt", "daily", "blocks", "accuracy"}.
+    If None, all four charts are included.
+    """
+    _, PdfPages = _import_matplotlib()
+
+    if include is None:
+        include = {"gantt", "daily", "blocks", "accuracy"}
+
+    chart_specs = [
+        ("gantt", lambda: render_gantt(items, start_date=start_date, end_date=end_date)),
+        (
+            "daily",
+            lambda: render_daily_activity(analytics, start_date=start_date, end_date=end_date),
+        ),
+        (
+            "blocks",
+            lambda: render_time_blocks(analytics, start_date=start_date, end_date=end_date),
+        ),
+        (
+            "accuracy",
+            lambda: render_accuracy(
+                analytics, list_id=list_id, start_date=start_date, end_date=end_date
+            ),
+        ),
+    ]
 
     with PdfPages(str(path)) as pdf:
-        for renderer, args in [
-            (render_gantt, (items,)),
-            (render_daily_activity, (analytics,)),
-            (render_time_blocks, (analytics,)),
-            (render_accuracy, (analytics, list_id)),
-        ]:
-            fig = renderer(*args)
+        for key, renderer in chart_specs:
+            if key not in include:
+                continue
+            fig = renderer()
             pdf.savefig(fig)
-            plt.close(fig)
