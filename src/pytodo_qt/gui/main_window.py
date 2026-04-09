@@ -290,6 +290,12 @@ class MainWindow(QMainWindow):
         self.export_ics_action.setToolTip(self._tip(self.tr("Export list as .ics file"), "Ctrl+E"))
         self.export_ics_action.triggered.connect(self._on_export_ics)
 
+        self.export_charts_action = QAction(self.tr("Export &Charts..."), self)
+        self.export_charts_action.setToolTip(
+            self.tr("Export analytics charts as PNG or multi-page PDF report")
+        )
+        self.export_charts_action.triggered.connect(self._on_export_charts)
+
         self.print_action = QAction(self.tr("&Print"), self)
         self.print_action.setShortcut("Ctrl+P")
         self.print_action.setToolTip(self._tip(self.tr("Print current list"), "Ctrl+P"))
@@ -538,6 +544,7 @@ class MainWindow(QMainWindow):
         if file_menu:
             file_menu.addAction(self.import_ics_action)
             file_menu.addAction(self.export_ics_action)
+            file_menu.addAction(self.export_charts_action)
             file_menu.addSeparator()
             file_menu.addAction(self.print_action)
             file_menu.addSeparator()
@@ -3913,6 +3920,59 @@ class MainWindow(QMainWindow):
 
         count = active_list.active_item_count()
         self.status_bar_widget.show_message(self.tr(f"Exported {count} items to {Path(path).name}"))
+
+    def _on_export_charts(self) -> None:
+        """Export analytics charts as PNG or PDF."""
+        active_list = self._database.active_list
+        if active_list is None:
+            QMessageBox.warning(self, self.tr("Export Charts"), self.tr("No list selected."))
+            return
+
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            self.tr("Export Charts"),
+            f"{active_list.name}-charts.pdf",
+            self.tr("PDF Report (*.pdf);;PNG Image (*.png);;All Files (*)"),
+        )
+        if not path:
+            return
+
+        try:
+            from ..core.chart_export import (
+                MatplotlibUnavailable,
+                export_pdf_report,
+                export_png,
+                render_gantt,
+            )
+        except ImportError as e:
+            QMessageBox.critical(
+                self,
+                self.tr("Export Error"),
+                self.tr(f"Chart export module unavailable:\n{e}"),
+            )
+            return
+
+        try:
+            items = list(active_list.active_items())
+            if path.lower().endswith(".pdf") or "PDF" in selected_filter:
+                export_pdf_report(self._analytics, items, path, list_id=active_list.id)
+            else:
+                fig = render_gantt(items)
+                export_png(fig, path)
+        except MatplotlibUnavailable as e:
+            QMessageBox.critical(
+                self,
+                self.tr("Export Error"),
+                self.tr(str(e)),
+            )
+            return
+        except Exception as e:
+            QMessageBox.critical(
+                self, self.tr("Export Error"), self.tr(f"Could not export charts:\n{e}")
+            )
+            return
+
+        self.status_bar_widget.show_message(self.tr(f"Exported charts to {Path(path).name}"))
 
     def _on_print(self) -> None:
         """Handle print action."""
