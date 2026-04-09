@@ -103,11 +103,12 @@ class AnalyticsService:
             conditions.append("date <= ?")
             params.append(end_date)
         if list_id is not None:
+            # SQLite cannot bind UUID objects directly — coerce to string
             conditions.append("list_id = ?")
-            params.append(list_id)
+            params.append(str(list_id))
         if item_id is not None:
             conditions.append("item_id = ?")
-            params.append(item_id)
+            params.append(str(item_id))
         if session_type is not None:
             conditions.append("session_type = ?")
             params.append(session_type)
@@ -479,8 +480,9 @@ class AnalyticsService:
         conditions = ["deleted = 0"]
         params: list = []
         if list_id is not None:
+            # SQLite cannot bind UUID objects directly — coerce to string
             conditions.append("list_id = ?")
-            params.append(list_id)
+            params.append(str(list_id))
 
         where = f" WHERE {' AND '.join(conditions)}"
         sql = f"SELECT id, estimated_pomodoros, estimated_minutes, time_spent, work_duration FROM items{where}"  # noqa: S608
@@ -764,8 +766,9 @@ class AnalyticsService:
         where = "WHERE deleted = 0 AND event_date IS NOT NULL"
         params: list[str] = []
         if list_id:
+            # SQLite cannot bind UUID objects directly — coerce to string
             where += " AND list_id = ?"
-            params.append(list_id)
+            params.append(str(list_id))
 
         query = f"""
             SELECT id, reminder, due_date, event_date, complete, updated_at

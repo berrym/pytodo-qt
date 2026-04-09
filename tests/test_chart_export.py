@@ -94,6 +94,18 @@ class TestRenderAccuracy:
         fig = render_accuracy(analytics)
         assert fig is not None
 
+    def test_renders_with_uuid_list_id(self, analytics):
+        """Regression: AnalyticsService.estimate_accuracy must accept UUID list_id.
+
+        Previously crashed with 'Error binding parameter 1: type UUID is not supported'
+        because the UUID was passed directly to sqlite3 without str() coercion.
+        """
+        from uuid import uuid4
+
+        list_id = uuid4()
+        fig = render_accuracy(analytics, list_id=list_id)
+        assert fig is not None
+
 
 class TestExport:
     def test_export_png(self, sample_items, tmp_path):

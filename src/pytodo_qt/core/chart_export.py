@@ -30,6 +30,14 @@ class MatplotlibUnavailable(RuntimeError):
 def _import_matplotlib():
     """Import matplotlib lazily so it stays optional. Returns (Figure, PdfPages)."""
     try:
+        # Silence matplotlib's chatty findfont/PDF backend DEBUG logs.
+        # These flood stdout when our app is run with DEBUG-level logging.
+        import logging as _logging
+
+        _logging.getLogger("matplotlib").setLevel(_logging.WARNING)
+        _logging.getLogger("matplotlib.font_manager").setLevel(_logging.WARNING)
+        _logging.getLogger("matplotlib.backends.backend_pdf").setLevel(_logging.WARNING)
+
         from matplotlib.backends.backend_pdf import PdfPages
         from matplotlib.figure import Figure
 
