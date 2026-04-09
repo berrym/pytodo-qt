@@ -114,3 +114,23 @@ dev = [
     "ruff>=0.15",
     "basedpyright>=1.18",
 ]
+
+[tool.coverage.run]
+source = ["src/pytodo_qt"]
+omit = [
+    "*/tests/*",
+    "*/__main__.py",
+]
+
+[tool.coverage.report]
+# Realistic threshold based on current state. Aspirational target is 70%,
+# which requires significant test additions for the large GUI dialogs
+# (settings, device_manager, peer_manager, main_window) and is tracked
+# in the project plan.
+fail_under = 60
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
