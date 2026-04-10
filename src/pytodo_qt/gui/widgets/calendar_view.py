@@ -2456,7 +2456,15 @@ class _WeekModel(QAbstractTableModel):
 
 
 class _WeekDelegate(QStyledItemDelegate):
-    """Painter for week view cells — shows task chips in hour slots."""
+    """Painter for week view cells — shows task chips in hour slots.
+
+    Also paints now-aware overlays in today's column: a translucent vertical
+    span from the current minute down to each item's due-time row, plus a
+    bright "now line" at the exact current-minute pixel position. Both are
+    color-coded for urgency (green > 60min, amber 15-60min, red < 15min /
+    overdue) and update via a 30-second viewport repaint timer installed by
+    the parent CalendarViewWidget.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -2473,6 +2481,101 @@ class _WeekDelegate(QStyledItemDelegate):
     def set_selected(self, item_id: UUID | None) -> None:
         self._selected_item_id = item_id
 
+    @staticmethod
+    def _urgency_color(minutes_remaining: float) -> QColor:
+        """Span color based on minutes until due. Green→amber→red."""
+        if minutes_remaining < 15:
+            return QColor(239, 68, 68)  # red — overdue or final stretch
+        if minutes_remaining < 60:
+            return QColor(245, 158, 11)  # amber — under an hour
+        return QColor(16, 185, 129)  # green — plenty of time
+
+    def _paint_now_overlays(
+        self,
+        painter: QPainter,
+        rect: Any,
+        index: QModelIndex,
+        cell_hour: int,
+    ) -> None:
+        """Paint translucent spans from 'now' to each item's due time, plus
+        the horizontal now line at the current minute, in today's column.
+
+        Each cell paints its own slice of any spans that cross it, so a span
+        from 9:30 AM to 4:00 PM contributes a slice in rows 9, 10, ..., 16.
+        """
+        from datetime import datetime as _dt
+
+        model = index.model()
+        if model is None:
+            return
+
+        now = _dt.now()
+        current_hour = now.hour
+        if cell_hour < current_hour:
+            return  # spans/now line only at or after current hour
+
+        col = index.column()
+
+        def y_for_minute(hour_int: int, minute: int) -> int:
+            """Map a clock time to a pixel y inside this cell. Clamps to top
+            or bottom for times outside the cell's hour."""
+            if hour_int < cell_hour:
+                return rect.top()
+            if hour_int > cell_hour:
+                return rect.bottom()
+            return int(rect.top() + (minute / 60.0) * rect.height())
+
+        now_y = y_for_minute(current_hour, now.minute)
+
+        # ------------------------------------------------------------------
+        # Spans: scan all cells in this column from current_hour onward,
+        # find items with due_time later than now, and for each item paint
+        # the slice of its [now → due_time] span that falls in THIS cell.
+        # Model has 25 rows: row 0 = all-day, rows 1..24 = hours 0..23.
+        # ------------------------------------------------------------------
+        for row in range(current_hour + 1, 25):
+            cell_items = model.index(row, col).data(_WEEK_ITEMS_ROLE) or []
+            for item in cell_items:
+                if item.complete or item.due_time is None:
+                    continue
+                due_h = item.due_time.hour
+                due_m = item.due_time.minute
+                try:
+                    item_dt = _dt(now.year, now.month, now.day, due_h, due_m)
+                except ValueError:
+                    continue
+                delta_min = (item_dt - now).total_seconds() / 60.0
+                if delta_min <= 0:
+                    continue  # already past
+
+                if cell_hour > due_h:
+                    continue
+
+                top_y = now_y if cell_hour == current_hour else rect.top()
+                bot_y = y_for_minute(due_h, due_m) if cell_hour == due_h else rect.bottom()
+                if bot_y <= top_y:
+                    continue
+
+                color = self._urgency_color(delta_min)
+                color.setAlpha(70)
+                span_left = rect.left() + 4
+                span_width = rect.width() - 8
+                painter.fillRect(span_left, top_y, span_width, bot_y - top_y, color)
+
+        # ------------------------------------------------------------------
+        # Now line: bright red horizontal at the current minute, only in the
+        # cell whose hour matches the current hour.
+        # ------------------------------------------------------------------
+        if cell_hour == current_hour:
+            line_color = QColor(239, 68, 68)
+            painter.save()
+            painter.setPen(QPen(line_color, 2))
+            painter.drawLine(rect.left() + 1, now_y, rect.right() - 1, now_y)
+            painter.setBrush(line_color)
+            painter.setPen(QPen(line_color, 1))
+            painter.drawEllipse(rect.left() - 3, now_y - 4, 8, 8)
+            painter.restore()
+
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -2483,6 +2586,10 @@ class _WeekDelegate(QStyledItemDelegate):
         cell_date = index.data(_WEEK_DATE_ROLE)
         hour = index.data(_WEEK_HOUR_ROLE)
         items: list = index.data(_WEEK_ITEMS_ROLE) or []
+
+        # Refresh today every paint so the calendar wakes up correctly across
+        # midnight without requiring a manual refresh
+        self._today = date.today()
 
         col_base = QColor(c["base"])
         col_alt_base = QColor(c["alternate_base"])
@@ -2509,6 +2616,15 @@ class _WeekDelegate(QStyledItemDelegate):
             painter.fillRect(rect, col_alt_base)
         else:
             painter.fillRect(rect, col_base)
+
+        # ------------------------------------------------------------------
+        # Now-aware overlays: translucent spans from "now" down to each item
+        # with a due_time later today, plus the horizontal "now line".
+        # Painted AFTER the background so chips and grid go on top.
+        # Only runs for today's hour cells (skips all-day row and other days).
+        # ------------------------------------------------------------------
+        if is_today and not is_all_day:
+            self._paint_now_overlays(painter, rect, index, hour)
 
         # Grid lines
         painter.setPen(QPen(col_border, 1))
@@ -2622,144 +2738,6 @@ class _WeekDelegate(QStyledItemDelegate):
         from PyQt6.QtCore import QSize
 
         return QSize(100, 40)
-
-
-class _NowOverlay(QWidget):
-    """Transparent overlay painted on top of week/day table viewports.
-
-    Paints a horizontal "now" line at the exact current-minute position in
-    today's column, plus translucent vertical spans from the now line down
-    to each item's due-time row. Color shifts green→amber→red as deadlines
-    approach. Updates every 30 seconds via QTimer. Mouse-transparent so the
-    underlying table receives clicks normally.
-    """
-
-    def __init__(self, table: QTableView) -> None:
-        super().__init__(table.viewport())
-        self._table = table
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-
-        # Tick every 30 seconds for smooth-feeling updates without thrash
-        from PyQt6.QtCore import QTimer
-
-        self._timer = QTimer(self)
-        self._timer.setInterval(30_000)
-        self._timer.timeout.connect(self.update)
-        self._timer.start()
-
-        # Track viewport so we resize with it
-        viewport = table.viewport()
-        if viewport is not None:
-            viewport.installEventFilter(self)
-
-        # Repaint on scroll
-        h_bar = table.horizontalScrollBar()
-        v_bar = table.verticalScrollBar()
-        if h_bar is not None:
-            h_bar.valueChanged.connect(self.update)
-        if v_bar is not None:
-            v_bar.valueChanged.connect(self.update)
-
-        self._sync_geometry()
-
-    def eventFilter(self, obj, event) -> bool:  # noqa: N802
-        from PyQt6.QtCore import QEvent
-
-        if event is not None and event.type() == QEvent.Type.Resize:
-            self._sync_geometry()
-        return False
-
-    def _sync_geometry(self) -> None:
-        viewport = self._table.viewport()
-        if viewport is not None:
-            self.setGeometry(viewport.rect())
-
-    def _urgency_color(self, minutes_remaining: float) -> QColor:
-        """Return a span color based on minutes until due."""
-        if minutes_remaining < 0:
-            return QColor(239, 68, 68)  # red — overdue
-        if minutes_remaining < 15:
-            return QColor(239, 68, 68)  # red — final stretch
-        if minutes_remaining < 60:
-            return QColor(245, 158, 11)  # amber — under an hour
-        return QColor(16, 185, 129)  # green — plenty of time
-
-    def paintEvent(self, a0) -> None:  # noqa: N802
-        from datetime import datetime as _dt
-
-        model = self._table.model()
-        if model is None:
-            return
-
-        now = _dt.now()
-        today = now.date()
-        current_hour = now.hour
-        minute_frac = now.minute / 60.0
-
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        # Iterate columns to find today's column(s)
-        col_count = model.columnCount()
-        for col in range(col_count):
-            if self._table.isColumnHidden(col):
-                continue
-            # Get the column's date from row 0 (which knows its date)
-            idx0 = model.index(0, col)
-            if not idx0.isValid():
-                continue
-            cell_date = idx0.data(_WEEK_DATE_ROLE)
-            if cell_date != today:
-                continue
-
-            # Find current hour cell rect (row = hour + 1, since row 0 is All-Day)
-            cur_row = current_hour + 1
-            cur_index = model.index(cur_row, col)
-            cur_rect = self._table.visualRect(cur_index)
-            if cur_rect.isEmpty():
-                continue
-
-            now_y = int(cur_rect.top() + minute_frac * cur_rect.height())
-
-            # --- Spans: from now-line down to each item's due-time row ---
-            # Collect items due later today with a due_time
-            for row in range(cur_row, model.rowCount()):
-                items = model.index(row, col).data(_WEEK_ITEMS_ROLE) or []
-                for item in items:
-                    if item.complete or item.due_time is None:
-                        continue
-                    item_dt = _dt.combine(today, item.due_time)
-                    delta_min = (item_dt - now).total_seconds() / 60.0
-                    if delta_min < 0:
-                        continue  # already past — skip span
-                    item_rect = self._table.visualRect(model.index(row, col))
-                    if item_rect.isEmpty():
-                        continue
-                    item_minute_frac = item.due_time.minute / 60.0
-                    item_y = int(item_rect.top() + item_minute_frac * item_rect.height())
-                    if item_y <= now_y:
-                        continue
-                    # Span rect: full column width, from now line to item time
-                    span_left = cur_rect.left() + 4
-                    span_right = cur_rect.right() - 4
-                    span_color = self._urgency_color(delta_min)
-                    span_color.setAlpha(40)
-                    painter.fillRect(
-                        span_left, now_y, span_right - span_left, item_y - now_y, span_color
-                    )
-
-            # --- Now line: bright red horizontal across today's column ---
-            line_color = QColor(239, 68, 68)
-            painter.setPen(QPen(line_color, 2))
-            painter.drawLine(cur_rect.left() + 1, now_y, cur_rect.right() - 1, now_y)
-
-            # Small dot on the left edge for emphasis
-            painter.setBrush(line_color)
-            painter.drawEllipse(cur_rect.left() - 2, now_y - 4, 8, 8)
-
-        painter.end()
 
 
 class _WeekTableView(QTableView):
@@ -3330,7 +3308,6 @@ class CalendarViewWidget(QWidget):
         # Hide columns 1-6, show only column 0 (the single day)
         for col in range(1, 7):
             self._day_table.setColumnHidden(col, True)
-        self._day_now_overlay = _NowOverlay(self._day_table)
         self._sub_stack.addWidget(self._day_table)  # 0
 
         # Week view — QTableView with hour rows and day columns
@@ -3344,8 +3321,18 @@ class CalendarViewWidget(QWidget):
         self._week_table.task_right_clicked.connect(self._on_task_right_clicked)
         self._week_table.task_dropped.connect(self._on_week_task_dropped)
         self._week_table.more_clicked.connect(self._on_more_clicked)
-        self._week_now_overlay = _NowOverlay(self._week_table)
         self._sub_stack.addWidget(self._week_table)  # 1
+
+        # Now-aware repaint timer: every 30 seconds, ask both day and week
+        # tables to repaint so the now line creeps and spans shrink as time
+        # passes. The delegate paints the indicators directly in cell paint
+        # events — no overlay widget, no z-order issues, no model-sync issues.
+        from PyQt6.QtCore import QTimer
+
+        self._now_timer = QTimer(self)
+        self._now_timer.setInterval(30_000)
+        self._now_timer.timeout.connect(self._tick_now_indicators)
+        self._now_timer.start()
 
         # Month view — QTableView with custom model/delegate
         month_container = QWidget()
@@ -3720,6 +3707,14 @@ class CalendarViewWidget(QWidget):
             self._week_table.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
 
     # --- Task interaction ---
+
+    def _tick_now_indicators(self) -> None:
+        """Repaint the day/week table viewports so now-line + spans creep
+        as time passes. Called every 30 seconds by self._now_timer."""
+        for table in (self._day_table, self._week_table):
+            viewport = table.viewport()
+            if viewport is not None:
+                viewport.update()
 
     def _on_task_clicked(self, item_id: UUID) -> None:
         self._selected_item_id = item_id

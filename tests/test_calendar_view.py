@@ -12,7 +12,6 @@ from datetime import date, timedelta
 from uuid import uuid4
 
 import pytest
-from PyQt6.QtCore import Qt
 
 from pytodo_qt.core.models import (
     create_todo_item,
@@ -565,101 +564,99 @@ class TestWeekModel:
 
 
 # ---------------------------------------------------------------------------
-# _NowOverlay
+# Now-aware delegate painting
 # ---------------------------------------------------------------------------
 
 
-class TestNowOverlay:
-    @pytest.fixture()
-    def table(self, qtbot):
+class TestWeekDelegateNowOverlays:
+    """The week/day delegate paints translucent now→due spans and a now line
+    in today's column directly during cell painting (no overlay widget)."""
+
+    def test_urgency_color_under_15min_red(self):
+        from pytodo_qt.gui.widgets.calendar_view import _WeekDelegate
+
+        c = _WeekDelegate._urgency_color(10)
+        assert c.red() > c.green()
+
+    def test_urgency_color_overdue_red(self):
+        from pytodo_qt.gui.widgets.calendar_view import _WeekDelegate
+
+        c = _WeekDelegate._urgency_color(-5)
+        assert c.red() > c.green()
+
+    def test_urgency_color_under_60min_amber(self):
+        from pytodo_qt.gui.widgets.calendar_view import _WeekDelegate
+
+        c = _WeekDelegate._urgency_color(45)
+        assert c.red() > 200
+        assert c.green() > 100
+
+    def test_urgency_color_plenty_green(self):
+        from pytodo_qt.gui.widgets.calendar_view import _WeekDelegate
+
+        c = _WeekDelegate._urgency_color(180)
+        assert c.green() > c.red()
+
+    def test_paint_does_not_crash_with_now_overlay(self, qtbot):
+        """Paint a today-row cell with future items present — should not raise."""
+        from datetime import datetime as _dt
+        from datetime import time
+
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QPainter, QPixmap
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
         from pytodo_qt.gui.widgets.calendar_view import (
+            _WeekDelegate,
             _WeekModel,
             _WeekTableView,
         )
 
         view = _WeekTableView()
-        view.setModel(_WeekModel())
+        model = _WeekModel()
+        view.setModel(model)
+        view.setItemDelegate(_WeekDelegate())
         qtbot.addWidget(view)
         view.resize(800, 600)
         view.show()
-        return view
 
-    def test_construction(self, table):
-        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
-
-        overlay = _NowOverlay(table)
-        assert overlay.parent() is table.viewport()
-
-    def test_overlay_is_mouse_transparent(self, table):
-        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
-
-        overlay = _NowOverlay(table)
-        assert overlay.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-
-    def test_overlay_geometry_matches_viewport(self, table):
-        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
-
-        overlay = _NowOverlay(table)
-        viewport = table.viewport()
-        assert viewport is not None
-        assert overlay.geometry() == viewport.rect()
-
-    def test_paint_does_not_crash_with_no_items(self, table, qtbot):
-        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
-
-        overlay = _NowOverlay(table)
-        overlay.show()
-        qtbot.wait(50)
-        # Force a paint event
-        overlay.repaint()
-
-    def test_paint_with_items_due_today(self, table, qtbot):
-        from datetime import time
-
-        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
-
+        # Add an item due later today so a span exists
         today = date.today()
-        item = create_todo_item("Test")
+        item = create_todo_item("Future task")
         item.due_date = today
-        item.due_time = time(23, 0)  # later today
-        model = table.model()
+        item.due_time = time(23, 30)
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
         model.set_items({today: [item]})
 
-        overlay = _NowOverlay(table)
-        overlay.show()
-        qtbot.wait(50)
-        overlay.repaint()
+        # Render a cell at the current hour into an offscreen pixmap
+        delegate = view.itemDelegate()
+        now = _dt.now()
+        idx = model.index(now.hour + 1, 0)
+        pixmap = QPixmap(100, 60)
+        pixmap.fill()
+        painter = QPainter(pixmap)
+        opt = QStyleOptionViewItem()
+        opt.rect = QRect(0, 0, 100, 60)
+        # Should not raise
+        delegate.paint(painter, opt, idx)
+        painter.end()
 
-    def test_urgency_color_overdue_red(self, table):
-        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
+    def test_calendar_widget_has_now_timer(self, qtbot):
+        """CalendarViewWidget creates a 30-second QTimer for now-line ticks."""
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
 
-        overlay = _NowOverlay(table)
-        c = overlay._urgency_color(-5)
-        assert c.red() > c.green()  # Red dominates
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+        assert hasattr(cal, "_now_timer")
+        assert cal._now_timer.isActive()
+        assert cal._now_timer.interval() == 30_000
 
-    def test_urgency_color_under_15min_red(self, table):
-        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
+    def test_tick_now_indicators_does_not_crash(self, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
 
-        overlay = _NowOverlay(table)
-        c = overlay._urgency_color(10)
-        assert c.red() > c.green()
-
-    def test_urgency_color_under_60min_amber(self, table):
-        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
-
-        overlay = _NowOverlay(table)
-        c = overlay._urgency_color(45)
-        # Amber: high red, high green, low blue
-        assert c.red() > 200
-        assert c.green() > 100
-
-    def test_urgency_color_plenty_green(self, table):
-        from pytodo_qt.gui.widgets.calendar_view import _NowOverlay
-
-        overlay = _NowOverlay(table)
-        c = overlay._urgency_color(180)
-        # Green dominates
-        assert c.green() > c.red()
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+        cal._tick_now_indicators()  # should be a no-op when nothing is shown
 
 
 # ---------------------------------------------------------------------------
