@@ -10,8 +10,76 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date, timedelta
+from typing import NamedTuple
 
 import pandas as pd
+
+# ---------------------------------------------------------------------------
+# Result types for completion-timing analytics (Step 4 of calendar Gantt
+# redesign). NamedTuples per feedback-return-type-patterns.md: NamedTuple
+# for 3+ field returns.
+# ---------------------------------------------------------------------------
+
+
+class ItemCompletionTiming(NamedTuple):
+    """Per-item classification for completion_timing.
+
+    deviation_minutes is signed: negative for early completions, positive
+    for late completions, zero for exactly-on-time. UNKNOWN items are not
+    included in this list at all (the `unknown_count` on the parent
+    result records how many were excluded).
+    """
+
+    item_id: str
+    classification: str  # "early", "ontime", "late"
+    deviation_minutes: int
+
+
+class CompletionTimingResult(NamedTuple):
+    """Result of analyzing completion timing across a date range.
+
+    `items` excludes UNKNOWN-cohort tasks (those completed before
+    schema v19 introduced the timestamp). `unknown_count` records
+    how many were excluded so the caller can report transparency.
+    """
+
+    total: int  # total completed items in range (including unknown)
+    early_count: int
+    ontime_count: int
+    late_count: int
+    unknown_count: int
+    items: list[ItemCompletionTiming]
+
+
+class SlipRateResult(NamedTuple):
+    """Result of computing slip rate over a date range.
+
+    Slip rate = late_count / (early_count + ontime_count + late_count).
+    UNKNOWN cohort is excluded from both numerator and denominator.
+    `rate` is None when the denominator is zero (no classifiable items).
+    """
+
+    total: int  # total completed items in range (including unknown)
+    early_count: int
+    ontime_count: int
+    late_count: int
+    unknown_count: int
+    rate: float | None  # None when no classifiable data
+
+
+class CycleTimeResult(NamedTuple):
+    """Result of computing cycle time (created_at → completed_at) stats.
+
+    Operates only on items with both created_at and completed_at known
+    (so the UNKNOWN cohort is excluded). All time fields are in minutes.
+    Statistics fields are None when no qualifying items exist.
+    """
+
+    count: int  # qualifying items (excluding unknown)
+    unknown_count: int  # excluded from stats
+    mean_minutes: float | None
+    median_minutes: float | None
+    p90_minutes: float | None
 
 
 class AnalyticsService:
@@ -753,10 +821,23 @@ class AnalyticsService:
         return grouped
 
     def scheduling_accuracy(self, list_id: str | None = None) -> pd.DataFrame:
-        """For tasks with event_date: were they completed by due_date?
+        """For tasks with event_date: were they completed by the event date?
 
         Returns DataFrame with columns:
-            id, reminder, due_date, event_date, complete, on_time
+            id, reminder, due_date, event_date, complete, completed_at,
+            on_time, timestamp_source
+
+        `timestamp_source` is one of:
+            "completed_at"     — used the real schema v19 timestamp
+            "updated_at"       — fallback for pre-v19 completions where
+                                 completed_at is NULL but complete=1
+            "incomplete"       — task is not complete
+
+        `on_time` is True when the task was completed at or before the
+        end of its event_date day. UNKNOWN-cohort tasks (complete=1 but
+        completed_at IS NULL) fall back to using `updated_at` as an
+        approximation, with timestamp_source recording the fallback so
+        callers can filter to the accurate cohort if desired.
         """
         cache_key = self._cache_key("scheduling_accuracy", list_id=list_id or "all")
         cached = self._get_cached(cache_key)
@@ -771,21 +852,277 @@ class AnalyticsService:
             params.append(str(list_id))
 
         query = f"""
-            SELECT id, reminder, due_date, event_date, complete, updated_at
+            SELECT id, reminder, due_date, event_date, complete, completed_at, updated_at
             FROM items {where}
-        """
+        """  # noqa: S608
         df = pd.read_sql_query(query, self._conn, params=params or None)
         if df.empty:
             df["on_time"] = pd.Series(dtype="bool")
+            df["timestamp_source"] = pd.Series(dtype="object")
             self._set_cached(cache_key, df)
             return df
 
-        # A task is "on time" if it was completed (complete=1) and
-        # either has no due_date or was completed before/on the due_date
-        df["on_time"] = df["complete"].astype(bool)
+        # Determine the timestamp source per row
+        def _classify_source(row: pd.Series) -> str:
+            if not bool(row["complete"]):
+                return "incomplete"
+            if pd.notna(row["completed_at"]):
+                return "completed_at"
+            return "updated_at"
+
+        df["timestamp_source"] = df.apply(_classify_source, axis=1)
+
+        # On-time check: completion timestamp is at or before end-of-event-date.
+        # For incomplete tasks, on_time is False.
+        def _on_time(row: pd.Series) -> bool:
+            if not bool(row["complete"]):
+                return False
+            event_date_str = row["event_date"]
+            if not event_date_str:
+                # No event_date should not happen given the WHERE filter,
+                # but defend anyway.
+                return True
+            event_d = date.fromisoformat(event_date_str)
+            # End-of-day cutoff: a task completed on the event date
+            # (any time of day) is on-time. The cutoff is the next day's
+            # midnight.
+            cutoff_ms = pd.Timestamp(event_d + timedelta(days=1)).timestamp() * 1000
+            ts = row["completed_at"] if pd.notna(row["completed_at"]) else row["updated_at"]
+            return float(ts) < cutoff_ms
+
+        df["on_time"] = df.apply(_on_time, axis=1)
 
         self._set_cached(cache_key, df)
         return df
+
+    # ------------------------------------------------------------------
+    # Completion-timing analytics — Step 4 of calendar Gantt redesign.
+    # These methods depend on completed_at (schema v19+). UNKNOWN-cohort
+    # items (complete=1 but completed_at IS NULL) are excluded from the
+    # classification cohort and reported via the result's unknown_count
+    # field for transparency.
+    # ------------------------------------------------------------------
+
+    def _query_completed_items(
+        self,
+        list_id: str | None,
+        start_date: str | None,
+        end_date: str | None,
+    ) -> pd.DataFrame:
+        """Shared query: completed items with due_date in the given range.
+
+        Returns columns: id, due_date, due_time, completed_at, created_at.
+        Filters to deleted=0, complete=1, due_date IS NOT NULL.
+        Date range filters operate on due_date.
+        """
+        conditions = [
+            "deleted = 0",
+            "complete = 1",
+            "due_date IS NOT NULL",
+        ]
+        params: list = []
+        if list_id is not None:
+            conditions.append("list_id = ?")
+            params.append(str(list_id))
+        if start_date is not None:
+            conditions.append("due_date >= ?")
+            params.append(start_date)
+        if end_date is not None:
+            conditions.append("due_date <= ?")
+            params.append(end_date)
+
+        where = " WHERE " + " AND ".join(conditions)
+        sql = (
+            "SELECT id, due_date, due_time, completed_at, created_at "
+            f"FROM items{where}"  # noqa: S608
+        )
+        return pd.read_sql_query(sql, self._conn, params=params or None)
+
+    @staticmethod
+    def _due_end_ms(due_date_str: str, due_time_str: str | None) -> int:
+        """Convert a due_date (and optional due_time) into ms-since-epoch.
+
+        When due_time is missing, the deadline is end-of-day (next-day
+        midnight), matching the ALL_DAY semantics in calendar_layout.
+        """
+        from datetime import datetime, time
+
+        d = date.fromisoformat(due_date_str)
+        if due_time_str:
+            t = time.fromisoformat(due_time_str)
+            return int(datetime.combine(d, t).timestamp() * 1000)
+        # All-day deadline: end of due_date = start of next day
+        next_day = d + timedelta(days=1)
+        return int(datetime.combine(next_day, time(0, 0, 0)).timestamp() * 1000)
+
+    def completion_timing(
+        self,
+        *,
+        list_id: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> CompletionTimingResult:
+        """Classify each completed item in range as EARLY, ONTIME, LATE, or UNKNOWN.
+
+        Classification rules (no fuzz, matching calendar_layout.compute_bar_state):
+            EARLY   — completed_at < due_end (any amount)
+            ONTIME  — completed_at == due_end (exact)
+            LATE    — completed_at > due_end (any amount)
+            UNKNOWN — completed_at IS NULL (excluded from `items`)
+
+        `due_end` is the deadline as a ms timestamp: due_date+due_time when
+        due_time is set, or end-of-due-date (next-day midnight) for all-day
+        items.
+
+        Args:
+            list_id: optional list filter
+            start_date: optional due_date >= filter (YYYY-MM-DD)
+            end_date: optional due_date <= filter (YYYY-MM-DD)
+
+        Returns:
+            CompletionTimingResult with counts and per-item classifications.
+        """
+        df = self._query_completed_items(list_id, start_date, end_date)
+
+        if df.empty:
+            return CompletionTimingResult(
+                total=0,
+                early_count=0,
+                ontime_count=0,
+                late_count=0,
+                unknown_count=0,
+                items=[],
+            )
+
+        total = len(df)
+        items: list[ItemCompletionTiming] = []
+        early_count = 0
+        ontime_count = 0
+        late_count = 0
+        unknown_count = 0
+
+        for _, row in df.iterrows():
+            if pd.isna(row["completed_at"]):
+                unknown_count += 1
+                continue
+            due_end_ms = self._due_end_ms(row["due_date"], row["due_time"])
+            completed_ms = int(row["completed_at"])
+            deviation_minutes = (completed_ms - due_end_ms) // 60_000
+            if completed_ms < due_end_ms:
+                classification = "early"
+                early_count += 1
+            elif completed_ms == due_end_ms:
+                classification = "ontime"
+                ontime_count += 1
+            else:
+                classification = "late"
+                late_count += 1
+            items.append(
+                ItemCompletionTiming(
+                    item_id=str(row["id"]),
+                    classification=classification,
+                    deviation_minutes=int(deviation_minutes),
+                )
+            )
+
+        return CompletionTimingResult(
+            total=total,
+            early_count=early_count,
+            ontime_count=ontime_count,
+            late_count=late_count,
+            unknown_count=unknown_count,
+            items=items,
+        )
+
+    def slip_rate(
+        self,
+        *,
+        list_id: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> SlipRateResult:
+        """Percentage of completed items in range that finished after their deadline.
+
+        slip_rate = late / (early + ontime + late)
+
+        UNKNOWN-cohort items are excluded from both numerator and
+        denominator. The rate is None when the denominator is zero
+        (no classifiable items in range).
+        """
+        timing = self.completion_timing(list_id=list_id, start_date=start_date, end_date=end_date)
+        classifiable = timing.early_count + timing.ontime_count + timing.late_count
+        rate: float | None
+        if classifiable == 0:
+            rate = None
+        else:
+            rate = timing.late_count / classifiable
+        return SlipRateResult(
+            total=timing.total,
+            early_count=timing.early_count,
+            ontime_count=timing.ontime_count,
+            late_count=timing.late_count,
+            unknown_count=timing.unknown_count,
+            rate=rate,
+        )
+
+    def cycle_time(
+        self,
+        *,
+        list_id: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> CycleTimeResult:
+        """Distribution of (completed_at − created_at) for completed items in range.
+
+        Excludes UNKNOWN-cohort items (no completed_at). All returned
+        statistics are in minutes. Stats fields are None when no
+        qualifying items exist.
+        """
+        df = self._query_completed_items(list_id, start_date, end_date)
+
+        if df.empty:
+            return CycleTimeResult(
+                count=0,
+                unknown_count=0,
+                mean_minutes=None,
+                median_minutes=None,
+                p90_minutes=None,
+            )
+
+        unknown_count = int(df["completed_at"].isna().sum())
+        with_ts = df[df["completed_at"].notna()].copy()
+        if with_ts.empty:
+            return CycleTimeResult(
+                count=0,
+                unknown_count=unknown_count,
+                mean_minutes=None,
+                median_minutes=None,
+                p90_minutes=None,
+            )
+
+        # Cycle time in minutes: (completed_at − created_at) / 60_000
+        cycle_minutes = (
+            with_ts["completed_at"].astype("int64") - with_ts["created_at"].astype("int64")
+        ) / 60_000
+        # Negative cycle times (clock skew, manual edits) are excluded
+        # rather than reported as misleading negative durations.
+        cycle_minutes = cycle_minutes[cycle_minutes >= 0]
+        if cycle_minutes.empty:
+            return CycleTimeResult(
+                count=0,
+                unknown_count=unknown_count,
+                mean_minutes=None,
+                median_minutes=None,
+                p90_minutes=None,
+            )
+
+        return CycleTimeResult(
+            count=int(cycle_minutes.count()),
+            unknown_count=unknown_count,
+            mean_minutes=float(cycle_minutes.mean()),
+            median_minutes=float(cycle_minutes.median()),
+            p90_minutes=float(cycle_minutes.quantile(0.9)),
+        )
 
     def notification_effectiveness(self) -> pd.DataFrame:
         """Compare notified items vs non-notified: completion rates.

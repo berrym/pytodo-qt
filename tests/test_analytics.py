@@ -6,13 +6,24 @@ Uses in-memory SQLite fixtures. No Qt dependency.
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from uuid import uuid4
 
 import pandas as pd
 import pytest
 
 from pytodo_qt.core.analytics import AnalyticsService
+
+
+def _ms(dt: datetime) -> int:
+    """Convert a naive (local-time) datetime to ms since epoch.
+
+    Matches the behavior of analytics._due_end_ms and the production
+    completed_at write path, which both use datetime.timestamp() on
+    naive datetimes (local-time interpretation).
+    """
+    return int(dt.timestamp() * 1000)
+
 
 # --- Fixtures ---
 
@@ -55,7 +66,9 @@ def db():
             due_time_block TEXT,
             event_date TEXT,
             notified_at INTEGER NOT NULL DEFAULT 0,
-            updated_at INTEGER NOT NULL DEFAULT 0
+            created_at INTEGER NOT NULL DEFAULT 0,
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            completed_at INTEGER
         )"""
     )
     yield conn
@@ -102,10 +115,14 @@ def _insert_item(
     work_duration=0,
     complete=0,
     due_date=None,
+    due_time=None,
     due_time_block=None,
     event_date=None,
     notified_at=0,
     priority=2,
+    created_at=0,
+    updated_at=0,
+    completed_at=None,
 ):
     item_id = item_id or str(uuid4())
     list_id = list_id or str(uuid4())
@@ -113,8 +130,8 @@ def _insert_item(
         """INSERT INTO items (id, list_id, reminder, time_spent, pomodoro_count,
            estimated_pomodoros, estimated_minutes, work_duration, break_duration,
            long_break_duration, complete, deleted, priority, due_date, due_time,
-           due_time_block, event_date, notified_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, ?, ?, NULL, ?, ?, ?, 0)""",
+           due_time_block, event_date, notified_at, created_at, updated_at, completed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             item_id,
             list_id,
@@ -127,9 +144,13 @@ def _insert_item(
             complete,
             priority,
             due_date,
+            due_time,
             due_time_block,
             event_date,
             notified_at,
+            created_at,
+            updated_at,
+            completed_at,
         ),
     )
     return item_id, list_id
@@ -620,12 +641,386 @@ class TestSchedulingAccuracy:
         assert len(df) == 0
 
     def test_returns_event_date_items(self, db, svc):
-        _insert_item(db, reminder="Dentist", event_date="2026-05-01", complete=1)
+        # Item completed on the event date (real timestamp) is on time
+        completed_ms = _ms(datetime(2026, 5, 1, 14, 30, 0))
+        _insert_item(
+            db,
+            reminder="Dentist",
+            event_date="2026-05-01",
+            complete=1,
+            completed_at=completed_ms,
+        )
         _insert_item(db, reminder="No event", due_date="2026-04-10")
         df = svc.scheduling_accuracy()
         assert len(df) == 1
         assert df.iloc[0]["reminder"] == "Dentist"
         assert bool(df.iloc[0]["on_time"]) is True
+        assert df.iloc[0]["timestamp_source"] == "completed_at"
+
+    def test_late_completion_marked_not_on_time(self, db, svc):
+        """A completion timestamp after the event date is not on-time."""
+        # event_date is May 1, but completed May 3
+        completed_ms = _ms(datetime(2026, 5, 3, 9, 0, 0))
+        _insert_item(
+            db,
+            reminder="Late dentist",
+            event_date="2026-05-01",
+            complete=1,
+            completed_at=completed_ms,
+        )
+        df = svc.scheduling_accuracy()
+        assert len(df) == 1
+        assert bool(df.iloc[0]["on_time"]) is False
+        assert df.iloc[0]["timestamp_source"] == "completed_at"
+
+    def test_unknown_completion_falls_back_to_updated_at(self, db, svc):
+        """Pre-v19 completion (completed_at IS NULL) uses updated_at fallback."""
+        # updated_at on May 1 (on time relative to May 1 event_date)
+        updated_ms = _ms(datetime(2026, 5, 1, 12, 0, 0))
+        _insert_item(
+            db,
+            reminder="Old completion",
+            event_date="2026-05-01",
+            complete=1,
+            completed_at=None,  # UNKNOWN cohort
+            updated_at=updated_ms,
+        )
+        df = svc.scheduling_accuracy()
+        assert len(df) == 1
+        assert df.iloc[0]["timestamp_source"] == "updated_at"
+        assert bool(df.iloc[0]["on_time"]) is True
+
+    def test_incomplete_marked_incomplete(self, db, svc):
+        """Incomplete tasks have on_time=False and source='incomplete'."""
+        _insert_item(
+            db,
+            reminder="Pending",
+            event_date="2026-05-01",
+            complete=0,
+        )
+        df = svc.scheduling_accuracy()
+        assert len(df) == 1
+        assert df.iloc[0]["timestamp_source"] == "incomplete"
+        assert bool(df.iloc[0]["on_time"]) is False
+
+
+class TestCompletionTiming:
+    """Step 4: per-item EARLY/ONTIME/LATE/UNKNOWN classification."""
+
+    def test_empty(self, db, svc):
+        result = svc.completion_timing()
+        assert result.total == 0
+        assert result.early_count == 0
+        assert result.late_count == 0
+        assert result.items == []
+
+    def test_early_completion(self, db, svc):
+        """Completed before due_time → EARLY with negative deviation."""
+        # Due Apr 10 at 15:00, completed Apr 10 at 14:00 (60 min early)
+        due_end = _ms(datetime(2026, 4, 10, 15, 0, 0))
+        completed = _ms(datetime(2026, 4, 10, 14, 0, 0))
+        _insert_item(
+            db,
+            reminder="Early",
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            completed_at=completed,
+        )
+        result = svc.completion_timing()
+        assert result.total == 1
+        assert result.early_count == 1
+        assert result.ontime_count == 0
+        assert result.late_count == 0
+        assert len(result.items) == 1
+        assert result.items[0].classification == "early"
+        assert result.items[0].deviation_minutes == -60
+        # Sanity: due_end vs completed math
+        assert (completed - due_end) // 60_000 == -60
+
+    def test_ontime_exact_match(self, db, svc):
+        """Completed exactly at due_time → ONTIME with zero deviation."""
+        completed = _ms(datetime(2026, 4, 10, 15, 0, 0))
+        _insert_item(
+            db,
+            reminder="Ontime",
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            completed_at=completed,
+        )
+        result = svc.completion_timing()
+        assert result.ontime_count == 1
+        assert result.items[0].classification == "ontime"
+        assert result.items[0].deviation_minutes == 0
+
+    def test_late_completion(self, db, svc):
+        """Completed after due_time → LATE with positive deviation."""
+        # Due Apr 10 at 15:00, completed Apr 11 at 09:00
+        completed = _ms(datetime(2026, 4, 11, 9, 0, 0))
+        _insert_item(
+            db,
+            reminder="Late",
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            completed_at=completed,
+        )
+        result = svc.completion_timing()
+        assert result.late_count == 1
+        assert result.items[0].classification == "late"
+        # Apr 10 15:00 → Apr 11 09:00 = 18 hours = 1080 minutes
+        assert result.items[0].deviation_minutes == 1080
+
+    def test_unknown_excluded_from_items_list(self, db, svc):
+        """UNKNOWN cohort items are NOT in items list but are counted separately."""
+        _insert_item(
+            db,
+            reminder="Old completion",
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            completed_at=None,  # UNKNOWN
+        )
+        result = svc.completion_timing()
+        assert result.total == 1
+        assert result.unknown_count == 1
+        assert result.early_count == 0
+        assert result.late_count == 0
+        assert result.ontime_count == 0
+        assert result.items == []  # excluded from per-item list
+
+    def test_all_day_due_uses_end_of_day(self, db, svc):
+        """An item with no due_time uses end-of-day (next-day midnight) as the deadline."""
+        # Due Apr 10 (no time), completed Apr 10 at 23:30 — should be EARLY
+        # because deadline is Apr 11 00:00
+        completed = _ms(datetime(2026, 4, 10, 23, 30, 0))
+        _insert_item(
+            db,
+            reminder="All day done late but on time",
+            due_date="2026-04-10",
+            due_time=None,
+            complete=1,
+            completed_at=completed,
+        )
+        result = svc.completion_timing()
+        assert result.early_count == 1
+
+    def test_date_range_filter(self, db, svc):
+        """Date range filters operate on due_date."""
+        completed = _ms(datetime(2026, 4, 10, 14, 0, 0))
+        _insert_item(
+            db,
+            reminder="In range",
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            completed_at=completed,
+        )
+        _insert_item(
+            db,
+            reminder="Out of range",
+            due_date="2026-05-15",
+            due_time="15:00:00",
+            complete=1,
+            completed_at=completed,
+        )
+        result = svc.completion_timing(start_date="2026-04-01", end_date="2026-04-30")
+        assert result.total == 1
+        assert result.items[0].classification == "early"
+
+    def test_list_id_filter(self, db, svc):
+        """list_id filter scopes the cohort."""
+        list_a = str(uuid4())
+        list_b = str(uuid4())
+        completed = _ms(datetime(2026, 4, 10, 14, 0, 0))
+        _insert_item(
+            db,
+            list_id=list_a,
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            completed_at=completed,
+        )
+        _insert_item(
+            db,
+            list_id=list_b,
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            completed_at=completed,
+        )
+        result = svc.completion_timing(list_id=list_a)
+        assert result.total == 1
+
+
+class TestSlipRate:
+    def test_empty_returns_none_rate(self, db, svc):
+        result = svc.slip_rate()
+        assert result.rate is None
+        assert result.total == 0
+
+    def test_zero_late_rate(self, db, svc):
+        """All early/ontime items → slip rate 0.0."""
+        for _ in range(3):
+            completed = _ms(datetime(2026, 4, 10, 14, 0, 0))
+            _insert_item(
+                db,
+                due_date="2026-04-10",
+                due_time="15:00:00",
+                complete=1,
+                completed_at=completed,
+            )
+        result = svc.slip_rate()
+        assert result.rate == 0.0
+        assert result.early_count == 3
+        assert result.late_count == 0
+
+    def test_mixed_slip_rate(self, db, svc):
+        """2 late out of 4 → slip rate 0.5."""
+        early_ts = _ms(datetime(2026, 4, 10, 14, 0, 0))
+        late_ts = _ms(datetime(2026, 4, 11, 9, 0, 0))
+        for ts in [early_ts, early_ts, late_ts, late_ts]:
+            _insert_item(
+                db,
+                due_date="2026-04-10",
+                due_time="15:00:00",
+                complete=1,
+                completed_at=ts,
+            )
+        result = svc.slip_rate()
+        assert result.rate == 0.5
+        assert result.early_count == 2
+        assert result.late_count == 2
+
+    def test_unknown_excluded_from_rate(self, db, svc):
+        """UNKNOWN items don't affect rate but are reported separately."""
+        late_ts = _ms(datetime(2026, 4, 11, 9, 0, 0))
+        # 1 late, 1 unknown — rate should be 1.0 (late/(late) = 1.0), not 0.5
+        _insert_item(
+            db,
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            completed_at=late_ts,
+        )
+        _insert_item(
+            db,
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            completed_at=None,
+        )
+        result = svc.slip_rate()
+        assert result.rate == 1.0
+        assert result.unknown_count == 1
+        assert result.late_count == 1
+
+    def test_only_unknown_returns_none_rate(self, db, svc):
+        _insert_item(
+            db,
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            completed_at=None,
+        )
+        result = svc.slip_rate()
+        assert result.rate is None
+        assert result.unknown_count == 1
+
+
+class TestCycleTime:
+    def test_empty_returns_none_stats(self, db, svc):
+        result = svc.cycle_time()
+        assert result.count == 0
+        assert result.mean_minutes is None
+
+    def test_basic_stats(self, db, svc):
+        """Three items with cycle times 60, 120, 180 minutes."""
+        completed = _ms(datetime(2026, 4, 10, 14, 0, 0))
+        for cycle_minutes in [60, 120, 180]:
+            created = completed - cycle_minutes * 60_000
+            _insert_item(
+                db,
+                due_date="2026-04-10",
+                due_time="15:00:00",
+                complete=1,
+                created_at=created,
+                completed_at=completed,
+            )
+        result = svc.cycle_time()
+        assert result.count == 3
+        assert result.mean_minutes == pytest.approx(120.0)
+        assert result.median_minutes == pytest.approx(120.0)
+        # p90 of [60, 120, 180]
+        assert result.p90_minutes == pytest.approx(168.0)
+
+    def test_unknown_excluded(self, db, svc):
+        """UNKNOWN items don't contribute to stats."""
+        completed = _ms(datetime(2026, 4, 10, 14, 0, 0))
+        _insert_item(
+            db,
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            created_at=completed - 60 * 60_000,
+            completed_at=completed,
+        )
+        # UNKNOWN — has created_at but no completed_at
+        _insert_item(
+            db,
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            created_at=completed - 120 * 60_000,
+            completed_at=None,
+        )
+        result = svc.cycle_time()
+        assert result.count == 1
+        assert result.unknown_count == 1
+        assert result.mean_minutes == pytest.approx(60.0)
+
+    def test_negative_cycle_times_excluded(self, db, svc):
+        """Negative durations (clock skew, manual edits) are excluded."""
+        completed = _ms(datetime(2026, 4, 10, 14, 0, 0))
+        # created_at AFTER completed_at — corrupt data
+        _insert_item(
+            db,
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            created_at=completed + 60 * 60_000,
+            completed_at=completed,
+        )
+        result = svc.cycle_time()
+        assert result.count == 0
+        assert result.mean_minutes is None
+
+    def test_list_id_and_date_filter(self, db, svc):
+        list_a = str(uuid4())
+        list_b = str(uuid4())
+        completed = _ms(datetime(2026, 4, 10, 14, 0, 0))
+        _insert_item(
+            db,
+            list_id=list_a,
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            created_at=completed - 60 * 60_000,
+            completed_at=completed,
+        )
+        _insert_item(
+            db,
+            list_id=list_b,
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            created_at=completed - 200 * 60_000,
+            completed_at=completed,
+        )
+        result = svc.cycle_time(list_id=list_a)
+        assert result.count == 1
+        assert result.mean_minutes == pytest.approx(60.0)
 
 
 class TestNotificationEffectiveness:
