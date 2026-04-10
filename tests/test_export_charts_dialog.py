@@ -66,6 +66,14 @@ class TestExportChartsDialog:
         for key in ExportChartsDialog.CHART_KEYS:
             assert dialog.chart_checkboxes[key].isChecked()
 
+    def test_timing_chart_in_chart_keys(self, app, setup):
+        """Step 5: completion timing chart is exposed in the dialog."""
+        lst, analytics = setup
+        dialog = ExportChartsDialog(None, lst, analytics)
+        assert "timing" in ExportChartsDialog.CHART_KEYS
+        assert "timing" in dialog.chart_checkboxes
+        assert "Completion Timing" in ExportChartsDialog.CHART_LABELS["timing"]
+
     def test_preset_change_updates_date_fields(self, app, setup):
         lst, analytics = setup
         dialog = ExportChartsDialog(None, lst, analytics)

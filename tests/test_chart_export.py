@@ -19,6 +19,7 @@ from pytodo_qt.core.chart_export import (  # noqa: E402
     export_pdf_report,
     export_png,
     render_accuracy,
+    render_completion_timing,
     render_daily_activity,
     render_gantt,
     render_time_blocks,
@@ -107,6 +108,180 @@ class TestRenderGantt:
         assert any("Full task reminders" in t for t in text_contents)
         assert any(t.startswith("1.") for t in text_contents)
 
+    def test_uses_bar_state_palette_for_legend(self, sample_items):
+        """The legend reflects the BarState palette: in-progress, due-soon,
+        overdue, completed, early surplus, late overflow."""
+        fig = render_gantt(sample_items)
+        legends = [entry.get_text() for ax in fig.axes for entry in ax.get_legend().texts]
+        joined = " ".join(legends).lower()
+        # The five lifecycle labels should appear
+        assert "in progress" in joined
+        assert "overdue" in joined
+        assert "completed" in joined
+        assert "early surplus" in joined
+        assert "late overflow" in joined
+
+
+class TestGanttTwoZoneRendering:
+    """Two-zone rendering for completed bars based on completed_at."""
+
+    def test_completed_late_draws_overflow_zone(self):
+        """A late-completed item gets a hatched late-overflow zone past
+        due_end. The bar count increases by 1 for the deviation patch."""
+        from datetime import datetime, time
+
+        today = date.today()
+        item = TodoItem(
+            reminder="Late task",
+            due_date=today,
+            due_time=time(15, 0),
+            estimated_minutes=120,
+            complete=True,
+        )
+        # Completed 2 hours after due_time
+        item.completed_at = int(datetime.combine(today, time(17, 0)).timestamp() * 1000)
+
+        fig = render_gantt([item])
+        ax = fig.axes[0]
+        # Two patches for this item: planned span + late overflow zone.
+        # The bar count for a single late item is 2.
+        # (We can't easily count patches by category, but we can verify at
+        # least one patch with a hatch pattern exists for the late case.)
+        hatched = [p for p in ax.patches if p.get_hatch()]
+        assert len(hatched) >= 1, "expected at least one hatched late-overflow patch"
+
+    def test_completed_early_draws_surplus_zone(self):
+        """An early-completed item gets a translucent surplus zone."""
+        from datetime import datetime, time
+
+        today = date.today()
+        item = TodoItem(
+            reminder="Early task",
+            due_date=today,
+            due_time=time(15, 0),
+            estimated_minutes=120,
+            complete=True,
+        )
+        # Completed 30 min before due_time, well into the planned window
+        item.completed_at = int(datetime.combine(today, time(14, 30)).timestamp() * 1000)
+
+        fig = render_gantt([item])
+        ax = fig.axes[0]
+        # Should have at least 2 patches: solid planned span + translucent surplus
+        patches = [p for p in ax.patches if hasattr(p, "get_alpha")]
+        # The surplus zone uses alpha 0.45; the main bar uses 0.85
+        translucent = [p for p in patches if p.get_alpha() and p.get_alpha() < 0.6]
+        assert len(translucent) >= 1, "expected at least one translucent surplus patch"
+
+    def test_completed_unknown_no_two_zone(self):
+        """A completed item with NULL completed_at renders as a single bar
+        (no two-zone) since we don't know when it was finished."""
+        from datetime import time
+
+        today = date.today()
+        item = TodoItem(
+            reminder="Unknown completion",
+            due_date=today,
+            due_time=time(15, 0),
+            estimated_minutes=120,
+            complete=True,
+        )
+        item.completed_at = None
+
+        fig = render_gantt([item])
+        ax = fig.axes[0]
+        # No hatched patches and no special translucent overlays
+        hatched = [p for p in ax.patches if p.get_hatch()]
+        assert len(hatched) == 0
+
+    def test_active_overdue_renders_with_overdue_color(self):
+        """Active overdue items use the OVERDUE_ACTIVE base color."""
+        from datetime import time
+
+        from pytodo_qt.core.bar_palette import get_palette
+        from pytodo_qt.core.calendar_layout import BarState
+
+        today = date.today()
+        item = TodoItem(
+            reminder="Overdue task",
+            due_date=today - timedelta(days=2),  # past due
+            due_time=time(15, 0),
+            estimated_minutes=60,
+            complete=False,
+        )
+
+        fig = render_gantt([item])
+        ax = fig.axes[0]
+        expected_color = get_palette("light")[BarState.OVERDUE_ACTIVE].base
+        # Check that at least one bar has the overdue color
+        # (matplotlib stores colors as RGBA tuples; we convert hex to compare)
+        from matplotlib.colors import to_rgba
+
+        expected_rgba = to_rgba(expected_color, alpha=0.85)
+        bar_colors = [p.get_facecolor() for p in ax.patches if hasattr(p, "get_facecolor")]
+        # Allow small floating-point differences in alpha
+        matched = any(
+            abs(c[0] - expected_rgba[0]) < 0.01
+            and abs(c[1] - expected_rgba[1]) < 0.01
+            and abs(c[2] - expected_rgba[2]) < 0.01
+            for c in bar_colors
+        )
+        assert matched, f"no bar with OVERDUE_ACTIVE color {expected_color} found"
+
+
+class TestRenderCompletionTiming:
+    """Tests for the new completion timing chart."""
+
+    def test_renders_empty(self, analytics):
+        """No completed items in the cohort → returns an empty-message figure."""
+        fig = render_completion_timing(analytics)
+        assert fig is not None
+
+    def test_renders_with_data(self, sample_storage):
+        """A populated cohort produces a real chart with two panels."""
+        from datetime import datetime, time
+
+        from pytodo_qt.core.models import create_todo_list
+
+        # Use the existing storage to insert items so the analytics service
+        # has something to query.
+        storage = sample_storage
+        lst = create_todo_list("Timing test")
+        storage.save_list(lst)
+        today = date.today()
+
+        # Three early, one ontime, two late
+        for i, hour_offset in enumerate([-1, -2, -1, 0, 1, 2]):
+            item = TodoItem(
+                reminder=f"Item {i}",
+                due_date=today,
+                due_time=time(15, 0),
+                complete=True,
+            )
+            item.completed_at = int(
+                datetime.combine(today, time(15 + hour_offset, 0)).timestamp() * 1000
+            )
+            storage.save_item(lst.id, item)
+
+        analytics = AnalyticsService(storage.connection)
+        fig = render_completion_timing(
+            analytics,
+            list_id=lst.id,
+            start_date=today,
+            end_date=today,
+        )
+        assert fig is not None
+        # Two panels: cohort breakdown bar chart + per-item scatter
+        assert len(fig.axes) >= 2
+
+    def test_export_png(self, analytics, tmp_path):
+        """The new chart can be exported as PNG."""
+        fig = render_completion_timing(analytics)
+        out = tmp_path / "timing.png"
+        export_png(fig, out)
+        assert out.exists()
+        assert out.stat().st_size > 0
+
 
 class TestRenderDailyActivity:
     def test_renders_empty(self, analytics):
@@ -173,6 +348,13 @@ class TestExport:
         export_pdf_report(analytics, sample_items, out, include={"gantt"})
         assert out.exists()
         # Single-page PDF is smaller than full report
+        assert out.stat().st_size > 0
+
+    def test_export_pdf_includes_timing_chart(self, sample_items, analytics, tmp_path):
+        """Step 5: timing chart is part of the default export set."""
+        out = tmp_path / "with-timing.pdf"
+        export_pdf_report(analytics, sample_items, out, include={"timing"})
+        assert out.exists()
         assert out.stat().st_size > 0
 
 

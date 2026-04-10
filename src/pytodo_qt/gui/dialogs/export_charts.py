@@ -107,12 +107,13 @@ def _install_gantt_hover_tooltips(canvas, full_labels: list[str]) -> None:
 class ExportChartsDialog(QDialog):
     """Dialog with date range, chart selection, and live preview."""
 
-    CHART_KEYS = ["gantt", "daily", "blocks", "accuracy"]
+    CHART_KEYS = ["gantt", "daily", "blocks", "accuracy", "timing"]
     CHART_LABELS = {
         "gantt": "Tasks Timeline (Gantt)",
         "daily": "Daily Activity",
         "blocks": "Time Block Productivity",
         "accuracy": "Estimate Accuracy",
+        "timing": "Completion Timing",
     }
 
     def __init__(
@@ -251,6 +252,7 @@ class ExportChartsDialog(QDialog):
             from ...core.chart_export import (
                 MatplotlibUnavailable,
                 render_accuracy,
+                render_completion_timing,
                 render_daily_activity,
                 render_gantt,
                 render_time_blocks,
@@ -282,6 +284,12 @@ class ExportChartsDialog(QDialog):
                 self._analytics, start_date=start_date, end_date=end_date
             ),
             "accuracy": lambda: render_accuracy(
+                self._analytics,
+                list_id=self._active_list.id,
+                start_date=start_date,
+                end_date=end_date,
+            ),
+            "timing": lambda: render_completion_timing(
                 self._analytics,
                 list_id=self._active_list.id,
                 start_date=start_date,
@@ -404,6 +412,7 @@ class ExportChartsDialog(QDialog):
                 MatplotlibUnavailable,
                 export_png,
                 render_accuracy,
+                render_completion_timing,
                 render_daily_activity,
                 render_gantt,
                 render_time_blocks,
@@ -425,6 +434,12 @@ class ExportChartsDialog(QDialog):
                     self._analytics, start_date=start_date, end_date=end_date
                 ),
                 "accuracy": lambda: render_accuracy(
+                    self._analytics,
+                    list_id=self._active_list.id,
+                    start_date=start_date,
+                    end_date=end_date,
+                ),
+                "timing": lambda: render_completion_timing(
                     self._analytics,
                     list_id=self._active_list.id,
                     start_date=start_date,

@@ -375,39 +375,90 @@ def render_gantt(
     fig._gantt_full_labels = list(full_labels)  # type: ignore[attr-defined]
 
     # ------------------------------------------------------------------
-    # Draw bars
+    # Draw bars — Q5 lifecycle visualization with two-zone deviation
     # ------------------------------------------------------------------
+    # Use the calendar_layout pure functions for state classification so
+    # the chart matches what the calendar UI shows for the same task.
+    from .bar_palette import get_palette
+    from .calendar_layout import (
+        BarState,
+        compute_bar_state,
+        compute_bar_window,
+    )
+
+    palette = get_palette("light")  # chart export always uses light theme
+    today_dt = datetime.combine(today, datetime.min.time())
+
     for idx, item in enumerate(due_items):
-        created = (
-            datetime.fromtimestamp(item.created_at / 1000).date() if item.created_at else today
-        )
-        due = item.due_date
-        if due is None:
+        window = compute_bar_window(item)
+        if window is None:
+            # Defensive: due_items already filtered to has-due-date, but
+            # an item could still have an invalid window in pathological
+            # cases. Skip it rather than crash.
             continue
-        if created >= due:
-            created = due - timedelta(days=1)
 
-        is_overdue = (not item.complete) and due < today
-        if item.complete:
-            color = _COLOR_SECONDARY
-            alpha = 0.55
-        elif is_overdue:
-            color = _COLOR_DANGER
-            alpha = 0.85
-        else:
-            color = _COLOR_PRIMARY
-            alpha = 0.85
+        # Reference time for state computation: today for live items,
+        # capped at completed_at for completed items so the state is
+        # frozen rather than "still active years later."
+        as_of = today_dt
+        if item.complete and item.completed_at is not None:
+            completed_dt = datetime.fromtimestamp(item.completed_at / 1000)
+            if as_of > completed_dt or item.completed_at:
+                as_of = completed_dt
+        state = compute_bar_state(item, window, as_of)
+        colors = palette[state]
 
+        # Bar geometry: matplotlib barh uses (left, width) in mdates units.
+        origin_num = mdates.date2num(window.origin)
+        end_num = mdates.date2num(window.end)
+        if end_num <= origin_num:
+            # Defensive: empty window
+            continue
+
+        # The full planned span (origin → end) is always drawn.
         ax.barh(
             idx,
-            (due - created).days,
-            left=mdates.date2num(created),
-            color=color,
-            alpha=alpha,
+            end_num - origin_num,
+            left=origin_num,
+            color=colors.base,
+            alpha=0.85,
             edgecolor="white",
             linewidth=0.5,
             height=0.65,
         )
+
+        # Deviation zone for completed bars
+        if state == BarState.COMPLETED_EARLY and item.completed_at is not None:
+            # Early surplus: translucent deviation color from completed_at
+            # to end. Communicates "this time was allocated but not used."
+            completed_num = mdates.date2num(datetime.fromtimestamp(item.completed_at / 1000))
+            if origin_num <= completed_num < end_num:
+                # Overlay a lighter translucent rectangle over the surplus
+                ax.barh(
+                    idx,
+                    end_num - completed_num,
+                    left=completed_num,
+                    color=colors.deviation,
+                    alpha=0.45,
+                    edgecolor="white",
+                    linewidth=0.5,
+                    height=0.65,
+                )
+        elif state == BarState.COMPLETED_LATE and item.completed_at is not None:
+            # Late overflow: hatched deviation zone from end to completed_at
+            completed_num = mdates.date2num(datetime.fromtimestamp(item.completed_at / 1000))
+            if completed_num > end_num:
+                ax.barh(
+                    idx,
+                    completed_num - end_num,
+                    left=end_num,
+                    color=colors.deviation,
+                    alpha=0.85,
+                    edgecolor="white",
+                    linewidth=0.5,
+                    height=0.65,
+                    hatch="///",
+                )
 
     ax.set_yticks(range(len(due_items)))
     ax.set_yticklabels(display_labels, fontsize=10)
@@ -443,10 +494,40 @@ def render_gantt(
 
     from matplotlib.patches import Patch
 
+    # Legend reflects every BarState that could appear, in lifecycle order.
+    # Two-zone completed bars get their own deviation entries.
     legend_handles = [
-        Patch(facecolor=_COLOR_PRIMARY, alpha=0.85, label="Active"),
-        Patch(facecolor=_COLOR_DANGER, alpha=0.85, label="Overdue"),
-        Patch(facecolor=_COLOR_SECONDARY, alpha=0.55, label="Complete"),
+        Patch(
+            facecolor=palette[BarState.IN_WORK_WINDOW].base,
+            alpha=0.85,
+            label="In progress",
+        ),
+        Patch(
+            facecolor=palette[BarState.DUE_NOW].base,
+            alpha=0.85,
+            label="Due soon",
+        ),
+        Patch(
+            facecolor=palette[BarState.OVERDUE_ACTIVE].base,
+            alpha=0.85,
+            label="Overdue",
+        ),
+        Patch(
+            facecolor=palette[BarState.COMPLETED_ONTIME].base,
+            alpha=0.85,
+            label="Completed",
+        ),
+        Patch(
+            facecolor=palette[BarState.COMPLETED_EARLY].deviation,
+            alpha=0.45,
+            label="Early surplus",
+        ),
+        Patch(
+            facecolor=palette[BarState.COMPLETED_LATE].deviation,
+            alpha=0.85,
+            hatch="///",
+            label="Late overflow",
+        ),
     ]
     ax.legend(handles=legend_handles, loc="lower right", framealpha=0.9, frameon=True)
 
@@ -688,6 +769,173 @@ def render_accuracy(
     return fig
 
 
+def render_completion_timing(
+    analytics: AnalyticsService,
+    list_id=None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+):
+    """Distribution of completion timing: early / on-time / late / unknown.
+
+    Two-panel layout:
+      - Left: bar chart of cohort counts (early, ontime, late, unknown)
+      - Right: horizontal scatter of per-item deviation in minutes,
+        colored by classification
+
+    Uses the same BarState palette as render_gantt and the calendar UI
+    so the visualization is consistent across surfaces.
+    """
+    _, _, _ = _import_matplotlib()
+
+    from .bar_palette import get_palette
+    from .calendar_layout import BarState
+
+    palette = get_palette("light")
+
+    start_str = start_date.isoformat() if start_date else None
+    end_str = end_date.isoformat() if end_date else None
+    result = analytics.completion_timing(
+        list_id=str(list_id) if list_id else None,
+        start_date=start_str,
+        end_date=end_str,
+    )
+
+    if result.total == 0:
+        return _empty_figure(
+            "Completion Timing",
+            "No completed items in this range",
+        )
+
+    fig = _make_figure((13.0, 6.0), left_margin=0.06)
+    # Two side-by-side axes — counts on the left, scatter on the right.
+    # subplots_adjust already set top/bottom; use add_axes for precise layout.
+    ax_counts = fig.add_axes((0.06, 0.16, 0.30, 0.66))
+    ax_scatter = fig.add_axes((0.46, 0.16, 0.50, 0.66))
+
+    # ------------------------------------------------------------------
+    # Left panel: cohort count bars
+    # ------------------------------------------------------------------
+    cohort_labels = ["Early", "On time", "Late", "Unknown"]
+    cohort_counts = [
+        result.early_count,
+        result.ontime_count,
+        result.late_count,
+        result.unknown_count,
+    ]
+    cohort_colors = [
+        palette[BarState.COMPLETED_EARLY].base,
+        palette[BarState.COMPLETED_ONTIME].base,
+        palette[BarState.COMPLETED_LATE].deviation,  # late-overflow color
+        palette[BarState.COMPLETED_UNKNOWN].base,
+    ]
+    bars = ax_counts.bar(
+        cohort_labels,
+        cohort_counts,
+        color=cohort_colors,
+        alpha=0.85,
+        edgecolor="white",
+        linewidth=0.8,
+    )
+    # Annotate each bar with its count above the top
+    for bar, count in zip(bars, cohort_counts, strict=True):
+        if count > 0:
+            ax_counts.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height(),
+                str(count),
+                ha="center",
+                va="bottom",
+                fontsize=10,
+                color=_COLOR_TEXT,
+                fontweight="bold",
+            )
+    ax_counts.set_ylabel("Count")
+    ax_counts.set_title("Cohort breakdown", loc="left", pad=8, fontsize=11)
+    ax_counts.spines["top"].set_visible(False)
+    ax_counts.spines["right"].set_visible(False)
+    ax_counts.grid(True, axis="y", alpha=0.5)
+    ax_counts.set_axisbelow(True)
+    if max(cohort_counts) > 0:
+        ax_counts.set_ylim(0, max(cohort_counts) * 1.15)
+
+    # ------------------------------------------------------------------
+    # Right panel: per-item deviation scatter
+    # ------------------------------------------------------------------
+    if result.items:
+        # Sort by deviation so the visual flows left (early) to right (late)
+        sorted_items = sorted(result.items, key=lambda i: i.deviation_minutes)
+        deviations = [i.deviation_minutes for i in sorted_items]
+        # Y position: spread vertically to reduce overlap, with a small jitter
+        # for visibility. Use index-based positions evenly spaced in [0, 1].
+        n = len(sorted_items)
+        y_positions = [(i + 0.5) / n if n > 0 else 0.5 for i in range(n)]
+        point_colors = []
+        for it in sorted_items:
+            if it.classification == "early":
+                point_colors.append(palette[BarState.COMPLETED_EARLY].base)
+            elif it.classification == "ontime":
+                point_colors.append(palette[BarState.COMPLETED_ONTIME].base)
+            else:
+                point_colors.append(palette[BarState.COMPLETED_LATE].deviation)
+        ax_scatter.scatter(
+            deviations,
+            y_positions,
+            c=point_colors,
+            s=80,
+            alpha=0.75,
+            edgecolors="white",
+            linewidth=1,
+        )
+        # Vertical reference line at deviation = 0
+        ax_scatter.axvline(
+            0,
+            color=_COLOR_NEUTRAL,
+            linestyle="--",
+            linewidth=1.2,
+            alpha=0.7,
+            zorder=0,
+        )
+        # Symmetric x range so the zero line stays visually centered
+        # unless skew is extreme
+        if deviations:
+            max_abs = max(abs(d) for d in deviations)
+            x_pad = max(max_abs * 0.1, 5)
+            ax_scatter.set_xlim(-max_abs - x_pad, max_abs + x_pad)
+        ax_scatter.set_yticks([])
+        ax_scatter.set_xlabel("Deviation (minutes) — negative = early, positive = late")
+        ax_scatter.set_title(
+            f"Per-item deviation ({len(result.items)} items)",
+            loc="left",
+            pad=8,
+            fontsize=11,
+        )
+        ax_scatter.spines["top"].set_visible(False)
+        ax_scatter.spines["right"].set_visible(False)
+        ax_scatter.spines["left"].set_visible(False)
+        ax_scatter.grid(True, axis="x", alpha=0.5)
+        ax_scatter.set_axisbelow(True)
+    else:
+        # All UNKNOWN cohort — no per-item data to show
+        ax_scatter.text(
+            0.5,
+            0.5,
+            f"All {result.unknown_count} completions in this range\n"
+            "have no recorded completion timestamp\n(pre-v19 data)",
+            ha="center",
+            va="center",
+            fontsize=11,
+            color=_COLOR_TEXT_MUTED,
+            transform=ax_scatter.transAxes,
+        )
+        ax_scatter.set_xticks([])
+        ax_scatter.set_yticks([])
+        for spine in ax_scatter.spines.values():
+            spine.set_visible(False)
+
+    _set_title_with_subtitle(fig, None, "Completion Timing", start_date, end_date)
+    return fig
+
+
 # ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
@@ -709,13 +957,14 @@ def export_pdf_report(
 ) -> None:
     """Export a multi-page PDF report containing the selected charts.
 
-    `include` is a set of chart keys to include: {"gantt", "daily", "blocks", "accuracy"}.
-    If None, all four charts are included.
+    `include` is a set of chart keys to include:
+    {"gantt", "daily", "blocks", "accuracy", "timing"}.
+    If None, all five charts are included.
     """
     _, PdfPages, _ = _import_matplotlib()
 
     if include is None:
-        include = {"gantt", "daily", "blocks", "accuracy"}
+        include = {"gantt", "daily", "blocks", "accuracy", "timing"}
 
     chart_specs = [
         (
@@ -738,6 +987,12 @@ def export_pdf_report(
         (
             "accuracy",
             lambda: render_accuracy(
+                analytics, list_id=list_id, start_date=start_date, end_date=end_date
+            ),
+        ),
+        (
+            "timing",
+            lambda: render_completion_timing(
                 analytics, list_id=list_id, start_date=start_date, end_date=end_date
             ),
         ),
