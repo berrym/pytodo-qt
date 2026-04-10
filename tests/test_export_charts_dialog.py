@@ -125,3 +125,88 @@ class TestExportChartsDialog:
         dialog._refresh_preview()
         # Should show "No charts selected" label
         assert dialog.preview_layout.count() >= 1
+
+    def test_gantt_hover_tooltip_handler_installed(self, app, setup):
+        """Render gantt with truncatable label, verify motion handler set tooltip."""
+        from datetime import date as _date
+
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        from PyQt6.QtWidgets import QToolTip
+
+        from pytodo_qt.core.models import TodoItem
+
+        lst, analytics = setup
+        # Add an item with a long label that will be truncated; due today so
+        # it falls within the dialog's default "Last 30 days" range.
+        long_item = TodoItem(
+            reminder="this reminder is intentionally super long so it gets ellipsis "
+            "truncated in the chart but the full text should be available via hover",
+            priority=2,
+        )
+        long_item.due_date = _date.today()
+        lst.items[long_item.id] = long_item
+
+        dialog = ExportChartsDialog(None, lst, analytics)
+        dialog._refresh_preview()
+
+        # Find the gantt canvas (the first one in layout)
+        canvas = None
+        for i in range(dialog.preview_layout.count()):
+            w = dialog.preview_layout.itemAt(i).widget()
+            if isinstance(w, FigureCanvasQTAgg):
+                canvas = w
+                break
+        assert canvas is not None
+
+        # The figure should carry full_labels metadata
+        assert hasattr(canvas.figure, "_gantt_full_labels")
+        full_labels = canvas.figure._gantt_full_labels
+        assert any("ellipsis truncated" in label for label in full_labels)
+
+        # Synthesize a matplotlib motion event over row 0 and verify QToolTip
+        # is shown. We can't directly observe Qt's tooltip widget, but we can
+        # verify the handler runs without crashing and accesses the data.
+        from matplotlib.backend_bases import MouseEvent
+
+        ax = canvas.figure.axes[0]
+        # Convert data y=0 to display pixels
+        x_disp, y_disp = ax.transData.transform((ax.get_xlim()[0], 0))
+        evt = MouseEvent("motion_notify_event", canvas, x_disp, y_disp)
+        # Trigger our handler indirectly via the canvas's callback registry
+        canvas.callbacks.process("motion_notify_event", evt)
+        # Tooltip text was set (or hidden) — both are valid; we just want
+        # no exception
+        QToolTip.hideText()  # cleanup
+
+    def test_preview_canvas_ignores_wheel(self, app, setup):
+        """Wheel events on preview canvas must propagate to parent QScrollArea."""
+        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        from PyQt6.QtCore import QPoint, QPointF, Qt
+        from PyQt6.QtGui import QWheelEvent
+
+        lst, analytics = setup
+        dialog = ExportChartsDialog(None, lst, analytics)
+        dialog._refresh_preview()
+
+        # Find the first FigureCanvasQTAgg subclass widget in the preview layout
+        canvas = None
+        for i in range(dialog.preview_layout.count()):
+            w = dialog.preview_layout.itemAt(i).widget()
+            if isinstance(w, FigureCanvasQTAgg):
+                canvas = w
+                break
+        assert canvas is not None
+
+        # Synthesize a wheel event and call wheelEvent directly
+        evt = QWheelEvent(
+            QPointF(50, 50),
+            QPointF(canvas.mapToGlobal(QPointF(50, 50).toPoint())),
+            QPoint(0, 0),
+            QPoint(0, -120),
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+            Qt.ScrollPhase.NoScrollPhase,
+            False,
+        )
+        canvas.wheelEvent(evt)
+        assert not evt.isAccepted()  # event was ignored, will propagate

@@ -41,6 +41,69 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 
+def _make_preview_canvas_class():
+    """Build _PreviewCanvas lazily so matplotlib import stays optional.
+
+    Returns a FigureCanvasQTAgg subclass that propagates wheel events to the
+    parent QScrollArea (instead of matplotlib's default behavior of emitting
+    a scroll_event for zoom and swallowing the Qt event).
+    """
+    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+
+    class _PreviewCanvas(FigureCanvasQTAgg):
+        """FigureCanvasQTAgg that lets wheel events bubble up to parents."""
+
+        def wheelEvent(self, event) -> None:  # noqa: N802
+            # event.ignore() lets Qt propagate the wheel to the enclosing
+            # QScrollArea so standard trackpad/mouse-wheel scrolling works.
+            if event is not None:
+                event.ignore()
+
+    return _PreviewCanvas
+
+
+_PreviewCanvas = None  # lazily initialized on first preview refresh
+
+
+def _install_gantt_hover_tooltips(canvas, full_labels: list[str]) -> None:
+    """Show the full untruncated reminder as a Qt tooltip when hovering over
+    any y-row of the Gantt — including the y-label gutter outside the plot.
+
+    Uses QToolTip.showText() directly (bypassing the standard hover delay)
+    so the tooltip appears immediately as the cursor moves between rows.
+    Maps cursor pixel y to the row index via the axes' data transform, which
+    works even when the cursor is to the left of the plot area (over the
+    truncated labels).
+    """
+    from PyQt6.QtGui import QCursor
+    from PyQt6.QtWidgets import QToolTip
+
+    def on_motion(event) -> None:
+        if event.x is None or event.y is None:
+            QToolTip.hideText()
+            return
+        if not canvas.figure.axes:
+            return
+        ax = canvas.figure.axes[0]
+        try:
+            _, data_y = ax.transData.inverted().transform((event.x, event.y))
+        except Exception:
+            QToolTip.hideText()
+            return
+        idx = int(round(data_y))
+        if 0 <= idx < len(full_labels):
+            QToolTip.showText(QCursor.pos(), full_labels[idx], canvas)
+        else:
+            QToolTip.hideText()
+
+    def on_leave(_event) -> None:
+        QToolTip.hideText()
+
+    canvas.mpl_connect("motion_notify_event", on_motion)
+    canvas.mpl_connect("axes_leave_event", on_leave)
+    canvas.mpl_connect("figure_leave_event", on_leave)
+
+
 class ExportChartsDialog(QDialog):
     """Dialog with date range, chart selection, and live preview."""
 
@@ -60,7 +123,8 @@ class ExportChartsDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("Export Charts"))
-        self.setMinimumSize(900, 700)
+        self.setMinimumSize(1100, 800)
+        self.resize(1200, 900)
 
         self._active_list = active_list
         self._analytics = analytics
@@ -182,9 +246,8 @@ class ExportChartsDialog(QDialog):
 
     def _refresh_preview(self) -> None:
         """Re-render selected charts and embed in the preview area."""
+        global _PreviewCanvas
         try:
-            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-
             from ...core.chart_export import (
                 MatplotlibUnavailable,
                 render_accuracy,
@@ -192,6 +255,9 @@ class ExportChartsDialog(QDialog):
                 render_gantt,
                 render_time_blocks,
             )
+
+            if _PreviewCanvas is None:
+                _PreviewCanvas = _make_preview_canvas_class()
         except ImportError as e:
             self._show_preview_error(str(e))
             return
@@ -236,8 +302,17 @@ class ExportChartsDialog(QDialog):
                 logger.log.exception("Failed to render %s chart", key)
                 self._show_preview_error(f"Failed to render {key}: {e}")
                 continue
-            canvas = FigureCanvasQTAgg(fig)
-            canvas.setMinimumHeight(300)
+            canvas = _PreviewCanvas(fig)
+            # Give each chart enough vertical room — figsize is in inches at 100 DPI
+            inches_h = fig.get_size_inches()[1]
+            canvas.setMinimumHeight(int(inches_h * 100))
+            canvas.setMinimumWidth(800)
+
+            # Hover tooltips for Gantt: show full untruncated reminder when
+            # the mouse is over a y-row (useful when labels are ellipsis-cut)
+            full_labels = getattr(fig, "_gantt_full_labels", None)
+            if full_labels:
+                _install_gantt_hover_tooltips(canvas, full_labels)
             self.preview_layout.addWidget(canvas)
             any_rendered = True
             if self._current_figure is None:
@@ -337,7 +412,12 @@ class ExportChartsDialog(QDialog):
             start_date, end_date = self._get_date_range()
             items = list(self._active_list.active_items())
             renderers = {
-                "gantt": lambda: render_gantt(items, start_date=start_date, end_date=end_date),
+                "gantt": lambda: render_gantt(
+                    items,
+                    start_date=start_date,
+                    end_date=end_date,
+                    include_full_legend=True,  # zero data loss in exported PNG
+                ),
                 "daily": lambda: render_daily_activity(
                     self._analytics, start_date=start_date, end_date=end_date
                 ),

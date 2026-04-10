@@ -72,6 +72,41 @@ class TestRenderGantt:
         fig = render_gantt([item])
         assert fig is not None
 
+    def test_truncates_long_labels(self, sample_items):
+        """Labels that exceed the width cap are truncated with an ellipsis."""
+        long_item = TodoItem(
+            reminder="this is a ridiculously long reminder text that should definitely "
+            "get ellipsis-truncated in the chart",
+            priority=2,
+        )
+        long_item.due_date = date.today() + timedelta(days=2)
+        items = [*sample_items, long_item]
+        fig = render_gantt(items)
+        assert fig is not None
+        # Find the y-tick labels and verify at least one has been truncated
+        axes = fig.axes
+        assert len(axes) >= 1
+        ytick_labels = [t.get_text() for t in axes[0].get_yticklabels()]
+        assert any("…" in lbl for lbl in ytick_labels)
+
+    def test_short_labels_not_truncated(self, sample_items):
+        """Short labels should stay untouched."""
+        fig = render_gantt(sample_items)
+        ytick_labels = [t.get_text() for t in fig.axes[0].get_yticklabels()]
+        # sample_items has "Task 0"..."Task 4" — none should be truncated
+        assert all("…" not in lbl for lbl in ytick_labels)
+
+    def test_include_full_legend_adds_text(self, sample_items):
+        """include_full_legend=True appends a numbered legend below the chart."""
+        fig_without = render_gantt(sample_items, include_full_legend=False)
+        fig_with = render_gantt(sample_items, include_full_legend=True)
+        # With-legend figure should be taller
+        assert fig_with.get_size_inches()[1] > fig_without.get_size_inches()[1]
+        # Check that the fig.texts contain a numbered entry
+        text_contents = [t.get_text() for t in fig_with.texts]
+        assert any("Full task reminders" in t for t in text_contents)
+        assert any(t.startswith("1.") for t in text_contents)
+
 
 class TestRenderDailyActivity:
     def test_renders_empty(self, analytics):
