@@ -150,16 +150,20 @@ class TestAdvanceOverdueRecurring:
         assert item.updated_at >= old_updated
 
     def test_exhausted_by_end_date_marks_complete(self):
-        """If next_due exceeds end_date, item becomes complete."""
+        """If next_due exceeds end_date, item becomes complete with a timestamp."""
         item = create_todo_item("Task")
         item.recurrence_type = "daily"
         item.due_date = date.today() - timedelta(days=1)
         # End date is yesterday — next_due (tomorrow) will exceed it
         item.recurrence_end_date = date.today() - timedelta(days=1)
+        assert item.completed_at is None
 
         assert advance_overdue_recurring(item)
         assert item.complete
         assert item.missed_recurrences == 1
+        # Auto-completion writes a real completion timestamp.
+        assert item.completed_at is not None
+        assert item.completed_at > 0
 
     def test_due_time_preserved_daily(self):
         """due_time is preserved after daily advance (only date changes)."""
@@ -479,6 +483,55 @@ class TestCycleCompletedRecurring:
         assert result is True
         assert item.complete is False
         assert item.due_date >= today
+
+    def test_cycle_clears_completed_at(self, monkeypatch):
+        """A cycled recurring item starts a fresh cycle: completed_at must be None."""
+        yesterday = date(2026, 3, 17)
+        today = date(2026, 3, 18)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: today)}),
+        )
+
+        lst = create_todo_list("Tasks")
+        item = create_todo_item("Take meds", due_date=yesterday)
+        item.recurrence_type = "daily"
+        item.complete = True
+        item.completed_at = 1_700_000_000_000  # Previous cycle's timestamp
+        item.recurrence_count = 1
+        lst.add_item(item)
+
+        cycle_completed_recurring(item, lst)
+        # New cycle is a fresh instance — no completion timestamp.
+        assert item.complete is False
+        assert item.completed_at is None
+
+    def test_cycle_clears_subtask_completed_at(self, monkeypatch):
+        """Cycling resets each non-recurring subtask's completed_at to None."""
+        yesterday = date(2026, 3, 17)
+        today = date(2026, 3, 18)
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: today)}),
+        )
+
+        lst = create_todo_list("Tasks")
+        parent = create_todo_item("Take meds", due_date=yesterday)
+        parent.recurrence_type = "daily"
+        parent.complete = True
+        parent.completed_at = 1_700_000_000_000
+        parent.recurrence_count = 1
+        lst.add_item(parent)
+
+        sub = create_todo_item("Morning dose")
+        sub.parent_id = parent.id
+        sub.complete = True
+        sub.completed_at = 1_700_000_000_500
+        lst.add_item(sub)
+
+        cycle_completed_recurring(parent, lst)
+        assert sub.complete is False
+        assert sub.completed_at is None
 
     def test_cycle_resets_subtask_completions(self, monkeypatch):
         """Cycling a parent resets all non-recurring subtask completions."""

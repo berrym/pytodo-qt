@@ -146,6 +146,7 @@ class ToggleCompleteCommand(QUndoCommand):
         self._list_id = list_id
         self._item_states = item_states
         self._old_board_columns: dict[UUID, str] = {}
+        self._old_completed_ats: dict[UUID, int | None] = {}
 
     def redo(self) -> None:
         todo_list = self._window._database.lists.get(self._list_id)
@@ -157,6 +158,7 @@ class ToggleCompleteCommand(QUndoCommand):
             item = todo_list.get_item(item_id)
             if item:
                 self._old_board_columns[item_id] = item.board_column
+                self._old_completed_ats[item_id] = item.completed_at
                 item.toggle_complete()
                 # Sync board_column with new completion state
                 if item.complete and last_col and item.board_column != last_col:
@@ -174,6 +176,13 @@ class ToggleCompleteCommand(QUndoCommand):
             item = todo_list.get_item(item_id)
             if item:
                 item.complete = old_complete
+                # Restore the original completed_at exactly as it was before
+                # the toggle. This preserves the timestamp for tasks that were
+                # already completed (e.g., when toggling from complete back to
+                # incomplete and then undoing), and clears it back to None for
+                # tasks that were originally incomplete.
+                if item_id in self._old_completed_ats:
+                    item.completed_at = self._old_completed_ats[item_id]
                 if item_id in self._old_board_columns:
                     item.board_column = self._old_board_columns[item_id]
                 item.mark_updated()
@@ -419,6 +428,7 @@ class ToggleCompleteRecurringCommand(QUndoCommand):
         self._old_count = old_count
         self._ended = recurrence_ended
         self._old_board_column: str = ""
+        self._old_completed_at: int | None = None
 
     def redo(self) -> None:
         todo_list = self._window._database.lists.get(self._list_id)
@@ -428,7 +438,8 @@ class ToggleCompleteRecurringCommand(QUndoCommand):
         if not item:
             return
         self._old_board_column = item.board_column
-        item.complete = True
+        self._old_completed_at = item.completed_at
+        item.set_complete(True)
         item.recurrence_count = self._old_count + 1
         # Move to completion column
         cols = todo_list.board_columns
@@ -448,6 +459,7 @@ class ToggleCompleteRecurringCommand(QUndoCommand):
         if not item:
             return
         item.complete = False
+        item.completed_at = self._old_completed_at
         item.due_date = self._old_due_date
         item.recurrence_count = self._old_count
         item.board_column = self._old_board_column
@@ -760,6 +772,7 @@ class MoveToColumnCommand(QUndoCommand):
         self._new_column = new_column
         self._auto_complete = auto_complete
         self._old_complete: bool | None = None
+        self._old_completed_at: int | None = None
 
     def redo(self) -> None:
         todo_list = self._window._database.lists.get(self._list_id)
@@ -771,10 +784,12 @@ class MoveToColumnCommand(QUndoCommand):
         item.board_column = self._new_column
         if self._auto_complete is True:
             self._old_complete = item.complete
-            item.complete = True
+            self._old_completed_at = item.completed_at
+            item.set_complete(True)
         elif self._auto_complete is False:
             self._old_complete = item.complete
-            item.complete = False
+            self._old_completed_at = item.completed_at
+            item.set_complete(False)
         item.mark_updated()
         todo_list.mark_updated()
         self._window._save_database()
@@ -790,6 +805,7 @@ class MoveToColumnCommand(QUndoCommand):
         item.board_column = self._old_column
         if self._old_complete is not None:
             item.complete = self._old_complete
+            item.completed_at = self._old_completed_at
         item.mark_updated()
         todo_list.mark_updated()
         self._window._save_database()

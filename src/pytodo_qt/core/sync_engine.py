@@ -225,7 +225,18 @@ class SyncEngine:
                     field="complete",
                 )
             )
+            # Preserve the remote's completion truth verbatim — both the
+            # flag and the timestamp. Direct assignment (not set_complete)
+            # because the timestamp belongs to the remote, not "now".
             local_item.complete = remote_item.complete
+            local_item.completed_at = remote_item.completed_at
+            changes_made = True
+        elif local_item.completed_at != remote_item.completed_at:
+            # Same complete flag but different timestamps — the remote knows
+            # something we don't (e.g. it learned the actual completion time
+            # via a CalDAV import). Sync the timestamp without raising a
+            # conflict on `complete` itself.
+            local_item.completed_at = remote_item.completed_at
             changes_made = True
 
         if local_item.deleted != remote_item.deleted:

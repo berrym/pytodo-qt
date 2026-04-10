@@ -275,6 +275,49 @@ class TestToggleCompleteCommand:
         cmd = ToggleCompleteCommand(window, lst.id, [(item1.id, False), (item2.id, False)])
         assert cmd.text() == "Toggle 2 item(s)"
 
+    def test_redo_writes_completed_at(self):
+        """Toggling an incomplete item to complete writes completed_at."""
+        db, lst, item1, _ = make_populated_db()
+        assert item1.completed_at is None
+        window = make_window(db)
+        cmd = ToggleCompleteCommand(window, lst.id, [(item1.id, False)])
+
+        cmd.redo()
+
+        assert item1.complete is True
+        assert item1.completed_at is not None
+        assert item1.completed_at > 0
+
+    def test_undo_restores_completed_at_to_none(self):
+        """Undoing a complete-from-incomplete restores completed_at to None."""
+        db, lst, item1, _ = make_populated_db()
+        assert item1.completed_at is None
+        window = make_window(db)
+        cmd = ToggleCompleteCommand(window, lst.id, [(item1.id, False)])
+
+        cmd.redo()
+        assert item1.completed_at is not None
+        cmd.undo()
+        assert item1.complete is False
+        assert item1.completed_at is None
+
+    def test_undo_restores_existing_completed_at(self):
+        """Undoing an uncomplete-from-complete restores the original timestamp."""
+        db, lst, item1, _ = make_populated_db()
+        original_ts = 1_700_000_000_000
+        item1.complete = True
+        item1.completed_at = original_ts
+        window = make_window(db)
+        cmd = ToggleCompleteCommand(window, lst.id, [(item1.id, True)])
+
+        cmd.redo()
+        assert item1.complete is False
+        assert item1.completed_at is None  # cleared by toggle
+
+        cmd.undo()
+        assert item1.complete is True
+        assert item1.completed_at == original_ts  # exact original preserved
+
 
 # ---------------------------------------------------------------------------
 # EditPriorityCommand

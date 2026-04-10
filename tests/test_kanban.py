@@ -629,6 +629,79 @@ class TestMoveToColumnCommand:
         assert item.board_column == "To Do"
         assert item.complete is False  # Restored to original
 
+    def test_auto_complete_writes_completed_at(self):
+        """Auto-complete on move writes a completed_at timestamp."""
+        from pytodo_qt.core.models import Database
+        from pytodo_qt.gui.commands import MoveToColumnCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Task", board_column="To Do")
+        assert item.completed_at is None
+        lst.add_item(item)
+        db.add_list(lst)
+
+        window = MagicMock()
+        window._database = db
+
+        cmd = MoveToColumnCommand(window, lst.id, item.id, "To Do", "Done", auto_complete=True)
+        cmd.redo()
+
+        assert item.complete is True
+        assert item.completed_at is not None
+        assert item.completed_at > 0
+
+    def test_auto_complete_undo_clears_completed_at(self):
+        """Undoing an auto-complete restores completed_at to its original value."""
+        from pytodo_qt.core.models import Database
+        from pytodo_qt.gui.commands import MoveToColumnCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Task", board_column="To Do")
+        # Originally incomplete with no timestamp
+        lst.add_item(item)
+        db.add_list(lst)
+
+        window = MagicMock()
+        window._database = db
+
+        cmd = MoveToColumnCommand(window, lst.id, item.id, "To Do", "Done", auto_complete=True)
+        cmd.redo()
+        assert item.completed_at is not None
+
+        cmd.undo()
+        assert item.complete is False
+        assert item.completed_at is None  # Back to original
+
+    def test_auto_uncomplete_undo_restores_completed_at(self):
+        """Undoing an auto-uncomplete restores the original completed_at."""
+        from pytodo_qt.core.models import Database
+        from pytodo_qt.gui.commands import MoveToColumnCommand
+
+        db = Database()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Task", board_column="Done")
+        original_ts = 1_700_000_000_000
+        item.complete = True
+        item.completed_at = original_ts
+        lst.add_item(item)
+        db.add_list(lst)
+
+        window = MagicMock()
+        window._database = db
+
+        cmd = MoveToColumnCommand(
+            window, lst.id, item.id, "Done", "In Progress", auto_complete=False
+        )
+        cmd.redo()
+        assert item.complete is False
+        assert item.completed_at is None  # Cleared by uncomplete
+
+        cmd.undo()
+        assert item.complete is True
+        assert item.completed_at == original_ts  # Exact original preserved
+
     def test_missing_list_no_op(self):
         """Command no-ops if list doesn't exist."""
         from pytodo_qt.core.models import Database

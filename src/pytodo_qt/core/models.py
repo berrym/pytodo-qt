@@ -86,10 +86,26 @@ class TodoItem:
         self.deleted = True
         self.mark_updated()
 
-    def toggle_complete(self) -> None:
-        """Toggle completion status."""
-        self.complete = not self.complete
+    def set_complete(self, value: bool) -> None:
+        """Set completion status, atomically managing completed_at.
+
+        Marking complete writes the current timestamp to completed_at.
+        Un-completing clears completed_at to None — the previous completion
+        no longer applies.
+
+        No-op if the item is already in the desired state. Sync paths that
+        need to copy a remote item's completed_at verbatim should set the
+        fields directly rather than going through this method.
+        """
+        if value == self.complete:
+            return
+        self.complete = value
+        self.completed_at = _now_timestamp() if value else None
         self.mark_updated()
+
+    def toggle_complete(self) -> None:
+        """Toggle completion status (delegates to set_complete)."""
+        self.set_complete(not self.complete)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -1111,9 +1127,8 @@ def advance_overdue_recurring(item: TodoItem) -> bool:
         next_time = next_dt.time().replace(second=0, microsecond=0)
 
         if is_recurrence_ended(item, next_date):
-            item.complete = True
+            item.set_complete(True)
             item.missed_recurrences += missed_count
-            item.mark_updated()
             return True
 
         item.due_date = next_date
@@ -1126,9 +1141,8 @@ def advance_overdue_recurring(item: TodoItem) -> bool:
 
     if is_recurrence_ended(item, next_due):
         # Recurrence expired while missed — mark as complete
-        item.complete = True
+        item.set_complete(True)
         item.missed_recurrences += 1
-        item.mark_updated()
         return True
 
     item.due_date = next_due
@@ -1175,8 +1189,8 @@ def cycle_completed_recurring(item: TodoItem, todo_list: TodoList, day_start_hou
     if is_recurrence_ended(item, next_date):
         return False  # Recurrence ended — stay complete permanently
 
-    # Cycle to next occurrence
-    item.complete = False
+    # Cycle to next occurrence — clear completed_at since this is a fresh cycle
+    item.set_complete(False)
     item.due_date = next_date
     if next_time is not None:
         item.due_time = next_time
@@ -1207,8 +1221,7 @@ def cycle_completed_recurring(item: TodoItem, todo_list: TodoList, day_start_hou
             and child.complete
             and not child.is_recurring
         ):
-            child.complete = False
-            child.mark_updated()
+            child.set_complete(False)
 
     item.mark_updated()
     return True

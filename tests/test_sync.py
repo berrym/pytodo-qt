@@ -193,6 +193,58 @@ class TestSyncEngine:
         assert priority_conflict.remote_value == 1
         assert priority_conflict.winner == "remote"
 
+    def test_sync_copies_completed_at_from_remote(self):
+        """When the remote wins on `complete`, completed_at must follow."""
+        local = Database()
+        remote = Database()
+
+        local_list = create_todo_list("List")
+        local_item = create_todo_item("Task")
+        local_list.add_item(local_item)
+        local.add_list(local_list)
+
+        remote_list = TodoList.from_dict(local_list.to_dict())
+        remote.add_list(remote_list)
+
+        time.sleep(0.01)
+        remote_item = remote_list.items[local_item.id]
+        remote_item.complete = True
+        remote_item.completed_at = 1_700_000_000_000  # Remote's truth
+        remote_item.mark_updated()
+
+        merge_databases(local, remote)
+        merged_local_item = local.lists[local_list.id].items[local_item.id]
+
+        assert merged_local_item.complete is True
+        assert merged_local_item.completed_at == 1_700_000_000_000
+
+    def test_sync_propagates_completed_at_only(self):
+        """If both sides agree on `complete` but completed_at differs, sync the timestamp."""
+        local = Database()
+        remote = Database()
+
+        local_list = create_todo_list("List")
+        local_item = create_todo_item("Task")
+        local_item.complete = True  # Already complete locally, no timestamp
+        local_list.add_item(local_item)
+        local.add_list(local_list)
+
+        remote_list = TodoList.from_dict(local_list.to_dict())
+        remote.add_list(remote_list)
+
+        time.sleep(0.01)
+        remote_item = remote_list.items[local_item.id]
+        # Same complete flag (True), but the remote learned the actual timestamp
+        # via a CalDAV import or similar.
+        remote_item.completed_at = 1_700_000_500_000
+        remote_item.mark_updated()
+
+        merge_databases(local, remote)
+        merged_local_item = local.lists[local_list.id].items[local_item.id]
+
+        assert merged_local_item.complete is True
+        assert merged_local_item.completed_at == 1_700_000_500_000
+
 
 class TestMergeResult:
     """Tests for MergeResult."""

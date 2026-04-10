@@ -81,9 +81,12 @@ def _item_to_vtodo(item: TodoItem) -> Todo:
     todo.add("status", "COMPLETED" if item.complete else "NEEDS-ACTION")
     todo.add("percent-complete", 100 if item.complete else 0)
 
-    # COMPLETED timestamp (RFC 5545: SHOULD be present when STATUS=COMPLETED)
-    if item.complete:
-        todo.add("completed", _ms_to_utc_datetime(item.updated_at))
+    # COMPLETED timestamp (RFC 5545: SHOULD be present when STATUS=COMPLETED).
+    # Only write it when we actually know when the task was completed.
+    # NULL completed_at (pre-v19 data or sync from a peer that didn't have it)
+    # means UNKNOWN — we don't invent a value.
+    if item.complete and item.completed_at is not None:
+        todo.add("completed", _ms_to_utc_datetime(item.completed_at))
 
     # Always export DUE as datetime (RFC 5545 compliance).
     # Date-only items use midnight UTC — imported back as date-only
@@ -187,10 +190,24 @@ def _vtodo_to_item(vtodo: Component) -> TodoItem | None:
     if priority_val is not None:
         item.priority = _ical_priority_to_pytodo(int(priority_val))
 
-    # Completion
+    # Completion — set both `complete` and `completed_at` together so the
+    # truth from the remote calendar is preserved exactly. Direct field
+    # assignment (not set_complete) because the timestamp belongs to the
+    # remote, not "now".
     status = vtodo.get("status")
     if status:
         item.complete = str(status).upper() == "COMPLETED"
+    # iCalendar COMPLETED property is the actual completion timestamp.
+    # If present, use it. If absent (status COMPLETED with no COMPLETED
+    # property), leave completed_at as None — honest UNKNOWN.
+    completed = vtodo.get("completed")
+    if completed is not None and item.complete:
+        cdt = completed.dt
+        if isinstance(cdt, datetime):
+            item.completed_at = int(cdt.timestamp() * 1000)
+        elif isinstance(cdt, date):
+            # Date-only COMPLETED — use start of that day in local time
+            item.completed_at = int(datetime.combine(cdt, time(0, 0, 0)).timestamp() * 1000)
 
     # Due date/time
     due = vtodo.get("due")
@@ -291,6 +308,19 @@ def vtodo_to_field_dict(data: bytes) -> dict:
         status = component.get("status")
         if status:
             fields["complete"] = str(status).upper() == "COMPLETED"
+        # iCalendar COMPLETED gives the actual completion timestamp.
+        # Pass through so the receiver preserves the remote's truth instead
+        # of stamping its own "now". Absent property → fields key absent →
+        # receiver falls back to generating a timestamp.
+        completed = component.get("completed")
+        if completed is not None and fields.get("complete"):
+            cdt = completed.dt
+            if isinstance(cdt, datetime):
+                fields["completed_at"] = int(cdt.timestamp() * 1000)
+            elif isinstance(cdt, date):
+                fields["completed_at"] = int(
+                    datetime.combine(cdt, time(0, 0, 0)).timestamp() * 1000
+                )
 
         due = component.get("due")
         if due is not None:

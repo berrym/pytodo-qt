@@ -67,6 +67,59 @@ class TestTodoItem:
         item = create_todo_item("Test")
         assert item.completed_at is None
 
+    def test_set_complete_true_writes_timestamp(self):
+        """set_complete(True) writes a fresh completed_at timestamp."""
+        item = create_todo_item("Test")
+        assert item.complete is False
+        assert item.completed_at is None
+
+        item.set_complete(True)
+
+        assert item.complete is True
+        assert item.completed_at is not None
+        assert item.completed_at > 0
+
+    def test_set_complete_false_clears_timestamp(self):
+        """set_complete(False) clears completed_at to None."""
+        item = create_todo_item("Test")
+        item.set_complete(True)
+        assert item.completed_at is not None
+
+        item.set_complete(False)
+
+        assert item.complete is False
+        assert item.completed_at is None
+
+    def test_set_complete_is_noop_when_already_in_state(self):
+        """set_complete to the current state does not modify the item."""
+        item = create_todo_item("Test")
+        # Already incomplete, calling set_complete(False) should be a no-op
+        original_updated = item.updated_at
+        item.set_complete(False)
+        assert item.completed_at is None
+        assert item.updated_at == original_updated
+
+        # Mark complete, then call set_complete(True) again — also a no-op
+        item.set_complete(True)
+        first_completion = item.completed_at
+        first_updated = item.updated_at
+        item.set_complete(True)
+        assert item.completed_at == first_completion  # not regenerated
+        assert item.updated_at == first_updated
+
+    def test_toggle_complete_now_writes_timestamp(self):
+        """toggle_complete delegates to set_complete and writes the timestamp."""
+        item = create_todo_item("Test")
+        assert item.completed_at is None
+
+        item.toggle_complete()
+        assert item.complete is True
+        assert item.completed_at is not None
+
+        item.toggle_complete()
+        assert item.complete is False
+        assert item.completed_at is None
+
     def test_completed_at_round_trip(self):
         """completed_at survives to_dict / from_dict round-trip including None."""
         item = create_todo_item("Test")

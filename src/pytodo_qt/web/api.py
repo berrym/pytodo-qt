@@ -179,6 +179,7 @@ def _item_to_json(item: TodoItem) -> dict[str, Any]:
         "reminder_cadence": item.reminder_cadence,
         "notified_at": item.notified_at,
         "conditions": item.conditions,
+        "completed_at": item.completed_at,
     }
 
 
@@ -629,7 +630,27 @@ def _apply_item_fields(item: TodoItem, body: dict[str, Any], lst: TodoList | Non
         if p in (1, 2, 3):
             item.priority = p
     if "complete" in body:
-        item.complete = bool(body["complete"])
+        new_complete = bool(body["complete"])
+        if "completed_at" in body:
+            # Sync path (e.g. CalDAV import) — preserve the remote's actual
+            # completion timestamp verbatim instead of stamping with NOW.
+            # Direct field assignment, not set_complete(), so the timestamp
+            # stays exactly as the remote sent it.
+            item.complete = new_complete
+            ca = body["completed_at"]
+            item.completed_at = int(ca) if ca is not None else None
+            item.mark_updated()
+        else:
+            # User-action path — set_complete() generates a fresh timestamp
+            # on the True transition and clears it on the False transition.
+            item.set_complete(new_complete)
+    elif "completed_at" in body:
+        # Edit-only path — the client is correcting just the timestamp
+        # (e.g. fixing an inaccurate completion time on an already-complete
+        # item). Direct assignment preserves the value.
+        ca = body["completed_at"]
+        item.completed_at = int(ca) if ca is not None else None
+        item.mark_updated()
     if "tags" in body and isinstance(body["tags"], list):
         item.tags = [str(t) for t in body["tags"]]
     if "due_date" in body:
@@ -892,7 +913,7 @@ async def handle_toggle_item(request: web.Request) -> web.Response:
             and item.recurrence_count >= item.recurrence_end_count
         )
         if item.is_recurring and not item.complete and not already_exhausted:
-            item.complete = True
+            item.set_complete(True)
             item.recurrence_count += 1
         else:
             item.toggle_complete()

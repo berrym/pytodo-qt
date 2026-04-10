@@ -409,6 +409,35 @@ class TestToggleCompleteRecurringCommand:
         assert item.due_date == original_due
         assert item.recurrence_count == 0
 
+    def test_redo_writes_completed_at_and_undo_clears_it(self):
+        """Redo writes completed_at; undo restores it to the original value."""
+        db = Database()
+        lst = create_todo_list("Test")
+        original_due = date.today()
+        item = make_recurring_item(due_date=original_due)
+        assert item.completed_at is None
+        lst.add_item(item)
+        db.add_list(lst)
+        window = make_window(db)
+
+        cmd = ToggleCompleteRecurringCommand(
+            window,
+            lst.id,
+            item.id,
+            old_due_date=original_due,
+            new_due_date=date.today() + timedelta(days=7),
+            old_count=0,
+            recurrence_ended=False,
+        )
+        cmd.redo()
+        assert item.complete is True
+        assert item.completed_at is not None
+        assert item.completed_at > 0
+
+        cmd.undo()
+        assert item.complete is False
+        assert item.completed_at is None  # restored to original
+
     def test_redo_undo_redo_consistent(self):
         db = Database()
         lst = create_todo_list("Test")

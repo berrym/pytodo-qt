@@ -542,6 +542,115 @@ class TestToggleItem:
         finally:
             await client.close()
 
+    @pytest.mark.asyncio
+    async def test_toggle_item_writes_completed_at(self):
+        """Toggling an incomplete item via the API writes a completed_at timestamp."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(i for i in lst.active_items() if not i.complete)
+        item_id = str(item.id)
+        assert item.completed_at is None
+
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.patch(f"/api/items/{item_id}/toggle")
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["complete"] is True
+            assert data["completed_at"] is not None
+            assert data["completed_at"] > 0
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_put_complete_writes_completed_at(self):
+        """PUT /api/items/{id} with `complete: true` generates a completed_at timestamp."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(i for i in lst.active_items() if not i.complete)
+        item_id = str(item.id)
+        assert item.completed_at is None
+
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(f"/api/items/{item_id}", json={"complete": True})
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["complete"] is True
+            assert data["completed_at"] is not None
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_put_complete_false_clears_completed_at(self):
+        """PUT with `complete: false` clears completed_at to None."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.complete = True
+        item.completed_at = 1_700_000_000_000
+        item_id = str(item.id)
+
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(f"/api/items/{item_id}", json={"complete": False})
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["complete"] is False
+            assert data["completed_at"] is None
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_put_with_explicit_completed_at_preserves_value(self):
+        """Sync mode: PUT with both `complete` and `completed_at` preserves the timestamp verbatim."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(i for i in lst.active_items() if not i.complete)
+        item_id = str(item.id)
+
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(
+                f"/api/items/{item_id}",
+                json={"complete": True, "completed_at": 1_650_000_000_000},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["complete"] is True
+            assert data["completed_at"] == 1_650_000_000_000  # exact, not regenerated
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_item_json_includes_completed_at(self):
+        """List item JSON includes completed_at field."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.complete = True
+        item.completed_at = 1_700_000_000_000
+        item_id = str(item.id)
+        list_id = str(lst.id)
+
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{list_id}")
+            assert resp.status == 200
+            data = await resp.json()
+            items = data.get("items", [])
+            target = next((it for it in items if it["id"] == item_id), None)
+            assert target is not None
+            assert "completed_at" in target
+            assert target["completed_at"] == 1_700_000_000_000
+        finally:
+            await client.close()
+
 
 # ===========================================================================
 # Status endpoint

@@ -10,7 +10,7 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time
 from uuid import UUID
 
 import pytest
@@ -137,12 +137,29 @@ class TestExportFieldMapping:
     def test_completed_status(self):
         lst = create_todo_list("Test")
         item = create_todo_item("Done")
-        item.complete = True
+        # Use set_complete so completed_at is written, simulating a real
+        # user completion path.
+        item.set_complete(True)
         lst.add_item(item)
 
         data = export_list_to_ics(lst)
         assert b"STATUS:COMPLETED" in data
         assert b"PERCENT-COMPLETE:100" in data
+        # COMPLETED property must be present when we have a real timestamp.
+        assert b"COMPLETED:" in data
+
+    def test_completed_status_unknown_timestamp(self):
+        """A completed item with NULL completed_at must NOT export the COMPLETED property."""
+        lst = create_todo_list("Test")
+        item = create_todo_item("Done long ago")
+        item.complete = True
+        item.completed_at = None  # Pre-v19 data — UNKNOWN
+        lst.add_item(item)
+
+        data = export_list_to_ics(lst)
+        assert b"STATUS:COMPLETED" in data
+        # No COMPLETED: property — we don't invent timestamps.
+        assert b"COMPLETED:" not in data
 
     def test_incomplete_status(self):
         lst = create_todo_list("Test")
@@ -386,6 +403,27 @@ class TestImportFieldMapping:
 
         items = import_ics_to_items(cal.to_ical())
         assert items[0].complete is True
+        # No COMPLETED property on the VTODO → unknown timestamp.
+        assert items[0].completed_at is None
+
+    def test_completed_with_timestamp(self):
+        """COMPLETED property carries the actual completion timestamp."""
+        cal = Calendar()
+        cal.add("prodid", "-//Test//EN")
+        cal.add("version", "2.0")
+        todo = Todo()
+        todo.add("summary", "Done with time")
+        todo.add("status", "COMPLETED")
+        completion_dt = datetime(2026, 3, 15, 14, 30, 0, tzinfo=UTC)
+        todo.add("completed", completion_dt)
+        cal.add_component(todo)
+
+        items = import_ics_to_items(cal.to_ical())
+        assert items[0].complete is True
+        assert items[0].completed_at is not None
+        # Within 1ms of the source timestamp (timezone-converted)
+        expected_ms = int(completion_dt.timestamp() * 1000)
+        assert abs(items[0].completed_at - expected_ms) < 2
 
     def test_needs_action_status(self):
         cal = Calendar()
