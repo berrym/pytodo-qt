@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 from uuid import uuid4
 
-from pytodo_qt.core.database import DatabaseStorage
+from pytodo_qt.core.database import SCHEMA_VERSION, DatabaseStorage
 from pytodo_qt.core.models import (
     Database,
     TodoItem,
@@ -317,7 +317,7 @@ class TestDatabaseSubtasks:
         # Open with DatabaseStorage which should migrate
         storage = DatabaseStorage(db_path)
         storage.open()
-        assert storage.get_schema_version() == 18
+        assert storage.get_schema_version() == SCHEMA_VERSION
 
         # Verify parent_id column exists
         cursor = storage.connection.execute("PRAGMA table_info(items)")

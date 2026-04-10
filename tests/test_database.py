@@ -97,6 +97,169 @@ class TestSchemaVersion:
             assert storage.get_schema_version() == 99
             storage.close()
 
+    def test_schema_version_is_at_least_19(self):
+        """Sentinel: completed_at column was introduced in v19."""
+        assert SCHEMA_VERSION >= 19
+
+
+class TestSchemaMigrationV18ToV19:
+    """Tests for the v18 -> v19 migration adding completed_at."""
+
+    def test_migration_adds_completed_at_column(self):
+        """A v18 database is upgraded to v19 with the completed_at column."""
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+
+            # Build a minimal v18-shaped items table directly, without v19's column.
+            conn = sqlite3.connect(str(db_path))
+            conn.row_factory = sqlite3.Row
+            conn.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
+            conn.execute("INSERT INTO metadata (key, value) VALUES ('schema_version', '18')")
+            conn.execute(
+                """
+                CREATE TABLE items (
+                    id TEXT PRIMARY KEY,
+                    list_id TEXT NOT NULL,
+                    reminder TEXT NOT NULL DEFAULT '',
+                    priority INTEGER NOT NULL DEFAULT 2,
+                    complete INTEGER NOT NULL DEFAULT 0,
+                    due_date TEXT,
+                    due_time TEXT,
+                    tags TEXT,
+                    recurrence_type TEXT,
+                    recurrence_interval INTEGER NOT NULL DEFAULT 1,
+                    recurrence_end_date TEXT,
+                    recurrence_end_count INTEGER,
+                    recurrence_count INTEGER NOT NULL DEFAULT 0,
+                    missed_recurrences INTEGER NOT NULL DEFAULT 0,
+                    time_spent INTEGER NOT NULL DEFAULT 0,
+                    pomodoro_count INTEGER NOT NULL DEFAULT 0,
+                    estimated_pomodoros INTEGER NOT NULL DEFAULT 0,
+                    estimated_minutes INTEGER NOT NULL DEFAULT 0,
+                    work_duration INTEGER NOT NULL DEFAULT 0,
+                    break_duration INTEGER NOT NULL DEFAULT 0,
+                    long_break_duration INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    deleted INTEGER NOT NULL DEFAULT 0,
+                    parent_id TEXT,
+                    board_column TEXT NOT NULL DEFAULT '',
+                    due_time_end TEXT,
+                    due_time_block TEXT,
+                    event_date TEXT,
+                    remind_before_days INTEGER NOT NULL DEFAULT 0,
+                    reminder_cadence TEXT NOT NULL DEFAULT 'none',
+                    notified_at INTEGER NOT NULL DEFAULT 0,
+                    conditions TEXT
+                )
+                """
+            )
+            # Insert an existing complete row (no completed_at — pre-v19 data)
+            conn.execute(
+                "INSERT INTO items (id, list_id, reminder, complete, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (str(uuid4()), str(uuid4()), "Old completed task", 1, 0, 0),
+            )
+            conn.commit()
+            conn.close()
+
+            # Now open via DatabaseStorage — migration runs automatically
+            storage = DatabaseStorage(db_path)
+            storage.open()
+
+            try:
+                # After migration we must be at least v19 (where completed_at landed).
+                assert storage.get_schema_version() >= 19
+                cols = [row[1] for row in storage.connection.execute("PRAGMA table_info(items)")]
+                assert "completed_at" in cols
+                # Existing row's completed_at must be NULL — no backfill
+                cursor = storage.connection.execute(
+                    "SELECT completed_at FROM items WHERE complete = 1"
+                )
+                row = cursor.fetchone()
+                assert row is not None
+                assert row["completed_at"] is None
+            finally:
+                storage.close()
+
+    def test_migration_is_idempotent(self):
+        """Running open() twice on an already-current database does not error."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            assert storage.get_schema_version() == SCHEMA_VERSION
+            storage.close()
+
+            storage2 = DatabaseStorage(db_path)
+            storage2.open()
+            assert storage2.get_schema_version() == SCHEMA_VERSION
+            storage2.close()
+
+
+class TestCompletedAtField:
+    """Tests that completed_at round-trips through save_item / get_item."""
+
+    def test_save_and_get_item_with_completed_at(self):
+        """Saving an item with completed_at preserves the timestamp."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            storage = DatabaseStorage(db_path)
+            storage.open()
+
+            lst = TodoList(name="Test List")
+            storage.save_list(lst)
+
+            item = TodoItem(reminder="Done", complete=True, completed_at=1_700_000_000_000)
+            storage.save_item(lst.id, item)
+
+            retrieved = storage.get_item(item.id)
+            assert retrieved is not None
+            assert retrieved.complete is True
+            assert retrieved.completed_at == 1_700_000_000_000
+            storage.close()
+
+    def test_save_and_get_item_with_null_completed_at(self):
+        """A complete item with NULL completed_at round-trips as None."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            storage = DatabaseStorage(db_path)
+            storage.open()
+
+            lst = TodoList(name="Test List")
+            storage.save_list(lst)
+
+            item = TodoItem(reminder="Done but unknown", complete=True)
+            assert item.completed_at is None
+            storage.save_item(lst.id, item)
+
+            retrieved = storage.get_item(item.id)
+            assert retrieved is not None
+            assert retrieved.complete is True
+            assert retrieved.completed_at is None
+            storage.close()
+
+    def test_default_item_has_null_completed_at(self):
+        """A freshly saved incomplete item has completed_at = None."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            storage = DatabaseStorage(db_path)
+            storage.open()
+
+            lst = TodoList(name="Test List")
+            storage.save_list(lst)
+
+            item = TodoItem(reminder="Not done")
+            storage.save_item(lst.id, item)
+
+            retrieved = storage.get_item(item.id)
+            assert retrieved is not None
+            assert retrieved.complete is False
+            assert retrieved.completed_at is None
+            storage.close()
+
 
 class TestActiveList:
     """Tests for active list management."""

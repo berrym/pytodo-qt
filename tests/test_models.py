@@ -62,6 +62,31 @@ class TestTodoItem:
         assert item2.priority == item.priority
         assert item2.complete == item.complete
 
+    def test_completed_at_default_is_none(self):
+        """A new TodoItem has completed_at=None (we don't know when it was completed)."""
+        item = create_todo_item("Test")
+        assert item.completed_at is None
+
+    def test_completed_at_round_trip(self):
+        """completed_at survives to_dict / from_dict round-trip including None."""
+        item = create_todo_item("Test")
+        item.complete = True
+        item.completed_at = 1_700_000_000_000  # arbitrary ms timestamp
+
+        data = item.to_dict()
+        assert data["completed_at"] == 1_700_000_000_000
+
+        item2 = TodoItem.from_dict(data)
+        assert item2.completed_at == 1_700_000_000_000
+
+        # NULL round-trip
+        item3 = create_todo_item("Test 3")
+        item3.complete = True  # complete but unknown when
+        data3 = item3.to_dict()
+        assert data3["completed_at"] is None
+        item4 = TodoItem.from_dict(data3)
+        assert item4.completed_at is None
+
     def test_from_legacy(self):
         """Test creating from legacy format."""
         legacy = {

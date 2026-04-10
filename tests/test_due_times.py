@@ -702,11 +702,11 @@ class TestDatabaseDueTime:
         assert loaded.due_time is None
 
     def test_schema_version_8(self, tmp_path):
-        from pytodo_qt.core.database import DatabaseStorage
+        from pytodo_qt.core.database import SCHEMA_VERSION, DatabaseStorage
 
         db_path = tmp_path / "test.db"
         storage = DatabaseStorage(db_path)
-        assert storage.get_schema_version() == 18
+        assert storage.get_schema_version() == SCHEMA_VERSION
 
 
 # ---------------------------------------------------------------------------

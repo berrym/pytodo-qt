@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import pytest
 
-from pytodo_qt.core.database import DatabaseStorage
+from pytodo_qt.core.database import SCHEMA_VERSION, DatabaseStorage
 from pytodo_qt.core.models import (
     Database,
     TodoItem,
@@ -237,7 +237,7 @@ class TestMigrateSchema4To5:
             assert "idx_devices_fingerprint" in indexes
             assert "idx_devices_trust_level" in indexes
 
-            assert storage.get_schema_version() == 18
+            assert storage.get_schema_version() == SCHEMA_VERSION
             storage.close()
 
 

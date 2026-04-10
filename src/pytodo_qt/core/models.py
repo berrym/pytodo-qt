@@ -65,6 +65,7 @@ class TodoItem:
     reminder_cadence: str = "none"  # none/once/daily_until_due
     notified_at: int = 0  # Last notification timestamp in ms (0 = never)
     conditions: list[dict[str, str]] | None = None  # Structured conditions (JSON)
+    completed_at: int | None = None  # Completion timestamp in ms (schema v19, None = unknown)
 
     @property
     def is_subtask(self) -> bool:
@@ -127,6 +128,7 @@ class TodoItem:
             "reminder_cadence": self.reminder_cadence,
             "notified_at": self.notified_at,
             "conditions": self.conditions,
+            "completed_at": self.completed_at,
         }
 
     @classmethod
@@ -177,6 +179,7 @@ class TodoItem:
             reminder_cadence=data.get("reminder_cadence", "none"),
             notified_at=data.get("notified_at", 0),
             conditions=data.get("conditions"),
+            completed_at=data.get("completed_at"),
         )
 
     @classmethod

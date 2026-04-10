@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS items (
     reminder_cadence TEXT NOT NULL DEFAULT 'none',
     notified_at INTEGER NOT NULL DEFAULT 0,
     conditions TEXT,
+    completed_at INTEGER,
     FOREIGN KEY (list_id) REFERENCES lists(id)
 )
 """
@@ -303,6 +304,7 @@ class DatabaseStorage:
         self._migrate_schema_15_to_16()
         self._migrate_schema_16_to_17()
         self._migrate_schema_17_to_18()
+        self._migrate_schema_18_to_19()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -607,6 +609,24 @@ class DatabaseStorage:
 
         self.set_schema_version(18)
 
+    def _migrate_schema_18_to_19(self) -> None:
+        """Migrate schema from version 18 to 19 (add completed_at timestamp).
+
+        Adds a nullable INTEGER column tracking when an item was marked complete
+        (milliseconds since epoch). Existing completed rows are NOT backfilled —
+        NULL is the honest value when we don't know when completion happened.
+        """
+        current_version = self.get_schema_version()
+        if current_version >= 19:
+            return
+
+        columns = [row[1] for row in self.connection.execute("PRAGMA table_info(items)")]
+        if "completed_at" not in columns:
+            self.connection.execute("ALTER TABLE items ADD COLUMN completed_at INTEGER")
+            logger.log.info("Migrated schema 18->19: added completed_at column to items")
+
+        self.set_schema_version(19)
+
     def get_schema_version(self) -> int:
         """Get current schema version."""
         cursor = self.connection.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
@@ -851,6 +871,7 @@ class DatabaseStorage:
             "reminder_cadence": item.reminder_cadence,
             "notified_at": item.notified_at,
             "conditions": json.dumps(item.conditions) if item.conditions else None,
+            "completed_at": item.completed_at,
         }
         columns = ", ".join(params.keys())
         placeholders = ", ".join(f":{k}" for k in params)
@@ -1003,6 +1024,12 @@ class DatabaseStorage:
         except (KeyError, IndexError):
             conditions = None
 
+        # Handle completed_at column (v19+)
+        try:
+            completed_at = row["completed_at"]
+        except (KeyError, IndexError):
+            completed_at = None
+
         return TodoItem(
             id=UUID(row["id"]),
             reminder=row["reminder"],
@@ -1036,6 +1063,7 @@ class DatabaseStorage:
             reminder_cadence=reminder_cadence,
             notified_at=notified_at,
             conditions=conditions,
+            completed_at=completed_at,
         )
 
     # Bulk operations (for sync and migration)

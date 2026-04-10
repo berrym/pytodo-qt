@@ -205,7 +205,8 @@ class TestSchemaVersion:
     """Test schema version is updated."""
 
     def test_current_schema_version_is_9(self):
-        assert SCHEMA_VERSION == 18
+        # Sentinel: tags column was introduced in v9.
+        assert SCHEMA_VERSION >= 9
 
     def test_fresh_database_has_tags_column(self, tmp_path):
         db_path = tmp_path / "test.db"
@@ -219,7 +220,7 @@ class TestSchemaVersion:
     def test_schema_version_is_9(self, tmp_path):
         db_path = tmp_path / "test.db"
         storage = DatabaseStorage(db_path)
-        assert storage.get_schema_version() == 18
+        assert storage.get_schema_version() == SCHEMA_VERSION
         storage.close()
 
 

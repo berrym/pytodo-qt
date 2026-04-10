@@ -63,12 +63,13 @@ class TestStopwatchConfig:
 
 class TestSchemaV16:
     def test_current_version(self):
-        assert SCHEMA_VERSION == 18
+        # Sentinel: estimated_minutes was introduced in v16.
+        assert SCHEMA_VERSION >= 16
 
     def test_fresh_database_has_estimated_minutes(self, tmp_path: Path):
         storage = DatabaseStorage(tmp_path / "test.db")
         storage.open()
-        assert storage.get_schema_version() == 18
+        assert storage.get_schema_version() == SCHEMA_VERSION
 
         columns = [row[1] for row in storage.connection.execute("PRAGMA table_info(items)")]
         assert "estimated_minutes" in columns
@@ -113,7 +114,7 @@ class TestSchemaV16:
 
         storage = DatabaseStorage(db_path)
         storage.open()
-        assert storage.get_schema_version() == 18
+        assert storage.get_schema_version() == SCHEMA_VERSION
 
         columns = [row[1] for row in storage.connection.execute("PRAGMA table_info(items)")]
         assert "estimated_minutes" in columns

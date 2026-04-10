@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 from uuid import uuid4
 
-from pytodo_qt.core.database import DatabaseStorage
+from pytodo_qt.core.database import SCHEMA_VERSION, DatabaseStorage
 from pytodo_qt.core.models import (
     Database,
     TodoItem,
@@ -570,7 +570,7 @@ class TestRecurrenceMigration:
             db_path = Path(tmpdir) / "test.db"
             storage = DatabaseStorage(db_path)
             storage.open()
-            assert storage.get_schema_version() == 18
+            assert storage.get_schema_version() == SCHEMA_VERSION
             storage.close()
 
     def test_save_load_recurring_item(self):
