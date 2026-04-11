@@ -2377,6 +2377,11 @@ class _TimelineAccuracyWidget(QWidget):
 _WEEK_ITEMS_ROLE = Qt.ItemDataRole.UserRole + 10
 _WEEK_HOUR_ROLE = Qt.ItemDataRole.UserRole + 11
 _WEEK_DATE_ROLE = Qt.ItemDataRole.UserRole + 12
+# Step 6 of calendar Gantt redesign: returns the FULL list of items for
+# this column's date regardless of row. The Gantt-bar delegate uses this
+# to compute which bars intersect each cell instead of querying per-hour
+# items via _WEEK_ITEMS_ROLE (which only returns the items at row.hour).
+_WEEK_COLUMN_ITEMS_ROLE = Qt.ItemDataRole.UserRole + 13
 
 
 class _WeekModel(QAbstractTableModel):
@@ -2415,6 +2420,13 @@ class _WeekModel(QAbstractTableModel):
                 return [i for i in items if i.due_time is None]
             hour = row - 1
             return [i for i in items if i.due_time and i.due_time.hour == hour]
+
+        if role == _WEEK_COLUMN_ITEMS_ROLE:
+            # Full column items list — every item whose due_date matches
+            # this column's date, regardless of which row was queried.
+            # The Gantt delegate uses this to compute intersecting bars
+            # for the cell's hour rather than per-hour buckets.
+            return list(self._items_by_date.get(d, []))
 
         if role == Qt.ItemDataRole.DisplayRole:
             if row == 0:

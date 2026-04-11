@@ -563,6 +563,125 @@ class TestWeekModel:
         model.set_items({today: [item]})
 
 
+class TestWeekModelColumnItemsRole:
+    """Step 6: _WEEK_COLUMN_ITEMS_ROLE returns the full column items list."""
+
+    @pytest.fixture()
+    def model(self):
+        from pytodo_qt.gui.widgets.calendar_view import _WeekModel
+
+        m = _WeekModel()
+        # Pin to a known week so we can target a specific column directly
+        m.set_week(date(2026, 4, 13))  # Monday of that week
+        return m
+
+    def _column_for_date(self, model, target: date) -> int:
+        """Helper: find the column index whose date matches `target`."""
+        for col, d in enumerate(model.week_dates()):
+            if d == target:
+                return col
+        raise AssertionError(f"date {target} not in week dates {model.week_dates()}")
+
+    def test_empty_column_returns_empty_list(self, model):
+        """A column with no items returns [], never None."""
+        from pytodo_qt.gui.widgets.calendar_view import _WEEK_COLUMN_ITEMS_ROLE
+
+        col = self._column_for_date(model, date(2026, 4, 14))
+        idx = model.index(0, col)
+        items = idx.data(_WEEK_COLUMN_ITEMS_ROLE)
+        assert items == []
+
+    def test_single_item_returned_for_every_row(self, model):
+        """The same item appears at every row in its column — the role is
+        row-independent. The delegate decides which slice intersects each
+        cell, not the model."""
+        from datetime import time
+
+        from pytodo_qt.gui.widgets.calendar_view import _WEEK_COLUMN_ITEMS_ROLE
+
+        target_date = date(2026, 4, 15)
+        item = create_todo_item("Workback")
+        item.due_date = target_date
+        item.due_time = time(15, 0)
+        item.estimated_minutes = 60
+        model.set_items({target_date: [item]})
+
+        col = self._column_for_date(model, target_date)
+        # Every row in the column returns the same single-item list
+        for row in (0, 1, 12, 14, 15, 24):
+            items = model.index(row, col).data(_WEEK_COLUMN_ITEMS_ROLE)
+            assert len(items) == 1
+            assert items[0].id == item.id
+
+    def test_multiple_items_returned_in_order(self, model):
+        """Multiple items in a column all appear in the role result."""
+        from datetime import time
+
+        from pytodo_qt.gui.widgets.calendar_view import _WEEK_COLUMN_ITEMS_ROLE
+
+        target_date = date(2026, 4, 16)
+        items_in = []
+        for i in range(3):
+            item = create_todo_item(f"Item {i}")
+            item.due_date = target_date
+            item.due_time = time(10 + i, 0)
+            items_in.append(item)
+        model.set_items({target_date: items_in})
+
+        col = self._column_for_date(model, target_date)
+        items_out = model.index(0, col).data(_WEEK_COLUMN_ITEMS_ROLE)
+        assert len(items_out) == 3
+        # Order matches input order
+        assert [it.id for it in items_out] == [it.id for it in items_in]
+
+    def test_no_time_items_included(self, model):
+        """Items with no due_time still appear in the column items role —
+        the role is about column membership, not row placement."""
+        from pytodo_qt.gui.widgets.calendar_view import _WEEK_COLUMN_ITEMS_ROLE
+
+        target_date = date(2026, 4, 17)
+        all_day_item = create_todo_item("All day task")
+        all_day_item.due_date = target_date
+        all_day_item.due_time = None
+        model.set_items({target_date: [all_day_item]})
+
+        col = self._column_for_date(model, target_date)
+        # Hour rows (1-24) also see the all-day item via this role
+        items = model.index(8, col).data(_WEEK_COLUMN_ITEMS_ROLE)
+        assert len(items) == 1
+        assert items[0].id == all_day_item.id
+
+    def test_invalid_column_returns_none(self, model):
+        """An out-of-range column index returns None."""
+        from pytodo_qt.gui.widgets.calendar_view import _WEEK_COLUMN_ITEMS_ROLE
+
+        # Column 99 is out of range; data() returns None for invalid columns
+        idx = model.index(0, 99)
+        if idx.isValid():
+            assert idx.data(_WEEK_COLUMN_ITEMS_ROLE) is None
+
+    def test_returned_list_is_independent_copy(self, model):
+        """Mutating the returned list does not affect the model's state.
+        The role returns a fresh list to prevent accidental data corruption."""
+        from datetime import time
+
+        from pytodo_qt.gui.widgets.calendar_view import _WEEK_COLUMN_ITEMS_ROLE
+
+        target_date = date(2026, 4, 13)
+        item = create_todo_item("Original")
+        item.due_date = target_date
+        item.due_time = time(10, 0)
+        model.set_items({target_date: [item]})
+
+        col = self._column_for_date(model, target_date)
+        items = model.index(0, col).data(_WEEK_COLUMN_ITEMS_ROLE)
+        items.clear()  # mutate the returned list
+
+        # Re-fetch — model state must be unchanged
+        items_again = model.index(0, col).data(_WEEK_COLUMN_ITEMS_ROLE)
+        assert len(items_again) == 1
+
+
 # ---------------------------------------------------------------------------
 # Now-aware delegate painting
 # ---------------------------------------------------------------------------
