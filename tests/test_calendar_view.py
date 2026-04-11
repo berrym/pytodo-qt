@@ -883,6 +883,256 @@ class TestWeekDelegateBarPainting:
         cal._tick_now_indicators()  # should be a no-op when nothing is shown
 
 
+class TestWeekViewBarHitTest:
+    """Step 8: hit-test recognizes Gantt bar segments via the new geometry.
+
+    Without these tests, multi-hour bars would visually appear but only
+    register clicks in their start-hour cell — the bug Step 8 fixes.
+    """
+
+    @pytest.fixture()
+    def view_with_bar(self, qtbot):
+        """Build a week view with one workback bar from 13:00 to 15:00 today."""
+        from datetime import time
+
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _WeekModel,
+            _WeekTableView,
+        )
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        qtbot.addWidget(view)
+        view.resize(800, 600)
+        view.show()
+
+        today = date.today()
+        item = create_todo_item("Workback bar")
+        item.due_date = today
+        item.due_time = time(15, 0)
+        item.estimated_minutes = 120  # origin = 13:00, end = 15:00
+        # Pin the model's week_dates to a known column for `today`
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+        model.set_items({today: [item]})
+        return view, model, item
+
+    def test_click_in_start_hour_cell_hits_bar(self, view_with_bar):
+        """Clicking in the bar's first hour-cell (row 14 = hour 13) finds the item."""
+        from PyQt6.QtCore import QPoint
+
+        view, model, item = view_with_bar
+        # Row 14 is hour 13 (13:00–14:00). Column 0 is today.
+        idx = model.index(14, 0)
+        rect = view.visualRect(idx)
+        click = QPoint(rect.center().x(), rect.center().y())
+        hit = view._hit_test(click)
+        assert hit is not None
+        assert hit[0] == "task"
+        assert hit[1].id == item.id
+
+    def test_click_in_middle_hour_cell_also_hits_bar(self, view_with_bar):
+        """Clicking in the SECOND hour-cell of the bar (row 15 = hour 14)
+        also finds the item. This is the regression Step 8 prevents — the
+        old hit-test only worked in the start-hour cell."""
+        from PyQt6.QtCore import QPoint
+
+        view, model, item = view_with_bar
+        # Row 15 is hour 14 (14:00–15:00) — the bar's second hour
+        idx = model.index(15, 0)
+        rect = view.visualRect(idx)
+        click = QPoint(rect.center().x(), rect.center().y())
+        hit = view._hit_test(click)
+        assert hit is not None
+        assert hit[0] == "task"
+        assert hit[1].id == item.id
+
+    def test_click_outside_bar_returns_none(self, view_with_bar):
+        """Clicking in a cell that the bar does NOT intersect returns None."""
+        from PyQt6.QtCore import QPoint
+
+        view, model, _item = view_with_bar
+        # Row 6 is hour 5 (5:00–6:00) — well outside the 13:00–15:00 bar
+        idx = model.index(6, 0)
+        rect = view.visualRect(idx)
+        click = QPoint(rect.center().x(), rect.center().y())
+        hit = view._hit_test(click)
+        assert hit is None
+
+    def test_click_in_horizontal_padding_returns_none(self, view_with_bar):
+        """The bar is inset 4px from each cell edge — clicking in the
+        padding area is not a hit."""
+        from PyQt6.QtCore import QPoint
+
+        view, model, _item = view_with_bar
+        idx = model.index(14, 0)
+        rect = view.visualRect(idx)
+        # Click 1 pixel from the left edge — inside the cell but in the
+        # bar's left padding zone
+        click = QPoint(rect.left() + 1, rect.center().y())
+        hit = view._hit_test(click)
+        assert hit is None
+
+    def test_click_on_empty_cell_returns_none(self, qtbot):
+        """An empty week (no items) produces no hits."""
+        from PyQt6.QtCore import QPoint
+
+        from pytodo_qt.gui.widgets.calendar_view import _WeekModel, _WeekTableView
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        qtbot.addWidget(view)
+        view.resize(800, 600)
+        view.show()
+
+        idx = model.index(10, 0)
+        rect = view.visualRect(idx)
+        click = QPoint(rect.center().x(), rect.center().y())
+        hit = view._hit_test(click)
+        assert hit is None
+
+    def test_all_day_row_chip_hit_test_preserved(self, qtbot):
+        """The All Day row (row 0) still hits via the chip path until Step 9
+        moves it. An item with no due_time is rendered as a chip there."""
+        from PyQt6.QtCore import QPoint
+
+        from pytodo_qt.gui.widgets.calendar_view import _WeekModel, _WeekTableView
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        qtbot.addWidget(view)
+        view.resize(800, 600)
+        view.show()
+
+        today = date.today()
+        item = create_todo_item("All-day task")
+        item.due_date = today
+        item.due_time = None
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+        model.set_items({today: [item]})
+
+        idx = model.index(0, 0)  # All Day row
+        rect = view.visualRect(idx)
+        # Click near the top of the chip area
+        click = QPoint(rect.center().x(), rect.top() + 8)
+        hit = view._hit_test(click)
+        assert hit is not None
+        assert hit[0] == "task"
+        assert hit[1].id == item.id
+
+
+class TestWeekViewBarTooltip:
+    """Step 8: tooltip enrichment with bar window, state, and deviation."""
+
+    def test_tooltip_includes_state_and_window(self):
+        """The tooltip builder embeds the bar's window and state name."""
+        from datetime import time
+
+        from pytodo_qt.gui.widgets.calendar_view import _WeekTableView
+
+        item = create_todo_item("Test task")
+        item.due_date = date(2026, 4, 13)
+        item.due_time = time(15, 0)
+        item.estimated_minutes = 60
+
+        text = _WeekTableView._build_bar_tooltip(item)
+        assert "Test task" in text
+        # Window line: origin → end
+        assert "→" in text
+        # One of the state labels should appear
+        assert any(
+            label in text
+            for label in (
+                "Future",
+                "In progress",
+                "Due now",
+                "Overdue",
+                "Completed early",
+                "Completed on time",
+                "Completed late",
+            )
+        )
+
+    def test_tooltip_completed_late_includes_deviation(self):
+        """A completed-late task's tooltip explicitly says how late."""
+        from datetime import datetime as _dt
+        from datetime import time
+
+        from pytodo_qt.gui.widgets.calendar_view import _WeekTableView
+
+        today = date.today()
+        item = create_todo_item("Late task")
+        item.due_date = today
+        item.due_time = time(15, 0)
+        item.estimated_minutes = 60
+        item.complete = True
+        # 2 hours past due
+        item.completed_at = int(_dt.combine(today, time(17, 0)).timestamp() * 1000)
+
+        text = _WeekTableView._build_bar_tooltip(item)
+        assert "Completed late" in text
+        assert "late" in text.lower()
+
+    def test_tooltip_completed_early_includes_deviation(self):
+        """A completed-early task's tooltip explicitly says how early."""
+        from datetime import datetime as _dt
+        from datetime import time
+
+        from pytodo_qt.gui.widgets.calendar_view import _WeekTableView
+
+        today = date.today()
+        item = create_todo_item("Early task")
+        item.due_date = today
+        item.due_time = time(15, 0)
+        item.estimated_minutes = 120
+        item.complete = True
+        # 1 hour before the deadline
+        item.completed_at = int(_dt.combine(today, time(14, 0)).timestamp() * 1000)
+
+        text = _WeekTableView._build_bar_tooltip(item)
+        assert "Completed early" in text
+        assert "early" in text.lower()
+
+    def test_tooltip_unknown_completion_no_deviation_line(self):
+        """A pre-v19 completed task (completed_at IS NULL) gets a single
+        'Completed (unknown when)' label, no early/late deviation."""
+        from datetime import time
+
+        from pytodo_qt.gui.widgets.calendar_view import _WeekTableView
+
+        item = create_todo_item("Old completion")
+        item.due_date = date(2026, 4, 13)
+        item.due_time = time(15, 0)
+        item.estimated_minutes = 60
+        item.complete = True
+        item.completed_at = None
+
+        text = _WeekTableView._build_bar_tooltip(item)
+        assert "unknown when" in text.lower()
+        assert "early" not in text.lower()
+        assert "late" not in text.lower()
+
+    def test_tooltip_preserves_existing_fields(self):
+        """Recurrence, pomodoros, and tags still appear in the tooltip."""
+        from datetime import time
+
+        from pytodo_qt.gui.widgets.calendar_view import _WeekTableView
+
+        item = create_todo_item("Rich task")
+        item.due_date = date(2026, 4, 13)
+        item.due_time = time(15, 0)
+        item.estimated_minutes = 60
+        item.tags = ["@work", "@urgent"]
+        item.pomodoro_count = 2
+        item.estimated_pomodoros = 4
+
+        text = _WeekTableView._build_bar_tooltip(item)
+        assert "@work" in text
+        assert "2/4" in text  # pomodoro counter
+
+
 # ---------------------------------------------------------------------------
 # _UnscheduledPanel
 # ---------------------------------------------------------------------------

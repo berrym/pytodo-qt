@@ -2930,15 +2930,43 @@ class _WeekTableView(QTableView):
         self._dragging = False
 
     def _hit_test(self, pos):
+        """Find what was clicked at `pos`.
+
+        Hour-grid cells (rows 1–24) hit-test against Gantt bar segments
+        from core.calendar_layout. The All Day row (row 0) still uses
+        the chip-rectangle hit logic until Step 9 moves it to its own
+        widget.
+
+        Returns:
+            ("task", TodoItem, QModelIndex) when a bar slice or chip
+                was hit
+            ("more", date, items) when the All Day overflow area was
+                hit
+            None when nothing was under the cursor
+        """
         index = self.indexAt(pos)
         if not index.isValid():
             return None
-        items = index.data(_WEEK_ITEMS_ROLE) or []
         cell_date = index.data(_WEEK_DATE_ROLE)
-        if not items or cell_date is None:
+        hour = index.data(_WEEK_HOUR_ROLE)
+        if cell_date is None:
             return None
 
         rect = self.visualRect(index)
+
+        # ------------------------------------------------------------------
+        # Hour grid: bar segment hit-test
+        # ------------------------------------------------------------------
+        if hour >= 0:
+            return self._hit_test_bar_segments(pos, rect, index, cell_date, hour)
+
+        # ------------------------------------------------------------------
+        # All Day row: chip hit-test (preserved until Step 9)
+        # ------------------------------------------------------------------
+        items = index.data(_WEEK_ITEMS_ROLE) or []
+        if not items:
+            return None
+
         font = QFont()
         font.setPixelSize(10)
         fm = QFontMetrics(font)
@@ -2946,7 +2974,6 @@ class _WeekTableView(QTableView):
         overflow_height = fm.height() + 2
         available = rect.height() - 4
 
-        # Same overflow calculation as delegate paint
         if len(items) * chip_height <= available:
             max_chips = len(items)
         else:
@@ -2955,12 +2982,64 @@ class _WeekTableView(QTableView):
         click_y = pos.y() - rect.top() - 2
         item_idx = int(click_y / chip_height) if chip_height > 0 else -1
 
-        # Check overflow area
         if len(items) > max_chips and item_idx >= max_chips:
             return ("more", cell_date, items)
 
         if 0 <= item_idx < min(max_chips, len(items)):
             return ("task", items[item_idx], index)
+        return None
+
+    def _hit_test_bar_segments(self, pos, rect, index, cell_date, hour):
+        """Find which bar slice (if any) is under `pos` in an hour-grid cell.
+
+        Mirrors _WeekDelegate._paint_bar_segments geometry: walks the
+        column items, computes segments via calendar_layout, and returns
+        the first item whose visible slice contains the click point.
+        Iteration order matches paint order so the front-most bar wins.
+        """
+        from datetime import datetime as _dt
+
+        from ...core.calendar_layout import (
+            compute_bar_segments,
+            compute_bar_window,
+        )
+
+        column_items = index.data(_WEEK_COLUMN_ITEMS_ROLE) or []
+        if not column_items:
+            return None
+
+        # Click coordinates within the cell
+        click_x = pos.x()
+        click_y = pos.y()
+        if not (rect.left() + 4 <= click_x <= rect.right() - 4):
+            # Outside the bar's horizontal padding — not a hit
+            return None
+
+        cell_minute_start = hour * 60
+        cell_minute_end = (hour + 1) * 60
+        cell_minute_width = cell_minute_end - cell_minute_start
+
+        # Map click y to a minute-of-hour
+        click_fraction = (click_y - rect.top()) / rect.height()
+        click_minute = cell_minute_start + click_fraction * cell_minute_width
+
+        current_time = _dt.now()
+        for item in column_items:
+            window = compute_bar_window(item)
+            if window is None:
+                continue
+            segments = compute_bar_segments(item, window, cell_date, current_time)
+            for seg in segments:
+                if seg.is_all_day or seg.is_marker:
+                    continue
+                # Slice intersection with this cell
+                if seg.end_minute <= cell_minute_start or seg.start_minute >= cell_minute_end:
+                    continue
+                # Click must fall within the segment's full minute range
+                # (not just the cell's slice — clicking anywhere on the
+                # bar's vertical extent counts as hitting the bar).
+                if seg.start_minute <= click_minute <= seg.end_minute:
+                    return ("task", item, index)
         return None
 
     def mousePressEvent(self, a0) -> None:  # noqa: N802
@@ -3014,31 +3093,86 @@ class _WeekTableView(QTableView):
         hit = self._hit_test(a0.pos())
         if hit and hit[0] == "task":
             item = hit[1]
-            parts = [item.reminder]
-            if item.due_time:
-                parts.append(f"Due: {item.due_time.strftime('%I:%M %p').lstrip('0')}")
-            if item.recurrence_type:
-                from ...core.models import format_recurrence
-
-                parts.append(format_recurrence(item))
-            if item.estimated_pomodoros > 0 or item.pomodoro_count > 0:
-                pom = (
-                    f"\U0001f345 {item.pomodoro_count}/{item.estimated_pomodoros}"
-                    if item.estimated_pomodoros
-                    else f"\U0001f345 {item.pomodoro_count}"
-                )
-                parts.append(pom)
-            if item.tags:
-                parts.append(f"Tags: {', '.join(item.tags)}")
-            if item.complete:
-                parts.append("\u2713 Completed")
+            tooltip_text = self._build_bar_tooltip(item)
             from PyQt6.QtWidgets import QToolTip
 
-            QToolTip.showText(a0.globalPosition().toPoint(), "\n".join(parts), self)
+            QToolTip.showText(a0.globalPosition().toPoint(), tooltip_text, self)
         else:
             from PyQt6.QtWidgets import QToolTip
 
             QToolTip.hideText()
+
+    @staticmethod
+    def _build_bar_tooltip(item) -> str:
+        """Build the enriched bar tooltip with state, origin, end, deviation.
+
+        The tooltip is composed of:
+            - Full reminder text (line 1)
+            - Bar window: origin → end (formatted, natural duration)
+            - Lifecycle state (FUTURE / IN_WORK_WINDOW / etc.)
+            - Completion deviation (early/on time/late by N) when complete
+            - Existing fields: recurrence, pomodoros, tags, complete check
+        """
+        from datetime import datetime as _dt
+
+        from ...core.calendar_layout import (
+            BarState,
+            compute_bar_state,
+            compute_bar_window,
+        )
+        from ...core.models import format_duration, format_recurrence
+
+        parts: list[str] = [item.reminder or ""]
+
+        window = compute_bar_window(item)
+        if window is not None:
+            # Bar window in natural format
+            origin_str = window.origin.strftime("%a %b %d %I:%M %p").lstrip("0")
+            end_str = window.end.strftime("%a %b %d %I:%M %p").lstrip("0")
+            parts.append(f"{origin_str} → {end_str}")
+
+            # State + deviation. Use end_of_day-aware as_of for non-today
+            # so the display matches what the bar visually shows. For
+            # tooltip we use real-now since the user is hovering live.
+            current = _dt.now()
+            state = compute_bar_state(item, window, current)
+            state_label = {
+                BarState.FUTURE: "Future",
+                BarState.IN_WORK_WINDOW: "In progress",
+                BarState.DUE_NOW: "Due now",
+                BarState.OVERDUE_ACTIVE: "Overdue",
+                BarState.COMPLETED_EARLY: "Completed early",
+                BarState.COMPLETED_ONTIME: "Completed on time",
+                BarState.COMPLETED_LATE: "Completed late",
+                BarState.COMPLETED_UNKNOWN: "Completed (unknown when)",
+            }.get(state, str(state.value))
+            parts.append(state_label)
+
+            if item.complete and item.completed_at is not None:
+                completed_dt = _dt.fromtimestamp(item.completed_at / 1000)
+                deviation_minutes = int((completed_dt - window.end).total_seconds() / 60)
+                if deviation_minutes < 0:
+                    parts.append(f"Finished {format_duration(-deviation_minutes)} early")
+                elif deviation_minutes > 0:
+                    parts.append(f"Finished {format_duration(deviation_minutes)} late")
+            elif state == BarState.OVERDUE_ACTIVE:
+                # Active overdue: show how much
+                overdue_minutes = int((current - window.end).total_seconds() / 60)
+                if overdue_minutes > 0:
+                    parts.append(f"{format_duration(overdue_minutes)} overdue")
+
+        if item.recurrence_type:
+            parts.append(format_recurrence(item))
+        if item.estimated_pomodoros > 0 or item.pomodoro_count > 0:
+            pom = (
+                f"\U0001f345 {item.pomodoro_count}/{item.estimated_pomodoros}"
+                if item.estimated_pomodoros
+                else f"\U0001f345 {item.pomodoro_count}"
+            )
+            parts.append(pom)
+        if item.tags:
+            parts.append(f"Tags: {', '.join(item.tags)}")
+        return "\n".join(parts)
 
     def mouseDoubleClickEvent(self, a0) -> None:  # noqa: N802
         if a0 is None:
