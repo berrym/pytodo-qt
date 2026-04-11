@@ -3410,6 +3410,131 @@ class _UnscheduledPanel(QFrame):
 
 
 # ---------------------------------------------------------------------------
+# Pinned All Day row container
+# ---------------------------------------------------------------------------
+
+
+class _PinnedWeekContainer(QWidget):
+    """Stacks an all-day _WeekTableView pinned above an hour-grid _WeekTableView.
+
+    Both inner tables share the same _WeekModel and _WeekDelegate. The
+    all-day table hides rows 1-24 (showing only row 0); the hour-grid
+    table hides row 0 (showing only the scrollable hours). Horizontal
+    scroll positions are kept in sync so columns stay aligned.
+
+    The all-day table has fixed height (one row, slightly taller than a
+    normal hour cell to give bars room) and never scrolls vertically.
+    The hour-grid table fills the remaining vertical space and scrolls
+    as before.
+
+    Per spec Q6 / Step 9: this is the structural change that lets all-day
+    bars and Q6 overdue markers stay visible while the user scrolls the
+    hour grid.
+    """
+
+    def __init__(
+        self,
+        model: _WeekModel,
+        delegate: _WeekDelegate,
+        parent: QWidget | None = None,
+        *,
+        all_day_height: int = 64,
+    ) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # All Day pinned table — shows row 0 only
+        self.all_day_table = _WeekTableView()
+        self.all_day_table.setModel(model)
+        self.all_day_table.setItemDelegate(delegate)
+        self.all_day_table.setFixedHeight(all_day_height)
+        # Hide hour rows
+        v_header = self.all_day_table.verticalHeader()
+        if v_header is not None:
+            for source_row in range(1, 25):
+                v_header.hideSection(source_row)
+        # Disable vertical scroll on the pinned row
+        self.all_day_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        layout.addWidget(self.all_day_table)
+
+        # Hour grid table — shows rows 1-24 only
+        self.hour_grid_table = _WeekTableView()
+        self.hour_grid_table.setModel(model)
+        self.hour_grid_table.setItemDelegate(delegate)
+        v_header_h = self.hour_grid_table.verticalHeader()
+        if v_header_h is not None:
+            v_header_h.hideSection(0)
+        layout.addWidget(self.hour_grid_table, 1)
+
+        # Horizontal scroll synchronization
+        # When the hour grid scrolls horizontally, the all-day row follows.
+        # And vice versa, with a re-entry guard to prevent infinite recursion.
+        self._syncing_hscroll = False
+        all_day_hbar = self.all_day_table.horizontalScrollBar()
+        hour_grid_hbar = self.hour_grid_table.horizontalScrollBar()
+        if all_day_hbar is not None and hour_grid_hbar is not None:
+            all_day_hbar.valueChanged.connect(self._on_all_day_hscroll)
+            hour_grid_hbar.valueChanged.connect(self._on_hour_grid_hscroll)
+
+    def _on_all_day_hscroll(self, value: int) -> None:
+        if self._syncing_hscroll:
+            return
+        self._syncing_hscroll = True
+        try:
+            hbar = self.hour_grid_table.horizontalScrollBar()
+            if hbar is not None:
+                hbar.setValue(value)
+        finally:
+            self._syncing_hscroll = False
+
+    def _on_hour_grid_hscroll(self, value: int) -> None:
+        if self._syncing_hscroll:
+            return
+        self._syncing_hscroll = True
+        try:
+            hbar = self.all_day_table.horizontalScrollBar()
+            if hbar is not None:
+                hbar.setValue(value)
+        finally:
+            self._syncing_hscroll = False
+
+    def hide_columns(self, columns: list[int]) -> None:
+        """Hide the same columns in both inner tables (used by day view)."""
+        for col in columns:
+            self.all_day_table.setColumnHidden(col, True)
+            self.hour_grid_table.setColumnHidden(col, True)
+
+    def update_viewports(self) -> None:
+        """Trigger a repaint of both inner tables. Used by the now-tick timer."""
+        for table in (self.all_day_table, self.hour_grid_table):
+            viewport = table.viewport()
+            if viewport is not None:
+                viewport.update()
+
+    def connect_task_signals(
+        self,
+        on_task_clicked,
+        on_task_double_clicked,
+        on_task_right_clicked,
+        on_task_dropped,
+        on_more_clicked,
+    ) -> None:
+        """Wire both inner tables' signals to the same handlers.
+
+        Centralizing the wiring here keeps CalendarViewWidget's setup
+        code from having to know about the two-table internal structure.
+        """
+        for table in (self.all_day_table, self.hour_grid_table):
+            table.task_clicked.connect(on_task_clicked)
+            table.task_double_clicked.connect(on_task_double_clicked)
+            table.task_right_clicked.connect(on_task_right_clicked)
+            table.task_dropped.connect(on_task_dropped)
+            table.more_clicked.connect(on_more_clicked)
+
+
+# ---------------------------------------------------------------------------
 # Main calendar view widget
 # ---------------------------------------------------------------------------
 
@@ -3580,38 +3705,47 @@ class CalendarViewWidget(QWidget):
         # Sub-view stack
         self._sub_stack = QStackedWidget()
 
-        # Day view — single-column version of week view with larger slots
+        # Day view — single-column version of week view with pinned All Day row
         self._day_model = _WeekModel()
         self._day_delegate = _WeekDelegate()
-        self._day_table = _WeekTableView()
-        self._day_table.setModel(self._day_model)
-        self._day_table.setItemDelegate(self._day_delegate)
-        self._day_table.task_clicked.connect(self._on_task_clicked)
-        self._day_table.task_double_clicked.connect(self._on_task_double_clicked)
-        self._day_table.task_right_clicked.connect(self._on_task_right_clicked)
-        self._day_table.task_dropped.connect(self._on_week_task_dropped)
-        self._day_table.more_clicked.connect(self._on_more_clicked)
+        self._day_container = _PinnedWeekContainer(
+            self._day_model, self._day_delegate, all_day_height=80
+        )
         # Larger slots for day view — more room for detail
-        v_header = self._day_table.verticalHeader()
-        if v_header:
-            v_header.setDefaultSectionSize(80)
-        # Hide columns 1-6, show only column 0 (the single day)
-        for col in range(1, 7):
-            self._day_table.setColumnHidden(col, True)
-        self._sub_stack.addWidget(self._day_table)  # 0
+        for table in (self._day_container.all_day_table, self._day_container.hour_grid_table):
+            v_header = table.verticalHeader()
+            if v_header:
+                v_header.setDefaultSectionSize(80)
+        # Hide columns 1-6 in both inner tables, show only column 0 (the single day)
+        self._day_container.hide_columns(list(range(1, 7)))
+        self._day_container.connect_task_signals(
+            self._on_task_clicked,
+            self._on_task_double_clicked,
+            self._on_task_right_clicked,
+            self._on_week_task_dropped,
+            self._on_more_clicked,
+        )
+        # Backward-compat references — code that previously did
+        # self._day_table.scrollTo(...) etc. now targets the hour-grid
+        # table inside the container.
+        self._day_table = self._day_container.hour_grid_table
+        self._sub_stack.addWidget(self._day_container)  # 0
 
-        # Week view — QTableView with hour rows and day columns
+        # Week view — pinned All Day row over scrollable hour grid
         self._week_model = _WeekModel()
         self._week_delegate = _WeekDelegate()
-        self._week_table = _WeekTableView()
-        self._week_table.setModel(self._week_model)
-        self._week_table.setItemDelegate(self._week_delegate)
-        self._week_table.task_clicked.connect(self._on_task_clicked)
-        self._week_table.task_double_clicked.connect(self._on_task_double_clicked)
-        self._week_table.task_right_clicked.connect(self._on_task_right_clicked)
-        self._week_table.task_dropped.connect(self._on_week_task_dropped)
-        self._week_table.more_clicked.connect(self._on_more_clicked)
-        self._sub_stack.addWidget(self._week_table)  # 1
+        self._week_container = _PinnedWeekContainer(
+            self._week_model, self._week_delegate, all_day_height=64
+        )
+        self._week_container.connect_task_signals(
+            self._on_task_clicked,
+            self._on_task_double_clicked,
+            self._on_task_right_clicked,
+            self._on_week_task_dropped,
+            self._on_more_clicked,
+        )
+        self._week_table = self._week_container.hour_grid_table
+        self._sub_stack.addWidget(self._week_container)  # 1
 
         # Now-aware repaint timer: every 30 seconds, ask both day and week
         # tables to repaint so the now line creeps and spans shrink as time
@@ -3999,12 +4133,16 @@ class CalendarViewWidget(QWidget):
     # --- Task interaction ---
 
     def _tick_now_indicators(self) -> None:
-        """Repaint the day/week table viewports so now-line + spans creep
-        as time passes. Called every 30 seconds by self._now_timer."""
-        for table in (self._day_table, self._week_table):
-            viewport = table.viewport()
-            if viewport is not None:
-                viewport.update()
+        """Repaint the day/week table viewports so the now line creeps and
+        DUE_NOW/OVERDUE_ACTIVE bars advance their visual treatment as time
+        passes. Called every 30 seconds by self._now_timer.
+
+        Updates BOTH inner tables of each pinned container (the All Day
+        row and the hour grid) so all-day bars and Q6 overdue markers
+        also refresh on each tick.
+        """
+        self._day_container.update_viewports()
+        self._week_container.update_viewports()
 
     def _on_task_clicked(self, item_id: UUID) -> None:
         self._selected_item_id = item_id
@@ -4013,8 +4151,11 @@ class CalendarViewWidget(QWidget):
         self._day_delegate.set_selected(item_id)
         self._timeline_tasks_widget.set_selected(item_id)
         self._cal_table.viewport().update()  # type: ignore[union-attr]
-        self._week_table.viewport().update()  # type: ignore[union-attr]
-        self._day_table.viewport().update()  # type: ignore[union-attr]
+        # Both inner tables of each pinned container must repaint so
+        # the selection highlight appears regardless of whether the
+        # selected task is an all-day bar or an hour-grid bar.
+        self._week_container.update_viewports()
+        self._day_container.update_viewports()
 
     def _on_task_double_clicked(self, item_id: UUID) -> None:
         self._selected_item_id = item_id

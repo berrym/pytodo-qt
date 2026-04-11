@@ -1023,6 +1023,223 @@ class TestWeekViewBarHitTest:
         assert hit[1].id == item.id
 
 
+class TestPinnedAllDayRow:
+    """Step 9: the pinned All Day row container stacks two _WeekTableView
+    instances over the same _WeekModel with filtered row visibility and
+    synchronized horizontal scroll."""
+
+    @pytest.fixture()
+    def container(self, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _PinnedWeekContainer,
+            _WeekDelegate,
+            _WeekModel,
+        )
+
+        model = _WeekModel()
+        delegate = _WeekDelegate()
+        c = _PinnedWeekContainer(model, delegate)
+        qtbot.addWidget(c)
+        c.resize(800, 600)
+        c.show()
+        return c, model
+
+    def test_container_has_two_inner_tables(self, container):
+        c, _model = container
+        assert c.all_day_table is not None
+        assert c.hour_grid_table is not None
+        assert c.all_day_table is not c.hour_grid_table
+
+    def test_both_tables_share_the_same_model(self, container):
+        c, model = container
+        assert c.all_day_table.model() is model
+        assert c.hour_grid_table.model() is model
+
+    def test_all_day_table_has_fixed_height(self, container):
+        c, _model = container
+        # Height is constrained so the pinned row doesn't stretch
+        assert c.all_day_table.maximumHeight() == c.all_day_table.minimumHeight()
+        assert c.all_day_table.maximumHeight() > 0
+
+    def test_all_day_table_hides_hour_rows(self, container):
+        c, _model = container
+        v_header = c.all_day_table.verticalHeader()
+        assert v_header is not None
+        # Row 0 is visible, rows 1-24 are hidden
+        assert not v_header.isSectionHidden(0)
+        for row in range(1, 25):
+            assert v_header.isSectionHidden(row), f"row {row} should be hidden"
+
+    def test_hour_grid_table_hides_row_0(self, container):
+        c, _model = container
+        v_header = c.hour_grid_table.verticalHeader()
+        assert v_header is not None
+        # Row 0 (All Day) is hidden, rows 1-24 are visible
+        assert v_header.isSectionHidden(0)
+        for row in range(1, 25):
+            assert not v_header.isSectionHidden(row), f"row {row} should be visible"
+
+    def test_all_day_vertical_scrollbar_disabled(self, container):
+        c, _model = container
+        from PyQt6.QtCore import Qt
+
+        assert c.all_day_table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+
+    def test_horizontal_scroll_handler_hour_to_all_day(self, container):
+        """The hour-grid→all-day scroll handler forwards the value.
+
+        Test the handler directly rather than via setValue() because
+        the test scrollbars have no range (Stretch mode, all columns
+        fit in the viewport), so setValue() would clamp to 0.
+        """
+        c, _model = container
+        other = c.all_day_table.horizontalScrollBar()
+        if other is None:
+            pytest.skip("no horizontal scrollbar on this platform")
+        # Manually extend the all-day scrollbar range so setValue has effect
+        other.setRange(0, 200)
+        c._on_hour_grid_hscroll(50)
+        assert other.value() == 50
+
+    def test_horizontal_scroll_handler_all_day_to_hour(self, container):
+        """The all-day→hour-grid scroll handler forwards the value."""
+        c, _model = container
+        other = c.hour_grid_table.horizontalScrollBar()
+        if other is None:
+            pytest.skip("no horizontal scrollbar on this platform")
+        other.setRange(0, 200)
+        c._on_all_day_hscroll(75)
+        assert other.value() == 75
+
+    def test_horizontal_scroll_reentry_guard(self, container):
+        """Setting the `_syncing_hscroll` flag prevents handler recursion."""
+        c, _model = container
+        # Simulate the flag already set (as if we're mid-sync)
+        c._syncing_hscroll = True
+        hbar_ad = c.all_day_table.horizontalScrollBar()
+        hbar_hg = c.hour_grid_table.horizontalScrollBar()
+        if hbar_ad is None or hbar_hg is None:
+            pytest.skip("no horizontal scrollbars on this platform")
+        hbar_ad.setRange(0, 200)
+        hbar_hg.setRange(0, 200)
+        hbar_ad.setValue(10)
+        hbar_hg.setValue(20)
+        # Handler called with the guard set should short-circuit
+        c._on_all_day_hscroll(99)
+        c._on_hour_grid_hscroll(99)
+        # Neither value should have been forwarded
+        assert hbar_hg.value() == 20
+        assert hbar_ad.value() == 10
+        c._syncing_hscroll = False  # reset for cleanup
+
+    def test_hide_columns_affects_both_tables(self, container):
+        """hide_columns() on the container hides the same columns on both
+        inner tables — used by the day view to show only column 0."""
+        c, _model = container
+        c.hide_columns([1, 2, 3, 4, 5, 6])
+        for col in range(1, 7):
+            assert c.all_day_table.isColumnHidden(col)
+            assert c.hour_grid_table.isColumnHidden(col)
+        # Column 0 stays visible
+        assert not c.all_day_table.isColumnHidden(0)
+        assert not c.hour_grid_table.isColumnHidden(0)
+
+    def test_update_viewports_no_crash(self, container):
+        """update_viewports() triggers repaints on both inner tables
+        without raising — the path called by the 30s now-tick timer."""
+        c, _model = container
+        c.update_viewports()  # should not raise
+
+    def test_model_updates_propagate_to_both_tables(self, container):
+        """Setting items on the shared model is visible through both inner
+        tables because they share the model directly."""
+        from datetime import time
+
+        c, model = container
+        today = date.today()
+        all_day_item = create_todo_item("All day")
+        all_day_item.due_date = today
+        all_day_item.due_time = None
+
+        hour_item = create_todo_item("Hour task")
+        hour_item.due_date = today
+        hour_item.due_time = time(14, 0)
+        hour_item.estimated_minutes = 60
+
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+        model.set_items({today: [all_day_item, hour_item]})
+
+        # Both tables now report the same column items via the new role
+        from pytodo_qt.gui.widgets.calendar_view import _WEEK_COLUMN_ITEMS_ROLE
+
+        all_day_items = c.all_day_table.model().index(0, 0).data(_WEEK_COLUMN_ITEMS_ROLE)
+        hour_grid_items = c.hour_grid_table.model().index(15, 0).data(_WEEK_COLUMN_ITEMS_ROLE)
+        assert all_day_items is not None
+        assert hour_grid_items is not None
+        # Both see the full column (row-independent role)
+        assert len(all_day_items) == 2
+        assert len(hour_grid_items) == 2
+
+
+class TestCalendarWidgetPinnedContainerIntegration:
+    """Step 9: CalendarViewWidget uses _PinnedWeekContainer for week and day views."""
+
+    def test_week_container_exists(self, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import (
+            CalendarViewWidget,
+            _PinnedWeekContainer,
+        )
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+        assert hasattr(cal, "_week_container")
+        assert isinstance(cal._week_container, _PinnedWeekContainer)
+
+    def test_day_container_exists(self, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import (
+            CalendarViewWidget,
+            _PinnedWeekContainer,
+        )
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+        assert hasattr(cal, "_day_container")
+        assert isinstance(cal._day_container, _PinnedWeekContainer)
+
+    def test_week_table_points_to_hour_grid_table(self, qtbot):
+        """_week_table backward-compat alias still resolves to a _WeekTableView —
+        the hour grid table inside the container. Code that does
+        self._week_table.scrollTo(...) etc. still works."""
+        from pytodo_qt.gui.widgets.calendar_view import (
+            CalendarViewWidget,
+            _WeekTableView,
+        )
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+        assert isinstance(cal._week_table, _WeekTableView)
+        assert cal._week_table is cal._week_container.hour_grid_table
+
+    def test_day_view_hides_non_first_columns_in_both_tables(self, qtbot):
+        """Day view shows only column 0 in both the all-day row and the
+        hour grid."""
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+        for col in range(1, 7):
+            assert cal._day_container.all_day_table.isColumnHidden(col)
+            assert cal._day_container.hour_grid_table.isColumnHidden(col)
+
+    def test_tick_now_indicators_updates_pinned_rows(self, qtbot):
+        """The 30s tick updates both inner tables of both containers."""
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+        cal._tick_now_indicators()  # should not crash
+
+
 class TestWeekViewBarTooltip:
     """Step 8: tooltip enrichment with bar window, state, and deviation."""
 
