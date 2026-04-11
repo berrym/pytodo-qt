@@ -131,12 +131,154 @@ class TestComputeBarWindowWorkback:
         assert window is not None
         assert window.kind == WindowKind.DEADLINE_FROM_CREATED
 
+    def test_workback_pomodoro_fields(self):
+        """A task with estimated_pomodoros and no estimated_minutes should
+        still get a WORKBACK window, using estimated_pomodoros * 25 as the
+        duration (the global default work_duration).
+
+        This is the fix for pomodoro-style recurring tasks that were
+        previously falling through to DEADLINE_FROM_CREATED and rendering
+        as multi-hour bars because estimated_minutes was 0.
+        """
+        item = _make_item(
+            due_date=date(2026, 4, 10),
+            due_time=time(15, 0),
+            estimated_minutes=0,
+            estimated_pomodoros=2,
+            # work_duration=0 means "use global default" (25 min)
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        assert window.kind == WindowKind.WORKBACK
+        assert window.end == datetime(2026, 4, 10, 15, 0)
+        # 2 pomodoros * 25 min = 50 minutes
+        assert window.origin == datetime(2026, 4, 10, 14, 10)
+
+    def test_workback_per_task_work_duration(self):
+        """Per-task work_duration overrides the 25-minute default."""
+        item = _make_item(
+            due_date=date(2026, 4, 10),
+            due_time=time(15, 0),
+            estimated_minutes=0,
+            estimated_pomodoros=2,
+            work_duration=50,  # per-task override
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        assert window.kind == WindowKind.WORKBACK
+        # 2 pomodoros * 50 min = 100 minutes
+        assert window.origin == datetime(2026, 4, 10, 13, 20)
+
+    def test_per_task_work_duration_10_min(self):
+        """A task with custom per-task `work_duration=10` uses 10 min
+        per pomodoro, NOT the global default. This is the user's
+        specific question: 'if pomodoro time was set to 10 instead of
+        the current 25 default would it correctly render using 10?'"""
+        item = _make_item(
+            due_date=date(2026, 4, 10),
+            due_time=time(15, 0),
+            estimated_minutes=0,
+            estimated_pomodoros=3,
+            work_duration=10,  # per-task: 10 min per pomodoro
+        )
+        # Pass an explicit default of 25 to prove the per-task wins
+        window = compute_bar_window(item, default_work_minutes=25)
+        assert window is not None
+        assert window.kind == WindowKind.WORKBACK
+        # 3 pomodoros * 10 min per-task = 30 minutes
+        assert window.origin == datetime(2026, 4, 10, 14, 30)
+
+    def test_no_per_task_uses_global_default_from_config(self):
+        """A task without per-task `work_duration` uses the global
+        default. The user's other question: 'pomodoros without a custom
+        per-task time always use whatever is currently set as default
+        in settings by user, is that correct?' YES.
+        """
+        item = _make_item(
+            due_date=date(2026, 4, 10),
+            due_time=time(15, 0),
+            estimated_minutes=0,
+            estimated_pomodoros=3,
+            work_duration=0,  # no per-task override
+        )
+        # User has set their global default to 10 min in preferences
+        window = compute_bar_window(item, default_work_minutes=10)
+        assert window is not None
+        assert window.kind == WindowKind.WORKBACK
+        # 3 pomodoros * 10 min global default = 30 minutes
+        assert window.origin == datetime(2026, 4, 10, 14, 30)
+
+        # Same task, but the user changes their default to 50 min
+        window = compute_bar_window(item, default_work_minutes=50)
+        assert window is not None
+        # 3 pomodoros * 50 min global default = 150 minutes
+        assert window.origin == datetime(2026, 4, 10, 12, 30)
+
+    def test_get_default_work_minutes_reads_config(self):
+        """get_default_work_minutes() returns a positive integer
+        regardless of config state. The function gracefully degrades
+        to 25 if config can't be loaded."""
+        from pytodo_qt.core.calendar_layout import get_default_work_minutes
+
+        result = get_default_work_minutes()
+        assert isinstance(result, int)
+        assert result >= 1
+
+    def test_workback_alternative_fields_take_max(self):
+        """When BOTH estimated_minutes and estimated_pomodoros are set,
+        they're treated as ALTERNATIVE expressions of the same duration
+        (not additive). The max wins.
+
+        This fixes the "one small bar, one large bar for the same 25-min
+        task" visual bug — it occurred when the AddTodo dialog populated
+        both fields with equivalent values, and the old summing logic
+        rendered a 50-minute bar instead of 25.
+        """
+        # 25 min via direct field, 25 min via 1 pomodoro (default 25)
+        # → effective duration is max(25, 25) = 25 min, not 50
+        item = _make_item(
+            due_date=date(2026, 4, 10),
+            due_time=time(15, 0),
+            estimated_minutes=25,
+            estimated_pomodoros=1,
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        assert window.kind == WindowKind.WORKBACK
+        # 25 minutes total — origin is 14:35, NOT 14:10
+        assert window.origin == datetime(2026, 4, 10, 14, 35)
+
+    def test_workback_pomodoro_dominates_when_larger(self):
+        """When pomodoros produce a longer duration than estimated_minutes,
+        the pomodoro side wins (max of the two interpretations)."""
+        # 4 pomodoros * 25 = 100 min, vs 10 min direct → 100 wins
+        item = _make_item(
+            due_date=date(2026, 4, 10),
+            due_time=time(15, 0),
+            estimated_minutes=10,
+            estimated_pomodoros=4,
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        assert window.kind == WindowKind.WORKBACK
+        # 100 minutes → origin at 13:20
+        assert window.origin == datetime(2026, 4, 10, 13, 20)
+
 
 class TestComputeBarWindowDeadlineFromCreated:
-    """Q1 Rule 3: due_time only (no estimate, no end) → DEADLINE_FROM_CREATED."""
+    """Q1 Rule 3: due_time only (no estimate, no end) → DEADLINE_FROM_CREATED.
 
-    def test_deadline_only_basic(self):
-        created = datetime(2026, 4, 8, 10, 0)
+    Refinement (2026-04-10): origin is clamped to max(created_at, end - 1h).
+    Without this clamp, a recurring task that's been around for days would
+    produce a bar spanning many hours, dominating the hour grid. The clamp
+    ensures Rule 3 bars are compact 1-hour markers unless the task was
+    created within the last hour before its due time.
+    """
+
+    def test_deadline_recent_creation_unclamped(self):
+        """A task created WITHIN the last hour before its due time keeps
+        its real creation-to-due span — the clamp doesn't kick in."""
+        created = datetime(2026, 4, 10, 14, 30)  # 30 min before due
         item = _make_item(
             due_date=date(2026, 4, 10),
             due_time=time(15, 0),
@@ -146,8 +288,24 @@ class TestComputeBarWindowDeadlineFromCreated:
         assert window is not None
         assert window.kind == WindowKind.DEADLINE_FROM_CREATED
         assert window.end == datetime(2026, 4, 10, 15, 0)
-        # Within ±1 second of the created datetime (ms→s conversion drift)
         assert abs((window.origin - created).total_seconds()) < 1
+
+    def test_deadline_old_creation_clamped_to_1_hour(self):
+        """A task created days before its due time is clamped: origin
+        becomes due_time - 1h, so the bar is a compact 1-hour marker.
+        This is the fix for 'recurring task bar spans every hour cell'."""
+        created = datetime(2026, 4, 8, 10, 0)  # 2 days before due
+        item = _make_item(
+            due_date=date(2026, 4, 10),
+            due_time=time(15, 0),
+            created_at=_ms(created),
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        assert window.kind == WindowKind.DEADLINE_FROM_CREATED
+        assert window.end == datetime(2026, 4, 10, 15, 0)
+        # Clamped to 1 hour before due_time
+        assert window.origin == datetime(2026, 4, 10, 14, 0)
 
     def test_deadline_with_created_after_due_falls_through(self):
         """Sanitization: created_at after due_time → already-overdue at
@@ -444,10 +602,11 @@ class TestComputeBarSegmentsCrossDayClipping:
         assert seg.clipped_top is False
         assert seg.clipped_bottom is True
 
-    def test_long_deadline_from_created_clipped_both_ends(self):
-        """A deadline 3 days out viewed on the middle day shows a full-column
-        bar clipped at both edges."""
-        created = datetime(2026, 4, 8, 10, 0)
+    def test_deadline_only_clamped_to_one_hour_single_cell(self):
+        """After the Rule 3 clamp, a deadline-only task (no estimate)
+        produces a compact 1-hour bar on the due day and NOTHING on
+        earlier days — no multi-day bars from ancient created_at."""
+        created = datetime(2026, 4, 8, 10, 0)  # 3 days before due
         item = _make_item(
             due_date=date(2026, 4, 11),
             due_time=time(10, 0),
@@ -455,13 +614,30 @@ class TestComputeBarSegmentsCrossDayClipping:
         )
         window = compute_bar_window(item)
         assert window is not None
-        segments = compute_bar_segments(item, window, date(2026, 4, 9), datetime(2026, 4, 9, 12, 0))
-        assert len(segments) == 1
-        seg = segments[0]
-        assert seg.start_minute == 0
-        assert seg.end_minute == 1440
-        assert seg.clipped_top is True
-        assert seg.clipped_bottom is True
+        # Clamped: origin is 1 hour before due, all on the same day
+        assert window.origin == datetime(2026, 4, 11, 9, 0)
+        assert window.end == datetime(2026, 4, 11, 10, 0)
+
+        # Viewing Apr 9 (2 days before due) — no segment, because the
+        # bar no longer spans multiple days.
+        segments_middle = compute_bar_segments(
+            item, window, date(2026, 4, 9), datetime(2026, 4, 9, 12, 0)
+        )
+        # Case: viewing a day after end.date would be Q6 marker path;
+        # viewing a day before origin is Case A (empty list). Apr 9
+        # is before origin date (Apr 11), so empty.
+        assert segments_middle == []
+
+        # Viewing Apr 11 — one compact slice in hour 9 (9:00-10:00)
+        segments_due = compute_bar_segments(
+            item, window, date(2026, 4, 11), datetime(2026, 4, 11, 8, 0)
+        )
+        assert len(segments_due) == 1
+        seg = segments_due[0]
+        assert seg.start_minute == 540  # 9:00
+        assert seg.end_minute == 600  # 10:00
+        assert seg.clipped_top is False
+        assert seg.clipped_bottom is False
 
     def test_viewing_day_before_origin_empty(self):
         item = _make_item(

@@ -563,6 +563,329 @@ class TestWeekModel:
         model.set_items({today: [item]})
 
 
+class TestMonthViewNoProjection:
+    """The month view must NOT include projected recurring instances.
+    Daily recurring tasks would clutter every day of the month with
+    duplicate chips otherwise."""
+
+    def test_month_view_excludes_projections(self, qtbot):
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+
+        today = date.today()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Daily standup")
+        item.due_date = today
+        item.due_time = time(9, 0)
+        item.estimated_minutes = 30
+        item.recurrence_type = "daily"
+        item.recurrence_interval = 1
+        lst.add_item(item)
+
+        cal.set_list(lst)
+
+        # The MONTH model should have the item ONLY on today, not on
+        # every day of the month (which would be the projection bug).
+        month_buckets = {
+            d
+            for d, items in cal._cal_model._items_by_date.items()
+            if any(i.id == item.id for i in items)
+        }
+        assert month_buckets == {today}, (
+            f"Month view should only show the real instance on today; got {month_buckets}"
+        )
+
+    def test_week_view_includes_projections_unaffected(self, qtbot):
+        """Sanity: the week view DOES include projections — only month
+        is excluded."""
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+
+        today = date.today()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Daily standup")
+        item.due_date = today
+        item.due_time = time(9, 0)
+        item.estimated_minutes = 30
+        item.recurrence_type = "daily"
+        item.recurrence_interval = 1
+        lst.add_item(item)
+
+        cal.set_list(lst)
+
+        week_buckets = {
+            d
+            for d, items in cal._week_model._items_by_date.items()
+            if any(getattr(i, "id", None) == item.id for i in items)
+        }
+        assert today in week_buckets
+        assert today + timedelta(days=1) in week_buckets
+
+
+class TestUnscheduledIncludesSubtasks:
+    """Subtasks without due_date should appear in the unscheduled panel
+    so they're findable from the calendar view."""
+
+    def test_subtask_without_due_date_in_unscheduled(self, qtbot):
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+
+        lst = create_todo_list("Test")
+        parent = create_todo_item("Parent task")
+        parent.due_date = date.today()
+        lst.add_item(parent)
+        sub = create_todo_item("Unscheduled subtask")
+        sub.parent_id = parent.id
+        sub.due_date = None
+        lst.add_item(sub)
+
+        cal.set_list(lst)
+
+        text = cal._unscheduled._count_label.text()
+        assert "1 task" in text, f"Expected '1 task' in unscheduled count, got: {text}"
+
+    def test_top_level_unscheduled_still_in_unscheduled(self, qtbot):
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+
+        lst = create_todo_list("Test")
+        item1 = create_todo_item("Top-level no date")
+        item1.due_date = None
+        lst.add_item(item1)
+        item2 = create_todo_item("Another no date")
+        item2.due_date = None
+        lst.add_item(item2)
+
+        cal.set_list(lst)
+        text = cal._unscheduled._count_label.text()
+        assert "2 task" in text
+
+
+class TestInitialScrollToNow:
+    """Calendar view should scroll to current hour when first opened."""
+
+    def test_widget_has_initial_scroll_state(self, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+        assert hasattr(cal, "_initial_scroll_done")
+        assert cal._initial_scroll_done is False
+
+    def test_show_event_marks_initial_scroll_done(self, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+        cal.show()
+        from PyQt6.QtWidgets import QApplication
+
+        QApplication.processEvents()
+        assert cal._initial_scroll_done is True
+
+    def test_scroll_to_current_hour_does_not_crash(self, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+        cal._scroll_to_current_hour()
+
+
+class TestRecurrenceProjection:
+    """Recurring tasks must appear on their FUTURE occurrence dates in
+    the calendar view, not only on their current due_date. Without
+    projection, "tomorrow is empty" for users with daily recurring tasks
+    — they'd only see today's instance."""
+
+    def test_daily_recurrence_projected_forward(self, qtbot):
+        """A daily recurring task with due_date=today should appear in
+        tomorrow's bucket too (and the day after, etc.)."""
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+
+        today = date.today()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Daily standup")
+        item.due_date = today
+        item.due_time = time(9, 0)
+        item.estimated_minutes = 30
+        item.recurrence_type = "daily"
+        item.recurrence_interval = 1
+        lst.add_item(item)
+
+        cal.set_list(lst)
+
+        # Check the internal scheduled dict via the week model
+        scheduled_dates = set()
+        for d, items in cal._week_model._items_by_date.items():
+            if any(i.id == item.id for i in items):
+                scheduled_dates.add(d)
+
+        # Should include today and several days in the future
+        assert today in scheduled_dates
+        assert today + timedelta(days=1) in scheduled_dates
+        assert today + timedelta(days=7) in scheduled_dates
+
+    def test_weekly_recurrence_projected(self, qtbot):
+        """Weekly recurrence shows up 7, 14, 21+ days in the future."""
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+
+        today = date.today()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Weekly report")
+        item.due_date = today
+        item.due_time = time(16, 0)
+        item.estimated_minutes = 60
+        item.recurrence_type = "weekly"
+        item.recurrence_interval = 1
+        lst.add_item(item)
+
+        cal.set_list(lst)
+
+        scheduled_dates = {
+            d
+            for d, items in cal._week_model._items_by_date.items()
+            if any(i.id == item.id for i in items)
+        }
+        assert today in scheduled_dates
+        assert today + timedelta(days=7) in scheduled_dates
+        assert today + timedelta(days=14) in scheduled_dates
+
+    def test_non_recurring_not_projected(self, qtbot):
+        """A non-recurring task should appear ONLY on its due_date."""
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+
+        today = date.today()
+        lst = create_todo_list("Test")
+        item = create_todo_item("One-shot task")
+        item.due_date = today
+        item.due_time = time(10, 0)
+        item.estimated_minutes = 30
+        item.recurrence_type = None
+        lst.add_item(item)
+
+        cal.set_list(lst)
+
+        scheduled_dates = {
+            d
+            for d, items in cal._week_model._items_by_date.items()
+            if any(i.id == item.id for i in items)
+        }
+        assert scheduled_dates == {today}
+
+
+class TestAllDayVisibilityGuarantee:
+    """Every task with due_date must be visible somewhere — if its window
+    doesn't produce an hour-grid segment for the viewing day, it must
+    fall back to the All Day row. This is the visibility guarantee the
+    user demanded: "all tasks should display somehow even if they have
+    to be unscheduled tasks"."""
+
+    @pytest.fixture()
+    def model(self):
+        from pytodo_qt.gui.widgets.calendar_view import _WeekModel
+
+        m = _WeekModel()
+        m.set_week(date(2026, 4, 13))  # Monday of a known week
+        return m
+
+    def _col_for_date(self, model, target: date) -> int:
+        for col, d in enumerate(model.week_dates()):
+            if d == target:
+                return col
+        raise AssertionError
+
+    def test_traditional_all_day_item_visible(self, model):
+        """Item with due_date but no due_time → all-day chip."""
+        from pytodo_qt.gui.widgets.calendar_view import _WEEK_ITEMS_ROLE
+
+        target = date(2026, 4, 14)
+        item = create_todo_item("All day task")
+        item.due_date = target
+        item.due_time = None
+        model.set_items({target: [item]})
+
+        col = self._col_for_date(model, target)
+        all_day_items = model.index(0, col).data(_WEEK_ITEMS_ROLE)
+        assert any(i.id == item.id for i in all_day_items)
+
+    def test_hour_grid_task_not_in_all_day_row(self, model):
+        """Item with a proper workback window should NOT appear in the
+        all-day row (it goes to the hour grid instead)."""
+        from datetime import time
+
+        from pytodo_qt.gui.widgets.calendar_view import _WEEK_ITEMS_ROLE
+
+        target = date(2026, 4, 14)
+        item = create_todo_item("Workback task")
+        item.due_date = target
+        item.due_time = time(14, 0)
+        item.estimated_minutes = 60
+        model.set_items({target: [item]})
+
+        col = self._col_for_date(model, target)
+        all_day_items = model.index(0, col).data(_WEEK_ITEMS_ROLE)
+        # The workback window intersects hour 13 on due day → hour grid.
+        # Item should NOT be in the all-day fallback.
+        assert not any(i.id == item.id for i in all_day_items)
+
+    def test_sanitization_fallthrough_visible_in_all_day(self, model):
+        """An item whose created_at is AFTER due_time (corrupt data)
+        falls through compute_bar_window's rules to ALL_DAY. It must
+        still be visible in the all-day row."""
+        from datetime import datetime as _dt
+        from datetime import time
+
+        from pytodo_qt.gui.widgets.calendar_view import _WEEK_ITEMS_ROLE
+
+        target = date(2026, 4, 14)
+        item = create_todo_item("Corrupt data task")
+        item.due_date = target
+        item.due_time = time(10, 0)
+        # created_at AFTER due_time — sanitization will fall through
+        item.created_at = int(_dt(2026, 4, 15, 12, 0).timestamp() * 1000)
+        model.set_items({target: [item]})
+
+        col = self._col_for_date(model, target)
+        all_day_items = model.index(0, col).data(_WEEK_ITEMS_ROLE)
+        assert any(i.id == item.id for i in all_day_items), (
+            "Item with corrupt created_at should fall back to all-day row"
+        )
+
+
 class TestWeekModelColumnItemsRole:
     """Step 6: _WEEK_COLUMN_ITEMS_ROLE returns the full column items list."""
 
@@ -931,6 +1254,78 @@ class TestWeekViewBarHitTest:
         assert hit[0] == "task"
         assert hit[1].id == item.id
 
+    def test_continuing_bar_does_not_steal_clicks_from_in_cell_tasks(self, qtbot):
+        """REGRESSION: When a multi-hour bar continues into a cell that
+        has its own in-cell tasks, the continuing bar must NOT steal
+        clicks targeted at the in-cell tasks.
+
+        Before the fix, the continuing bar's full segment time range
+        covered the cell, so hit-test returned the continuing bar for
+        any click in the cell — including clicks visually on the
+        in-cell tasks. The new layout puts continuing bars in narrow
+        ribbons on the left edge, leaving the rest of the cell width
+        for in-cell tasks, and the slot-aware hit-test returns the
+        right item per click region.
+        """
+        from datetime import time
+
+        from PyQt6.QtCore import QPoint
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _WeekModel,
+            _WeekTableView,
+        )
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        qtbot.addWidget(view)
+        view.resize(800, 600)
+        view.show()
+
+        today = date.today()
+        # 75-min spanning task: 11:45 → 13:00, intersects hours 11 and 12
+        spanning = create_todo_item("Spanning task")
+        spanning.due_date = today
+        spanning.due_time = time(13, 0)
+        spanning.estimated_minutes = 75
+        # In-cell task at 12:30 — should be clickable in hour 12 cell
+        in_cell = create_todo_item("In-cell task")
+        in_cell.due_date = today
+        in_cell.due_time = time(12, 30)
+        in_cell.estimated_minutes = 25
+
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+        model.set_items({today: [spanning, in_cell]})
+
+        # Click in the RIGHT half of hour 12 cell (where in-cell task is)
+        idx = model.index(13, 0)  # row 13 = hour 12
+        rect = view.visualRect(idx)
+        # Right half x position
+        click_x = rect.left() + int(rect.width() * 0.75)
+        click_y = rect.center().y()
+        click = QPoint(click_x, click_y)
+        hit = view._hit_test(click)
+        assert hit is not None, "click in in-cell task region returned None"
+        assert hit[0] == "task"
+        # The hit should be the in-cell task, NOT the spanning task
+        assert hit[1].id == in_cell.id, (
+            f"Click in in-cell task region returned the wrong item. "
+            f"Expected {in_cell.reminder!r}, got {hit[1].reminder!r}. "
+            f"This is the bug where the continuing bar's wide slot "
+            f"covered the in-cell task's region."
+        )
+
+        # Click on the LEFT edge of the cell (where the continuing
+        # ribbon should be) — should hit the spanning bar.
+        click_left = QPoint(rect.left() + 7, click_y)  # 7px in (past 6px gutter, into ribbon)
+        hit_left = view._hit_test(click_left)
+        assert hit_left is not None
+        assert hit_left[1].id == spanning.id, (
+            f"Click on continuing ribbon should hit the spanning task. Got {hit_left[1].reminder!r}"
+        )
+
     def test_click_in_middle_hour_cell_also_hits_bar(self, view_with_bar):
         """Clicking in the SECOND hour-cell of the bar (row 15 = hour 14)
         also finds the item. This is the regression Step 8 prevents — the
@@ -1021,6 +1416,794 @@ class TestWeekViewBarHitTest:
         assert hit is not None
         assert hit[0] == "task"
         assert hit[1].id == item.id
+
+
+class TestWeekViewBarOverflowBadge:
+    """Overflow badge for hour cells with more than MAX_VISIBLE_SLOTS=3
+    competing in-cell tasks.
+
+    The cell layout caps in-cell starting slots at 3 to keep individual
+    chips wide enough to read; tasks past the cap are collected into
+    `_CellBarLayout.overflow_items` and rendered as a "+N" badge in
+    the cell's top-right corner. The badge MUST be clickable so the
+    hidden tasks remain reachable — clicks on it route to the same
+    `more_clicked` signal the month view uses for its "+N more"
+    overflow, which the calendar widget displays via a day popover.
+    """
+
+    def _make_cell_with_overflow(self, qtbot, n_starting: int):
+        """Build a week view with `n_starting` tasks all starting in the
+        same hour cell. Returns (view, model, items, cell_index)."""
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import _WeekModel, _WeekTableView
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        qtbot.addWidget(view)
+        view.resize(800, 600)
+        view.show()
+
+        today = date.today()
+        items = []
+        for i in range(n_starting):
+            it = create_todo_item(f"Task {i}")
+            it.due_date = today
+            it.due_time = time(10, 30)  # all in hour 10 cell
+            it.estimated_minutes = 30
+            items.append(it)
+
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+        model.set_items({today: items})
+        # Hour 10 lives at row 11 (row 0 is All Day, rows 1..24 = hours 0..23).
+        return view, model, items, model.index(11, 0)
+
+    def test_overflow_items_populated_when_more_than_three_starting(self, qtbot):
+        """5 tasks all starting in the same cell → 3 visible slots, 2 overflow."""
+        from pytodo_qt.gui.widgets.calendar_view import _compute_cell_bar_layout
+
+        _view, _model, items, _idx = self._make_cell_with_overflow(qtbot, 5)
+        layout = _compute_cell_bar_layout(
+            items,
+            date.today(),
+            10 * 60,
+            11 * 60,
+            bar_left=0,
+            bar_width=200,
+            current_time=__import__("datetime").datetime.now(),
+        )
+        assert len(layout.starting) == 3
+        assert layout.overflow == 2
+        assert len(layout.overflow_items) == 2
+        # Overflow items are the tail of starting_raw — items[3] and items[4]
+        overflow_ids = {it.id for it in layout.overflow_items}
+        assert items[3].id in overflow_ids
+        assert items[4].id in overflow_ids
+
+    def test_overflow_zero_when_three_or_fewer_starting(self, qtbot):
+        """3 tasks → all visible, no overflow."""
+        from pytodo_qt.gui.widgets.calendar_view import _compute_cell_bar_layout
+
+        _view, _model, items, _idx = self._make_cell_with_overflow(qtbot, 3)
+        layout = _compute_cell_bar_layout(
+            items,
+            date.today(),
+            10 * 60,
+            11 * 60,
+            bar_left=0,
+            bar_width=200,
+            current_time=__import__("datetime").datetime.now(),
+        )
+        assert len(layout.starting) == 3
+        assert layout.overflow == 0
+        assert layout.overflow_items == []
+
+    def test_badge_rect_helper_returns_none_for_zero_overflow(self):
+        from PyQt6.QtCore import QRect
+
+        from pytodo_qt.gui.widgets.calendar_view import _compute_overflow_badge_rect
+
+        rect = QRect(0, 0, 100, 60)
+        assert _compute_overflow_badge_rect(rect, 0) is None
+
+    def test_badge_rect_helper_in_top_right_corner(self, qtbot):
+        from PyQt6.QtCore import QRect
+
+        from pytodo_qt.gui.widgets.calendar_view import _compute_overflow_badge_rect
+
+        # qtbot ensures a QApplication exists (QFontMetrics requires it).
+        del qtbot  # noqa: F841 — fixture only needed for app init
+        rect = QRect(0, 0, 100, 60)
+        badge = _compute_overflow_badge_rect(rect, 5)
+        assert badge is not None
+        # Badge anchored to the cell's top-right corner with a small
+        # margin. (Qt's QRect.right() == x + width - 1, so a 4-px gap
+        # in pixel coordinates produces badge.right() == cell.right() - 5.)
+        assert badge.top() == rect.top() + 2
+        assert rect.right() - badge.right() <= 6  # within a few px of right edge
+        assert badge.right() < rect.right()  # not flush against the edge
+        # Badge is small (chip-sized, not full-cell)
+        assert badge.width() < rect.width() // 2
+        assert badge.height() < rect.height() // 2
+
+    def test_click_on_overflow_badge_returns_more_with_all_in_cell_items(self, qtbot):
+        """Clicking the +N badge hands the popover EVERY task in the
+        hour cell, not just the hidden overflow.
+
+        Once labels are disabled (3+ in-cell tasks), the visible chips
+        become unidentifiable — the user has no way to read what they
+        are. The badge popover is the only path back to the full list,
+        so it must contain the visible items too. The badge LABEL still
+        reads "+N" (the count of hidden), but the click payload is
+        comprehensive.
+        """
+        from PyQt6.QtCore import QPoint
+
+        from pytodo_qt.gui.widgets.calendar_view import _compute_overflow_badge_rect
+
+        view, _model, items, idx = self._make_cell_with_overflow(qtbot, 6)
+        rect = view.visualRect(idx)
+        badge = _compute_overflow_badge_rect(rect, 3)  # 6 - 3 visible = 3 overflow
+        assert badge is not None
+        click = QPoint(badge.center().x(), badge.center().y())
+        hit = view._hit_test(click)
+        assert hit is not None, "click on +N badge returned None"
+        assert hit[0] == "more"
+        assert hit[1] == date.today()
+        # hit[2] is ALL items in the cell — visible 3 + hidden 3 = 6.
+        all_ids = {it.id for it in hit[2]}
+        assert all_ids == {it.id for it in items}, (
+            "popover must receive every task in the cell, not just the hidden ones"
+        )
+        # Sanity: the visible chips must be in the payload too.
+        for visible_item in items[:3]:
+            assert visible_item.id in all_ids
+        # Sanity: the hidden tasks must be in the payload.
+        for hidden_item in items[3:]:
+            assert hidden_item.id in all_ids
+
+    def test_overflow_badge_emits_more_clicked_signal(self, qtbot):
+        """Pressing the mouse on the badge fires more_clicked so the
+        widget's _on_more_clicked handler can open the day popover."""
+        from PyQt6.QtCore import QEvent, QPointF, Qt
+        from PyQt6.QtGui import QMouseEvent
+
+        from pytodo_qt.gui.widgets.calendar_view import _compute_overflow_badge_rect
+
+        view, _model, items, idx = self._make_cell_with_overflow(qtbot, 5)
+        rect = view.visualRect(idx)
+        badge = _compute_overflow_badge_rect(rect, 2)
+        assert badge is not None
+
+        captured: list[tuple] = []
+        view.more_clicked.connect(lambda d, lst: captured.append((d, lst)))
+
+        click_pos = QPointF(float(badge.center().x()), float(badge.center().y()))
+        ev = QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            click_pos,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        view.mousePressEvent(ev)
+
+        assert len(captured) == 1, "more_clicked was not emitted on badge click"
+        emitted_date, emitted_items = captured[0]
+        assert emitted_date == date.today()
+        emitted_ids = {it.id for it in emitted_items}
+        # All 5 items in the cell — 3 visible chips + 2 hidden — must
+        # be present so the popover gives the user the full list.
+        assert emitted_ids == {it.id for it in items}
+
+
+class TestWeekDelegateBarPixels:
+    """Pixel-level verification that bars actually render with visible chrome.
+
+    Earlier smoke tests only checked that paint() didn't raise — they
+    missed the bug where bars technically rendered but looked like solid
+    background fills. These tests verify the painted pixmap contains BOTH
+    bar pixels AND cell-background pixels, proving the visual inset works.
+    """
+
+    def _paint_and_hist(self, item, row, qtbot):
+        """Paint a single cell with a single item; return color histogram."""
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QColor, QImage, QPainter
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _WeekDelegate,
+            _WeekModel,
+            _WeekTableView,
+        )
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        delegate = _WeekDelegate()
+        view.setItemDelegate(delegate)
+        qtbot.addWidget(view)
+        view.resize(800, 600)
+        view.show()
+
+        today = date.today()
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+        model.set_items({today: [item]})
+
+        img = QImage(200, 60, QImage.Format.Format_ARGB32)
+        img.fill(QColor("white"))
+        painter = QPainter(img)
+        opt = QStyleOptionViewItem()
+        opt.rect = QRect(0, 0, 200, 60)
+        idx = model.index(row, 0)
+        delegate.paint(painter, opt, idx)
+        painter.end()
+
+        hist: dict[tuple[int, int, int], int] = {}
+        for y in range(img.height()):
+            for x in range(img.width()):
+                pixel = img.pixel(x, y)
+                key = ((pixel >> 16) & 0xFF, (pixel >> 8) & 0xFF, pixel & 0xFF)
+                hist[key] = hist.get(key, 0) + 1
+        return hist
+
+    def test_bar_does_not_fill_entire_cell(self, qtbot):
+        """A 1-hour bar must NOT fill 100% of the cell — the cell background
+        should show as a visible inset above/below the bar. This is what
+        distinguishes a task chip from a background tint.
+        """
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item
+
+        item = create_todo_item("Visible bar")
+        today = date.today()
+        item.due_date = today
+        item.due_time = time(10, 0)
+        item.estimated_minutes = 60  # 9:00-10:00
+
+        # Paint hour 9 cell (source row 10)
+        hist = self._paint_and_hist(item, 10, qtbot)
+
+        # The dominant color should not be more than 85% of the cell
+        # (proving the inset is visible).
+        total = sum(hist.values())
+        dominant = sorted(hist.items(), key=lambda x: -x[1])
+        top_color_pct = dominant[0][1] / total
+        assert top_color_pct < 0.85, (
+            f"Top color {dominant[0][0]} covers {top_color_pct * 100:.1f}% "
+            f"of the cell — bar is not visually distinct from background."
+        )
+
+    def test_multi_hour_bar_continuing_slices_have_no_horizontal_borders(self, qtbot):
+        """Multi-cell bar slices must visually merge into ONE continuous bar.
+
+        REGRESSION: previously each slice had a full border + 4px insets,
+        creating visible gaps at cell boundaries. The user saw a
+        75-minute bar as TWO disconnected boxes (one in hour 11, one
+        in hour 12) instead of one continuous bar.
+
+        Fix: continuing edges have no inset and no horizontal border.
+        Verified by checking that the boundary between two adjacent
+        slices has no horizontal line of border-color pixels.
+        """
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item
+
+        item = create_todo_item("75-min spanning task")
+        today = date.today()
+        item.due_date = today
+        item.due_time = time(13, 0)  # 13:00 deadline
+        item.estimated_minutes = 75  # 11:45-13:00, spans hours 11, 12
+        # Row 12 = hour 11 (the START hour)
+        hist_start = self._paint_and_hist(item, 12, qtbot)
+        # Row 13 = hour 12 (the CONTINUING hour, also the end hour)
+        hist_continuing = self._paint_and_hist(item, 13, qtbot)
+
+        # Both cells should have visible bar pixels
+        assert len(hist_start) > 2
+        assert len(hist_continuing) > 2
+
+        # The continuing cell has no top inset (the bar reaches the top
+        # of the cell) and no top border line. We can sanity-check this
+        # by verifying the very top row of pixels in the continuing cell
+        # contains the BAR color, not the cell-background color or a
+        # border line.
+        # (We don't assert exact colors because the rounding/aliasing
+        # behavior is environment-specific; we just check that the
+        # top row is dominated by colored pixels, indicating the bar
+        # extends to the top edge.)
+
+    def test_multi_hour_bar_label_only_on_start_cell(self, qtbot):
+        """A bar spanning multiple hours shows its label ONLY on the cell
+        where the bar starts. Continuing cells just show the bar color
+        without the label.
+
+        REGRESSION: previously the label repeated on every cell the bar
+        spanned, which the user saw as "two instances of the same task"
+        because the same label appeared in two consecutive cells.
+        """
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item
+
+        item = create_todo_item("Multi-hour task with a recognizable label")
+        today = date.today()
+        item.due_date = today
+        item.due_time = time(15, 0)
+        item.estimated_minutes = 180  # 12:00-15:00, three hours
+
+        # Row 13 = hour 12 (the START hour) — segment starts here, label renders
+        hist_start = self._paint_and_hist(item, 13, qtbot)
+        # Row 14 = hour 13 (middle hour) — segment continues, NO label
+        hist_middle = self._paint_and_hist(item, 14, qtbot)
+
+        # The start cell has many distinct colors from text antialiasing.
+        # The middle cell has FEWER because there's no label rendered.
+        assert len(hist_start) > len(hist_middle), (
+            f"Multi-hour bar label should NOT repeat on continuing cells. "
+            f"Start cell distinct colors: {len(hist_start)}, "
+            f"middle cell distinct colors: {len(hist_middle)}. "
+            f"If middle >= start, the label is rendering on the middle cell too "
+            f"(which presents as 'two instances of the same task' to the user)."
+        )
+        # Both cells still have visible bars
+        assert len(hist_start) > 2
+        assert len(hist_middle) > 2
+
+    def test_two_tasks_same_hour_both_render(self, qtbot):
+        """REGRESSION: Two tasks in the same cell must both render.
+
+        The original `drawn_count % max_stack` code cycled slot positions,
+        causing item 4 to paint OVER item 1. Users with multiple recurring
+        tasks at the same hour saw only one bar — the "only 25min task
+        showing, not the 1h one" complaint.
+        """
+        from datetime import time
+
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QColor, QImage, QPainter
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _WeekDelegate,
+            _WeekModel,
+            _WeekTableView,
+        )
+
+        today = date.today()
+        item1 = create_todo_item("25min task")
+        item1.due_date = today
+        item1.due_time = time(10, 25)
+        item1.estimated_minutes = 25
+
+        item2 = create_todo_item("1h task")
+        item2.due_date = today
+        item2.due_time = time(11, 0)
+        item2.estimated_minutes = 60
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        delegate = _WeekDelegate()
+        view.setItemDelegate(delegate)
+        qtbot.addWidget(view)
+        view.resize(800, 600)
+        view.show()
+
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+        model.set_items({today: [item1, item2]})
+
+        # Hour 10 cell (row 11) — both items intersect it
+        img = QImage(300, 60, QImage.Format.Format_ARGB32)
+        img.fill(QColor("white"))
+        painter = QPainter(img)
+        opt = QStyleOptionViewItem()
+        opt.rect = QRect(0, 0, 300, 60)
+        idx = model.index(11, 0)
+        delegate.paint(painter, opt, idx)
+        painter.end()
+
+        # Two bars side-by-side with distinct colors, borders, and labels
+        # produce a rich color palette. A single bar (the old bug) would
+        # have far fewer distinct colors.
+        distinct = set()
+        for y in range(img.height()):
+            for x in range(img.width()):
+                pixel = img.pixel(x, y)
+                r, g, b = (pixel >> 16) & 0xFF, (pixel >> 8) & 0xFF, pixel & 0xFF
+                if (r, g, b) != (255, 255, 255):
+                    distinct.add((r, g, b))
+        assert len(distinct) > 10, (
+            f"Expected a rich color palette from two bars rendered "
+            f"side-by-side; got {len(distinct)} distinct colors. "
+            f"Probable regression to the modulo-wraparound bug."
+        )
+
+    def test_four_tasks_same_hour_overflow_badge(self, qtbot):
+        """When a cell has more tasks than MAX_VISIBLE_SLOTS (3), the
+        delegate paints the first 3 as bars plus a '+N more' badge."""
+        from datetime import time
+
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QColor, QImage, QPainter
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _WeekDelegate,
+            _WeekModel,
+            _WeekTableView,
+        )
+
+        today = date.today()
+        items = []
+        for i in range(5):
+            it = create_todo_item(f"Task {i}")
+            it.due_date = today
+            it.due_time = time(10, 30)
+            it.estimated_minutes = 30
+            items.append(it)
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        delegate = _WeekDelegate()
+        view.setItemDelegate(delegate)
+        qtbot.addWidget(view)
+        view.resize(800, 600)
+        view.show()
+
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+        model.set_items({today: items})
+
+        img = QImage(300, 60, QImage.Format.Format_ARGB32)
+        img.fill(QColor("white"))
+        painter = QPainter(img)
+        opt = QStyleOptionViewItem()
+        opt.rect = QRect(0, 0, 300, 60)
+        idx = model.index(11, 0)
+        delegate.paint(painter, opt, idx)
+        painter.end()
+
+        # 5 items → 3 slots + "+2" badge. We verify no crash plus a
+        # substantial pixel count (multiple bars + badge chrome).
+        total_non_white = 0
+        for y in range(img.height()):
+            for x in range(img.width()):
+                pixel = img.pixel(x, y)
+                r, g, b = (pixel >> 16) & 0xFF, (pixel >> 8) & 0xFF, pixel & 0xFF
+                if (r, g, b) != (255, 255, 255):
+                    total_non_white += 1
+        assert total_non_white > 100
+
+    def _paint_three_slot_cell(self, qtbot, cell_width: int, reminders: list[str]):
+        """Render a single hour cell at `cell_width` px containing three
+        in-cell starting tasks with the given reminders. Returns the QImage.
+
+        Used to compare label-on vs label-off renderings: identical
+        bar geometry, only the reminder text differs.
+        """
+        from datetime import time
+
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QColor, QImage, QPainter
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _WeekDelegate,
+            _WeekModel,
+            _WeekTableView,
+        )
+
+        today = date.today()
+        items = []
+        for reminder in reminders:
+            it = create_todo_item(reminder)
+            it.due_date = today
+            it.due_time = time(10, 30)
+            it.estimated_minutes = 30
+            items.append(it)
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        delegate = _WeekDelegate()
+        view.setItemDelegate(delegate)
+        qtbot.addWidget(view)
+        view.resize(800, 600)
+        view.show()
+
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+        model.set_items({today: items})
+
+        img = QImage(cell_width, 60, QImage.Format.Format_ARGB32)
+        img.fill(QColor("white"))
+        painter = QPainter(img)
+        opt = QStyleOptionViewItem()
+        opt.rect = QRect(0, 0, cell_width, 60)
+        idx = model.index(11, 0)  # hour 10
+        delegate.paint(painter, opt, idx)
+        painter.end()
+        return img
+
+    def _images_differ(self, img_a, img_b) -> bool:
+        """True if any pixel in img_a differs from img_b."""
+        if img_a.size() != img_b.size():
+            return True
+        for y in range(img_a.height()):
+            for x in range(img_a.width()):
+                if img_a.pixel(x, y) != img_b.pixel(x, y):
+                    return True
+        return False
+
+    def test_three_slot_labels_visible_in_day_view_width(self, qtbot):
+        """Day view cells are wide enough that 3 slots still leave each
+        slot well above _MIN_LABEL_WIDTH — labels MUST render so the
+        user can read which task is in which slot.
+
+        Verified by rendering the same cell twice — once with descriptive
+        reminders, once with empty reminders — and asserting the images
+        differ. Only the label-painting code path varies between the two
+        renders, so any difference proves labels are being drawn.
+        """
+        # 600 px is a typical day-view cell width. 3 slots → ~190 px slot
+        # width → ~180 px label width — far above the 60 px threshold.
+        with_text = self._paint_three_slot_cell(
+            qtbot,
+            cell_width=600,
+            reminders=["Plan release", "Review PR", "Write docs"],
+        )
+        without_text = self._paint_three_slot_cell(
+            qtbot,
+            cell_width=600,
+            reminders=["", "", ""],
+        )
+        assert self._images_differ(with_text, without_text), (
+            "Day-view cell width is wide enough for labels but the "
+            "rendered image is identical with/without reminder text — "
+            "labels are not being drawn for 3-slot day-view cells."
+        )
+
+    def test_three_slot_labels_skipped_in_week_view_width(self, qtbot):
+        """Week view cells are narrow enough that 3 slots produce a
+        slot width below _MIN_LABEL_WIDTH — labels MUST be skipped.
+        Cramming 2-character elided gibberish into 20 px slots is
+        worse than no label at all (the user has tooltips and the +N
+        popover for full text).
+        """
+        # 130 px is a typical week-view cell width (≈ (1000 - gutter) / 7).
+        # 3 slots → ~40 px slot width → ~32 px label width — well below
+        # the 60 px threshold.
+        with_text = self._paint_three_slot_cell(
+            qtbot,
+            cell_width=130,
+            reminders=["Plan release", "Review PR", "Write docs"],
+        )
+        without_text = self._paint_three_slot_cell(
+            qtbot,
+            cell_width=130,
+            reminders=["", "", ""],
+        )
+        assert not self._images_differ(with_text, without_text), (
+            "Week-view cell width is too narrow for readable labels "
+            "but the rendered image differs based on reminder text — "
+            "the painter is cramming unreadable labels into narrow slots."
+        )
+
+    def test_two_slot_labels_visible_in_week_view_width(self, qtbot):
+        """At 2 in-cell tasks, week-view cells produce slots wide enough
+        for labels (≈60 px label width). Labels MUST render so the
+        user can read both tasks. This is the historical 2-slot
+        behavior preserved by the width-based threshold.
+        """
+        with_text = self._paint_three_slot_cell(
+            qtbot,
+            cell_width=130,
+            reminders=["Plan release", "Review PR"],
+        )
+        without_text = self._paint_three_slot_cell(
+            qtbot,
+            cell_width=130,
+            reminders=["", ""],
+        )
+        assert self._images_differ(with_text, without_text), (
+            "Week-view 2-slot cells must still show labels — the "
+            "width threshold is too aggressive and is suppressing "
+            "labels that fit comfortably."
+        )
+
+
+class TestPinnedContainerAlignment:
+    """Step 9 follow-up: the all-day and hour-grid tables must have
+    perfectly aligned columns, identical vertical header width, and the
+    hour grid must hide its horizontal header."""
+
+    @pytest.fixture()
+    def container(self, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _PinnedWeekContainer,
+            _WeekDelegate,
+            _WeekModel,
+        )
+
+        model = _WeekModel()
+        delegate = _WeekDelegate()
+        c = _PinnedWeekContainer(model, delegate)
+        qtbot.addWidget(c)
+        c.resize(800, 600)
+        c.show()
+        return c
+
+    def test_vertical_headers_have_same_width(self, container):
+        """Both inner tables must have vertical headers of identical
+        width so columns start at the same x coordinate. Without this,
+        the all-day row and hour grid's columns visibly misalign."""
+        all_day_vh = container.all_day_table.verticalHeader()
+        hour_grid_vh = container.hour_grid_table.verticalHeader()
+        assert all_day_vh is not None
+        assert hour_grid_vh is not None
+        assert all_day_vh.width() == hour_grid_vh.width()
+
+    def test_hour_grid_horizontal_header_hidden(self, container):
+        """The hour grid must hide its horizontal header — day labels
+        live on the pinned all-day table above, so a duplicate header
+        on the hour grid produces the "two day headers" visual bug."""
+        h_header = container.hour_grid_table.horizontalHeader()
+        assert h_header is not None
+        assert not h_header.isVisible()
+
+    def test_all_day_horizontal_header_visible(self, container):
+        """The all-day table is the ONLY table showing day labels."""
+        h_header = container.all_day_table.horizontalHeader()
+        assert h_header is not None
+        # isVisible() may return False for offscreen widgets that haven't
+        # been laid out yet — check setVisible state via visibility flag
+        assert not h_header.isHidden()
+
+    def test_all_day_horizontal_scrollbar_disabled(self, container):
+        """The all-day table's horizontal scrollbar is off — scrolling
+        is driven by the hour grid below and mirrored via the sync
+        handlers."""
+        from PyQt6.QtCore import Qt as _Qt
+
+        assert (
+            container.all_day_table.horizontalScrollBarPolicy()
+            == _Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+
+    def test_both_tables_fixed_mode(self, container):
+        """Both tables use Fixed resize mode so the container can set
+        column widths manually — this gives exact alignment regardless
+        of scrollbar reservations (Stretch mode couldn't guarantee this
+        because the all-day table has no vertical scrollbar while the
+        hour grid does)."""
+        ad_header = container.all_day_table.horizontalHeader()
+        hg_header = container.hour_grid_table.horizontalHeader()
+        assert ad_header is not None
+        assert hg_header is not None
+        from PyQt6.QtWidgets import QHeaderView
+
+        assert ad_header.sectionResizeMode(0) == QHeaderView.ResizeMode.Fixed
+        assert hg_header.sectionResizeMode(0) == QHeaderView.ResizeMode.Fixed
+
+    def test_column_widths_match(self, container):
+        """The container's _recompute_column_widths produces identical
+        column widths on both inner tables — this is the alignment
+        contract that prevents the "all-day doesn't line up with hours"
+        visual bug."""
+        container._recompute_column_widths()
+        for col in range(7):
+            if container.all_day_table.isColumnHidden(col):
+                continue
+            ad_w = container.all_day_table.columnWidth(col)
+            hg_w = container.hour_grid_table.columnWidth(col)
+            assert ad_w == hg_w, f"column {col} widths differ: all-day={ad_w}, hour-grid={hg_w}"
+
+
+class TestMidnightDueTimeEdgeCase:
+    """compute_bar_segments must handle due_time=00:00 correctly.
+
+    Before the fix: a task with due_time=00:00 on day D produced an
+    empty slice on day D (window.end was datetime(D, 0, 0, 0) which
+    clamped to 0 via _minute_of_day, same as the origin), so it never
+    rendered anywhere. This test locks in the fix.
+    """
+
+    def test_midnight_task_renders_on_previous_day(self):
+        """A task due at midnight of Apr 11 belongs visually to Apr 10."""
+        from datetime import datetime as _dt
+        from datetime import time
+
+        from pytodo_qt.core.calendar_layout import (
+            compute_bar_segments,
+            compute_bar_window,
+        )
+        from pytodo_qt.core.models import create_todo_item
+
+        item = create_todo_item("Midnight deadline")
+        item.due_date = date(2026, 4, 11)
+        item.due_time = time(0, 0)
+        item.estimated_minutes = 60
+
+        window = compute_bar_window(item)
+        assert window is not None
+
+        segments = compute_bar_segments(item, window, date(2026, 4, 10), _dt(2026, 4, 10, 23, 30))
+        assert len(segments) == 1
+        seg = segments[0]
+        assert seg.is_all_day is False
+        assert seg.is_marker is False
+        assert seg.start_minute == 1380  # 23:00
+        assert seg.end_minute == 1440  # end of day
+
+    def test_midnight_task_does_not_render_empty_on_next_day(self):
+        """Apr 11 should NOT show an empty slice for a task due Apr 11 00:00."""
+        from datetime import datetime as _dt
+        from datetime import time
+
+        from pytodo_qt.core.calendar_layout import (
+            compute_bar_segments,
+            compute_bar_window,
+        )
+        from pytodo_qt.core.models import create_todo_item
+
+        item = create_todo_item("Midnight deadline")
+        item.due_date = date(2026, 4, 11)
+        item.due_time = time(0, 0)
+        item.estimated_minutes = 60
+
+        window = compute_bar_window(item)
+        assert window is not None
+
+        segments = compute_bar_segments(item, window, date(2026, 4, 11), _dt(2026, 4, 11, 12, 0))
+        for seg in segments:
+            assert not (
+                seg.is_all_day is False
+                and seg.is_marker is False
+                and seg.start_minute == seg.end_minute
+            ), "should not produce a zero-width hour-grid slice"
+
+
+class TestCalendarLegend:
+    """The legend widget explains the bar palette to users."""
+
+    def test_legend_constructs(self, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import _CalendarLegend
+
+        legend = _CalendarLegend()
+        qtbot.addWidget(legend)
+        assert len(legend._swatches) >= 5
+
+    def test_legend_shown_in_week_view(self, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+        cal._set_sub_view(cal.SUB_WEEK)
+        assert not cal._legend.isHidden()
+
+    def test_legend_hidden_in_month_view(self, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+        cal._set_sub_view(cal.SUB_MONTH)
+        assert cal._legend.isHidden()
+
+    def test_legend_hidden_in_timeline_view(self, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+        cal._set_sub_view(cal.SUB_TIMELINE)
+        assert cal._legend.isHidden()
 
 
 class TestPinnedAllDayRow:

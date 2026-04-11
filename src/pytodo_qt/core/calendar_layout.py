@@ -78,6 +78,15 @@ class WindowKind(Enum):
 # classification (EARLY/ONTIME/LATE) uses no fuzz.
 DUE_NOW_THRESHOLD = timedelta(minutes=15)
 
+# Maximum visible width for a Q1 Rule 3 (DEADLINE_FROM_CREATED) bar.
+# Without this clamp, a recurring task that's been around for a week
+# with due_time=10:00 would produce a bar spanning 7 days — which
+# renders on today's grid as a huge stretch from midnight to 10:00,
+# covering 10+ hour cells. The clamp makes the bar compact and
+# informative: "this is due at X, and we're showing the last hour
+# leading up to that time as a focus window."
+DEADLINE_DEFAULT_DURATION = timedelta(hours=1)
+
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -130,8 +139,69 @@ class BarSegment(NamedTuple):
 # ---------------------------------------------------------------------------
 
 
-def compute_bar_window(item: TodoItem) -> BarWindow | None:
+def get_default_work_minutes() -> int:
+    """Read the user's current pomodoro work duration default from config.
+
+    This is the value that bars use when a task has no per-task
+    `work_duration` override. Reading from config (rather than a
+    hardcoded constant) ensures bars always match the user's actual
+    settings — change the pomodoro default to 10, every task without
+    an override re-renders with 10-minute pomodoros.
+
+    Returns 25 (the spec default) if config can't be loaded for any
+    reason.
+    """
+    try:
+        from .config import get_config
+
+        cfg = get_config()
+        return max(1, cfg.pomodoro.work_duration)
+    except Exception:
+        return 25
+
+
+def _effective_work_minutes(item: TodoItem, default_work_minutes: int = 25) -> int:
+    """Return the task's effective duration in minutes for WORKBACK.
+
+    `estimated_minutes` and `estimated_pomodoros * work_duration` are
+    ALTERNATIVE expressions of the same quantity (task duration), not
+    additive components. We take the MAX of the two interpretations.
+
+    Per-task `work_duration` takes precedence over the global default.
+    When a task has `work_duration=0` (not set), we fall back to the
+    `default_work_minutes` parameter — which the calendar widget passes
+    in from the user's current pomodoro settings (PomodoroConfig.
+    work_duration). This ensures bars match the user's actual settings,
+    not a hardcoded constant.
+
+    Examples:
+      estimated_minutes=25, no pomodoros           → 25
+      estimated_pomodoros=1, work_duration=10      → 10 (per-task wins)
+      estimated_pomodoros=3, work_duration=0,
+        default_work_minutes=10                    → 30
+      estimated_pomodoros=3, work_duration=0,
+        default_work_minutes=25                    → 75
+      estimated_minutes=25, estimated_pomodoros=3,
+        default_work_minutes=25                    → max(25, 75) = 75
+
+    Returns 0 when the task has no duration information.
+    """
+    direct = max(0, item.estimated_minutes)
+    pom_count = max(0, item.estimated_pomodoros)
+    # Per-task work_duration takes precedence; the global default
+    # (passed in from the user's PomodoroConfig) is used when not set.
+    per_work = item.work_duration if item.work_duration > 0 else default_work_minutes
+    pom_total = pom_count * per_work
+    return max(direct, pom_total)
+
+
+def compute_bar_window(item: TodoItem, default_work_minutes: int | None = None) -> BarWindow | None:
     """Compute the bar window for an item per Q1's four rules.
+
+    When `default_work_minutes` is None (the typical case from runtime
+    callers), reads the user's current pomodoro work duration default
+    via `get_default_work_minutes()`. Tests pass an explicit value to
+    avoid depending on whatever config happens to be loaded.
 
     Returns None if the item has no temporal anchor (no due_date),
     indicating it should not appear in the calendar grid at all.
@@ -149,6 +219,9 @@ def compute_bar_window(item: TodoItem) -> BarWindow | None:
     if item.due_date is None:
         return None
 
+    if default_work_minutes is None:
+        default_work_minutes = get_default_work_minutes()
+
     base_date = item.due_date
 
     # Rule 1: EVENT — both endpoints set explicitly
@@ -159,20 +232,35 @@ def compute_bar_window(item: TodoItem) -> BarWindow | None:
             return BarWindow(origin=origin, end=end, kind=WindowKind.EVENT)
         # Otherwise fall through to the next rule (sanitization)
 
-    # Rule 2: WORKBACK — due_time + positive estimate
-    if item.due_time is not None and item.estimated_minutes > 0:
-        end = datetime.combine(base_date, item.due_time)
-        origin = end - timedelta(minutes=item.estimated_minutes)
-        if end > origin:
-            return BarWindow(origin=origin, end=end, kind=WindowKind.WORKBACK)
-        # Sanitization: estimated_minutes <= 0 is technically caught by the
-        # condition above, but a future negative-estimate case would fall
-        # through here.
+    # Rule 2: WORKBACK — due_time + positive estimate. The estimate
+    # can come from either `estimated_minutes` directly, or from the
+    # pomodoro fields (estimated_pomodoros * work_duration, with the
+    # global default when per-task work_duration is 0).
+    if item.due_time is not None:
+        work_minutes = _effective_work_minutes(item, default_work_minutes)
+        if work_minutes > 0:
+            end = datetime.combine(base_date, item.due_time)
+            origin = end - timedelta(minutes=work_minutes)
+            if end > origin:
+                return BarWindow(origin=origin, end=end, kind=WindowKind.WORKBACK)
+            # Sanitization: zero/negative duration falls through.
 
-    # Rule 3: DEADLINE_FROM_CREATED — due_time only, origin from created_at
+    # Rule 3: DEADLINE_FROM_CREATED — due_time only, origin from created_at.
+    # CLAMPED so the bar is at most DEADLINE_DEFAULT_DURATION wide.
+    # Without the clamp, a recurring task created weeks ago with a
+    # due_time would produce a multi-day bar that visually dominates
+    # every cell from midnight to due_time on the due day.
     if item.due_time is not None:
         end = datetime.combine(base_date, item.due_time)
-        origin = datetime.fromtimestamp(item.created_at / 1000)
+        created_origin = datetime.fromtimestamp(item.created_at / 1000)
+        # Clamp: origin is whichever is LATER between created_at and
+        # (end - DEADLINE_DEFAULT_DURATION). For recent creations
+        # (creation within the last hour), the original created_at wins
+        # and the bar is the real creation-to-due span. For old tasks
+        # (created days ago), the clamp wins and the bar is a
+        # compact 1-hour marker ending at due_time.
+        clamped_origin = end - DEADLINE_DEFAULT_DURATION
+        origin = max(created_origin, clamped_origin)
         if end > origin:
             return BarWindow(origin=origin, end=end, kind=WindowKind.DEADLINE_FROM_CREATED)
         # Sanitization: created_at after due_time means the deadline is
@@ -317,7 +405,19 @@ def compute_bar_segments(
         ]
 
     # Hour-grid items.
+    #
+    # Midnight edge case: if window.end falls exactly at 00:00 of day D,
+    # the bar visually belongs to day D-1 (ending at 23:59:59), not day D
+    # (starting at 00:00). Without this adjustment, a task with
+    # due_time=00:00 on day D would produce an empty slice on day D
+    # (because _minute_of_day clamps midnight to 0 for both origin and
+    # end, yielding start==end==0) and would never render anywhere.
     end_day = window.end.date()
+    if window.end.time() == time(0, 0, 0) and window.end > window.origin:
+        # Treat the bar as belonging to the previous day for layout
+        # purposes — it ends at end-of-that-day, not start-of-next-day.
+        end_day = end_day - timedelta(days=1)
+
     origin_day = window.origin.date()
 
     # Case A: viewing day is before the bar's origin day → bar not yet visible.
@@ -350,6 +450,15 @@ def _hour_grid_segment(
     start_minute = _minute_of_day(window.origin, viewing_day)
     end_minute = _minute_of_day(window.end, viewing_day)
 
+    # Midnight edge case: a bar that ends exactly at the START of the day
+    # AFTER viewing_day (e.g., due_time=00:00 on day D+1) should render
+    # as filling all 24 hours of viewing_day, not as an empty slice.
+    # _minute_of_day clamps start-of-next-day to 0, but for this case we
+    # want 1440 (end-of-viewing-day).
+    next_day_start = datetime.combine(viewing_day + timedelta(days=1), time(0, 0, 0))
+    if window.end == next_day_start:
+        end_minute = 1440
+
     # Sanitization: an empty slice (start >= end) means the bar's range
     # didn't actually intersect this day's hours. This shouldn't normally
     # happen because Case C in compute_bar_segments only fires when
@@ -358,7 +467,9 @@ def _hour_grid_segment(
         return []
 
     clipped_top = window.origin.date() < viewing_day
-    clipped_bottom = window.end.date() > viewing_day
+    # clipped_bottom when end is on a later day, OR when end is exactly at
+    # midnight of the day after viewing_day (handled by the adjustment above).
+    clipped_bottom = window.end.date() > viewing_day and window.end != next_day_start
 
     as_of = _as_of_for_viewing_day(viewing_day, current_time)
     if item.complete and item.completed_at is not None:

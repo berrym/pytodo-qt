@@ -28,6 +28,7 @@ from PyQt6.QtCore import (
     QCoreApplication,
     QMimeData,
     QModelIndex,
+    QRect,
     Qt,
     pyqtSignal,
 )
@@ -87,6 +88,237 @@ def _is_system_12h() -> bool:
     locale = QLocale.system()
     fmt = locale.timeFormat(QLocale.FormatType.ShortFormat)
     return "AP" in fmt.upper() or "AM" in fmt.upper()
+
+
+class _CellBarLayout:
+    """Result of laying out the bars within a single hour cell.
+
+    Separates "continuing" slices (bars that span into this cell from
+    a previous one) from "starting" slices (bars that begin in this
+    cell). Continuing slices get a thin ribbon on the left edge so
+    they don't compete with in-cell tasks for horizontal space; the
+    in-cell tasks get the rest of the bar width divided into slots
+    with proper labels.
+
+    Each slot tuple is (item, window, seg, slot_left, slot_right_edge).
+
+    `overflow_items` holds the real TodoItems (or _ProjectedItem proxies)
+    that didn't fit into the visible slot cap. The painter draws a "+N"
+    badge for them; the hit-test routes badge clicks to the day-popover
+    handler so the user can still reach them.
+    """
+
+    __slots__ = ("continuing", "starting", "overflow_items")
+
+    def __init__(
+        self,
+        continuing: list[tuple],
+        starting: list[tuple],
+        overflow_items: list,
+    ) -> None:
+        self.continuing = continuing
+        self.starting = starting
+        self.overflow_items = overflow_items
+
+    @property
+    def overflow(self) -> int:
+        return len(self.overflow_items)
+
+
+def _compute_cell_bar_layout(
+    column_items: list,
+    cell_date,
+    cell_minute_start: int,
+    cell_minute_end: int,
+    bar_left: int,
+    bar_width: int,
+    current_time,
+) -> _CellBarLayout:
+    """Compute the bar layout for a single hour cell.
+
+    Walks the column items, builds the intersecting list with id-dedup,
+    splits into continuing-slices vs starting-slices, and assigns slot
+    positions. The painter and the hit-test BOTH call this function so
+    they always agree on which item is at which x position.
+
+    Continuing slices each get a 5-pixel ribbon on the left edge.
+    Starting slices get the rest of the bar width divided into slots
+    capped at MAX_VISIBLE_SLOTS=3 with the rest collapsed into an
+    overflow count.
+    """
+    from ...core.calendar_layout import compute_bar_segments, compute_bar_window
+
+    MAX_VISIBLE_SLOTS = 3
+    RIBBON_WIDTH = 5
+
+    intersecting: list[tuple] = []
+    seen_ids: set = set()
+    deduped = _dedup_by_id(column_items)
+    for item in deduped:
+        iid = getattr(item, "id", None)
+        if iid is not None and iid in seen_ids:
+            continue
+        window = compute_bar_window(item)
+        if window is None:
+            continue
+        segments = compute_bar_segments(item, window, cell_date, current_time)
+        for seg in segments:
+            if seg.is_all_day or seg.is_marker:
+                continue
+            if seg.end_minute <= cell_minute_start or seg.start_minute >= cell_minute_end:
+                continue
+            intersecting.append((item, window, seg))
+            if iid is not None:
+                seen_ids.add(iid)
+            break  # one entry per item per cell
+
+    if not intersecting:
+        return _CellBarLayout([], [], [])
+
+    # Split: continuing (started before this cell) vs starting (begins in this cell)
+    continuing_raw = [t for t in intersecting if t[2].start_minute < cell_minute_start]
+    starting_raw = [t for t in intersecting if t[2].start_minute >= cell_minute_start]
+
+    continuing: list[tuple] = []
+    starting: list[tuple] = []
+
+    if not starting_raw:
+        # No competing in-cell tasks — the continuing slice(s) expand
+        # to fill the cell width as full bars (not thin ribbons). This
+        # is the case where a multi-hour bar passes through a cell with
+        # nothing else to compete with: it should look like a normal
+        # full-width bar, not a 5-pixel ribbon.
+        n_cont = len(continuing_raw)
+        if n_cont > 0:
+            slot_w = max(1, bar_width // n_cont)
+            slot_gap = 2 if n_cont > 1 else 0
+            for i, (item, window, seg) in enumerate(continuing_raw):
+                slot_left = bar_left + i * slot_w
+                slot_right = slot_left + slot_w - slot_gap
+                continuing.append((item, window, seg, slot_left, slot_right))
+        return _CellBarLayout(continuing, starting, [])
+
+    # In-cell starting tasks exist — give them priority for horizontal
+    # space. Continuing slices become thin ribbons on the left edge so
+    # they don't crowd the in-cell tasks but remain visible/clickable
+    # as a continuation indicator.
+    ribbon_zone_width = 0
+    for i, (item, window, seg) in enumerate(continuing_raw):
+        rib_left = bar_left + i * RIBBON_WIDTH
+        rib_right = rib_left + RIBBON_WIDTH - 1
+        continuing.append((item, window, seg, rib_left, rib_right))
+        ribbon_zone_width = (i + 1) * RIBBON_WIDTH
+
+    starting_visible_count = min(len(starting_raw), MAX_VISIBLE_SLOTS)
+    overflow_items = [t[0] for t in starting_raw[MAX_VISIBLE_SLOTS:]]
+
+    gap_after_ribbons = 2 if continuing else 0
+    slot_zone_left = bar_left + ribbon_zone_width + gap_after_ribbons
+    slot_zone_width = bar_width - ribbon_zone_width - gap_after_ribbons
+    slot_w = max(1, slot_zone_width // starting_visible_count)
+    slot_gap = 2 if starting_visible_count > 1 else 0
+    for slot_idx in range(starting_visible_count):
+        item, window, seg = starting_raw[slot_idx]
+        slot_left = slot_zone_left + slot_idx * slot_w
+        slot_right = slot_left + slot_w - slot_gap
+        starting.append((item, window, seg, slot_left, slot_right))
+
+    return _CellBarLayout(continuing, starting, overflow_items)
+
+
+# Minimum label width (pixels, *after* slot padding) at which a chip's
+# elided reminder text is still readable. Below this, the painter skips
+# the label entirely and the user must rely on hover tooltips / the +N
+# popover. With the 10 px bold font this fits roughly 5–6 elided
+# characters, the minimum that conveys any task identity. Tuned so:
+#   - day-view cells (wide single-column) show labels even with 3 slots
+#   - week-view cells (narrow seven-column) skip labels at 3 slots
+#     rather than cramming 2-char gibberish, but still show labels at
+#     1–2 slots
+_MIN_LABEL_WIDTH = 40
+
+
+def _compute_overflow_badge_rect(rect, overflow_count: int) -> QRect | None:
+    """Geometry of the "+N" overflow badge for an hour-grid cell.
+
+    Both the painter and the hit-test call this so the rect drawn on
+    screen is the rect that registers a click. Returns None when there
+    is no overflow (caller should skip painting / hit-testing).
+
+    The badge sits in the cell's top-right corner, sized to the
+    rendered "+N" text in the same 9 px bold font the painter uses.
+    """
+    if overflow_count <= 0:
+        return None
+    badge_font = QFont()
+    badge_font.setPixelSize(9)
+    badge_font.setBold(True)
+    fm = QFontMetrics(badge_font)
+    badge_text = f"+{overflow_count}"
+    text_width = fm.horizontalAdvance(badge_text) + 8
+    text_height = fm.height() + 2
+    badge_x = rect.right() - text_width - 4
+    badge_y = rect.top() + 2
+    return QRect(badge_x, badge_y, text_width, text_height)
+
+
+def _dedup_by_id(items: list) -> list:
+    """Return a copy of `items` with duplicate ids removed.
+
+    Defensive measure to ensure the calendar never renders the same
+    task twice in the same cell. The first occurrence wins; subsequent
+    items with the same id are silently dropped. Items without an id
+    attribute (shouldn't happen in practice) are kept.
+    """
+    seen: set = set()
+    out: list = []
+    for item in items:
+        iid = getattr(item, "id", None)
+        if iid is None:
+            out.append(item)
+            continue
+        if iid in seen:
+            continue
+        seen.add(iid)
+        out.append(item)
+    return out
+
+
+class _ProjectedItem:
+    """Lightweight proxy presenting a recurring item's projected occurrence
+    on a specific future date.
+
+    Forwards every attribute access to the underlying item EXCEPT
+    `due_date`, which returns the projected date instead. This lets
+    compute_bar_window compute a fresh bar window for each occurrence
+    on its actual scheduled date — daily standups appear as proper
+    bars on every day, not as Q6 overdue markers from today's instance.
+
+    Identity (`id`, `parent_id`, etc.) and all other state come from the
+    real underlying item, so click handlers, edits, and completion
+    affect the real (current-cycle) instance — clicking a projection
+    is equivalent to clicking the real task.
+    """
+
+    __slots__ = ("_item", "_projected_date")
+
+    def __init__(self, item, projected_date: date) -> None:
+        # Use object.__setattr__ to bypass __getattr__ during construction
+        object.__setattr__(self, "_item", item)
+        object.__setattr__(self, "_projected_date", projected_date)
+
+    @property
+    def due_date(self) -> date:
+        return self._projected_date
+
+    def __getattr__(self, name: str):
+        # Called only when normal attribute lookup fails — forward to
+        # the wrapped item. Note: 'due_date' is overridden by the
+        # property above so it never reaches this method.
+        return getattr(self._item, name)
+
+    def __repr__(self) -> str:
+        return f"_ProjectedItem({self._item!r} on {self._projected_date})"
 
 
 class _CloseButton(QWidget):
@@ -2416,17 +2648,19 @@ class _WeekModel(QAbstractTableModel):
         if role == _WEEK_ITEMS_ROLE:
             items = self._items_by_date.get(d, [])
             if row == 0:
-                # All-day: items with due_date but no due_time
-                return [i for i in items if i.due_time is None]
+                # All-day chips with defensive dedup. See _all_day_items
+                # for the inclusion criteria.
+                return _dedup_by_id(self._all_day_items(items, d))
             hour = row - 1
-            return [i for i in items if i.due_time and i.due_time.hour == hour]
+            return _dedup_by_id([i for i in items if i.due_time and i.due_time.hour == hour])
 
         if role == _WEEK_COLUMN_ITEMS_ROLE:
-            # Full column items list — every item whose due_date matches
-            # this column's date, regardless of which row was queried.
-            # The Gantt delegate uses this to compute intersecting bars
-            # for the cell's hour rather than per-hour buckets.
-            return list(self._items_by_date.get(d, []))
+            # Full column items list with defensive dedup by id. The
+            # Gantt delegate uses this to compute intersecting bars for
+            # the cell's hour. Dedup catches any source-side duplicate
+            # (e.g., a task somehow added twice to the bucket) so the
+            # painter only ever renders one bar per unique item id.
+            return _dedup_by_id(self._items_by_date.get(d, []))
 
         if role == Qt.ItemDataRole.DisplayRole:
             if row == 0:
@@ -2448,6 +2682,54 @@ class _WeekModel(QAbstractTableModel):
         if section == 0:
             return "All Day"
         return _format_hour(section - 1)
+
+    def _all_day_items(self, items: list, cell_date: date) -> list:
+        """Decide which items render in the All Day row for a cell date.
+
+        The visibility guarantee: every item with due_date == cell_date
+        must be visible SOMEWHERE on the calendar. If an item doesn't
+        produce an hour-grid segment for this viewing day, it falls
+        back to the All Day row so it's still visible.
+
+        Classification:
+            - due_time is None         → all-day by definition
+            - Q1 window is ALL_DAY     → sanitization fallthrough
+            - Q1 window is other but
+              no hour-grid segment
+              for this day             → visibility fallback
+            - Q1 window produces
+              an hour-grid segment     → skipped (hour grid handles it)
+        """
+        from ...core.calendar_layout import (
+            WindowKind,
+            compute_bar_segments,
+            compute_bar_window,
+        )
+
+        now = datetime.now()
+        out: list = []
+        for item in items:
+            # Fast path: no due_time → traditional all-day
+            if item.due_time is None:
+                out.append(item)
+                continue
+            window = compute_bar_window(item)
+            if window is None:
+                # Shouldn't happen (items_by_date is keyed on due_date),
+                # but defensive.
+                out.append(item)
+                continue
+            if window.kind == WindowKind.ALL_DAY:
+                out.append(item)
+                continue
+            # Does the item produce a visible hour-grid segment for this
+            # day? If yes, the hour grid handles it. If no, fall back to
+            # the all-day row.
+            segments = compute_bar_segments(item, window, cell_date, now)
+            has_hour_grid_seg = any(not s.is_all_day and not s.is_marker for s in segments)
+            if not has_hour_grid_seg:
+                out.append(item)
+        return out
 
     def _set_week(self, d: date) -> None:
         start = d - timedelta(days=d.weekday())
@@ -2522,11 +2804,7 @@ class _WeekDelegate(QStyledItemDelegate):
         Skips all-day and marker segments — those belong in the All Day
         row, which is rendered separately.
         """
-        from ...core.calendar_layout import (
-            BarState,
-            compute_bar_segments,
-            compute_bar_window,
-        )
+        from ...core.calendar_layout import BarState
 
         cell_date = index.data(_WEEK_DATE_ROLE)
         hour = index.data(_WEEK_HOUR_ROLE)
@@ -2541,94 +2819,208 @@ class _WeekDelegate(QStyledItemDelegate):
         cell_minute_width = cell_minute_end - cell_minute_start
 
         # Visual layout: bars are inset from the cell edges so today
-        # highlights and grid lines remain visible around them.
-        bar_left = rect.left() + 4
-        bar_width = rect.width() - 8
+        # highlights and grid lines remain visible around them. Horizontal
+        # padding is larger (6px each side) to make bars clearly narrower
+        # than the cell and read as chips rather than background fills.
+        bar_left = rect.left() + 6
+        bar_width = rect.width() - 12
 
-        for item in column_items:
-            window = compute_bar_window(item)
-            if window is None:
+        # ------------------------------------------------------------------
+        # Compute the cell's bar layout. Continuation slices (bars that
+        # span into this cell from a previous one) get a thin ribbon on
+        # the left edge so they don't compete with in-cell tasks for
+        # horizontal space. In-cell tasks get the rest of the bar width
+        # divided into slots with labels.
+        # ------------------------------------------------------------------
+        layout = _compute_cell_bar_layout(
+            column_items,
+            cell_date,
+            cell_minute_start,
+            cell_minute_end,
+            bar_left,
+            bar_width,
+            current_time,
+        )
+        if not layout.continuing and not layout.starting and not layout.overflow:
+            return
+
+        # Convenience aliases for the painting loop below.
+        continuing_slots = layout.continuing
+        starting_slots = layout.starting
+        overflow = layout.overflow
+
+        # Build a single iteration list of (item, window, seg, slot_left,
+        # slot_right_edge, is_continuing) tuples so the painting loop
+        # below stays simple. Label visibility is decided per-slot from
+        # the slot's actual width (see _MIN_LABEL_WIDTH) — day view's
+        # wide cells show labels even with 3 slots, week view's narrow
+        # cells skip them.
+        all_slots = [(*c, True) for c in continuing_slots] + [(*s, False) for s in starting_slots]
+        # We re-purpose the existing iteration variables — slot_idx is
+        # an index for the visible_count guard below, but that guard is
+        # now per-list rather than global.
+        visible_count = len(all_slots)
+        if visible_count == 0 and overflow == 0:
+            return
+
+        # ------------------------------------------------------------------
+        # PASS 2: Paint each slot. The slot's geometry was already
+        # computed by _compute_cell_bar_layout — for in-cell tasks
+        # that's a wide chip; for continuing slices that's a thin
+        # ribbon on the left edge that doesn't crowd in-cell tasks.
+        # ------------------------------------------------------------------
+        for item, window, seg, slot_left, slot_right_edge, is_ribbon in all_slots:
+            visible_start = max(seg.start_minute, cell_minute_start)
+            visible_end = min(seg.end_minute, cell_minute_end)
+            raw_top = rect.top() + int(
+                (visible_start - cell_minute_start) / cell_minute_width * rect.height()
+            )
+            raw_bot = rect.top() + int(
+                (visible_end - cell_minute_start) / cell_minute_width * rect.height()
+            )
+            # Multi-cell coherence: when the bar continues into an adjacent
+            # cell, no inset/border on the continuing edge so adjacent
+            # slices merge visually.
+            is_continuing_top = seg.start_minute < cell_minute_start
+            is_continuing_bot = seg.end_minute > cell_minute_end
+            inset_top = 0 if is_continuing_top else 4
+            inset_bot = 0 if is_continuing_bot else 4
+            top_y = raw_top + inset_top
+            bot_y = raw_bot - inset_bot
+            if bot_y <= top_y:
                 continue
-            segments = compute_bar_segments(item, window, cell_date, current_time)
-            for seg in segments:
-                if seg.is_all_day or seg.is_marker:
-                    # All-day items and Q6 markers belong in the pinned
-                    # All Day row, not the hour grid.
-                    continue
-                # Does this segment intersect the cell's hour range?
-                if seg.end_minute <= cell_minute_start or seg.start_minute >= cell_minute_end:
-                    continue
-                visible_start = max(seg.start_minute, cell_minute_start)
-                visible_end = min(seg.end_minute, cell_minute_end)
-                # Map minute offsets to pixel y inside this cell
-                top_y = rect.top() + int(
-                    (visible_start - cell_minute_start) / cell_minute_width * rect.height()
-                )
-                bot_y = rect.top() + int(
-                    (visible_end - cell_minute_start) / cell_minute_width * rect.height()
-                )
-                if bot_y <= top_y:
-                    continue
 
-                colors = self._bar_palette[seg.state]
-                base_qcolor = QColor(colors.base)
-                base_qcolor.setAlpha(220)
-                painter.fillRect(bar_left, top_y, bar_width, bot_y - top_y, base_qcolor)
+            colors = self._bar_palette[seg.state]
+            base_qcolor = QColor(colors.base)
+            base_qcolor.setAlpha(235)
+            border_color = QColor(colors.base).darker(160)
+            border_color.setAlpha(255)
 
-                # Two-zone deviation overlay for completed bars.
-                # COMPLETED_EARLY: translucent surplus from completed_at
-                # to window.end (only visible when completed_at is in
-                # this cell's slice).
-                # COMPLETED_LATE: distinct overlay from window.end to
-                # completed_at (the late-overflow zone).
-                # Both are tied to the planned-window minute range, not
-                # the visible slice, so they correctly span across cells.
-                if seg.state in (BarState.COMPLETED_EARLY, BarState.COMPLETED_LATE):
-                    self._paint_deviation_overlay(
-                        painter,
-                        rect,
-                        item,
-                        window,
-                        seg,
-                        cell_minute_start,
-                        cell_minute_end,
-                        bar_left,
-                        bar_width,
+            bar_rect = QRect(
+                int(slot_left),
+                int(top_y),
+                int(slot_right_edge - slot_left),
+                int(bot_y - top_y),
+            )
+
+            painter.save()
+            if not is_continuing_top and not is_continuing_bot:
+                # Bar is entirely within this cell — rounded corners +
+                # full border (the "chip" look).
+                painter.setBrush(base_qcolor)
+                painter.setPen(QPen(border_color, 1.5))
+                painter.drawRoundedRect(bar_rect, 4, 4)
+            else:
+                # Multi-cell slice: fill flat, then draw borders only on
+                # NON-continuing (exterior) edges. The continuing edges
+                # have no horizontal border line, letting adjacent slices
+                # blend seamlessly into one bar.
+                painter.fillRect(bar_rect, base_qcolor)
+                painter.setPen(QPen(border_color, 1.5))
+                # Left and right edges always have borders (vertical sides
+                # of the bar are always exposed)
+                painter.drawLine(
+                    bar_rect.left(), bar_rect.top(), bar_rect.left(), bar_rect.bottom()
+                )
+                painter.drawLine(
+                    bar_rect.right(), bar_rect.top(), bar_rect.right(), bar_rect.bottom()
+                )
+                # Top edge only when segment starts in this cell
+                if not is_continuing_top:
+                    painter.drawLine(
+                        bar_rect.left(), bar_rect.top(), bar_rect.right(), bar_rect.top()
                     )
+                # Bottom edge only when segment ends in this cell
+                if not is_continuing_bot:
+                    painter.drawLine(
+                        bar_rect.left(),
+                        bar_rect.bottom(),
+                        bar_rect.right(),
+                        bar_rect.bottom(),
+                    )
+            painter.restore()
 
-                # Selection highlight
-                if self._selected_item_id is not None and item.id == self._selected_item_id:
-                    painter.save()
-                    painter.setPen(QPen(QColor(self._colors["highlight"]), 2))
-                    painter.setBrush(Qt.BrushStyle.NoBrush)
-                    painter.drawRect(bar_left, top_y, bar_width - 1, bot_y - top_y - 1)
-                    painter.restore()
+            # Two-zone deviation overlay for completed bars
+            if seg.state in (BarState.COMPLETED_EARLY, BarState.COMPLETED_LATE):
+                self._paint_deviation_overlay(
+                    painter,
+                    rect,
+                    item,
+                    window,
+                    seg,
+                    cell_minute_start,
+                    cell_minute_end,
+                    slot_left,
+                    slot_right_edge - slot_left,
+                )
 
-                # Reminder text — top-anchored, ellipsis-truncated per Q4.
-                # Only paint when the slice has enough vertical room AND
-                # the segment STARTS in (or above) this cell so we don't
-                # repeat the label on every intersecting cell.
-                if seg.start_minute >= cell_minute_start and (bot_y - top_y) >= 14:
+            # Selection highlight
+            if self._selected_item_id is not None and item.id == self._selected_item_id:
+                painter.save()
+                painter.setPen(QPen(QColor(self._colors["highlight"]), 2))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRoundedRect(bar_rect.adjusted(-1, -1, 1, 1), 4, 4)
+                painter.restore()
+
+            # Label — only for non-ribbon (in-cell starting) slots,
+            # only when the slice has enough vertical space, and only
+            # when the slot is wide enough that an elided reminder is
+            # actually readable (see _MIN_LABEL_WIDTH). Continuation
+            # ribbons never get labels — their full text lives in the
+            # START cell where the bar begins.
+            if not is_ribbon and (bot_y - top_y) >= 14:
+                label_width = slot_right_edge - slot_left - 8
+                if label_width >= _MIN_LABEL_WIDTH:
                     painter.save()
                     text_font = QFont(painter.font())
                     text_font.setPixelSize(10)
+                    text_font.setBold(True)
                     painter.setFont(text_font)
                     fm = QFontMetrics(text_font)
                     label = fm.elidedText(
                         item.reminder or "",
                         Qt.TextElideMode.ElideRight,
-                        bar_width - 8,
+                        label_width,
                     )
-                    painter.setPen(QColor(self._colors["text"]))
+                    base_c = QColor(colors.base)
+                    luminance = (
+                        0.299 * base_c.red() + 0.587 * base_c.green() + 0.114 * base_c.blue()
+                    )
+                    text_color = QColor("white") if luminance < 140 else QColor("#111827")
+                    painter.setPen(text_color)
                     painter.drawText(
-                        bar_left + 4,
-                        top_y + 1,
-                        bar_width - 8,
-                        min(bot_y - top_y, 16),
-                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                        int(slot_left + 4),
+                        int(top_y + 1),
+                        int(label_width),
+                        min(int(bot_y - top_y - 2), 14),
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                         label,
                     )
                     painter.restore()
+
+        # ------------------------------------------------------------------
+        # Overflow badge. Drawn in the top-right corner of the cell so
+        # it's always visible and doesn't obscure the displayed bars.
+        # The badge geometry comes from _compute_overflow_badge_rect so
+        # the hit-test can re-derive the same rect and route badge
+        # clicks to the day-popover handler.
+        # ------------------------------------------------------------------
+        badge_rect = _compute_overflow_badge_rect(rect, overflow)
+        if badge_rect is not None:
+            painter.save()
+            badge_font = QFont(painter.font())
+            badge_font.setPixelSize(9)
+            badge_font.setBold(True)
+            painter.setFont(badge_font)
+            painter.setBrush(QColor(17, 24, 39, 220))  # near-black translucent
+            painter.setPen(QPen(QColor(255, 255, 255), 1))
+            painter.drawRoundedRect(badge_rect, 3, 3)
+            painter.drawText(
+                badge_rect,
+                Qt.AlignmentFlag.AlignCenter,
+                f"+{overflow}",
+            )
+            painter.restore()
 
     def _paint_deviation_overlay(
         self,
@@ -2999,47 +3391,72 @@ class _WeekTableView(QTableView):
         """
         from datetime import datetime as _dt
 
-        from ...core.calendar_layout import (
-            compute_bar_segments,
-            compute_bar_window,
-        )
-
         column_items = index.data(_WEEK_COLUMN_ITEMS_ROLE) or []
         if not column_items:
             return None
 
-        # Click coordinates within the cell
         click_x = pos.x()
         click_y = pos.y()
-        if not (rect.left() + 4 <= click_x <= rect.right() - 4):
-            # Outside the bar's horizontal padding — not a hit
-            return None
 
         cell_minute_start = hour * 60
         cell_minute_end = (hour + 1) * 60
         cell_minute_width = cell_minute_end - cell_minute_start
 
-        # Map click y to a minute-of-hour
-        click_fraction = (click_y - rect.top()) / rect.height()
-        click_minute = cell_minute_start + click_fraction * cell_minute_width
+        # Compute the same layout the painter uses, then test the click
+        # against each slot's actual on-screen rectangle. This ensures
+        # the slot the user CLICKED ON is the slot that returns a hit,
+        # not just any item whose segment time range happens to include
+        # the click time.
+        bar_left = rect.left() + 6
+        bar_width = rect.width() - 12
+        layout = _compute_cell_bar_layout(
+            column_items,
+            cell_date,
+            cell_minute_start,
+            cell_minute_end,
+            bar_left,
+            bar_width,
+            _dt.now(),
+        )
 
-        current_time = _dt.now()
-        for item in column_items:
-            window = compute_bar_window(item)
-            if window is None:
+        # Overflow badge: if the click is on the "+N" badge, hand the
+        # popover EVERY task in this cell — both the visible chips and
+        # the hidden overflow. Once labels get disabled (3+ in-cell
+        # tasks), the visible chips are unidentifiable, so the popover
+        # is the only way for the user to actually read which tasks
+        # are in this hour. Tested first because the badge sits on top
+        # of the bar slots in the cell's top-right corner.
+        if layout.overflow_items:
+            badge_rect = _compute_overflow_badge_rect(rect, len(layout.overflow_items))
+            if badge_rect is not None and badge_rect.contains(pos):
+                visible_starting = [t[0] for t in layout.starting]
+                all_in_cell = visible_starting + list(layout.overflow_items)
+                return ("more", cell_date, all_in_cell)
+
+        # Test starting (in-cell) slots first — they're the wider, more
+        # specific slots and the user is most likely clicking those.
+        for item, _window, seg, slot_left, slot_right in layout.starting:
+            if not (slot_left <= click_x <= slot_right):
                 continue
-            segments = compute_bar_segments(item, window, cell_date, current_time)
-            for seg in segments:
-                if seg.is_all_day or seg.is_marker:
-                    continue
-                # Slice intersection with this cell
-                if seg.end_minute <= cell_minute_start or seg.start_minute >= cell_minute_end:
-                    continue
-                # Click must fall within the segment's full minute range
-                # (not just the cell's slice — clicking anywhere on the
-                # bar's vertical extent counts as hitting the bar).
-                if seg.start_minute <= click_minute <= seg.end_minute:
-                    return ("task", item, index)
+            visible_start = max(seg.start_minute, cell_minute_start)
+            visible_end = min(seg.end_minute, cell_minute_end)
+            seg_top_y = rect.top() + int(
+                (visible_start - cell_minute_start) / cell_minute_width * rect.height()
+            )
+            seg_bot_y = rect.top() + int(
+                (visible_end - cell_minute_start) / cell_minute_width * rect.height()
+            )
+            if seg_top_y <= click_y <= seg_bot_y:
+                return ("task", item, index)
+
+        # Then test continuing ribbons (narrow strips on the left edge).
+        for item, _window, _seg, slot_left, slot_right in layout.continuing:
+            if not (slot_left <= click_x <= slot_right):
+                continue
+            # Continuing slices fill the cell vertically — any click in
+            # the ribbon x range is a hit.
+            return ("task", item, index)
+
         return None
 
     def mousePressEvent(self, a0) -> None:  # noqa: N802
@@ -3410,6 +3827,154 @@ class _UnscheduledPanel(QFrame):
 
 
 # ---------------------------------------------------------------------------
+# Calendar legend — explains the bar color palette to users
+# ---------------------------------------------------------------------------
+
+
+class _CalendarLegend(QWidget):
+    """Compact horizontal legend showing each BarState color with its label.
+
+    Displayed in week/day views so users know what the bar colors mean.
+    Refreshes automatically on theme change.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(6, 2, 6, 2)
+        self._layout.setSpacing(10)
+        self._swatches: list[QWidget] = []
+        self.refresh()
+
+    def refresh(self) -> None:
+        """Rebuild the legend from the current theme's bar palette."""
+        from ...core.bar_palette import get_palette
+        from ...core.calendar_layout import BarState
+        from ...gui.styles.themes import Theme, get_current_theme
+
+        # Clear existing content
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        self._swatches.clear()
+
+        theme_name = "dark" if get_current_theme() == Theme.DARK else "light"
+        palette = get_palette(theme_name)
+
+        legend_entries = [
+            (BarState.FUTURE, self.tr("Future")),
+            (BarState.IN_WORK_WINDOW, self.tr("In progress")),
+            (BarState.DUE_NOW, self.tr("Due soon")),
+            (BarState.OVERDUE_ACTIVE, self.tr("Overdue")),
+            (BarState.COMPLETED_ONTIME, self.tr("Completed")),
+        ]
+
+        # "Legend:" prefix
+        prefix = QLabel(self.tr("Legend:"))
+        prefix.setStyleSheet("QLabel { color: palette(text); font-size: 10px; font-weight: bold; }")
+        self._layout.addWidget(prefix)
+
+        for state, label_text in legend_entries:
+            colors = palette[state]
+            # Color swatch — small colored rectangle
+            swatch = QLabel()
+            swatch.setFixedSize(14, 12)
+            swatch.setStyleSheet(
+                f"QLabel {{ background-color: {colors.base}; "
+                f"border: 1px solid {QColor(colors.base).darker(130).name()}; "
+                f"border-radius: 2px; }}"
+            )
+            self._layout.addWidget(swatch)
+            # Text label
+            text_label = QLabel(label_text)
+            text_label.setStyleSheet("QLabel { color: palette(text); font-size: 10px; }")
+            self._layout.addWidget(text_label)
+            self._swatches.append(swatch)
+
+        # Spacer between lifecycle states and deviation markers
+        spacer = QLabel("  |  ")
+        spacer.setStyleSheet("QLabel { color: palette(mid); font-size: 10px; }")
+        self._layout.addWidget(spacer)
+
+        # Deviation indicators — using the COMPLETED_EARLY and COMPLETED_LATE
+        # deviation colors to show the two-zone concept.
+        early_colors = palette[BarState.COMPLETED_EARLY]
+        early_swatch = QLabel()
+        early_swatch.setFixedSize(14, 12)
+        early_swatch_color = QColor(early_colors.deviation)
+        early_swatch_color.setAlpha(150)
+        early_swatch.setStyleSheet(
+            f"QLabel {{ background-color: rgba("
+            f"{early_swatch_color.red()},"
+            f"{early_swatch_color.green()},"
+            f"{early_swatch_color.blue()},"
+            f"{early_swatch_color.alpha()}); "
+            f"border: 1px solid {QColor(early_colors.deviation).darker(130).name()}; "
+            f"border-radius: 2px; }}"
+        )
+        self._layout.addWidget(early_swatch)
+        early_label = QLabel(self.tr("Early surplus"))
+        early_label.setStyleSheet("QLabel { color: palette(text); font-size: 10px; }")
+        self._layout.addWidget(early_label)
+
+        late_colors = palette[BarState.COMPLETED_LATE]
+        late_swatch = QLabel()
+        late_swatch.setFixedSize(14, 12)
+        late_swatch.setStyleSheet(
+            f"QLabel {{ background-color: {late_colors.deviation}; "
+            f"border: 1px solid {QColor(late_colors.deviation).darker(130).name()}; "
+            f"border-radius: 2px; }}"
+        )
+        self._layout.addWidget(late_swatch)
+        late_label = QLabel(self.tr("Late overflow"))
+        late_label.setStyleSheet("QLabel { color: palette(text); font-size: 10px; }")
+        self._layout.addWidget(late_label)
+
+        # Separator before the now-line indicator
+        spacer2 = QLabel("  |  ")
+        spacer2.setStyleSheet("QLabel { color: palette(mid); font-size: 10px; }")
+        self._layout.addWidget(spacer2)
+
+        # Now-line indicator — a small horizontal red line swatch matching
+        # the actual now line drawn in the hour grid.
+        now_color = palette[BarState.OVERDUE_ACTIVE].base  # same color as the line
+        now_swatch = QLabel()
+        now_swatch.setFixedSize(14, 12)
+        # Two-pixel horizontal line centered vertically in the swatch,
+        # matching the look of the actual now line drawn by _paint_now_line.
+        now_swatch.setStyleSheet(
+            "QLabel { "
+            "background-color: transparent; "
+            "border-top: 5px solid transparent; "
+            "border-bottom: 5px solid transparent; "
+            "border-image: none; "
+            "}"
+        )
+        # Override with a direct linear-gradient-like fill simulating a line
+        now_swatch.setStyleSheet(
+            f"QLabel {{ "
+            f"background: qlineargradient("
+            f"x1:0, y1:0, x2:0, y2:1, "
+            f"stop:0 transparent, "
+            f"stop:0.4 transparent, "
+            f"stop:0.45 {now_color}, "
+            f"stop:0.55 {now_color}, "
+            f"stop:0.6 transparent, "
+            f"stop:1 transparent); "
+            f"}}"
+        )
+        self._layout.addWidget(now_swatch)
+        now_label = QLabel(self.tr("Now"))
+        now_label.setStyleSheet("QLabel { color: palette(text); font-size: 10px; }")
+        self._layout.addWidget(now_label)
+        self._swatches.append(now_swatch)
+
+        self._layout.addStretch()
+
+
+# ---------------------------------------------------------------------------
 # Pinned All Day row container
 # ---------------------------------------------------------------------------
 
@@ -3441,36 +4006,61 @@ class _PinnedWeekContainer(QWidget):
         all_day_height: int = 64,
     ) -> None:
         super().__init__(parent)
+        from PyQt6.QtWidgets import QHeaderView, QStyle
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # All Day pinned table — shows row 0 only
+        # Shared geometry — both tables use these so columns line up
+        # perfectly regardless of scrollbar reservations.
+        self._shared_v_header_width = 56
+        self._scrollbar_width = self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+
+        # All Day pinned table — shows row 0 only. This is the ONLY
+        # table that shows the horizontal day header; the hour-grid's
+        # header is hidden so users see a single seamless day header
+        # above the hour grid.
         self.all_day_table = _WeekTableView()
         self.all_day_table.setModel(model)
         self.all_day_table.setItemDelegate(delegate)
         self.all_day_table.setFixedHeight(all_day_height)
-        # Hide hour rows
         v_header = self.all_day_table.verticalHeader()
         if v_header is not None:
             for source_row in range(1, 25):
                 v_header.hideSection(source_row)
-        # Disable vertical scroll on the pinned row
+            v_header.setFixedWidth(self._shared_v_header_width)
         self.all_day_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.all_day_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         layout.addWidget(self.all_day_table)
 
-        # Hour grid table — shows rows 1-24 only
+        # Hour grid table — shows rows 1-24 only, hides the horizontal
+        # day header.
         self.hour_grid_table = _WeekTableView()
         self.hour_grid_table.setModel(model)
         self.hour_grid_table.setItemDelegate(delegate)
         v_header_h = self.hour_grid_table.verticalHeader()
         if v_header_h is not None:
             v_header_h.hideSection(0)
+            v_header_h.setFixedWidth(self._shared_v_header_width)
+        h_header_hg = self.hour_grid_table.horizontalHeader()
+        if h_header_hg is not None:
+            h_header_hg.setVisible(False)
         layout.addWidget(self.hour_grid_table, 1)
 
-        # Horizontal scroll synchronization
-        # When the hour grid scrolls horizontally, the all-day row follows.
-        # And vice versa, with a re-entry guard to prevent infinite recursion.
+        # Both tables use Fixed resize mode with manually-computed
+        # widths (see resizeEvent). This gives exact column alignment
+        # regardless of scrollbar reservations, which Stretch mode
+        # cannot guarantee because the all-day table has no vertical
+        # scrollbar reservation while the hour grid does.
+        ad_hh = self.all_day_table.horizontalHeader()
+        hg_hh = self.hour_grid_table.horizontalHeader()
+        if ad_hh is not None:
+            ad_hh.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        if hg_hh is not None:
+            hg_hh.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+
+        # Horizontal scroll synchronization (narrow-window case).
         self._syncing_hscroll = False
         all_day_hbar = self.all_day_table.horizontalScrollBar()
         hour_grid_hbar = self.hour_grid_table.horizontalScrollBar()
@@ -3500,11 +4090,51 @@ class _PinnedWeekContainer(QWidget):
         finally:
             self._syncing_hscroll = False
 
+    def resizeEvent(self, a0) -> None:  # noqa: N802
+        """Compute matching column widths for both inner tables on resize.
+
+        Uses Fixed resize mode with manual widths so alignment is exact
+        regardless of scrollbar reservations. The authoritative viewport
+        width is the hour grid's (which reserves vertical scrollbar space)
+        minus its vertical header — divided equally across visible
+        columns. Both tables get the same per-column width.
+        """
+        super().resizeEvent(a0)
+        self._recompute_column_widths()
+
+    def showEvent(self, a0) -> None:  # noqa: N802
+        super().showEvent(a0)
+        self._recompute_column_widths()
+
+    def _recompute_column_widths(self) -> None:
+        model = self.all_day_table.model()
+        if model is None:
+            return
+        col_count = model.columnCount()
+        visible_cols = [c for c in range(col_count) if not self.all_day_table.isColumnHidden(c)]
+        if not visible_cols:
+            return
+        # Available width = hour grid viewport width - vertical header
+        # - scrollbar width. The hour grid is authoritative because its
+        # vertical scrollbar is the one that takes real space.
+        total = self.width() - self._shared_v_header_width - self._scrollbar_width
+        if total <= 0:
+            return
+        col_w = total // len(visible_cols)
+        remainder = total - (col_w * len(visible_cols))
+        # Give the remainder to the first visible column so widths sum
+        # exactly to the total (no sub-pixel drift at the right edge).
+        for i, col in enumerate(visible_cols):
+            w = col_w + (remainder if i == 0 else 0)
+            self.all_day_table.setColumnWidth(col, w)
+            self.hour_grid_table.setColumnWidth(col, w)
+
     def hide_columns(self, columns: list[int]) -> None:
         """Hide the same columns in both inner tables (used by day view)."""
         for col in columns:
             self.all_day_table.setColumnHidden(col, True)
             self.hour_grid_table.setColumnHidden(col, True)
+        self._recompute_column_widths()
 
     def update_viewports(self) -> None:
         """Trigger a repaint of both inner tables. Used by the now-tick timer."""
@@ -3666,6 +4296,17 @@ class CalendarViewWidget(QWidget):
 
         layout.addWidget(top_bar)
 
+        # Legend bar — explains the bar color palette to users. Visible in
+        # week/day sub-views, hidden in month/timeline. Initial visibility
+        # is set by the first _set_sub_view call below.
+        self._legend = _CalendarLegend()
+        self._legend.setStyleSheet(
+            "QWidget { background: palette(alternate-base); "
+            "border-bottom: 1px solid palette(mid); }"
+        )
+        self._legend.setVisible(self._sub_view in (self.SUB_DAY, self.SUB_WEEK))
+        layout.addWidget(self._legend)
+
         # Secondary pill row for timeline sub-views (hidden unless Timeline selected)
         self._timeline_pill_frame = QFrame()
         self._timeline_pill_frame.setStyleSheet(
@@ -3822,6 +4463,49 @@ class CalendarViewWidget(QWidget):
 
         self._update_nav_label()
 
+        # Initial stack position — use the saved sub-view directly
+        # without going through _set_sub_view (which has side effects
+        # like writing to config and calling refresh before the
+        # widget's set_list() has run).
+        self._sub_stack.setCurrentIndex(self._sub_view)
+        self._initial_scroll_done = False
+
+    def showEvent(self, a0) -> None:  # noqa: N802
+        """Scroll to the current hour the first time the widget is shown.
+
+        Calling _set_sub_view in __init__ doesn't reliably scroll because
+        the table viewport hasn't been laid out yet — scrollTo computes
+        positions from rendered geometry. We defer the initial scroll
+        to the first showEvent (when the widget is being painted for
+        real) and use a one-shot QTimer to ensure the scroll happens
+        AFTER the layout pass completes.
+        """
+        super().showEvent(a0)
+        if not self._initial_scroll_done:
+            self._initial_scroll_done = True
+            from PyQt6.QtCore import QTimer
+
+            QTimer.singleShot(0, self._scroll_to_current_hour)
+
+    def _scroll_to_current_hour(self) -> None:
+        """Scroll the active sub-view to put the current hour in view.
+
+        Used for the initial scroll on first show, and also called by
+        _set_sub_view when the user switches between day/week views so
+        the active grid is always centered on now.
+        """
+        from datetime import datetime as _dt
+
+        current_hour = _dt.now().hour
+        target_row = current_hour + 1  # row 0 = All Day, row N = hour N-1
+
+        if self._sub_view == self.SUB_DAY:
+            index = self._day_model.index(target_row, 0)
+            self._day_table.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
+        elif self._sub_view == self.SUB_WEEK:
+            index = self._week_model.index(target_row, 0)
+            self._week_table.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
+
     # --- Public API ---
 
     def set_list(self, todo_list: TodoList | None) -> None:
@@ -3872,35 +4556,60 @@ class CalendarViewWidget(QWidget):
             self._unscheduled.set_items([])
             return
 
-        items = list(self._todo_list.active_items())
-        items = [i for i in items if i.parent_id is None]
-        items = self._apply_filter(items)
+        # All non-deleted items including subtasks. We split them
+        # carefully below: top-level items with due_date go to the
+        # calendar buckets; ALL items without due_date (including
+        # subtasks) go to the unscheduled panel so users can find them.
+        all_items = list(self._todo_list.active_items())
+        all_items = self._apply_filter(all_items)
+        top_level = [i for i in all_items if i.parent_id is None]
 
-        scheduled: dict[date, list] = {}
+        # Build the canonical scheduled dict from real (non-projected)
+        # top-level items. This is what the MONTH view uses — projections
+        # would clutter the month grid with daily-recurring chips.
+        scheduled_real: dict[date, list] = {}
         unscheduled: list = []
-        for item in items:
+        for item in top_level:
             if item.due_date:
-                scheduled.setdefault(item.due_date, []).append(item)
+                scheduled_real.setdefault(item.due_date, []).append(item)
             else:
                 unscheduled.append(item)
 
-        for d in scheduled:
-            scheduled[d].sort(
-                key=lambda i: (
-                    i.complete,
-                    i.priority,
-                    i.due_time.hour * 60 + i.due_time.minute if i.due_time else 9999,
-                    i.reminder.lower(),
-                )
-            )
+        # Subtasks without due_date are not in `top_level` (parent_id
+        # filter), but they should still appear in the unscheduled panel
+        # so they're findable from the calendar view. The user can't
+        # see them on the calendar grid, but the panel is the catch-all.
+        for item in all_items:
+            if item.parent_id is not None and item.due_date is None:
+                unscheduled.append(item)
 
-        self._cal_model.set_items(scheduled)
+        # Build a SEPARATE scheduled dict for week/day views with
+        # recurrence projections layered in. The month view explicitly
+        # uses scheduled_real (no projections) so it stays clean.
+        scheduled_with_projections: dict[date, list] = {
+            d: list(items) for d, items in scheduled_real.items()
+        }
+        self._project_recurrences_into(scheduled_with_projections)
+
+        sort_key = lambda i: (  # noqa: E731
+            i.complete,
+            i.priority,
+            i.due_time.hour * 60 + i.due_time.minute if i.due_time else 9999,
+            i.reminder.lower(),
+        )
+        for d in scheduled_real:
+            scheduled_real[d].sort(key=sort_key)
+        for d in scheduled_with_projections:
+            scheduled_with_projections[d].sort(key=sort_key)
+
+        # Month view: uses real scheduled (no projections).
+        self._cal_model.set_items(scheduled_real)
         self._cal_model.set_month(self._current_date.year, self._current_date.month)
         self._cal_delegate._today = date.today()
         self._cal_delegate._todo_list = self._todo_list
 
-        # Week view
-        self._week_model.set_items(scheduled)
+        # Week view: uses projections so future occurrences are visible.
+        self._week_model.set_items(scheduled_with_projections)
         self._week_model.set_week(self._current_date)
         self._week_delegate._today = date.today()
         # Update week header labels
@@ -3918,9 +4627,9 @@ class CalendarViewWidget(QWidget):
                             label = f"\u25cf {label}"
                         wmodel.setHeaderData(col, Qt.Orientation.Horizontal, label)
 
-        # Day view — show single day using week model with 1 visible column
-        # Set the week starting from current_date so column 0 = current_date
-        self._day_model.set_items(scheduled)
+        # Day view — uses projections too. Single day from a 7-row
+        # model with 1 visible column starting at current_date.
+        self._day_model.set_items(scheduled_with_projections)
         # Create a fake "week" starting from current_date
         self._day_model._set_week(self._current_date)
         # Shift so column 0 is the target date
@@ -3934,17 +4643,82 @@ class CalendarViewWidget(QWidget):
         if h_header:
             h_header.hide()  # Single column doesn't need day header
 
-        # Timeline view — all items with any date info
-        all_items = list(self._todo_list.active_items())
-        all_items = [i for i in all_items if i.parent_id is None]
-        all_items = self._apply_filter(all_items)
-        self._timeline_tasks_widget.set_data(all_items, self._current_date, self._todo_list)
+        # Timeline view — top-level items, used for the Gantt chart.
+        # Reuse the already-computed top_level list.
+        self._timeline_tasks_widget.set_data(top_level, self._current_date, self._todo_list)
 
         # Refresh active timeline sub-view (Daily/Productivity/Accuracy)
         if self._sub_view == self.SUB_TIMELINE and self._tl_sub_view > 0:
             self._refresh_timeline_sub_view()
 
         self._unscheduled.set_items(unscheduled, todo_list=self._todo_list)
+
+    def _project_recurrences_into(self, scheduled: dict[date, list]) -> None:
+        """Project recurring tasks into future date buckets.
+
+        For each recurring task that's currently in the scheduled dict,
+        walk forward N days computing its next occurrences and add the
+        same item object to each matching future date's bucket. This
+        makes recurring tasks visible on their future occurrence dates
+        without materializing virtual items in the database.
+
+        The projection horizon is ~42 days (6 weeks) — enough to cover
+        the visible range of month view plus navigation to the next
+        couple of months without overloading.
+        """
+        from dateutil.relativedelta import relativedelta
+
+        PROJECTION_DAYS = 42
+        today = date.today()
+        horizon = today + timedelta(days=PROJECTION_DAYS)
+
+        def next_occurrence(d: date, kind: str, interval: int) -> date | None:
+            """Step forward by ONE cycle from `d`. Unlike
+            compute_next_due_date which always computes the next
+            occurrence FROM TODAY, this advances FROM `d` so we can
+            iterate to project arbitrary distance."""
+            if interval < 1:
+                interval = 1
+            if kind == "daily":
+                return d + timedelta(days=interval)
+            if kind == "weekly":
+                return d + timedelta(weeks=interval)
+            if kind == "monthly":
+                return d + relativedelta(months=interval)
+            if kind == "yearly":
+                return d + relativedelta(years=interval)
+            return None
+
+        # Snapshot the keys because we'll be adding to the dict
+        starting_dates = list(scheduled.keys())
+        for start_date in starting_dates:
+            for item in list(scheduled[start_date]):
+                if not item.is_recurring:
+                    continue
+                if item.recurrence_type is None:
+                    continue
+                if item.due_date is None:
+                    continue
+                current = item.due_date
+                safety_counter = 0
+                while safety_counter < PROJECTION_DAYS + 10:
+                    safety_counter += 1
+                    next_due = next_occurrence(
+                        current, item.recurrence_type, item.recurrence_interval
+                    )
+                    if next_due is None or next_due > horizon:
+                        break
+                    if item.recurrence_end_date is not None and next_due > item.recurrence_end_date:
+                        break
+                    bucket = scheduled.setdefault(next_due, [])
+                    # Wrap as _ProjectedItem so compute_bar_window sees
+                    # the projected date as due_date and produces a fresh
+                    # bar (not an "overdue from today's instance" marker).
+                    # Dedupe by item id to avoid double-adding when the
+                    # real next instance is already in the dict.
+                    if not any(getattr(existing, "id", None) == item.id for existing in bucket):
+                        bucket.append(_ProjectedItem(item, next_due))
+                    current = next_due
 
     # --- Filter ---
 
@@ -4094,6 +4868,11 @@ class CalendarViewWidget(QWidget):
         self._timeline_pill_frame.setVisible(is_timeline)
         self._unscheduled.setVisible(not is_timeline)
 
+        # Legend is only meaningful for day/week (the sub-views that use
+        # the Gantt-bar palette). Hide it in month and timeline.
+        is_day_or_week = idx in (self.SUB_DAY, self.SUB_WEEK)
+        self._legend.setVisible(is_day_or_week)
+
         # Nav button state for timeline sub-views
         if is_timeline:
             self._update_timeline_nav_state()
@@ -4113,22 +4892,13 @@ class CalendarViewWidget(QWidget):
         get_config().database.calendar_sub_view = name_map.get(idx, "week")
         get_config_manager().save()
 
-        # Auto-scroll to current hour for day and week views
-        if idx == self.SUB_DAY:
-            from datetime import datetime as _dt
+        # Auto-scroll to current hour for day and week views. Use a
+        # one-shot timer because the table viewport may not be laid out
+        # immediately after switching the stack widget.
+        if idx in (self.SUB_DAY, self.SUB_WEEK):
+            from PyQt6.QtCore import QTimer
 
-            current_hour = _dt.now().hour
-            target_row = current_hour + 1
-            index = self._day_model.index(target_row, 0)
-            self._day_table.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
-        elif idx == self.SUB_WEEK:
-            from datetime import datetime as _dt
-
-            current_hour = _dt.now().hour
-            # Row 0 = All Day, row N = hour N-1, so current hour is row current_hour+1
-            target_row = current_hour + 1
-            index = self._week_model.index(target_row, 0)
-            self._week_table.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
+            QTimer.singleShot(0, self._scroll_to_current_hour)
 
     # --- Task interaction ---
 
