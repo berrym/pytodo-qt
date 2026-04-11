@@ -687,37 +687,19 @@ class TestWeekModelColumnItemsRole:
 # ---------------------------------------------------------------------------
 
 
-class TestWeekDelegateNowOverlays:
-    """The week/day delegate paints translucent now→due spans and a now line
-    in today's column directly during cell painting (no overlay widget)."""
+class TestWeekDelegateBarPainting:
+    """The week/day delegate paints Gantt bar segments via core.calendar_layout
+    and a single now-line on today's current-hour cell. Replaces the rejected
+    cell-overlay approach (commit 12968f7) per spec Q3/Q5/Q6."""
 
-    def test_urgency_color_under_15min_red(self):
-        from pytodo_qt.gui.widgets.calendar_view import _WeekDelegate
+    def test_paint_does_not_crash_with_bar_segment(self, qtbot):
+        """Paint a today-row cell with a future item — should not raise.
 
-        c = _WeekDelegate._urgency_color(10)
-        assert c.red() > c.green()
-
-    def test_urgency_color_overdue_red(self):
-        from pytodo_qt.gui.widgets.calendar_view import _WeekDelegate
-
-        c = _WeekDelegate._urgency_color(-5)
-        assert c.red() > c.green()
-
-    def test_urgency_color_under_60min_amber(self):
-        from pytodo_qt.gui.widgets.calendar_view import _WeekDelegate
-
-        c = _WeekDelegate._urgency_color(45)
-        assert c.red() > 200
-        assert c.green() > 100
-
-    def test_urgency_color_plenty_green(self):
-        from pytodo_qt.gui.widgets.calendar_view import _WeekDelegate
-
-        c = _WeekDelegate._urgency_color(180)
-        assert c.green() > c.red()
-
-    def test_paint_does_not_crash_with_now_overlay(self, qtbot):
-        """Paint a today-row cell with future items present — should not raise."""
+        Step 7 replaced the rejected `_paint_now_overlays` cell-spans with
+        Gantt bar segment painting via core.calendar_layout. This is the
+        smoke test that the new path runs without exceptions for a typical
+        item shape.
+        """
         from datetime import datetime as _dt
         from datetime import time
 
@@ -739,11 +721,12 @@ class TestWeekDelegateNowOverlays:
         view.resize(800, 600)
         view.show()
 
-        # Add an item due later today so a span exists
+        # Add an item due later today
         today = date.today()
         item = create_todo_item("Future task")
         item.due_date = today
         item.due_time = time(23, 30)
+        item.estimated_minutes = 60
         model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
         model.set_items({today: [item]})
 
@@ -759,6 +742,128 @@ class TestWeekDelegateNowOverlays:
         # Should not raise
         delegate.paint(painter, opt, idx)
         painter.end()
+
+    def test_paint_completed_late_two_zone_does_not_crash(self, qtbot):
+        """Paint a cell containing the late-overflow zone of a completed-late
+        bar. Verifies the deviation overlay path runs without crashing."""
+        from datetime import datetime as _dt
+        from datetime import time
+
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QPainter, QPixmap
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _WeekDelegate,
+            _WeekModel,
+            _WeekTableView,
+        )
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        view.setItemDelegate(_WeekDelegate())
+        qtbot.addWidget(view)
+        view.resize(800, 600)
+        view.show()
+
+        today = date.today()
+        item = create_todo_item("Late task")
+        item.due_date = today
+        item.due_time = time(15, 0)
+        item.estimated_minutes = 60
+        item.complete = True
+        # Completed 2 hours after due_time
+        item.completed_at = int(_dt.combine(today, time(17, 0)).timestamp() * 1000)
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+        model.set_items({today: [item]})
+
+        delegate = view.itemDelegate()
+        # Hour 16 cell — late overflow zone runs from 15:00 to 17:00, so
+        # hour 16 contains an entire deviation slice
+        idx = model.index(16 + 1, 0)
+        pixmap = QPixmap(100, 60)
+        pixmap.fill()
+        painter = QPainter(pixmap)
+        opt = QStyleOptionViewItem()
+        opt.rect = QRect(0, 0, 100, 60)
+        delegate.paint(painter, opt, idx)
+        painter.end()
+
+    def test_paint_completed_early_two_zone_does_not_crash(self, qtbot):
+        """Paint a cell containing the early-surplus zone of a completed-early bar."""
+        from datetime import datetime as _dt
+        from datetime import time
+
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QPainter, QPixmap
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _WeekDelegate,
+            _WeekModel,
+            _WeekTableView,
+        )
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        view.setItemDelegate(_WeekDelegate())
+        qtbot.addWidget(view)
+        view.resize(800, 600)
+        view.show()
+
+        today = date.today()
+        item = create_todo_item("Early task")
+        item.due_date = today
+        item.due_time = time(15, 0)
+        item.estimated_minutes = 120  # 1 PM origin
+        item.complete = True
+        # Completed at 14:00 — 1 hour into the planned window, 1 hour
+        # of surplus from 14:00 to 15:00
+        item.completed_at = int(_dt.combine(today, time(14, 0)).timestamp() * 1000)
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+        model.set_items({today: [item]})
+
+        delegate = view.itemDelegate()
+        idx = model.index(14 + 1, 0)  # hour 14 cell
+        pixmap = QPixmap(100, 60)
+        pixmap.fill()
+        painter = QPainter(pixmap)
+        opt = QStyleOptionViewItem()
+        opt.rect = QRect(0, 0, 100, 60)
+        delegate.paint(painter, opt, idx)
+        painter.end()
+
+    def test_paint_uses_column_items_role(self, qtbot):
+        """The new bar painting reads via _WEEK_COLUMN_ITEMS_ROLE so a bar
+        appearing in row 13's column data is visible when row 14 is painted
+        (because the bar spans both rows). Verified by simulating: column
+        items role on row 14 returns the item even though its hour is 13."""
+        from datetime import time
+
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _WEEK_COLUMN_ITEMS_ROLE,
+            _WeekModel,
+        )
+
+        model = _WeekModel()
+        today = date.today()
+        item = create_todo_item("Cross-cell bar")
+        item.due_date = today
+        item.due_time = time(15, 0)
+        item.estimated_minutes = 120  # spans 13:00–15:00, two cells
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+        model.set_items({today: [item]})
+
+        # Row 14 is hour 13 (13:00–14:00) — the bar's middle slice.
+        # Without the column-items role, this row would only see items
+        # whose due_time.hour == 13 — and our item has due_time.hour == 15.
+        # The new role exposes the full column so the delegate sees it.
+        idx = model.index(14, 0)
+        column_items = idx.data(_WEEK_COLUMN_ITEMS_ROLE)
+        assert column_items is not None
+        assert any(it.id == item.id for it in column_items)
 
     def test_calendar_widget_has_now_timer(self, qtbot):
         """CalendarViewWidget creates a 30-second QTimer for now-line ticks."""

@@ -18,7 +18,7 @@ KanbanBoardWidget for seamless integration with MainWindow.
 from __future__ import annotations
 
 import calendar
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -2468,14 +2468,23 @@ class _WeekModel(QAbstractTableModel):
 
 
 class _WeekDelegate(QStyledItemDelegate):
-    """Painter for week view cells — shows task chips in hour slots.
+    """Painter for week view cells — Gantt-bar rendering model.
 
-    Also paints now-aware overlays in today's column: a translucent vertical
-    span from the current minute down to each item's due-time row, plus a
-    bright "now line" at the exact current-minute pixel position. Both are
-    color-coded for urgency (green > 60min, amber 15-60min, red < 15min /
-    overdue) and update via a 30-second viewport repaint timer installed by
-    the parent CalendarViewWidget.
+    Each task with a temporal anchor produces a bar via
+    core.calendar_layout.compute_bar_window/compute_bar_segments. The
+    delegate queries the model's _WEEK_COLUMN_ITEMS_ROLE to get the
+    full set of items for the cell's column-date, then computes which
+    bar slices intersect the cell's hour range and paints them with
+    colors from core.bar_palette per the BarState lifecycle.
+
+    A single horizontal "now line" is painted in the cell containing
+    the current hour on today's column. The 30-second viewport repaint
+    timer installed by CalendarViewWidget triggers fresh state lookups
+    so live bars advance their visual treatment as time passes.
+
+    Hour grid (rows 1–24) renders bars; row 0 (All Day) renders task
+    chips for items with no due_time. The All Day row will be moved to
+    its own pinned widget in Step 9; until then it shares this delegate.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -2483,110 +2492,235 @@ class _WeekDelegate(QStyledItemDelegate):
         self._today = date.today()
         self._selected_item_id: UUID | None = None
         self._colors: dict[str, str] = {}
+        self._theme_name = "light"
+        self._bar_palette: dict = {}
         self._refresh_colors()
 
     def _refresh_colors(self) -> None:
-        from ...gui.styles.themes import get_colors
+        from ...core.bar_palette import get_palette
+        from ...gui.styles.themes import Theme, get_colors, get_current_theme
 
         self._colors = get_colors()
+        self._theme_name = "dark" if get_current_theme() == Theme.DARK else "light"
+        self._bar_palette = get_palette(self._theme_name)
 
     def set_selected(self, item_id: UUID | None) -> None:
         self._selected_item_id = item_id
 
-    @staticmethod
-    def _urgency_color(minutes_remaining: float) -> QColor:
-        """Span color based on minutes until due. Green→amber→red."""
-        if minutes_remaining < 15:
-            return QColor(239, 68, 68)  # red — overdue or final stretch
-        if minutes_remaining < 60:
-            return QColor(245, 158, 11)  # amber — under an hour
-        return QColor(16, 185, 129)  # green — plenty of time
-
-    def _paint_now_overlays(
+    def _paint_bar_segments(
         self,
         painter: QPainter,
         rect: Any,
         index: QModelIndex,
-        cell_hour: int,
+        current_time: datetime,
     ) -> None:
-        """Paint translucent spans from 'now' to each item's due time, plus
-        the horizontal now line at the current minute, in today's column.
+        """Paint Gantt bar slices for the cell's hour.
 
-        Each cell paints its own slice of any spans that cross it, so a span
-        from 9:30 AM to 4:00 PM contributes a slice in rows 9, 10, ..., 16.
+        Walks every item in the column (via _WEEK_COLUMN_ITEMS_ROLE),
+        computes its segments for the cell's date, and paints the slice
+        that intersects this cell's [hour*60, (hour+1)*60) minute range.
+        Skips all-day and marker segments — those belong in the All Day
+        row, which is rendered separately.
         """
-        from datetime import datetime as _dt
+        from ...core.calendar_layout import (
+            BarState,
+            compute_bar_segments,
+            compute_bar_window,
+        )
 
-        model = index.model()
-        if model is None:
+        cell_date = index.data(_WEEK_DATE_ROLE)
+        hour = index.data(_WEEK_HOUR_ROLE)
+        if cell_date is None or hour < 0:
+            return  # All Day row handled by chip path
+        column_items = index.data(_WEEK_COLUMN_ITEMS_ROLE) or []
+        if not column_items:
             return
 
-        now = _dt.now()
-        current_hour = now.hour
-        if cell_hour < current_hour:
-            return  # spans/now line only at or after current hour
+        cell_minute_start = hour * 60
+        cell_minute_end = (hour + 1) * 60
+        cell_minute_width = cell_minute_end - cell_minute_start
 
-        col = index.column()
+        # Visual layout: bars are inset from the cell edges so today
+        # highlights and grid lines remain visible around them.
+        bar_left = rect.left() + 4
+        bar_width = rect.width() - 8
 
-        def y_for_minute(hour_int: int, minute: int) -> int:
-            """Map a clock time to a pixel y inside this cell. Clamps to top
-            or bottom for times outside the cell's hour."""
-            if hour_int < cell_hour:
-                return rect.top()
-            if hour_int > cell_hour:
-                return rect.bottom()
-            return int(rect.top() + (minute / 60.0) * rect.height())
-
-        now_y = y_for_minute(current_hour, now.minute)
-
-        # ------------------------------------------------------------------
-        # Spans: scan all cells in this column from current_hour onward,
-        # find items with due_time later than now, and for each item paint
-        # the slice of its [now → due_time] span that falls in THIS cell.
-        # Model has 25 rows: row 0 = all-day, rows 1..24 = hours 0..23.
-        # ------------------------------------------------------------------
-        for row in range(current_hour + 1, 25):
-            cell_items = model.index(row, col).data(_WEEK_ITEMS_ROLE) or []
-            for item in cell_items:
-                if item.complete or item.due_time is None:
+        for item in column_items:
+            window = compute_bar_window(item)
+            if window is None:
+                continue
+            segments = compute_bar_segments(item, window, cell_date, current_time)
+            for seg in segments:
+                if seg.is_all_day or seg.is_marker:
+                    # All-day items and Q6 markers belong in the pinned
+                    # All Day row, not the hour grid.
                     continue
-                due_h = item.due_time.hour
-                due_m = item.due_time.minute
-                try:
-                    item_dt = _dt(now.year, now.month, now.day, due_h, due_m)
-                except ValueError:
+                # Does this segment intersect the cell's hour range?
+                if seg.end_minute <= cell_minute_start or seg.start_minute >= cell_minute_end:
                     continue
-                delta_min = (item_dt - now).total_seconds() / 60.0
-                if delta_min <= 0:
-                    continue  # already past
-
-                if cell_hour > due_h:
-                    continue
-
-                top_y = now_y if cell_hour == current_hour else rect.top()
-                bot_y = y_for_minute(due_h, due_m) if cell_hour == due_h else rect.bottom()
+                visible_start = max(seg.start_minute, cell_minute_start)
+                visible_end = min(seg.end_minute, cell_minute_end)
+                # Map minute offsets to pixel y inside this cell
+                top_y = rect.top() + int(
+                    (visible_start - cell_minute_start) / cell_minute_width * rect.height()
+                )
+                bot_y = rect.top() + int(
+                    (visible_end - cell_minute_start) / cell_minute_width * rect.height()
+                )
                 if bot_y <= top_y:
                     continue
 
-                color = self._urgency_color(delta_min)
-                color.setAlpha(70)
-                span_left = rect.left() + 4
-                span_width = rect.width() - 8
-                painter.fillRect(span_left, top_y, span_width, bot_y - top_y, color)
+                colors = self._bar_palette[seg.state]
+                base_qcolor = QColor(colors.base)
+                base_qcolor.setAlpha(220)
+                painter.fillRect(bar_left, top_y, bar_width, bot_y - top_y, base_qcolor)
 
-        # ------------------------------------------------------------------
-        # Now line: bright red horizontal at the current minute, only in the
-        # cell whose hour matches the current hour.
-        # ------------------------------------------------------------------
-        if cell_hour == current_hour:
-            line_color = QColor(239, 68, 68)
-            painter.save()
-            painter.setPen(QPen(line_color, 2))
-            painter.drawLine(rect.left() + 1, now_y, rect.right() - 1, now_y)
-            painter.setBrush(line_color)
-            painter.setPen(QPen(line_color, 1))
-            painter.drawEllipse(rect.left() - 3, now_y - 4, 8, 8)
-            painter.restore()
+                # Two-zone deviation overlay for completed bars.
+                # COMPLETED_EARLY: translucent surplus from completed_at
+                # to window.end (only visible when completed_at is in
+                # this cell's slice).
+                # COMPLETED_LATE: distinct overlay from window.end to
+                # completed_at (the late-overflow zone).
+                # Both are tied to the planned-window minute range, not
+                # the visible slice, so they correctly span across cells.
+                if seg.state in (BarState.COMPLETED_EARLY, BarState.COMPLETED_LATE):
+                    self._paint_deviation_overlay(
+                        painter,
+                        rect,
+                        item,
+                        window,
+                        seg,
+                        cell_minute_start,
+                        cell_minute_end,
+                        bar_left,
+                        bar_width,
+                    )
+
+                # Selection highlight
+                if self._selected_item_id is not None and item.id == self._selected_item_id:
+                    painter.save()
+                    painter.setPen(QPen(QColor(self._colors["highlight"]), 2))
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.drawRect(bar_left, top_y, bar_width - 1, bot_y - top_y - 1)
+                    painter.restore()
+
+                # Reminder text — top-anchored, ellipsis-truncated per Q4.
+                # Only paint when the slice has enough vertical room AND
+                # the segment STARTS in (or above) this cell so we don't
+                # repeat the label on every intersecting cell.
+                if seg.start_minute >= cell_minute_start and (bot_y - top_y) >= 14:
+                    painter.save()
+                    text_font = QFont(painter.font())
+                    text_font.setPixelSize(10)
+                    painter.setFont(text_font)
+                    fm = QFontMetrics(text_font)
+                    label = fm.elidedText(
+                        item.reminder or "",
+                        Qt.TextElideMode.ElideRight,
+                        bar_width - 8,
+                    )
+                    painter.setPen(QColor(self._colors["text"]))
+                    painter.drawText(
+                        bar_left + 4,
+                        top_y + 1,
+                        bar_width - 8,
+                        min(bot_y - top_y, 16),
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                        label,
+                    )
+                    painter.restore()
+
+    def _paint_deviation_overlay(
+        self,
+        painter: QPainter,
+        rect: Any,
+        item: Any,
+        window: Any,
+        seg: Any,
+        cell_minute_start: int,
+        cell_minute_end: int,
+        bar_left: int,
+        bar_width: int,
+    ) -> None:
+        """Paint the deviation zone for a COMPLETED_EARLY or COMPLETED_LATE bar.
+
+        Both rely on item.completed_at being set (the BarState classification
+        guarantees this for EARLY/LATE — UNKNOWN doesn't trigger this path).
+        """
+        from ...core.calendar_layout import BarState
+
+        if item.completed_at is None:
+            return  # Defensive: should not happen given the state check
+
+        cell_minute_width = cell_minute_end - cell_minute_start
+        completed_dt = datetime.fromtimestamp(item.completed_at / 1000)
+
+        # Only paint deviation on the same calendar day as the cell, since
+        # we map datetime → minute-of-day for layout.
+        if completed_dt.date() != window.end.date():
+            # Cross-day deviation will be handled when the cell on
+            # completed_dt's day is painted via _maybe_marker_segment's
+            # completion-day path. Skip here to avoid double-painting.
+            return
+
+        completed_minute = completed_dt.hour * 60 + completed_dt.minute
+        end_minute = window.end.hour * 60 + window.end.minute
+
+        if seg.state == BarState.COMPLETED_EARLY:
+            zone_start = max(completed_minute, cell_minute_start)
+            zone_end = min(end_minute, cell_minute_end)
+        else:  # COMPLETED_LATE
+            zone_start = max(end_minute, cell_minute_start)
+            zone_end = min(completed_minute, cell_minute_end)
+
+        if zone_end <= zone_start:
+            return
+
+        zone_top = rect.top() + int(
+            (zone_start - cell_minute_start) / cell_minute_width * rect.height()
+        )
+        zone_bot = rect.top() + int(
+            (zone_end - cell_minute_start) / cell_minute_width * rect.height()
+        )
+        if zone_bot <= zone_top:
+            return
+
+        deviation_color = QColor(self._bar_palette[seg.state].deviation)
+        if seg.state == BarState.COMPLETED_EARLY:
+            deviation_color.setAlpha(115)
+        else:  # COMPLETED_LATE
+            deviation_color.setAlpha(180)
+        painter.fillRect(bar_left, zone_top, bar_width, zone_bot - zone_top, deviation_color)
+
+    def _paint_now_line(
+        self,
+        painter: QPainter,
+        rect: Any,
+        index: QModelIndex,
+        current_time: datetime,
+    ) -> None:
+        """Paint a single horizontal line at the current minute on today's column.
+
+        Replaces the rejected `_paint_now_overlays` cell-spans approach.
+        Single line, single color, simple, honest.
+        """
+        cell_date = index.data(_WEEK_DATE_ROLE)
+        hour = index.data(_WEEK_HOUR_ROLE)
+        if cell_date is None or hour < 0:
+            return
+        if cell_date != current_time.date():
+            return
+        if hour != current_time.hour:
+            return
+
+        line_y = rect.top() + int((current_time.minute / 60.0) * rect.height())
+        from ...core.calendar_layout import BarState
+
+        line_color = QColor(self._bar_palette[BarState.OVERDUE_ACTIVE].base)
+        painter.save()
+        painter.setPen(QPen(line_color, 2))
+        painter.drawLine(rect.left() + 1, line_y, rect.right() - 1, line_y)
+        painter.restore()
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         painter.save()
@@ -2630,23 +2764,33 @@ class _WeekDelegate(QStyledItemDelegate):
             painter.fillRect(rect, col_base)
 
         # ------------------------------------------------------------------
-        # Now-aware overlays: translucent spans from "now" down to each item
-        # with a due_time later today, plus the horizontal "now line".
-        # Painted AFTER the background so chips and grid go on top.
-        # Only runs for today's hour cells (skips all-day row and other days).
+        # Hour-grid cells: paint Gantt bar segments via the pure-function
+        # layer in core.calendar_layout. The All Day row (hour == -1)
+        # falls through to the chip path below — it will be moved into
+        # its own pinned widget in Step 9.
         # ------------------------------------------------------------------
-        if is_today and not is_all_day:
-            self._paint_now_overlays(painter, rect, index, hour)
+        current_time = datetime.now()
+        if not is_all_day:
+            self._paint_bar_segments(painter, rect, index, current_time)
+            if is_today:
+                self._paint_now_line(painter, rect, index, current_time)
 
         # Grid lines
         painter.setPen(QPen(col_border, 1))
         painter.drawRect(rect.adjusted(0, 0, -1, -1))
 
+        # Hour-grid cells use the bar path above; only the All Day row
+        # falls through to chip rendering. This avoids drawing chips on
+        # top of bars (a half-state that the spec rules out).
+        if not is_all_day:
+            painter.restore()
+            return
+
         if not items:
             painter.restore()
             return
 
-        # Draw task chips
+        # Draw task chips (All Day row only)
         item_font = QFont(painter.font())
         item_font.setPixelSize(10)
         painter.setFont(item_font)
