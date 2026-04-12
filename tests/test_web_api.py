@@ -4068,3 +4068,255 @@ class TestSecurityHeaders:
             assert resp.headers["Referrer-Policy"] == "no-referrer"
         finally:
             await client.close()
+
+
+# ===========================================================================
+# Analytics endpoint tests
+# ===========================================================================
+
+
+class _FakeAnalytics:
+    """Stub AnalyticsService that records calls and returns canned NamedTuples.
+
+    Lets the web tests verify request → response wiring without dragging
+    SQLite into the in-memory web fixtures. Computation correctness is
+    covered separately in tests/test_analytics.py.
+    """
+
+    def __init__(self) -> None:
+        from pytodo_qt.core.analytics import (
+            CompletionTimingResult,
+            CycleTimeResult,
+            ItemCompletionTiming,
+            SlipRateResult,
+        )
+
+        self.last_completion_timing_kwargs: dict | None = None
+        self.last_slip_rate_kwargs: dict | None = None
+        self.last_cycle_time_kwargs: dict | None = None
+
+        self._completion_timing_result = CompletionTimingResult(
+            total=4,
+            early_count=1,
+            ontime_count=1,
+            late_count=1,
+            unknown_count=1,
+            items=[
+                ItemCompletionTiming(
+                    item_id="11111111-1111-1111-1111-111111111111",
+                    classification="early",
+                    deviation_minutes=-30,
+                ),
+                ItemCompletionTiming(
+                    item_id="22222222-2222-2222-2222-222222222222",
+                    classification="ontime",
+                    deviation_minutes=0,
+                ),
+                ItemCompletionTiming(
+                    item_id="33333333-3333-3333-3333-333333333333",
+                    classification="late",
+                    deviation_minutes=45,
+                ),
+            ],
+        )
+
+        self._slip_rate_result = SlipRateResult(
+            total=4,
+            early_count=1,
+            ontime_count=1,
+            late_count=1,
+            unknown_count=1,
+            rate=1 / 3,
+        )
+
+        self._cycle_time_result = CycleTimeResult(
+            count=3,
+            unknown_count=1,
+            mean_minutes=120.0,
+            median_minutes=90.0,
+            p90_minutes=200.0,
+        )
+
+    def completion_timing(self, **kwargs):
+        self.last_completion_timing_kwargs = kwargs
+        return self._completion_timing_result
+
+    def slip_rate(self, **kwargs):
+        self.last_slip_rate_kwargs = kwargs
+        return self._slip_rate_result
+
+    def cycle_time(self, **kwargs):
+        self.last_cycle_time_kwargs = kwargs
+        return self._cycle_time_result
+
+
+async def _make_client_with_analytics(
+    analytics: _FakeAnalytics | None,
+    db: Database | None = None,
+) -> TestClient:
+    """Build a test client and inject a fake AnalyticsService into the app."""
+    if db is None:
+        db = _make_db_with_data()
+    ws = WebServer(database=db)
+    app = ws.create_app()
+    if analytics is not None:
+        from pytodo_qt.web.api import analytics_key
+
+        app[analytics_key] = analytics
+    return TestClient(TestServer(app))
+
+
+class TestAnalyticsCompletionTiming:
+    @pytest.mark.asyncio
+    async def test_basic_response_shape(self):
+        analytics = _FakeAnalytics()
+        client = await _make_client_with_analytics(analytics)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/analytics/completion_timing")
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["total"] == 4
+            assert data["early_count"] == 1
+            assert data["ontime_count"] == 1
+            assert data["late_count"] == 1
+            assert data["unknown_count"] == 1
+            assert len(data["items"]) == 3
+            first = data["items"][0]
+            assert first["item_id"] == "11111111-1111-1111-1111-111111111111"
+            assert first["classification"] == "early"
+            assert first["deviation_minutes"] == -30
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_filters_passed_through(self):
+        analytics = _FakeAnalytics()
+        client = await _make_client_with_analytics(analytics)
+        await client.start_server()
+        try:
+            await client.get(
+                "/api/analytics/completion_timing"
+                "?list_id=abc&start_date=2026-04-01&end_date=2026-04-30"
+            )
+            assert analytics.last_completion_timing_kwargs == {
+                "list_id": "abc",
+                "start_date": "2026-04-01",
+                "end_date": "2026-04-30",
+            }
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_filters_become_none(self):
+        analytics = _FakeAnalytics()
+        client = await _make_client_with_analytics(analytics)
+        await client.start_server()
+        try:
+            await client.get("/api/analytics/completion_timing")
+            assert analytics.last_completion_timing_kwargs == {
+                "list_id": None,
+                "start_date": None,
+                "end_date": None,
+            }
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_no_analytics_returns_503(self):
+        client = await _make_client_with_analytics(None)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/analytics/completion_timing")
+            assert resp.status == 503
+        finally:
+            await client.close()
+
+
+class TestAnalyticsSlipRate:
+    @pytest.mark.asyncio
+    async def test_basic_response_shape(self):
+        analytics = _FakeAnalytics()
+        client = await _make_client_with_analytics(analytics)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/analytics/slip_rate")
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["total"] == 4
+            assert data["early_count"] == 1
+            assert data["ontime_count"] == 1
+            assert data["late_count"] == 1
+            assert data["unknown_count"] == 1
+            assert data["rate"] == pytest.approx(1 / 3)
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_filters_passed_through(self):
+        analytics = _FakeAnalytics()
+        client = await _make_client_with_analytics(analytics)
+        await client.start_server()
+        try:
+            await client.get("/api/analytics/slip_rate?list_id=xyz&start_date=2026-01-01")
+            assert analytics.last_slip_rate_kwargs == {
+                "list_id": "xyz",
+                "start_date": "2026-01-01",
+                "end_date": None,
+            }
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_no_analytics_returns_503(self):
+        client = await _make_client_with_analytics(None)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/analytics/slip_rate")
+            assert resp.status == 503
+        finally:
+            await client.close()
+
+
+class TestAnalyticsCycleTime:
+    @pytest.mark.asyncio
+    async def test_basic_response_shape(self):
+        analytics = _FakeAnalytics()
+        client = await _make_client_with_analytics(analytics)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/analytics/cycle_time")
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["count"] == 3
+            assert data["unknown_count"] == 1
+            assert data["mean_minutes"] == 120.0
+            assert data["median_minutes"] == 90.0
+            assert data["p90_minutes"] == 200.0
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_filters_passed_through(self):
+        analytics = _FakeAnalytics()
+        client = await _make_client_with_analytics(analytics)
+        await client.start_server()
+        try:
+            await client.get("/api/analytics/cycle_time?end_date=2026-12-31")
+            assert analytics.last_cycle_time_kwargs == {
+                "list_id": None,
+                "start_date": None,
+                "end_date": "2026-12-31",
+            }
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_no_analytics_returns_503(self):
+        client = await _make_client_with_analytics(None)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/analytics/cycle_time")
+            assert resp.status == 503
+        finally:
+            await client.close()

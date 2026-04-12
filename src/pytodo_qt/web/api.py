@@ -39,6 +39,7 @@ ws_clients_key: web.AppKey[set[web.WebSocketResponse]] = web.AppKey("ws_clients"
 web_server_key: web.AppKey[Any] = web.AppKey("web_server")
 device_store_key: web.AppKey[Any] = web.AppKey("device_store")
 main_window_key: web.AppKey[Any] = web.AppKey("main_window")
+analytics_key: web.AppKey[Any] = web.AppKey("analytics")
 
 
 _SECURITY_HEADERS = {
@@ -239,6 +240,9 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_get("/api/analytics/upcoming", handle_analytics_upcoming)
     app.router.add_get("/api/analytics/streak", handle_analytics_streak)
     app.router.add_get("/api/analytics/insights", handle_analytics_insights)
+    app.router.add_get("/api/analytics/completion_timing", handle_analytics_completion_timing)
+    app.router.add_get("/api/analytics/slip_rate", handle_analytics_slip_rate)
+    app.router.add_get("/api/analytics/cycle_time", handle_analytics_cycle_time)
     # Board layout presets
     app.router.add_get("/api/presets", handle_get_presets)
     app.router.add_post("/api/lists/{list_id}/apply-preset", handle_apply_preset)
@@ -1553,11 +1557,23 @@ async def handle_undo_state(request: web.Request) -> web.Response:
 
 
 def _get_analytics(request: web.Request):
-    """Get AnalyticsService from main window, or None."""
+    """Get AnalyticsService from direct injection or main window, or None."""
+    direct = request.app.get(analytics_key)
+    if direct is not None:
+        return direct
     window = request.app.get(main_window_key)
     if window is not None:
         return getattr(window, "_analytics", None)
     return None
+
+
+def _parse_analytics_filters(request: web.Request) -> dict[str, str | None]:
+    """Extract list_id/start_date/end_date query params for analytics endpoints."""
+    return {
+        "list_id": request.query.get("list_id") or None,
+        "start_date": request.query.get("start_date") or None,
+        "end_date": request.query.get("end_date") or None,
+    }
 
 
 async def handle_analytics_upcoming(request: web.Request) -> web.Response:
@@ -1596,6 +1612,76 @@ async def handle_analytics_insights(request: web.Request) -> web.Response:
     daily_goal = int(request.query.get("goal", "0"))
     suggestions = analytics.improvement_suggestions(daily_goal)
     return web.json_response({"suggestions": suggestions})
+
+
+async def handle_analytics_completion_timing(request: web.Request) -> web.Response:
+    """GET /api/analytics/completion_timing — Per-item early/ontime/late classifications.
+
+    Query params: list_id, start_date (YYYY-MM-DD), end_date (YYYY-MM-DD).
+    """
+    analytics = _get_analytics(request)
+    if analytics is None:
+        return _error(503, "Analytics not available")
+    result = analytics.completion_timing(**_parse_analytics_filters(request))
+    return web.json_response(
+        {
+            "total": result.total,
+            "early_count": result.early_count,
+            "ontime_count": result.ontime_count,
+            "late_count": result.late_count,
+            "unknown_count": result.unknown_count,
+            "items": [
+                {
+                    "item_id": it.item_id,
+                    "classification": it.classification,
+                    "deviation_minutes": it.deviation_minutes,
+                }
+                for it in result.items
+            ],
+        }
+    )
+
+
+async def handle_analytics_slip_rate(request: web.Request) -> web.Response:
+    """GET /api/analytics/slip_rate — Late completion percentage over a date range.
+
+    Query params: list_id, start_date (YYYY-MM-DD), end_date (YYYY-MM-DD).
+    """
+    analytics = _get_analytics(request)
+    if analytics is None:
+        return _error(503, "Analytics not available")
+    result = analytics.slip_rate(**_parse_analytics_filters(request))
+    return web.json_response(
+        {
+            "total": result.total,
+            "early_count": result.early_count,
+            "ontime_count": result.ontime_count,
+            "late_count": result.late_count,
+            "unknown_count": result.unknown_count,
+            "rate": result.rate,
+        }
+    )
+
+
+async def handle_analytics_cycle_time(request: web.Request) -> web.Response:
+    """GET /api/analytics/cycle_time — Created→completed duration distribution.
+
+    Query params: list_id, start_date (YYYY-MM-DD), end_date (YYYY-MM-DD).
+    All time fields are in minutes; statistics are None when no qualifying items.
+    """
+    analytics = _get_analytics(request)
+    if analytics is None:
+        return _error(503, "Analytics not available")
+    result = analytics.cycle_time(**_parse_analytics_filters(request))
+    return web.json_response(
+        {
+            "count": result.count,
+            "unknown_count": result.unknown_count,
+            "mean_minutes": result.mean_minutes,
+            "median_minutes": result.median_minutes,
+            "p90_minutes": result.p90_minutes,
+        }
+    )
 
 
 async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
