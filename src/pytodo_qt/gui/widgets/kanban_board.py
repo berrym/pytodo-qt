@@ -858,6 +858,8 @@ class KanbanBoardWidget(QWidget):
     delete_requested = pyqtSignal()  # NO ARGS
     edit_recurrence_requested = pyqtSignal()  # NO ARGS
 
+    item_selected = pyqtSignal(object)  # (item_id or None)
+
     # Kanban-only signals
     item_column_changed = pyqtSignal(object, str)
     layout_preset_requested = pyqtSignal(object)  # (list[str]) — preset columns
@@ -1181,6 +1183,7 @@ class KanbanBoardWidget(QWidget):
         if isinstance(item_id, UUID):
             self._selected_item_id = item_id
             self._update_selection_highlight()
+            self.item_selected.emit(item_id)
 
     def _on_card_toggle(self, item_id: object) -> None:
         """Bridge: card checkbox → select + emit no-args toggle."""

@@ -4390,6 +4390,7 @@ class CalendarViewWidget(QWidget):
     edit_tags_requested = pyqtSignal(object)
     focus_requested = pyqtSignal(object)
     add_subtask_requested = pyqtSignal(object)
+    item_selected = pyqtSignal(object)  # (item_id or None)
     toggle_requested = pyqtSignal()
     delete_requested = pyqtSignal()
     edit_recurrence_requested = pyqtSignal()
@@ -5134,6 +5135,7 @@ class CalendarViewWidget(QWidget):
 
     def _on_task_clicked(self, item_id: UUID) -> None:
         self._selected_item_id = item_id
+        self.item_selected.emit(item_id)
         self._cal_delegate.set_selected(item_id)
         self._week_delegate.set_selected(item_id)
         self._day_delegate.set_selected(item_id)

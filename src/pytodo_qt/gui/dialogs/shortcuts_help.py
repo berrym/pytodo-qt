@@ -34,6 +34,9 @@ _SHORTCUTS: list[tuple[str, str, str]] = [
     ("Lists", "Ctrl+Shift+P", "Toggle list private/shared"),
     ("Lists", "Ctrl+1..9", "Switch to list by position"),
     ("Lists", "Ctrl+Left/Right", "Cycle through lists"),
+    # Views
+    ("Views", "Ctrl+Shift+B", "Cycle views (list/board/calendar)"),
+    ("Views", "Ctrl+Shift+D", "Toggle task detail panel"),
     # Navigation
     ("Navigation", "Ctrl+F", "Focus search bar"),
     ("Navigation", "Escape", "Clear search / unfocus"),

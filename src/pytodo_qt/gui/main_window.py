@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from PyQt6.QtCore import QDate, QTimer, pyqtSlot
+from PyQt6.QtCore import QDate, Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import (
     QAction,
     QActionGroup,
@@ -564,6 +564,13 @@ class MainWindow(QMainWindow):
             view_menu.addAction(self.list_view_action)
             view_menu.addAction(self.board_view_action)
             view_menu.addAction(self.calendar_view_action)
+            view_menu.addSeparator()
+            self._detail_panel_action = QAction(self.tr("Task &Details"), self)
+            self._detail_panel_action.setShortcut("Ctrl+Shift+D")
+            self._detail_panel_action.setCheckable(True)
+            self._detail_panel_action.setChecked(False)
+            self._detail_panel_action.triggered.connect(self._toggle_detail_panel)
+            view_menu.addAction(self._detail_panel_action)
 
         # Todo menu
         todo_menu = menu_bar.addMenu(self.tr("&To-Do"))
@@ -724,6 +731,19 @@ class MainWindow(QMainWindow):
         top_row.addWidget(self._list_view_btn)
         top_row.addWidget(self._board_view_btn)
         top_row.addWidget(self._calendar_view_btn)
+
+        # Detail panel toggle — small info button after the view buttons
+        self._detail_btn = QToolButton()
+        self._detail_btn.setText(self.tr("\u2139"))  # ℹ info symbol
+        self._detail_btn.setCheckable(True)
+        self._detail_btn.setToolTip(self.tr("Task details (Ctrl+Shift+D)"))
+        self._detail_btn.setStyleSheet(
+            "QToolButton { font-size: 14px; padding: 2px 6px; color: palette(highlight); }"
+            "QToolButton:checked { font-weight: bold; }"
+        )
+        self._detail_btn.toggled.connect(self._on_detail_btn_toggled)
+        top_row.addWidget(self._detail_btn)
+
         layout.addLayout(top_row)
 
         # Search/filter bar
@@ -774,6 +794,17 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(central)
 
+        # Task detail panel — docked to the right, hidden by default.
+        # Shows full metadata for the selected task. Toggle with Ctrl+I.
+        from .widgets.detail_panel import TaskDetailPanel
+
+        self._detail_panel = TaskDetailPanel(self)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._detail_panel)
+        self._detail_panel.hide()
+
+        detail_shortcut = QShortcut(QKeySequence("Ctrl+Shift+D"), self)
+        detail_shortcut.activated.connect(self._toggle_detail_panel)
+
     def _connect_table_signals(self) -> None:
         """Connect TodoTableWidget signals to handlers."""
         self.todo_table.item_priority_changed.connect(self._on_item_priority_changed)
@@ -788,6 +819,7 @@ class MainWindow(QMainWindow):
         self.todo_table.add_subtask_requested.connect(self._on_add_subtask)
         self.todo_table.set_time_block_requested.connect(self._on_set_time_block)
         self.todo_table.set_event_date_requested.connect(self._on_set_event_date)
+        self.todo_table.item_selected.connect(lambda _: self._update_detail_panel())
 
     def _connect_kanban_signals(self) -> None:
         """Connect KanbanBoardWidget signals to handlers (same as table)."""
@@ -808,6 +840,7 @@ class MainWindow(QMainWindow):
         self.kanban_board.rename_column_requested.connect(self._on_rename_column)
         self.kanban_board.add_item_in_column_requested.connect(self._on_add_item_in_column)
         self.kanban_board.wip_limit_changed.connect(self._on_wip_limit_changed)
+        self.kanban_board.item_selected.connect(lambda _: self._update_detail_panel())
 
     def _connect_calendar_signals(self) -> None:
         """Connect CalendarViewWidget signals to handlers (same as table/board)."""
@@ -822,10 +855,49 @@ class MainWindow(QMainWindow):
         self.calendar_view.edit_recurrence_requested.connect(self._on_edit_recurrence)
         self.calendar_view.focus_requested.connect(self._on_context_menu_focus)
         self.calendar_view.add_subtask_requested.connect(self._on_add_subtask)
+        self.calendar_view.item_selected.connect(lambda _: self._update_detail_panel())
 
     def _on_view_toggle(self, view_id: int) -> None:
         """Handle view toggle button click."""
         self._set_view_mode(view_id)
+
+    def _toggle_detail_panel(self) -> None:
+        """Toggle the task detail panel visibility (Ctrl+Shift+D)."""
+        visible = not self._detail_panel.isVisible()
+        self._detail_panel.setVisible(visible)
+        self._detail_btn.setChecked(visible)
+        if hasattr(self, "_detail_panel_action"):
+            self._detail_panel_action.setChecked(visible)
+        if visible:
+            self._update_detail_panel()
+
+    def _on_detail_btn_toggled(self, checked: bool) -> None:
+        """Handle the inline detail button toggle."""
+        self._detail_panel.setVisible(checked)
+        if hasattr(self, "_detail_panel_action"):
+            self._detail_panel_action.setChecked(checked)
+        if checked:
+            self._update_detail_panel()
+
+    def _update_detail_panel(self) -> None:
+        """Update the detail panel with the currently selected task.
+
+        Called when the panel opens and whenever the selection changes
+        in any view. Looks up the full TodoItem from the database so
+        the panel always shows current data.
+        """
+        if not self._detail_panel.isVisible():
+            return
+        item_ids = self._active_view_widget().get_selected_item_ids()
+        if not item_ids:
+            self._detail_panel.set_item(None)
+            return
+        active_list = self._database.active_list
+        if active_list is None:
+            self._detail_panel.set_item(None)
+            return
+        item = active_list.items.get(item_ids[0])
+        self._detail_panel.set_item(item)
 
     def _toggle_view_mode(self) -> None:
         """Cycle through list → board → calendar (Ctrl+Shift+B)."""
@@ -1908,6 +1980,7 @@ class MainWindow(QMainWindow):
                 self.calendar_view.set_list(self._database.active_list)
             self._update_tags()
             self._update_status()
+            self._update_detail_panel()
         finally:
             self._refreshing = False
 
