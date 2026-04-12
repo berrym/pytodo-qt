@@ -378,6 +378,15 @@ def _collect_markers_for_dates(
     the same "as_of" semantics the pure layer uses — viewing today
     uses real now, viewing past/future uses end-of-that-day.
 
+    **Q7 — recurring tasks are excluded.** Recurring tasks reset
+    cleanly with no carryover (per Q7 in the design doc). The
+    recurrence projection system (_project_recurrences_into +
+    _ProjectedItem) handles their visibility on each cycle's actual
+    due date. If we let recurring tasks generate markers here, every
+    future viewing day would show a spurious "overdue" marker for
+    yesterday's missed cycle ALONGSIDE the projected fresh bar,
+    double-rendering the same task.
+
     Returns a dict mapping each date in `dates` to a list of
     `_MarkerChip` instances (empty list when no markers apply).
     De-dups by item id within each day so a single task can't
@@ -389,6 +398,9 @@ def _collect_markers_for_dates(
     seen: dict = {d: set() for d in dates}
     for item in items:
         if getattr(item, "due_date", None) is None:
+            continue
+        # Q7: recurring tasks are excluded — see docstring above.
+        if getattr(item, "is_recurring", False):
             continue
         window = compute_bar_window(item)
         if window is None:

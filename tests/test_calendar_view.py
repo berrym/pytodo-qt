@@ -2199,6 +2199,61 @@ class TestQ6OverdueMarkers:
         markers = _collect_markers_for_dates([item, item], [date.today()], _dt.now())
         assert len(markers[date.today()]) == 1
 
+    def test_collect_markers_excludes_recurring_tasks_per_q7(self):
+        """REGRESSION: Q7 says recurring tasks reset cleanly with no
+        carryover between cycles. _collect_markers_for_dates must skip
+        recurring items entirely so the projection system can show
+        each cycle as a fresh bar without a competing "overdue from
+        yesterday's missed cycle" marker shadowing it.
+
+        Without this filter, every future viewing day would show BOTH
+        a projected fresh bar AND a spurious overdue marker for the
+        same recurring task — a Q7 violation that double-renders the
+        same task on every cycle.
+        """
+        from datetime import datetime as _dt
+
+        from pytodo_qt.gui.widgets.calendar_view import _collect_markers_for_dates
+
+        # A daily recurring task that's "due today" — its current
+        # cycle is in today's hour grid. Tomorrow's view should NOT
+        # show a marker; the projection system handles tomorrow's
+        # fresh occurrence.
+        item = self._make_overdue_item(days_overdue=0, reminder="Daily standup")
+        item.due_time = __import__("datetime").time(9, 0)
+        item.recurrence_type = "daily"
+        item.recurrence_interval = 1
+
+        # Even when viewing far-future days, no marker for a recurring
+        # task. This is the load-bearing assertion: recurring tasks
+        # are out of scope for marker collection.
+        future_dates = [
+            date.today() + timedelta(days=1),
+            date.today() + timedelta(days=2),
+            date.today() + timedelta(days=7),
+        ]
+        markers = _collect_markers_for_dates([item], future_dates, _dt.now())
+        for d in future_dates:
+            assert markers[d] == [], (
+                f"Recurring task generated a Q7-violating marker for {d}. "
+                f"Recurring tasks must not produce overdue markers — "
+                f"the projection system handles their visibility."
+            )
+
+    def test_collect_markers_includes_non_recurring_overdue_tasks(self):
+        """Sanity check: non-recurring overdue tasks DO still produce
+        markers. Q7 only excludes recurring items."""
+        from datetime import datetime as _dt
+
+        from pytodo_qt.gui.widgets.calendar_view import _collect_markers_for_dates
+
+        item = self._make_overdue_item(days_overdue=2, reminder="One-shot task")
+        item.due_time = __import__("datetime").time(9, 0)
+        item.recurrence_type = None  # explicitly non-recurring
+        markers = _collect_markers_for_dates([item], [date.today()], _dt.now())
+        assert len(markers[date.today()]) == 1
+        assert markers[date.today()][0].id == item.id
+
     def test_collect_markers_respects_multiple_dates(self):
         """Each date in the input list gets its own marker entry,
         with the label reflecting that day's elapsed-overdue."""
