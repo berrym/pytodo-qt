@@ -1164,6 +1164,9 @@ class MainWindow(QMainWindow):
 
         self.tray_icon = QSystemTrayIcon(self)
 
+        # Full-color app icon for notification popups (not the monochrome tray icon)
+        self._notification_icon = self._get_icon("pytodo-qt.svg")
+
         # Use simple monochrome tray icon
         if sys.platform == "darwin":
             # Mark as template image for macOS menu bar (adapts to dark/light mode)
@@ -1953,7 +1956,7 @@ class MainWindow(QMainWindow):
         self.tray_icon.showMessage(
             self.tr("PyTodo-Qt Reminders"),
             "\n".join(lines),
-            QSystemTrayIcon.MessageIcon.Information,
+            self._notification_icon,
             10000,
         )
 
@@ -2950,7 +2953,7 @@ class MainWindow(QMainWindow):
                 self.tray_icon.showMessage(
                     self.tr("Focus Session Complete"),
                     self.tr("Time for a break!"),
-                    QSystemTrayIcon.MessageIcon.Information,
+                    self._notification_icon,
                     5000,
                 )
         elif state == "working" and self._pomodoro.session_count > 0:
@@ -2959,7 +2962,7 @@ class MainWindow(QMainWindow):
                 self.tray_icon.showMessage(
                     self.tr("Break Over"),
                     self.tr("Ready for the next session?"),
-                    QSystemTrayIcon.MessageIcon.Information,
+                    self._notification_icon,
                     5000,
                 )
 
@@ -3139,7 +3142,7 @@ class MainWindow(QMainWindow):
                 self.tray_icon.showMessage(
                     self.tr("Stopwatch Paused"),
                     self.tr(f"No activity detected for {timeout_mins} minutes"),
-                    QSystemTrayIcon.MessageIcon.Information,
+                    self._notification_icon,
                     5000,
                 )
 
@@ -3282,7 +3285,7 @@ class MainWindow(QMainWindow):
             self.tray_icon.showMessage(
                 title,
                 message,
-                QSystemTrayIcon.MessageIcon.Information,
+                self._notification_icon,
                 5000,
             )
         self.status_bar_widget.show_message(f"{title} {message}")

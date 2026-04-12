@@ -4754,6 +4754,11 @@ class CalendarViewWidget(QWidget):
                 self._timeline_accuracy_widget.set_active_session(item_id, elapsed, session_type)
 
     def refresh(self) -> None:
+        # Refresh delegate colors first so painting uses up-to-date theme
+        self._cal_delegate._refresh_colors()
+        self._week_delegate._refresh_colors()
+        self._day_delegate._refresh_colors()
+
         self._close_popover()
         if self._todo_list is None:
             self._cal_model.set_items({})
