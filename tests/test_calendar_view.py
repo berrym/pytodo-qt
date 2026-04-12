@@ -3049,10 +3049,10 @@ class TestCalendarWidgetPinnedContainerIntegration:
 
 
 class TestWeekViewBarTooltip:
-    """Step 8: tooltip enrichment with bar window, state, and deviation."""
+    """Rich tooltip via build_rich_tooltip shows full task metadata."""
 
-    def test_tooltip_includes_state_and_window(self):
-        """The tooltip builder embeds the bar's window and state name."""
+    def test_tooltip_includes_reminder_and_due(self):
+        """The tooltip shows the task name and due date/time."""
         from datetime import time
 
         from pytodo_qt.gui.widgets.calendar_view import _WeekTableView
@@ -3064,24 +3064,13 @@ class TestWeekViewBarTooltip:
 
         text = _WeekTableView._build_bar_tooltip(item)
         assert "Test task" in text
-        # Window line: origin → end
-        assert "→" in text
-        # One of the state labels should appear
-        assert any(
-            label in text
-            for label in (
-                "Future",
-                "In progress",
-                "Due now",
-                "Overdue",
-                "Completed early",
-                "Completed on time",
-                "Completed late",
-            )
-        )
+        assert "Due:" in text
+        assert "Apr 13" in text
+        assert "3:00 PM" in text
+        assert "Estimate:" in text
 
-    def test_tooltip_completed_late_includes_deviation(self):
-        """A completed-late task's tooltip explicitly says how late."""
+    def test_tooltip_complete_shows_timestamp(self):
+        """A completed task shows the completion timestamp."""
         from datetime import datetime as _dt
         from datetime import time
 
@@ -3093,54 +3082,43 @@ class TestWeekViewBarTooltip:
         item.due_time = time(15, 0)
         item.estimated_minutes = 60
         item.complete = True
-        # 2 hours past due
         item.completed_at = int(_dt.combine(today, time(17, 0)).timestamp() * 1000)
 
         text = _WeekTableView._build_bar_tooltip(item)
-        assert "Completed late" in text
-        assert "late" in text.lower()
+        assert "Complete" in text
 
-    def test_tooltip_completed_early_includes_deviation(self):
-        """A completed-early task's tooltip explicitly says how early."""
-        from datetime import datetime as _dt
+    def test_tooltip_shows_estimate_details(self):
+        """Estimate line shows pomodoro breakdown when set."""
         from datetime import time
 
         from pytodo_qt.gui.widgets.calendar_view import _WeekTableView
 
-        today = date.today()
-        item = create_todo_item("Early task")
-        item.due_date = today
-        item.due_time = time(15, 0)
-        item.estimated_minutes = 120
-        item.complete = True
-        # 1 hour before the deadline
-        item.completed_at = int(_dt.combine(today, time(14, 0)).timestamp() * 1000)
-
-        text = _WeekTableView._build_bar_tooltip(item)
-        assert "Completed early" in text
-        assert "early" in text.lower()
-
-    def test_tooltip_unknown_completion_no_deviation_line(self):
-        """A pre-v19 completed task (completed_at IS NULL) gets a single
-        'Completed (unknown when)' label, no early/late deviation."""
-        from datetime import time
-
-        from pytodo_qt.gui.widgets.calendar_view import _WeekTableView
-
-        item = create_todo_item("Old completion")
+        item = create_todo_item("Pom task")
         item.due_date = date(2026, 4, 13)
         item.due_time = time(15, 0)
-        item.estimated_minutes = 60
-        item.complete = True
-        item.completed_at = None
+        item.estimated_pomodoros = 3
 
         text = _WeekTableView._build_bar_tooltip(item)
-        assert "unknown when" in text.lower()
-        assert "early" not in text.lower()
-        assert "late" not in text.lower()
+        assert "3 pom" in text
+        assert "75 min" in text  # 3 × 25
 
-    def test_tooltip_preserves_existing_fields(self):
-        """Recurrence, pomodoros, and tags still appear in the tooltip."""
+    def test_tooltip_shows_no_estimate_clamp_hint(self):
+        """A task with due_time but no estimate gets a hint about
+        the 1-hour deadline clamp so users know why it renders that
+        wide."""
+        from datetime import time
+
+        from pytodo_qt.gui.widgets.calendar_view import _WeekTableView
+
+        item = create_todo_item("No estimate")
+        item.due_date = date(2026, 4, 13)
+        item.due_time = time(15, 0)
+
+        text = _WeekTableView._build_bar_tooltip(item)
+        assert "1h deadline clamp" in text
+
+    def test_tooltip_shows_tags_and_recurrence(self):
+        """Tags and recurrence info appear in the tooltip."""
         from datetime import time
 
         from pytodo_qt.gui.widgets.calendar_view import _WeekTableView
@@ -3150,12 +3128,24 @@ class TestWeekViewBarTooltip:
         item.due_time = time(15, 0)
         item.estimated_minutes = 60
         item.tags = ["@work", "@urgent"]
-        item.pomodoro_count = 2
-        item.estimated_pomodoros = 4
+        item.recurrence_type = "daily"
+        item.recurrence_interval = 1
 
         text = _WeekTableView._build_bar_tooltip(item)
         assert "@work" in text
-        assert "2/4" in text  # pomodoro counter
+        assert "@urgent" in text
+        assert "Daily" in text
+
+    def test_tooltip_shows_created_date_and_id(self):
+        """Creation date and short ID appear for full traceability."""
+        from pytodo_qt.gui.widgets.calendar_view import _WeekTableView
+
+        item = create_todo_item("Traceable task")
+        item.due_date = date(2026, 4, 13)
+
+        text = _WeekTableView._build_bar_tooltip(item)
+        assert "Created" in text
+        assert str(item.id)[:8] in text
 
 
 # ---------------------------------------------------------------------------

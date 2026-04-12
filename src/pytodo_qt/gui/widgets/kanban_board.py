@@ -219,6 +219,14 @@ class KanbanCardWidget(QFrame):
         )
         self.setStyleSheet(self._style_normal)
 
+        # Rich tooltip showing full task metadata — the only way the
+        # user can inspect a task's complete configuration without a
+        # database tool. Hover anywhere on the card to see all fields
+        # that affect the task's visual representation.
+        from ...core.models import build_rich_tooltip
+
+        self.setToolTip(build_rich_tooltip(item))
+
         # Drop shadow (enhanced glow for active focus session)
         shadow = QGraphicsDropShadowEffect(self)
         if is_focus_item:

@@ -741,6 +741,17 @@ class _CalendarTableView(QTableView):
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
         self.setStyleSheet("QTableView { border: none; background: palette(window); }")
+        # Persistent tooltip label — same pattern as _WeekTableView
+        self._tooltip_label = QLabel(self)
+        self._tooltip_label.setWindowFlags(
+            Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
+        )
+        self._tooltip_label.setStyleSheet(
+            "QLabel { background: palette(toolTipBase); color: palette(toolTipText); "
+            "border: 1px solid palette(mid); padding: 6px 8px; font-size: 12px; }"
+        )
+        self._tooltip_label.hide()
+        self._tooltip_item_id = None
         self._drag_start_pos = None
         self._drag_item_id = None
         self._dragging = False
@@ -792,6 +803,8 @@ class _CalendarTableView(QTableView):
         return None
 
     def mousePressEvent(self, a0) -> None:  # noqa: N802
+        self._tooltip_label.hide()
+        self._tooltip_item_id = None
         self._drag_start_pos = None
         self._drag_item_id = None
         self._dragging = False
@@ -846,44 +859,38 @@ class _CalendarTableView(QTableView):
             self._drag_item_id = None
             self._dragging = False
             return
-        # Tooltip on hover (only when not dragging)
+        # Tooltip on hover — persistent QLabel, not QToolTip.showText()
         hit = self._hit_test(a0.pos())
         if hit is not None and hit[0] == "task":
+            from ...core.models import build_rich_tooltip
+
             item = hit[1]
-            parts = [item.reminder]
-            if item.due_time:
-                parts.append(f"Due: {item.due_time.strftime('%I:%M %p').lstrip('0')}")
-            if item.recurrence_type:
-                from ...core.models import format_recurrence
-
-                parts.append(format_recurrence(item))
-            if item.estimated_pomodoros > 0 or item.pomodoro_count > 0:
-                pom = (
-                    f"\U0001f345 {item.pomodoro_count}/{item.estimated_pomodoros}"
-                    if item.estimated_pomodoros
-                    else f"\U0001f345 {item.pomodoro_count}"
-                )
-                parts.append(pom)
-            if item.tags:
-                parts.append(f"Tags: {', '.join(item.tags)}")
-            if item.complete:
-                parts.append("\u2713 Completed")
-            from PyQt6.QtWidgets import QToolTip
-
-            QToolTip.showText(a0.globalPosition().toPoint(), "\n".join(parts), self)
+            item_id = getattr(item, "id", None)
+            if item_id != self._tooltip_item_id:
+                self._tooltip_item_id = item_id
+                self._tooltip_label.setText(build_rich_tooltip(item))
+                self._tooltip_label.adjustSize()
+            cursor = a0.globalPosition().toPoint()
+            self._tooltip_label.move(cursor.x() + 16, cursor.y() + 8)
+            self._tooltip_label.show()
         elif hit is not None and hit[0] == "more":
-            from PyQt6.QtWidgets import QToolTip
-
             n = len(hit[2])
-            QToolTip.showText(
-                a0.globalPosition().toPoint(),
-                QCoreApplication.translate("CalendarViewWidget", f"Click to see all {n} tasks"),
-                self,
+            self._tooltip_item_id = None
+            self._tooltip_label.setText(
+                QCoreApplication.translate("CalendarViewWidget", f"Click to see all {n} tasks")
             )
+            self._tooltip_label.adjustSize()
+            cursor = a0.globalPosition().toPoint()
+            self._tooltip_label.move(cursor.x() + 16, cursor.y() + 8)
+            self._tooltip_label.show()
         else:
-            from PyQt6.QtWidgets import QToolTip
+            self._tooltip_label.hide()
+            self._tooltip_item_id = None
 
-            QToolTip.hideText()
+    def leaveEvent(self, a0) -> None:  # noqa: N802
+        self._tooltip_label.hide()
+        self._tooltip_item_id = None
+        super().leaveEvent(a0)
 
     def contextMenuEvent(self, a0) -> None:  # noqa: N802
         if a0 is None:
@@ -3547,6 +3554,19 @@ class _WeekTableView(QTableView):
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
         self.setStyleSheet("QTableView { border: none; background: palette(window); }")
+        # Persistent tooltip label — stays visible as long as the mouse
+        # hovers over a task bar, unaffected by viewport repaints from
+        # the now-timer. Same pattern as the timeline chart tooltips.
+        self._tooltip_label = QLabel(self)
+        self._tooltip_label.setWindowFlags(
+            Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
+        )
+        self._tooltip_label.setStyleSheet(
+            "QLabel { background: palette(toolTipBase); color: palette(toolTipText); "
+            "border: 1px solid palette(mid); padding: 6px 8px; font-size: 12px; }"
+        )
+        self._tooltip_label.hide()
+        self._tooltip_item_id = None
         self._drag_start_pos = None
         self._drag_item_id = None
         self._dragging = False
@@ -3690,6 +3710,8 @@ class _WeekTableView(QTableView):
         return None
 
     def mousePressEvent(self, a0) -> None:  # noqa: N802
+        self._tooltip_label.hide()
+        self._tooltip_item_id = None
         self._drag_start_pos = None
         self._drag_item_id = None
         self._dragging = False
@@ -3736,94 +3758,46 @@ class _WeekTableView(QTableView):
             self._drag_item_id = None
             self._dragging = False
             return
-        # Tooltip handling
+        # Tooltip handling — uses a persistent QLabel instead of
+        # QToolTip.showText() so viewport repaints from the now-timer
+        # don't dismiss it prematurely.
         hit = self._hit_test(a0.pos())
         if hit and hit[0] == "task":
             item = hit[1]
-            tooltip_text = self._build_bar_tooltip(item)
-            from PyQt6.QtWidgets import QToolTip
-
-            QToolTip.showText(a0.globalPosition().toPoint(), tooltip_text, self)
+            item_id = getattr(item, "id", None)
+            if item_id != self._tooltip_item_id:
+                self._tooltip_item_id = item_id
+                self._tooltip_label.setText(self._build_bar_tooltip(item))
+                self._tooltip_label.adjustSize()
+            cursor = a0.globalPosition().toPoint()
+            self._tooltip_label.move(cursor.x() + 16, cursor.y() + 8)
+            self._tooltip_label.show()
         else:
-            from PyQt6.QtWidgets import QToolTip
-
-            QToolTip.hideText()
+            self._tooltip_label.hide()
+            self._tooltip_item_id = None
 
     @staticmethod
     def _build_bar_tooltip(item) -> str:
-        """Build the enriched bar tooltip with state, origin, end, deviation.
+        """Build the comprehensive rich-text tooltip for a calendar bar.
 
-        The tooltip is composed of:
-            - Full reminder text (line 1)
-            - Bar window: origin → end (formatted, natural duration)
-            - Lifecycle state (FUTURE / IN_WORK_WINDOW / etc.)
-            - Completion deviation (early/on time/late by N) when complete
-            - Existing fields: recurrence, pomodoros, tags, complete check
+        Uses the shared build_rich_tooltip from core.models which shows
+        every field that affects the task's visual representation. This
+        replaced the ad-hoc partial tooltip that was missing fields like
+        estimated_minutes, work_duration, created_at, and board_column.
         """
-        from datetime import datetime as _dt
+        from ...core.models import build_rich_tooltip
 
-        from ...core.calendar_layout import (
-            BarState,
-            compute_bar_state,
-            compute_bar_window,
-        )
-        from ...core.models import format_duration, format_recurrence
+        return build_rich_tooltip(item)
 
-        parts: list[str] = [item.reminder or ""]
-
-        window = compute_bar_window(item)
-        if window is not None:
-            # Bar window in natural format
-            origin_str = window.origin.strftime("%a %b %d %I:%M %p").lstrip("0")
-            end_str = window.end.strftime("%a %b %d %I:%M %p").lstrip("0")
-            parts.append(f"{origin_str} → {end_str}")
-
-            # State + deviation. Use end_of_day-aware as_of for non-today
-            # so the display matches what the bar visually shows. For
-            # tooltip we use real-now since the user is hovering live.
-            current = _dt.now()
-            state = compute_bar_state(item, window, current)
-            state_label = {
-                BarState.FUTURE: "Future",
-                BarState.IN_WORK_WINDOW: "In progress",
-                BarState.DUE_NOW: "Due now",
-                BarState.OVERDUE_ACTIVE: "Overdue",
-                BarState.COMPLETED_EARLY: "Completed early",
-                BarState.COMPLETED_ONTIME: "Completed on time",
-                BarState.COMPLETED_LATE: "Completed late",
-                BarState.COMPLETED_UNKNOWN: "Completed (unknown when)",
-            }.get(state, str(state.value))
-            parts.append(state_label)
-
-            if item.complete and item.completed_at is not None:
-                completed_dt = _dt.fromtimestamp(item.completed_at / 1000)
-                deviation_minutes = int((completed_dt - window.end).total_seconds() / 60)
-                if deviation_minutes < 0:
-                    parts.append(f"Finished {format_duration(-deviation_minutes)} early")
-                elif deviation_minutes > 0:
-                    parts.append(f"Finished {format_duration(deviation_minutes)} late")
-            elif state == BarState.OVERDUE_ACTIVE:
-                # Active overdue: show how much
-                overdue_minutes = int((current - window.end).total_seconds() / 60)
-                if overdue_minutes > 0:
-                    parts.append(f"{format_duration(overdue_minutes)} overdue")
-
-        if item.recurrence_type:
-            parts.append(format_recurrence(item))
-        if item.estimated_pomodoros > 0 or item.pomodoro_count > 0:
-            pom = (
-                f"\U0001f345 {item.pomodoro_count}/{item.estimated_pomodoros}"
-                if item.estimated_pomodoros
-                else f"\U0001f345 {item.pomodoro_count}"
-            )
-            parts.append(pom)
-        if item.tags:
-            parts.append(f"Tags: {', '.join(item.tags)}")
-        return "\n".join(parts)
+    def leaveEvent(self, a0) -> None:  # noqa: N802
+        self._tooltip_label.hide()
+        self._tooltip_item_id = None
+        super().leaveEvent(a0)
 
     def mouseDoubleClickEvent(self, a0) -> None:  # noqa: N802
         if a0 is None:
             return
+        self._tooltip_label.hide()
         hit = self._hit_test(a0.pos())
         if hit and hit[0] == "task":
             self.task_double_clicked.emit(hit[1].id)
@@ -3831,6 +3805,7 @@ class _WeekTableView(QTableView):
     def contextMenuEvent(self, a0) -> None:  # noqa: N802
         if a0 is None:
             return
+        self._tooltip_label.hide()
         hit = self._hit_test(a0.pos())
         if hit and hit[0] == "task":
             self.task_clicked.emit(hit[1].id)

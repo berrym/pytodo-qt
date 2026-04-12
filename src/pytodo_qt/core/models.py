@@ -1308,6 +1308,130 @@ def format_recurrence_short(item: TodoItem) -> str:
     return f"Every {item.recurrence_interval} {units.get(item.recurrence_type, '')}"
 
 
+def build_rich_tooltip(item: TodoItem, time_format: str = "system") -> str:
+    """Build a comprehensive HTML tooltip showing all task metadata.
+
+    Designed to give the user full visibility into a task's configuration
+    from any view (list, kanban, calendar) without needing a database tool.
+    Includes every field that affects the task's visual representation:
+    priority, status, due date/time, estimates, recurrence, tags, timing,
+    creation date, and board column.
+
+    Fields that are unset or at default values are omitted to keep the
+    tooltip clean. The result is HTML suitable for Qt's rich-text tooltip
+    rendering.
+    """
+    from datetime import datetime as _dt
+
+    lines: list[str] = []
+
+    # Title
+    lines.append(f"<b>{_html_escape(item.reminder)}</b>")
+
+    # Priority + status line
+    prio_names = {1: "High", 2: "Normal", 3: "Low"}
+    prio = prio_names.get(item.priority, "Normal")
+    if item.complete:
+        status = "Complete"
+        if item.completed_at is not None:
+            completed_dt = _dt.fromtimestamp(item.completed_at / 1000)
+            status += f" ({completed_dt.strftime('%b %d at %I:%M %p')})"
+    else:
+        status = "Active"
+    lines.append(f"Priority: <b>{prio}</b> · {status}")
+
+    # Due date/time
+    if item.due_date is not None:
+        due_str = item.due_date.strftime("%a, %b %d %Y")
+        if item.due_time is not None:
+            due_str += f" at {item.due_time.strftime('%I:%M %p').lstrip('0')}"
+            if item.due_time_end is not None:
+                due_str += f" \u2013 {item.due_time_end.strftime('%I:%M %p').lstrip('0')}"
+        else:
+            due_str += " (all day)"
+        if item.due_time_block:
+            block_label = item.due_time_block.replace("_", " ").title()
+            due_str += f" [{block_label}]"
+        lines.append(f"Due: {due_str}")
+
+        # Overdue indicator for active items
+        if not item.complete and item.due_date < date.today():
+            overdue = _format_overdue_delta(item.due_date, item.due_time)
+            if overdue:
+                lines.append(f"<span style='color:#ef4444'>{_html_escape(overdue)}</span>")
+
+    # Estimates
+    est_parts: list[str] = []
+    if item.estimated_minutes > 0:
+        est_parts.append(f"{item.estimated_minutes} min direct")
+    if item.estimated_pomodoros > 0:
+        per_work = item.work_duration if item.work_duration > 0 else 25
+        total = item.estimated_pomodoros * per_work
+        pom_str = f"{item.estimated_pomodoros} pom \u00d7 {per_work} min = {total} min"
+        if item.work_duration > 0:
+            pom_str += " (custom)"
+        est_parts.append(pom_str)
+    if est_parts:
+        lines.append(f"Estimate: {' · '.join(est_parts)}")
+    elif item.due_time is not None and item.due_date is not None:
+        lines.append("Estimate: <i>none (1h deadline clamp)</i>")
+
+    # Recurrence
+    if item.recurrence_type:
+        rec_str = item.recurrence_type.capitalize()
+        if item.recurrence_interval > 1:
+            rec_str = f"Every {item.recurrence_interval} {item.recurrence_type}"
+        if item.recurrence_end_date:
+            rec_str += f" until {item.recurrence_end_date.strftime('%b %d, %Y')}"
+        if item.recurrence_end_count is not None:
+            rec_str += f" ({item.recurrence_count}/{item.recurrence_end_count} done)"
+        if item.missed_recurrences > 0:
+            rec_str += f" · {item.missed_recurrences} missed"
+        lines.append(f"Recurrence: {rec_str}")
+
+    # Tags
+    if item.tags:
+        lines.append(f"Tags: {', '.join(item.tags)}")
+
+    # Time spent
+    if item.time_spent > 0 or item.pomodoro_count > 0:
+        spent_min = item.time_spent // 60
+        spent_str = format_duration(spent_min) if spent_min > 0 else "0m"
+        sessions = f"{item.pomodoro_count} session{'s' if item.pomodoro_count != 1 else ''}"
+        lines.append(f"Time spent: {spent_str} ({sessions})")
+
+    # Event date
+    if item.event_date:
+        lines.append(f"Event: {item.event_date.strftime('%a, %b %d %Y')}")
+
+    # Board column
+    if item.board_column:
+        lines.append(f"Board: {item.board_column}")
+
+    # Subtask indicator
+    if item.parent_id is not None:
+        lines.append("<i>Subtask</i>")
+
+    # Conditions
+    if item.conditions:
+        cond_strs = [f"{c.get('type', '')}: {c.get('expression', '')}" for c in item.conditions]
+        lines.append(f"Conditions: {'; '.join(cond_strs)}")
+
+    # Created date
+    created_dt = _dt.fromtimestamp(item.created_at / 1000)
+    lines.append(
+        f"<span style='color:gray'>Created {created_dt.strftime('%b %d, %Y')}"
+        f" · ID: {str(item.id)[:8]}</span>"
+    )
+
+    return "<br>".join(lines)
+
+
+def _html_escape(text: str) -> str:
+    """Minimal HTML escaping for tooltip content."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def format_next_occurrence(item: TodoItem, time_format: str = "system") -> str:
     """Format when the next occurrence is due for display."""
     if not item.is_recurring or item.recurrence_type is None or item.due_date is None:

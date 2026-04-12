@@ -38,7 +38,6 @@ from ...core.models import (
     TodoItem,
     TodoList,
     format_due_date,
-    format_recurrence,
     is_due_this_week,
     is_due_today,
     is_overdue,
@@ -340,9 +339,6 @@ class TodoTableWidget(QTableWidget):
         # Selection behavior
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-
-        # Tooltips
-        self.setToolTip(self.tr("Your to-do list"))
 
         # Alternating row colors
         self.setAlternatingRowColors(True)
@@ -657,6 +653,10 @@ class TodoTableWidget(QTableWidget):
             else:
                 priority_combo.setStyleSheet(f"color: {colors['priority_low']};")
 
+            from ...core.models import build_rich_tooltip
+
+            priority_combo.setToolTip(build_rich_tooltip(item))
+
             self.setCellWidget(row, 0, priority_combo)
 
             # Reminder column: text field + optional tag chips
@@ -707,26 +707,9 @@ class TodoTableWidget(QTableWidget):
             else:
                 reminder_edit.setFont(self._normal_font)
 
-            tooltip_parts = []
-            if item.is_recurring:
-                recurrence_text = format_recurrence(item)
-                if recurrence_text:
-                    tooltip_parts.append(recurrence_text)
-            if item.tags:
-                tooltip_parts.append(f"Tags: {', '.join(item.tags)}")
-            if item.time_spent > 0:
-                from .pomodoro import PomodoroWidget
+            from ...core.models import build_rich_tooltip
 
-                tooltip_parts.append(
-                    self.tr(f"Time spent: {PomodoroWidget.format_time_spent(item.time_spent)}")
-                )
-            if item.pomodoro_count > 0 or item.estimated_pomodoros > 0:
-                pomo_text = self.tr(f"Sessions: {item.pomodoro_count}")
-                if item.estimated_pomodoros > 0:
-                    pomo_text += self.tr(f" / {item.estimated_pomodoros} estimated")
-                tooltip_parts.append(pomo_text)
-            if tooltip_parts:
-                reminder_edit.setToolTip("\n".join(tooltip_parts))
+            reminder_edit.setToolTip(build_rich_tooltip(item))
 
             reminder_layout.addWidget(reminder_edit, 1)
             reminder_edit.setCursorPosition(0)
@@ -860,6 +843,8 @@ class TodoTableWidget(QTableWidget):
                     due_widget.label.setStyleSheet(f"color: {colors['due_soon']};")
             elif item.due_date:
                 due_widget.label.setStyleSheet(f"color: {colors['completed_text']};")
+
+            due_widget.setToolTip(build_rich_tooltip(item))
 
             self.setCellWidget(row, 2, due_widget)
 
