@@ -801,6 +801,7 @@ class MainWindow(QMainWindow):
         self._detail_panel = TaskDetailPanel(self)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._detail_panel)
         self._detail_panel.hide()
+        self._connect_detail_panel_signals()
 
         detail_shortcut = QShortcut(QKeySequence("Ctrl+Shift+D"), self)
         detail_shortcut.activated.connect(self._toggle_detail_panel)
@@ -856,6 +857,38 @@ class MainWindow(QMainWindow):
         self.calendar_view.focus_requested.connect(self._on_context_menu_focus)
         self.calendar_view.add_subtask_requested.connect(self._on_add_subtask)
         self.calendar_view.item_selected.connect(lambda _: self._update_detail_panel())
+
+    def _connect_detail_panel_signals(self) -> None:
+        """Connect TaskDetailPanel edit signals to the same handlers
+        the list/kanban/calendar views use. Edits from the panel go
+        through the same undo-command infrastructure."""
+        self._detail_panel.item_reminder_changed.connect(self._on_item_reminder_changed)
+        self._detail_panel.item_priority_changed.connect(self._on_item_priority_changed)
+        self._detail_panel.item_due_date_changed.connect(self._on_item_due_date_changed)
+        self._detail_panel.item_due_time_changed.connect(self._on_item_due_time_changed)
+        self._detail_panel.toggle_requested.connect(self._on_toggle_todo)
+        self._detail_panel.edit_tags_requested.connect(self._on_edit_tags_for_item)
+        self._detail_panel.edit_requested.connect(self._on_detail_panel_edit)
+
+    def _on_detail_panel_edit(self, item_id: object, field_name: str, value: object) -> None:
+        """Handle generic field edits from the detail panel (estimated_minutes, etc.)."""
+        from uuid import UUID as _UUID
+
+        if not isinstance(item_id, _UUID):
+            return
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        item = active_list.get_item(item_id)
+        if item is None:
+            return
+        old_value = getattr(item, field_name, None)
+        if old_value == value:
+            return
+        setattr(item, field_name, value)
+        item.mark_updated()
+        active_list.mark_dirty()
+        self._refresh_ui()
 
     def _on_view_toggle(self, view_id: int) -> None:
         """Handle view toggle button click."""

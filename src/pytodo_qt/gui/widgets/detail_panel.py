@@ -5,12 +5,12 @@ a task in any view (list, kanban, calendar). Shows every field that
 affects the task's visual representation and behavior, organized in
 a readable form layout.
 
-The panel solves the "invisible metadata" UX gap: before this, the
-user had no way to see fields like estimated_minutes, work_duration,
-recurrence_interval, or created_at without querying the SQLite
-database directly. The enriched tooltips (Phase 1) partially address
-this for hover interactions; the detail panel provides a persistent,
-scannable view.
+Two modes:
+  - **View mode** (default): fields are read-only and styled as clean
+    labels. The panel is a scannable reference.
+  - **Edit mode** (pencil toggle): fields become interactive. Changes
+    apply live (same as list/kanban inline editing). Toggle back to
+    view mode when done.
 """
 
 from __future__ import annotations
@@ -18,15 +18,24 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QDate, QSize, Qt, QTime, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDateEdit,
     QDockWidget,
     QFormLayout,
     QFrame,
+    QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
+    QTimeEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -35,18 +44,17 @@ from ...core.models import TodoItem, format_duration
 
 
 class TaskDetailPanel(QDockWidget):
-    """Sliding detail panel showing full metadata of the selected task.
+    """Sliding detail panel with view/edit toggle for task metadata."""
 
-    Docks to the right side of MainWindow. The panel content updates
-    whenever `set_item(item)` is called — MainWindow wires this to
-    the selection signal from whichever view is active.
-
-    `set_item(None)` clears the panel and shows a placeholder.
-    """
-
-    # Emitted when the user wants to edit a field. MainWindow handles
-    # the actual persistence via the existing undo-command infrastructure.
+    # Signals matching the pattern other views use so MainWindow
+    # handles them identically via existing undo-command infrastructure.
     edit_requested = pyqtSignal(object, str, object)  # (item_id, field_name, new_value)
+    item_reminder_changed = pyqtSignal(object, str)
+    item_priority_changed = pyqtSignal(object, int)
+    item_due_date_changed = pyqtSignal(object, object)
+    item_due_time_changed = pyqtSignal(object, object)
+    toggle_requested = pyqtSignal()
+    edit_tags_requested = pyqtSignal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -60,10 +68,14 @@ class TaskDetailPanel(QDockWidget):
         )
 
         self._item: TodoItem | None = None
+        self._populating = False
+        self._edit_mode = False
+        # Track all editable widgets for batch enable/disable
+        self._editable_widgets: list[QWidget] = []
         self._setup_ui()
+        self._set_edit_mode(False)
 
     def _setup_ui(self) -> None:
-        # Scroll area wrapping the form
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -74,13 +86,13 @@ class TaskDetailPanel(QDockWidget):
         self._content_layout.setContentsMargins(12, 12, 12, 12)
         self._content_layout.setSpacing(0)
 
-        # Placeholder when no item is selected
+        # Placeholder
         self._placeholder = QLabel(self.tr("Select a task to view details"))
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setStyleSheet("color: palette(mid); font-style: italic;")
         self._content_layout.addWidget(self._placeholder)
 
-        # Detail sections (hidden until an item is set)
+        # Detail sections
         self._detail_widget = QWidget()
         self._detail_layout = QVBoxLayout(self._detail_widget)
         self._detail_layout.setContentsMargins(0, 0, 0, 0)
@@ -89,11 +101,10 @@ class TaskDetailPanel(QDockWidget):
         self._content_layout.addWidget(self._detail_widget)
 
         self._content_layout.addStretch()
-
         scroll.setWidget(self._content)
         self.setWidget(scroll)
 
-        # Build sections
+        # Build all sections
         self._build_header_section()
         self._build_status_section()
         self._build_schedule_section()
@@ -103,10 +114,30 @@ class TaskDetailPanel(QDockWidget):
         self._build_timing_section()
         self._build_meta_section()
 
-    # --- Section builders ---
+    # ------------------------------------------------------------------
+    # Read-only style for edit widgets in view mode
+    # ------------------------------------------------------------------
+
+    _VIEW_MODE_STYLE = (
+        "QLineEdit, QSpinBox, QDateEdit, QTimeEdit, QComboBox {"
+        "  border: none; background: transparent; padding: 1px 0px;"
+        "}"
+        "QCheckBox { background: transparent; }"
+        "QSpinBox::up-button, QSpinBox::down-button,"
+        "QDateEdit::up-button, QDateEdit::down-button,"
+        "QDateEdit::drop-down, QTimeEdit::up-button,"
+        "QTimeEdit::down-button, QComboBox::drop-down {"
+        "  width: 0px; border: none;"
+        "}"
+    )
+
+    _EDIT_MODE_STYLE = ""  # reset to default Qt styling
+
+    # ------------------------------------------------------------------
+    # Section builders
+    # ------------------------------------------------------------------
 
     def _add_section(self, title: str) -> QFormLayout:
-        """Add a titled section with a form layout."""
         section = QWidget()
         layout = QVBoxLayout(section)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -120,7 +151,6 @@ class TaskDetailPanel(QDockWidget):
         header.setStyleSheet("color: palette(highlight); margin-bottom: 2px;")
         layout.addWidget(header)
 
-        # Separator line
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         line.setFrameShadow(QFrame.Shadow.Sunken)
@@ -137,53 +167,156 @@ class TaskDetailPanel(QDockWidget):
         return form
 
     def _make_value_label(self) -> QLabel:
-        """Create a value label with word-wrap and selectable text."""
         label = QLabel()
         label.setWordWrap(True)
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         return label
 
+    def _track_editable(self, widget: QWidget) -> QWidget:
+        """Register a widget for batch view/edit mode toggling."""
+        self._editable_widgets.append(widget)
+        return widget
+
     def _build_header_section(self) -> None:
-        self._reminder_label = QLabel()
-        self._reminder_label.setWordWrap(True)
-        self._reminder_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        # Top row: reminder + pencil toggle
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(4)
+
+        self._reminder_edit = QLineEdit()
+        self._reminder_edit.setPlaceholderText("Task name...")
         font = QFont()
         font.setBold(True)
         font.setPixelSize(14)
-        self._reminder_label.setFont(font)
-        self._detail_layout.addWidget(self._reminder_label)
+        self._reminder_edit.setFont(font)
+        self._reminder_edit.editingFinished.connect(self._on_reminder_changed)
+        self._track_editable(self._reminder_edit)
+        header_row.addWidget(self._reminder_edit, 1)
+
+        # Pencil toggle button
+        self._edit_toggle_btn = QToolButton()
+        self._edit_toggle_btn.setText("\u270e")  # ✎ pencil
+        self._edit_toggle_btn.setCheckable(True)
+        self._edit_toggle_btn.setToolTip(self.tr("Toggle edit mode"))
+        self._edit_toggle_btn.setStyleSheet(
+            "QToolButton { font-size: 16px; padding: 2px 4px;"
+            " color: palette(highlight); border: none; }"
+            "QToolButton:checked { background: palette(highlight);"
+            " color: palette(highlightedText); border-radius: 3px; }"
+        )
+        self._edit_toggle_btn.toggled.connect(self._set_edit_mode)
+        header_row.addWidget(self._edit_toggle_btn, 0)
+
+        self._detail_layout.addLayout(header_row)
+
+    def _on_reminder_changed(self) -> None:
+        if self._populating or not self._edit_mode:
+            return
+        if self._item is not None:
+            self.item_reminder_changed.emit(self._item.id, self._reminder_edit.text())
 
     def _build_status_section(self) -> None:
         form = self._add_section(self.tr("Status"))
-        self._priority_value = self._make_value_label()
-        self._status_value = self._make_value_label()
+
+        self._priority_combo = self._track_editable(QComboBox())
+        self._priority_combo.addItem("High", 1)
+        self._priority_combo.addItem("Normal", 2)
+        self._priority_combo.addItem("Low", 3)
+        self._priority_combo.currentIndexChanged.connect(self._on_priority_changed)
+
+        self._complete_check = self._track_editable(QCheckBox(self.tr("Complete")))
+        self._complete_check.toggled.connect(self._on_complete_toggled)
+
         self._completed_at_value = self._make_value_label()
-        form.addRow(self.tr("Priority:"), self._priority_value)
-        form.addRow(self.tr("Status:"), self._status_value)
+        form.addRow(self.tr("Priority:"), self._priority_combo)
+        form.addRow(self.tr("Status:"), self._complete_check)
         form.addRow(self.tr("Completed:"), self._completed_at_value)
+
+    def _on_priority_changed(self, index: int) -> None:
+        if self._populating or not self._edit_mode:
+            return
+        if self._item is not None:
+            priority = self._priority_combo.itemData(index)
+            if priority is not None:
+                self.item_priority_changed.emit(self._item.id, priority)
+
+    def _on_complete_toggled(self, checked: bool) -> None:
+        if self._populating or not self._edit_mode:
+            return
+        self.toggle_requested.emit()
 
     def _build_schedule_section(self) -> None:
         form = self._add_section(self.tr("Schedule"))
-        self._due_date_value = self._make_value_label()
-        self._due_time_value = self._make_value_label()
+
+        self._due_date_edit = self._track_editable(QDateEdit())
+        self._due_date_edit.setCalendarPopup(True)
+        self._due_date_edit.setSpecialValueText("No date")
+        self._due_date_edit.setMinimumDate(QDate(1752, 9, 14))
+        self._due_date_edit.dateChanged.connect(self._on_due_date_changed)
+
+        self._due_time_edit = self._track_editable(QTimeEdit())
+        self._due_time_edit.setDisplayFormat("hh:mm AP")
+        self._due_time_edit.timeChanged.connect(self._on_due_time_changed)
+
         self._time_block_value = self._make_value_label()
         self._event_date_value = self._make_value_label()
-        form.addRow(self.tr("Due date:"), self._due_date_value)
-        form.addRow(self.tr("Due time:"), self._due_time_value)
+        form.addRow(self.tr("Due date:"), self._due_date_edit)
+        form.addRow(self.tr("Due time:"), self._due_time_edit)
         form.addRow(self.tr("Time block:"), self._time_block_value)
         form.addRow(self.tr("Event date:"), self._event_date_value)
 
+    def _on_due_date_changed(self, qdate: QDate) -> None:
+        if self._populating or not self._edit_mode:
+            return
+        if self._item is not None:
+            if qdate == self._due_date_edit.minimumDate():
+                self.item_due_date_changed.emit(self._item.id, None)
+            else:
+                self.item_due_date_changed.emit(
+                    self._item.id, date(qdate.year(), qdate.month(), qdate.day())
+                )
+
+    def _on_due_time_changed(self, qtime: QTime) -> None:
+        if self._populating or not self._edit_mode:
+            return
+        if self._item is not None:
+            from datetime import time as time_type
+
+            self.item_due_time_changed.emit(self._item.id, time_type(qtime.hour(), qtime.minute()))
+
     def _build_estimate_section(self) -> None:
         form = self._add_section(self.tr("Estimates"))
-        self._est_minutes_value = self._make_value_label()
-        self._est_pomodoros_value = self._make_value_label()
+
+        self._est_minutes_spin = self._track_editable(QSpinBox())
+        self._est_minutes_spin.setRange(0, 1440)
+        self._est_minutes_spin.setSuffix(" min")
+        self._est_minutes_spin.setSpecialValueText("\u2014")
+        self._est_minutes_spin.valueChanged.connect(self._on_est_minutes_changed)
+
+        self._est_pomodoros_spin = self._track_editable(QSpinBox())
+        self._est_pomodoros_spin.setRange(0, 99)
+        self._est_pomodoros_spin.setSpecialValueText("\u2014")
+        self._est_pomodoros_spin.valueChanged.connect(self._on_est_pomodoros_changed)
+
         self._work_duration_value = self._make_value_label()
         self._effective_value = self._make_value_label()
-        form.addRow(self.tr("Minutes:"), self._est_minutes_value)
-        form.addRow(self.tr("Pomodoros:"), self._est_pomodoros_value)
+        form.addRow(self.tr("Minutes:"), self._est_minutes_spin)
+        form.addRow(self.tr("Pomodoros:"), self._est_pomodoros_spin)
         form.addRow(self.tr("Work dur:"), self._work_duration_value)
         form.addRow(self.tr("Effective:"), self._effective_value)
+
+    def _on_est_minutes_changed(self, value: int) -> None:
+        if self._populating or not self._edit_mode:
+            return
+        if self._item is not None:
+            self.edit_requested.emit(self._item.id, "estimated_minutes", value)
+
+    def _on_est_pomodoros_changed(self, value: int) -> None:
+        if self._populating or not self._edit_mode:
+            return
+        if self._item is not None:
+            self.edit_requested.emit(self._item.id, "estimated_pomodoros", value)
 
     def _build_recurrence_section(self) -> None:
         form = self._add_section(self.tr("Recurrence"))
@@ -200,8 +333,25 @@ class TaskDetailPanel(QDockWidget):
 
     def _build_tags_section(self) -> None:
         form = self._add_section(self.tr("Tags"))
+        tags_container = QWidget()
+        tags_layout = QHBoxLayout(tags_container)
+        tags_layout.setContentsMargins(0, 0, 0, 0)
+        tags_layout.setSpacing(4)
+
         self._tags_value = self._make_value_label()
-        form.addRow(self._tags_value)
+        tags_layout.addWidget(self._tags_value, 1)
+
+        self._tags_edit_btn = QPushButton(self.tr("Edit"))
+        self._tags_edit_btn.setFixedWidth(40)
+        self._tags_edit_btn.clicked.connect(self._on_edit_tags_clicked)
+        self._track_editable(self._tags_edit_btn)
+        tags_layout.addWidget(self._tags_edit_btn, 0)
+
+        form.addRow(tags_container)
+
+    def _on_edit_tags_clicked(self) -> None:
+        if self._item is not None:
+            self.edit_tags_requested.emit(self._item.id)
 
     def _build_timing_section(self) -> None:
         form = self._add_section(self.tr("Focus Sessions"))
@@ -223,13 +373,34 @@ class TaskDetailPanel(QDockWidget):
         form.addRow(self.tr("Parent:"), self._parent_value)
         form.addRow(self.tr("Board:"), self._board_value)
 
-    # --- Public API ---
+    # ------------------------------------------------------------------
+    # View / Edit mode toggle
+    # ------------------------------------------------------------------
+
+    def _set_edit_mode(self, enabled: bool) -> None:
+        """Toggle between view mode (read-only) and edit mode (interactive)."""
+        self._edit_mode = enabled
+        for w in self._editable_widgets:
+            if isinstance(w, (QLineEdit,)):
+                w.setReadOnly(not enabled)
+            elif isinstance(w, (QDateEdit, QTimeEdit)):
+                w.setReadOnly(not enabled)
+                w.setButtonSymbols(
+                    QDateEdit.ButtonSymbols.UpDownArrows
+                    if enabled
+                    else QDateEdit.ButtonSymbols.NoButtons
+                )
+            else:
+                w.setEnabled(enabled)
+        # Stylesheet swap: view mode hides borders/buttons for clean look
+        style = self._EDIT_MODE_STYLE if enabled else self._VIEW_MODE_STYLE
+        self._detail_widget.setStyleSheet(style)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def set_item(self, item: TodoItem | None) -> None:
-        """Update the panel to show the given item's metadata.
-
-        Pass None to clear the panel and show the placeholder.
-        """
         self._item = item
         if item is None:
             self._detail_widget.hide()
@@ -245,22 +416,26 @@ class TaskDetailPanel(QDockWidget):
     def sizeHint(self) -> QSize:
         return QSize(320, 600)
 
-    # --- Field population ---
+    # ------------------------------------------------------------------
+    # Field population
+    # ------------------------------------------------------------------
 
     def _populate(self, item: TodoItem) -> None:
-        """Fill all fields from the item's current state."""
+        self._populating = True
+        try:
+            self._populate_inner(item)
+        finally:
+            self._populating = False
+
+    def _populate_inner(self, item: TodoItem) -> None:
         # Header
-        self._reminder_label.setText(item.reminder or "(no reminder)")
+        self._reminder_edit.setText(item.reminder or "")
 
         # Status
-        prio_names = {1: "High", 2: "Normal", 3: "Low"}
-        prio_colors = {1: "#ef4444", 2: "#3b82f6", 3: "#6b7280"}
-        prio = prio_names.get(item.priority, "Normal")
-        prio_color = prio_colors.get(item.priority, "#3b82f6")
-        self._priority_value.setText(f"<span style='color:{prio_color}'>{prio}</span>")
+        self._priority_combo.setCurrentIndex(item.priority - 1)
+        self._complete_check.setChecked(item.complete)
 
         if item.complete:
-            self._status_value.setText("<span style='color:#22c55e'>Complete</span>")
             if item.completed_at is not None:
                 dt = datetime.fromtimestamp(item.completed_at / 1000)
                 self._completed_at_value.setText(dt.strftime("%b %d %Y %I:%M %p"))
@@ -269,27 +444,20 @@ class TaskDetailPanel(QDockWidget):
                     "<span style='color:#f59e0b'>Unknown (pre-v19)</span>"
                 )
         else:
-            self._status_value.setText("Active")
             self._completed_at_value.setText("\u2014")
 
-        # Schedule — compact date format to fit narrow panel
+        # Schedule
         if item.due_date:
-            self._due_date_value.setText(item.due_date.strftime("%a, %b %d %Y"))
-            if not item.complete and item.due_date < date.today():
-                self._due_date_value.setStyleSheet("color: #ef4444; font-weight: bold;")
-            else:
-                self._due_date_value.setStyleSheet("")
+            self._due_date_edit.setDate(
+                QDate(item.due_date.year, item.due_date.month, item.due_date.day)
+            )
         else:
-            self._due_date_value.setText("\u2014")
-            self._due_date_value.setStyleSheet("")
+            self._due_date_edit.setDate(self._due_date_edit.minimumDate())
 
         if item.due_time:
-            time_str = item.due_time.strftime("%I:%M %p").lstrip("0")
-            if item.due_time_end:
-                time_str += f" \u2013 {item.due_time_end.strftime('%I:%M %p').lstrip('0')}"
-            self._due_time_value.setText(time_str)
+            self._due_time_edit.setTime(QTime(item.due_time.hour, item.due_time.minute))
         else:
-            self._due_time_value.setText("All day" if item.due_date else "\u2014")
+            self._due_time_edit.setTime(QTime(0, 0))
 
         if item.due_time_block:
             self._time_block_value.setText(item.due_time_block.replace("_", " ").title())
@@ -302,22 +470,15 @@ class TaskDetailPanel(QDockWidget):
             self._event_date_value.setText("\u2014")
 
         # Estimates
-        if item.estimated_minutes > 0:
-            self._est_minutes_value.setText(f"{item.estimated_minutes} min")
-        else:
-            self._est_minutes_value.setText("\u2014")
-
-        if item.estimated_pomodoros > 0:
-            self._est_pomodoros_value.setText(str(item.estimated_pomodoros))
-        else:
-            self._est_pomodoros_value.setText("\u2014")
+        self._est_minutes_spin.setValue(item.estimated_minutes)
+        self._est_pomodoros_spin.setValue(item.estimated_pomodoros)
 
         if item.work_duration > 0:
             self._work_duration_value.setText(f"{item.work_duration} min (custom)")
         else:
             self._work_duration_value.setText("Default")
 
-        # Effective duration calculation
+        # Effective duration
         direct = max(0, item.estimated_minutes)
         per_work = item.work_duration if item.work_duration > 0 else 25
         pom_total = max(0, item.estimated_pomodoros) * per_work
@@ -392,7 +553,7 @@ class TaskDetailPanel(QDockWidget):
             + (f" / {item.estimated_pomodoros} estimated" if item.estimated_pomodoros else "")
         )
 
-        # Metadata — compact timestamps
+        # Metadata
         created = datetime.fromtimestamp(item.created_at / 1000)
         self._created_value.setText(created.strftime("%b %d %Y %I:%M %p"))
         updated = datetime.fromtimestamp(item.updated_at / 1000)
