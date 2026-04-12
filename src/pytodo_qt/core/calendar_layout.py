@@ -378,10 +378,23 @@ def compute_bar_segments(
     The delegate uses BarSegment.is_marker / .is_all_day to choose the
     rendering treatment.
     """
-    # ALL_DAY items live on their due_date row regardless of state.
+    # ALL_DAY items live on their due_date row, plus Q6 markers on
+    # subsequent days when overdue or historically overdue.
     if window.kind == WindowKind.ALL_DAY:
-        if viewing_day != window.origin.date():
+        origin_day = window.origin.date()
+        if viewing_day < origin_day:
             return []
+        if viewing_day > origin_day:
+            # Q6 marker mode for all-day overdue tasks. The "due day"
+            # for marker semantics is origin_day (= due_date). For
+            # ALL_DAY, window.end is 00:00 of the next day, so we
+            # cannot use window.end.date() as the boundary — that
+            # would suppress the marker on the very first overdue day.
+            return _maybe_marker_segment(
+                item, window, viewing_day, current_time, effective_end_day=origin_day
+            )
+        # viewing_day == origin_day: render the all-day chip with the
+        # appropriate state.
         as_of = _as_of_for_viewing_day(viewing_day, current_time)
         # Cap as_of at completed_at for completed items so historical days
         # past the completion show the final state, not "still active."
@@ -428,7 +441,9 @@ def compute_bar_segments(
     # planned end day. Whether to render a marker depends on the item's
     # complete state and (if complete) the relationship to completed_at.
     if viewing_day > end_day:
-        return _maybe_marker_segment(item, window, viewing_day, current_time)
+        return _maybe_marker_segment(
+            item, window, viewing_day, current_time, effective_end_day=end_day
+        )
 
     # Case C: viewing day is within [origin_day, end_day] (inclusive of
     # both). Render a clipped slice of the bar in the hour grid.
@@ -498,13 +513,20 @@ def _maybe_marker_segment(
     window: BarWindow,
     viewing_day: date,
     current_time: datetime,
+    effective_end_day: date,
 ) -> list[BarSegment]:
     """Compute the Q6 marker segment for a viewing day strictly after end day.
+
+    `effective_end_day` is the "due day" for marker comparison purposes —
+    the last day on which the task is considered to live in the hour grid
+    (or all-day chip). For hour-grid items this is the midnight-adjusted
+    `window.end.date()`; for ALL_DAY items it is `window.origin.date()`
+    (the actual due_date, since `window.end` is 00:00 of the next day).
 
     Returns empty list if no marker should appear (e.g., item is complete
     and viewing_day is after the completion day).
     """
-    end_day = window.end.date()
+    end_day = effective_end_day
 
     if not item.complete:
         # Active overdue marker on every day after the due day.

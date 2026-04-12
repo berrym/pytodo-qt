@@ -493,7 +493,16 @@ class TestComputeBarStateCompleted:
 
 
 class TestComputeBarSegmentsAllDay:
-    """ALL_DAY items live in the All Day row of their due_date."""
+    """ALL_DAY items live in the All Day row of their due_date.
+
+    Q6 marker lifecycle also applies to ALL_DAY items: an uncompleted
+    all-day task whose due day has passed produces an OVERDUE_ACTIVE
+    marker on every subsequent viewing day, just like an hour-grid
+    task with a due_time. The "due day" reference for ALL_DAY is
+    `window.origin.date()` (= the actual due_date), not the
+    end-of-day boundary `window.end.date()` which is 00:00 of the
+    next day.
+    """
 
     def test_all_day_on_correct_day(self):
         item = _make_item(due_date=date(2026, 4, 10))
@@ -506,12 +515,108 @@ class TestComputeBarSegmentsAllDay:
         assert segments[0].is_all_day is True
         assert segments[0].is_marker is False
 
-    def test_all_day_wrong_day_empty(self):
+    def test_all_day_before_due_day_empty(self):
+        """A viewing day BEFORE the due day produces no segment —
+        the task is in the future."""
         item = _make_item(due_date=date(2026, 4, 10))
+        window = compute_bar_window(item)
+        assert window is not None
+        segments = compute_bar_segments(item, window, date(2026, 4, 9), datetime(2026, 4, 9, 12, 0))
+        assert segments == []
+
+    def test_all_day_uncomplete_subsequent_day_produces_marker(self):
+        """An uncompleted all-day task whose due day has passed
+        produces a Q6 OVERDUE_ACTIVE marker on the subsequent day."""
+        item = _make_item(due_date=date(2026, 4, 10), complete=False)
         window = compute_bar_window(item)
         assert window is not None
         segments = compute_bar_segments(
             item, window, date(2026, 4, 11), datetime(2026, 4, 11, 12, 0)
+        )
+        assert len(segments) == 1
+        seg = segments[0]
+        assert seg.is_marker is True
+        assert seg.is_all_day is True
+        assert seg.state == BarState.OVERDUE_ACTIVE
+        assert seg.marker_label is not None
+        assert "overdue" in seg.marker_label.lower()
+
+    def test_all_day_uncomplete_marker_grows_each_day(self):
+        """The marker label reflects the elapsed time from the due
+        day to end-of-viewing-day, so it grows on each subsequent day."""
+        item = _make_item(due_date=date(2026, 4, 10), complete=False)
+        window = compute_bar_window(item)
+        assert window is not None
+        # Day right after due
+        seg_d1 = compute_bar_segments(
+            item, window, date(2026, 4, 11), datetime(2026, 4, 15, 12, 0)
+        )[0]
+        # Three days after due
+        seg_d3 = compute_bar_segments(
+            item, window, date(2026, 4, 13), datetime(2026, 4, 15, 12, 0)
+        )[0]
+        # The d3 marker label should differ from d1 (more elapsed time)
+        assert seg_d1.marker_label != seg_d3.marker_label
+
+    def test_all_day_completed_unknown_no_marker_on_subsequent(self):
+        """COMPLETED_UNKNOWN (complete=True, completed_at=None) means
+        we don't know when the task was finished, so we can't honestly
+        claim it was overdue on day X. No marker on subsequent days."""
+        item = _make_item(due_date=date(2026, 4, 10), complete=True, completed_at=None)
+        window = compute_bar_window(item)
+        assert window is not None
+        segments = compute_bar_segments(
+            item, window, date(2026, 4, 11), datetime(2026, 4, 11, 12, 0)
+        )
+        assert segments == []
+
+    def test_all_day_completed_late_intermediate_day_shows_marker(self):
+        """ALL_DAY task due Mon, completed Wed, viewed Tue → marker
+        on Tue because the task was overdue-active on Tue."""
+        completed_at_ms = int(datetime(2026, 4, 12, 15, 0).timestamp() * 1000)
+        item = _make_item(
+            due_date=date(2026, 4, 10),
+            complete=True,
+            completed_at=completed_at_ms,
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        segments = compute_bar_segments(
+            item, window, date(2026, 4, 11), datetime(2026, 4, 15, 12, 0)
+        )
+        assert len(segments) == 1
+        assert segments[0].is_marker is True
+        assert segments[0].state == BarState.OVERDUE_ACTIVE
+
+    def test_all_day_completed_late_post_completion_no_marker(self):
+        """After the completion day, no marker — the task is done."""
+        completed_at_ms = int(datetime(2026, 4, 12, 15, 0).timestamp() * 1000)
+        item = _make_item(
+            due_date=date(2026, 4, 10),
+            complete=True,
+            completed_at=completed_at_ms,
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        segments = compute_bar_segments(
+            item, window, date(2026, 4, 13), datetime(2026, 4, 15, 12, 0)
+        )
+        assert segments == []
+
+    def test_all_day_completed_early_no_marker(self):
+        """A task completed BEFORE its due day was never overdue —
+        no marker on any subsequent day. The chip on the due day
+        itself shows the COMPLETED_EARLY state."""
+        completed_at_ms = int(datetime(2026, 4, 8, 15, 0).timestamp() * 1000)
+        item = _make_item(
+            due_date=date(2026, 4, 10),
+            complete=True,
+            completed_at=completed_at_ms,
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        segments = compute_bar_segments(
+            item, window, date(2026, 4, 11), datetime(2026, 4, 15, 12, 0)
         )
         assert segments == []
 

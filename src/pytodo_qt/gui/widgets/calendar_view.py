@@ -321,6 +321,97 @@ class _ProjectedItem:
         return f"_ProjectedItem({self._item!r} on {self._projected_date})"
 
 
+class _MarkerChip:
+    """Wrapper around an item that should appear as a Q6 overdue marker
+    in the All Day row of a viewing day after the item's due day.
+
+    Q6 marker semantics: when a task's due date has passed, every
+    subsequent day shows a fixed marker (not a growing bar) in the
+    pinned All Day row carrying the elapsed-overdue duration label
+    from `compute_bar_segments`. The label format is set in pure-layer
+    `_make_marker` (e.g., "3d overdue", "~2w overdue").
+
+    This wrapper carries the underlying item plus the marker_label and
+    BarState produced by `compute_bar_segments` for a particular
+    viewing day. The chip painter detects `_MarkerChip` via attribute
+    sniff (`marker_label is not None`) and renders distinct
+    OVERDUE_ACTIVE-colored chips with the duration label as the
+    primary text instead of the task reminder.
+
+    Forwards `.id` and all other attributes to the wrapped item so
+    hit-test, click handlers, selection state, and edit dialogs
+    transparently operate on the real underlying task — clicking a
+    marker is equivalent to clicking the real task.
+    """
+
+    __slots__ = ("_item", "marker_label", "marker_state")
+
+    def __init__(self, item, marker_label: str, marker_state) -> None:
+        object.__setattr__(self, "_item", item)
+        object.__setattr__(self, "marker_label", marker_label)
+        object.__setattr__(self, "marker_state", marker_state)
+
+    @property
+    def id(self):
+        return self._item.id
+
+    def __getattr__(self, name: str):
+        return getattr(self._item, name)
+
+    def __repr__(self) -> str:
+        return f"_MarkerChip({self._item!r} label={self.marker_label!r})"
+
+
+def _collect_markers_for_dates(
+    items: list,
+    dates: list,
+    current_time: datetime,
+) -> dict:
+    """Walk every (item, viewing_day) pair and collect Q6 marker chips.
+
+    For each item with a `due_date`, asks `compute_bar_segments` what
+    segments it would emit on each visible date. Marker segments
+    (`is_marker=True`) become `_MarkerChip` entries keyed by viewing
+    day so the All Day row of that day can render them.
+
+    `current_time` is passed straight through so the markers reflect
+    the same "as_of" semantics the pure layer uses — viewing today
+    uses real now, viewing past/future uses end-of-that-day.
+
+    Returns a dict mapping each date in `dates` to a list of
+    `_MarkerChip` instances (empty list when no markers apply).
+    De-dups by item id within each day so a single task can't
+    accidentally produce multiple marker chips for the same day.
+    """
+    from ...core.calendar_layout import compute_bar_segments, compute_bar_window
+
+    out: dict = {d: [] for d in dates}
+    seen: dict = {d: set() for d in dates}
+    for item in items:
+        if getattr(item, "due_date", None) is None:
+            continue
+        window = compute_bar_window(item)
+        if window is None:
+            continue
+        end_day = window.end.date()
+        for d in dates:
+            # Markers only apply on days strictly after the due day —
+            # the due day itself shows the bar in the hour grid, not
+            # a marker. Pre-filter so we don't waste a segment-compute
+            # call on every (item, day) pair.
+            if d <= end_day:
+                continue
+            segments = compute_bar_segments(item, window, d, current_time)
+            for seg in segments:
+                if not seg.is_marker:
+                    continue
+                if item.id in seen[d]:
+                    continue
+                out[d].append(_MarkerChip(item, seg.marker_label or "", seg.state))
+                seen[d].add(item.id)
+    return out
+
+
 class _CloseButton(QWidget):
     """QPainter-rendered close button for reliable cross-platform display."""
 
@@ -2623,6 +2714,11 @@ class _WeekModel(QAbstractTableModel):
         super().__init__(parent)
         self._week_dates: list[date] = []
         self._items_by_date: dict[date, list] = {}
+        # Q6 marker chips per viewing day. Populated by the widget's
+        # refresh() via set_markers(). Markers are computed from items
+        # whose due_date is BEFORE the viewing day, so they can never
+        # land in _items_by_date naturally.
+        self._markers_by_date: dict[date, list] = {}
         self._set_week(date.today())
 
     def rowCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
@@ -2648,9 +2744,21 @@ class _WeekModel(QAbstractTableModel):
         if role == _WEEK_ITEMS_ROLE:
             items = self._items_by_date.get(d, [])
             if row == 0:
-                # All-day chips with defensive dedup. See _all_day_items
-                # for the inclusion criteria.
-                return _dedup_by_id(self._all_day_items(items, d))
+                # All Day row composition (Q6):
+                #   1. Marker chips first — these represent past-due
+                #      tasks projected forward to this viewing day, and
+                #      are visually the most urgent thing on the row.
+                #   2. Regular all-day chips next — items keyed on this
+                #      day with no hour-grid placement (true all-day +
+                #      visibility-fallback fallthrough).
+                # Dedup is applied across the union: a marker shadows a
+                # regular chip with the same item id (shouldn't happen
+                # in practice because markers come from past-due items
+                # and regular chips come from items keyed on `d`, but
+                # be defensive).
+                markers = self._markers_by_date.get(d, [])
+                all_day = self._all_day_items(items, d)
+                return _dedup_by_id(list(markers) + all_day)
             hour = row - 1
             return _dedup_by_id([i for i in items if i.due_time and i.due_time.hour == hour])
 
@@ -2743,6 +2851,20 @@ class _WeekModel(QAbstractTableModel):
     def set_items(self, items_by_date: dict[date, list]) -> None:
         self.beginResetModel()
         self._items_by_date = items_by_date
+        self.endResetModel()
+
+    def set_markers(self, markers_by_date: dict) -> None:
+        """Install Q6 overdue marker chips per viewing day.
+
+        Markers are computed by the calendar widget's refresh() via
+        `_collect_markers_for_dates()`. They live in the All Day row
+        of viewing days strictly after each item's due day, and reflect
+        whatever the lifecycle case (active overdue, historical
+        overdue, projected overdue, completed-late historical) demands
+        per Q6.
+        """
+        self.beginResetModel()
+        self._markers_by_date = markers_by_date
         self.endResetModel()
 
     def week_dates(self) -> list[date]:
@@ -3114,6 +3236,79 @@ class _WeekDelegate(QStyledItemDelegate):
         painter.drawLine(rect.left() + 1, line_y, rect.right() - 1, line_y)
         painter.restore()
 
+    def _paint_marker_chip(
+        self,
+        painter: QPainter,
+        marker,
+        chip_y: int,
+        chip_height: int,
+        rect: Any,
+        x: int,
+        text_width: int,
+        fm: QFontMetrics,
+        is_selected: bool,
+        col_alt_base: QColor,
+        col_border: QColor,
+    ) -> None:
+        """Paint a Q6 overdue marker chip in the All Day row.
+
+        Distinct visual treatment from regular all-day chips:
+          - Filled background in the OVERDUE_ACTIVE palette color
+            (same red the now-line and overdue bars use, so the visual
+            language is consistent)
+          - White text for WCAG contrast against the red background
+          - The marker_label ("3d overdue", "~2w overdue") is the
+            primary signal, followed by " · <reminder>" so the user
+            can also identify which task is overdue
+          - Bold font weight throughout (the marker is the most urgent
+            thing in the row and should grab attention)
+          - Selection ring re-uses the existing style so clicking still
+            visibly highlights the chip
+        """
+        from ...core.calendar_layout import BarState
+
+        marker_state = getattr(marker, "marker_state", BarState.OVERDUE_ACTIVE)
+        bg = QColor(self._bar_palette[marker_state].base)
+        bg.setAlpha(235)
+        border = QColor(self._bar_palette[marker_state].base).darker(160)
+
+        chip_rect = rect.adjusted(2, 0, -2, 0)
+        chip_rect.setTop(chip_y)
+        chip_rect.setHeight(chip_height)
+
+        painter.save()
+        painter.setBrush(bg)
+        painter.setPen(QPen(border, 1.5))
+        painter.drawRoundedRect(chip_rect, 3, 3)
+
+        if is_selected:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(col_border.lighter(150), 2))
+            painter.drawRoundedRect(chip_rect.adjusted(-1, -1, 1, 1), 3, 3)
+
+        # Bold text. White on the red bg gives ~7:1 contrast (well
+        # above WCAG AA).
+        marker_font = QFont(painter.font())
+        marker_font.setBold(True)
+        painter.setFont(marker_font)
+        bold_fm = QFontMetrics(marker_font)
+
+        label = getattr(marker, "marker_label", "") or ""
+        reminder = getattr(marker, "reminder", "") or ""
+        full_text = f"{label} \u00b7 {reminder}" if reminder else label
+        elided = bold_fm.elidedText(full_text, Qt.TextElideMode.ElideRight, text_width - 4)
+
+        painter.setPen(QColor("white"))
+        painter.drawText(
+            x + 6,
+            chip_y,
+            text_width,
+            chip_height,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            elided,
+        )
+        painter.restore()
+
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -3212,6 +3407,26 @@ class _WeekDelegate(QStyledItemDelegate):
             item = items[i]
             chip_y = y + i * chip_height
             is_selected = bool(self._selected_item_id and item.id == self._selected_item_id)
+
+            # Q6 marker chip — distinct OVERDUE_ACTIVE-colored chip with
+            # the elapsed-overdue duration label (e.g., "3d overdue") as
+            # the primary text. Renders ABOVE the regular chip code path,
+            # which falls through for plain TodoItems.
+            if getattr(item, "marker_label", None) is not None:
+                self._paint_marker_chip(
+                    painter,
+                    item,
+                    chip_y,
+                    chip_height,
+                    rect,
+                    x,
+                    text_width,
+                    fm,
+                    is_selected,
+                    col_alt_base,
+                    col_border,
+                )
+                continue
 
             # Completed bg
             if item.complete:
@@ -4611,6 +4826,15 @@ class CalendarViewWidget(QWidget):
         # Week view: uses projections so future occurrences are visible.
         self._week_model.set_items(scheduled_with_projections)
         self._week_model.set_week(self._current_date)
+        # Q6: collect overdue markers for every visible day in the
+        # week. Source items are top_level (subtasks never appear in
+        # the calendar grid). Real items only — not projections —
+        # because projections represent FUTURE occurrences and a
+        # future occurrence can't be "overdue" yet.
+        now = datetime.now()
+        week_dates_for_markers = self._week_model.week_dates()
+        week_markers = _collect_markers_for_dates(top_level, week_dates_for_markers, now)
+        self._week_model.set_markers(week_markers)
         self._week_delegate._today = date.today()
         # Update week header labels
         week_dates = self._week_model.week_dates()
@@ -4636,6 +4860,10 @@ class CalendarViewWidget(QWidget):
         self._day_model._week_dates = [self._current_date] + [
             self._current_date + timedelta(days=i) for i in range(1, 7)
         ]
+        # Q6 markers for the day view's visible date (only column 0
+        # is shown but markers must still be computed for it).
+        day_markers = _collect_markers_for_dates(top_level, self._day_model._week_dates, now)
+        self._day_model.set_markers(day_markers)
         self._day_model.layoutChanged.emit()
         self._day_delegate._today = date.today()
         # Update header to show the day name

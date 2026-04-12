@@ -2020,6 +2020,484 @@ class TestWeekDelegateBarPixels:
         )
 
 
+class TestQ6OverdueMarkers:
+    """Step 10 — Q6 overdue marker rendering in the pinned All Day row.
+
+    Markers represent past-due tasks projected forward to a viewing
+    day after the task's due day. They live in the All Day row, NOT
+    the hour grid (the hour grid only paints the bar on the actual
+    due day). This test class covers:
+
+      - _MarkerChip wrapper attribute forwarding
+      - _collect_markers_for_dates pure-function correctness across
+        the Q6 lifecycle cases
+      - _WeekModel.set_markers + merging into the All Day row's items
+      - Marker chip pixel rendering (distinct from regular all-day
+        chips)
+      - Hit-test on marker chips routes clicks to the underlying item
+    """
+
+    def _make_overdue_item(self, days_overdue: int = 3, reminder: str = "Plan release"):
+        """Build a TodoItem due `days_overdue` days ago.
+
+        Sets `created_at` to 30 days before the due date so the
+        DEADLINE_FROM_CREATED rule (Rule 3) produces a valid window —
+        without this, create_todo_item() sets created_at to now, and
+        for past due_dates the rule sanitizes to ALL_DAY which never
+        produces marker segments. Real overdue tasks always satisfy
+        created_at < due_date because they were created before the
+        deadline arrived.
+        """
+        from datetime import datetime as _dt
+
+        from pytodo_qt.core.models import create_todo_item
+
+        item = create_todo_item(reminder)
+        item.due_date = date.today() - timedelta(days=days_overdue)
+        item.due_time = None
+        # 30 days before due_date — guarantees Rule 3 sees a valid
+        # creation timestamp regardless of how far in the past
+        # `days_overdue` is.
+        creation_dt = _dt.combine(
+            item.due_date - timedelta(days=30), __import__("datetime").time(8, 0)
+        )
+        item.created_at = int(creation_dt.timestamp() * 1000)
+        return item
+
+    # ------------------------------------------------------------------
+    # _MarkerChip attribute forwarding
+    # ------------------------------------------------------------------
+
+    def test_marker_chip_forwards_id_to_underlying_item(self):
+        from pytodo_qt.core.calendar_layout import BarState
+        from pytodo_qt.gui.widgets.calendar_view import _MarkerChip
+
+        item = self._make_overdue_item()
+        chip = _MarkerChip(item, "3d overdue", BarState.OVERDUE_ACTIVE)
+        # Click handlers do hit[1].id — must return the real item id
+        assert chip.id == item.id
+
+    def test_marker_chip_forwards_reminder_to_underlying_item(self):
+        from pytodo_qt.core.calendar_layout import BarState
+        from pytodo_qt.gui.widgets.calendar_view import _MarkerChip
+
+        item = self._make_overdue_item(reminder="Submit report")
+        chip = _MarkerChip(item, "5d overdue", BarState.OVERDUE_ACTIVE)
+        assert chip.reminder == "Submit report"
+
+    def test_marker_chip_carries_marker_label_and_state(self):
+        from pytodo_qt.core.calendar_layout import BarState
+        from pytodo_qt.gui.widgets.calendar_view import _MarkerChip
+
+        item = self._make_overdue_item()
+        chip = _MarkerChip(item, "3d overdue", BarState.OVERDUE_ACTIVE)
+        assert chip.marker_label == "3d overdue"
+        assert chip.marker_state == BarState.OVERDUE_ACTIVE
+
+    # ------------------------------------------------------------------
+    # _collect_markers_for_dates correctness
+    # ------------------------------------------------------------------
+
+    def test_collect_markers_for_active_overdue_task(self):
+        """A task due 3 days ago, not complete, viewed today: produces
+        a marker on today's date with the elapsed-overdue label."""
+        from datetime import datetime as _dt
+
+        from pytodo_qt.gui.widgets.calendar_view import _collect_markers_for_dates
+
+        item = self._make_overdue_item(days_overdue=3)
+        item.due_time = __import__("datetime").time(9, 0)  # 9 AM 3 days ago
+        item.complete = False
+        today = date.today()
+        markers = _collect_markers_for_dates([item], [today], _dt.now())
+        assert today in markers
+        assert len(markers[today]) == 1
+        chip = markers[today][0]
+        assert chip.id == item.id
+        # Label format from compute_bar_segments via _make_marker
+        assert "overdue" in chip.marker_label.lower()
+
+    def test_collect_markers_skips_due_day_itself(self):
+        """The due day shows the bar in the hour grid, NOT a marker.
+        _collect_markers_for_dates must not produce a marker for the
+        actual due day."""
+        from datetime import datetime as _dt
+
+        from pytodo_qt.gui.widgets.calendar_view import _collect_markers_for_dates
+
+        item = self._make_overdue_item(days_overdue=0)  # due today
+        item.due_time = __import__("datetime").time(9, 0)
+        today = date.today()
+        markers = _collect_markers_for_dates([item], [today], _dt.now())
+        assert markers[today] == []
+
+    def test_collect_markers_skips_pre_due_days(self):
+        """Days BEFORE the due day are not "overdue" — no marker."""
+        from datetime import datetime as _dt
+
+        from pytodo_qt.gui.widgets.calendar_view import _collect_markers_for_dates
+
+        item = self._make_overdue_item(days_overdue=-2)  # due in 2 days
+        item.due_time = __import__("datetime").time(9, 0)
+        today = date.today()
+        markers = _collect_markers_for_dates([item], [today], _dt.now())
+        assert markers[today] == []
+
+    def test_collect_markers_completed_late_intermediate_day(self):
+        """Task due Mon, completed Wed, viewing Tue → marker on Tue
+        because the task was overdue-active on Tue."""
+        from datetime import datetime as _dt
+
+        from pytodo_qt.gui.widgets.calendar_view import _collect_markers_for_dates
+
+        # Build a task due 5 days ago, completed 1 day ago
+        item = self._make_overdue_item(days_overdue=5)
+        item.due_time = __import__("datetime").time(9, 0)
+        item.complete = True
+        completed_dt = _dt.combine(
+            date.today() - timedelta(days=1), __import__("datetime").time(15, 0)
+        )
+        item.completed_at = int(completed_dt.timestamp() * 1000)
+
+        # Viewing day = 3 days ago (between due day and completed day)
+        viewing_day = date.today() - timedelta(days=3)
+        markers = _collect_markers_for_dates([item], [viewing_day], _dt.now())
+        assert len(markers[viewing_day]) == 1
+        assert markers[viewing_day][0].id == item.id
+
+    def test_collect_markers_completed_late_post_completion_no_marker(self):
+        """After the completion day, the bar lives in the hour grid
+        with the COMPLETED_LATE two-zone visual — no marker on
+        subsequent days."""
+        from datetime import datetime as _dt
+
+        from pytodo_qt.gui.widgets.calendar_view import _collect_markers_for_dates
+
+        item = self._make_overdue_item(days_overdue=5)
+        item.due_time = __import__("datetime").time(9, 0)
+        item.complete = True
+        completed_dt = _dt.combine(
+            date.today() - timedelta(days=2), __import__("datetime").time(15, 0)
+        )
+        item.completed_at = int(completed_dt.timestamp() * 1000)
+
+        # Viewing day = today (after completion day)
+        markers = _collect_markers_for_dates([item], [date.today()], _dt.now())
+        assert markers[date.today()] == []
+
+    def test_collect_markers_dedup_by_item_id(self):
+        """The same item must not produce multiple marker chips for
+        the same viewing day, even if compute_bar_segments somehow
+        emitted duplicates (defensive)."""
+        from datetime import datetime as _dt
+
+        from pytodo_qt.gui.widgets.calendar_view import _collect_markers_for_dates
+
+        item = self._make_overdue_item(days_overdue=3)
+        item.due_time = __import__("datetime").time(9, 0)
+        # Pass the same item twice in the input list
+        markers = _collect_markers_for_dates([item, item], [date.today()], _dt.now())
+        assert len(markers[date.today()]) == 1
+
+    def test_collect_markers_respects_multiple_dates(self):
+        """Each date in the input list gets its own marker entry,
+        with the label reflecting that day's elapsed-overdue."""
+        from datetime import datetime as _dt
+
+        from pytodo_qt.gui.widgets.calendar_view import _collect_markers_for_dates
+
+        item = self._make_overdue_item(days_overdue=5)
+        item.due_time = __import__("datetime").time(9, 0)
+        dates = [date.today() - timedelta(days=2), date.today() - timedelta(days=1), date.today()]
+        markers = _collect_markers_for_dates([item], dates, _dt.now())
+        for d in dates:
+            assert len(markers[d]) == 1, f"missing marker for {d}"
+
+    def test_collect_markers_for_pure_all_day_task_without_due_time(self):
+        """An ALL_DAY task (no due_time) whose due day passed produces
+        a marker on subsequent days too. Pure-layer support for this
+        is in TestComputeBarSegmentsAllDay; this test verifies the
+        widget-side `_collect_markers_for_dates` actually surfaces it.
+        """
+        from datetime import datetime as _dt
+
+        from pytodo_qt.gui.widgets.calendar_view import _collect_markers_for_dates
+
+        # Pure all-day task — no due_time set (the helper already
+        # leaves it None, but make it intentional in the test)
+        item = self._make_overdue_item(days_overdue=2, reminder="Birthday card")
+        item.due_time = None
+        markers = _collect_markers_for_dates([item], [date.today()], _dt.now())
+        assert len(markers[date.today()]) == 1
+        assert markers[date.today()][0].id == item.id
+        assert "overdue" in markers[date.today()][0].marker_label.lower()
+
+    # ------------------------------------------------------------------
+    # _WeekModel integration
+    # ------------------------------------------------------------------
+
+    def test_week_model_set_markers_merges_into_all_day_row(self, qtbot):
+        """Markers passed via set_markers() appear in _WEEK_ITEMS_ROLE
+        for row 0 (the All Day row), alongside regular all-day items."""
+        from datetime import datetime as _dt
+
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _WEEK_ITEMS_ROLE,
+            _collect_markers_for_dates,
+            _WeekModel,
+        )
+
+        model = _WeekModel()
+        qtbot.addWidget(__import__("PyQt6.QtWidgets", fromlist=["QWidget"]).QWidget())
+
+        today = date.today()
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+
+        # Overdue task from the past — won't appear in items_by_date[today]
+        # because its due_date is yesterday, not today.
+        overdue = self._make_overdue_item(days_overdue=2)
+        overdue.due_time = __import__("datetime").time(9, 0)
+        markers = _collect_markers_for_dates([overdue], [today], _dt.now())
+        assert len(markers[today]) == 1
+
+        model.set_items({})  # No items keyed on today
+        model.set_markers(markers)
+
+        idx = model.index(0, 0)  # All Day row, today's column
+        all_day_items = model.data(idx, _WEEK_ITEMS_ROLE) or []
+        assert len(all_day_items) == 1
+        assert all_day_items[0].id == overdue.id
+        assert getattr(all_day_items[0], "marker_label", None) is not None
+
+    def test_week_model_markers_appear_before_regular_all_day_items(self, qtbot):
+        """Markers come first in the All Day row's item list because
+        they represent the most urgent thing on the row."""
+        from datetime import datetime as _dt
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _WEEK_ITEMS_ROLE,
+            _collect_markers_for_dates,
+            _WeekModel,
+        )
+
+        del qtbot
+        model = _WeekModel()
+        today = date.today()
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+
+        regular = create_todo_item("Regular all-day task")
+        regular.due_date = today
+        regular.due_time = None
+
+        overdue = self._make_overdue_item(days_overdue=2)
+        overdue.due_time = __import__("datetime").time(9, 0)
+        markers = _collect_markers_for_dates([overdue], [today], _dt.now())
+
+        model.set_items({today: [regular]})
+        model.set_markers(markers)
+
+        idx = model.index(0, 0)
+        all_day_items = model.data(idx, _WEEK_ITEMS_ROLE) or []
+        assert len(all_day_items) == 2
+        # Marker first
+        assert getattr(all_day_items[0], "marker_label", None) is not None
+        assert all_day_items[0].id == overdue.id
+        # Regular second
+        assert getattr(all_day_items[1], "marker_label", None) is None
+        assert all_day_items[1].id == regular.id
+
+    # ------------------------------------------------------------------
+    # Pixel-level marker chip rendering
+    # ------------------------------------------------------------------
+
+    def test_marker_chip_renders_with_distinct_color_from_regular_chip(self, qtbot):
+        """Pixel test: a row containing a marker chip and a row
+        containing a regular all-day chip must produce visually
+        distinct images. The marker has a filled OVERDUE_ACTIVE
+        background, the regular chip uses cell-background.
+        """
+        from datetime import datetime as _dt
+
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QColor, QImage, QPainter
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _collect_markers_for_dates,
+            _WeekDelegate,
+            _WeekModel,
+            _WeekTableView,
+        )
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        delegate = _WeekDelegate()
+        view.setItemDelegate(delegate)
+        qtbot.addWidget(view)
+        view.resize(800, 200)
+        view.show()
+
+        today = date.today()
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+
+        # Render 1: regular all-day chip in row 0
+        regular = create_todo_item("Plan release")
+        regular.due_date = today
+        regular.due_time = None
+        model.set_items({today: [regular]})
+        model.set_markers({today: []})
+        img_regular = QImage(300, 64, QImage.Format.Format_ARGB32)
+        img_regular.fill(QColor("white"))
+        p = QPainter(img_regular)
+        opt = QStyleOptionViewItem()
+        opt.rect = QRect(0, 0, 300, 64)
+        delegate.paint(p, opt, model.index(0, 0))
+        p.end()
+
+        # Render 2: marker chip in row 0 (no regular item)
+        overdue = self._make_overdue_item(reminder="Plan release", days_overdue=3)
+        overdue.due_time = __import__("datetime").time(9, 0)
+        markers = _collect_markers_for_dates([overdue], [today], _dt.now())
+        model.set_items({})
+        model.set_markers(markers)
+        img_marker = QImage(300, 64, QImage.Format.Format_ARGB32)
+        img_marker.fill(QColor("white"))
+        p = QPainter(img_marker)
+        delegate.paint(p, opt, model.index(0, 0))
+        p.end()
+
+        # The two images must differ — the marker has a colored
+        # background fill that the regular chip does not.
+        differing_pixels = 0
+        for y in range(img_regular.height()):
+            for x in range(img_regular.width()):
+                if img_regular.pixel(x, y) != img_marker.pixel(x, y):
+                    differing_pixels += 1
+        assert differing_pixels > 100, (
+            f"Marker chip should be visually distinct from regular "
+            f"chip but only {differing_pixels} pixels differ."
+        )
+
+    def test_marker_chip_uses_overdue_active_color(self, qtbot):
+        """The marker chip background should be the OVERDUE_ACTIVE
+        color from the bar palette. Sample a pixel inside the chip
+        rect and verify it matches the palette color (alpha-blended)."""
+        from datetime import datetime as _dt
+
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QColor, QImage, QPainter
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        from pytodo_qt.core.bar_palette import get_palette
+        from pytodo_qt.core.calendar_layout import BarState
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _collect_markers_for_dates,
+            _WeekDelegate,
+            _WeekModel,
+            _WeekTableView,
+        )
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        delegate = _WeekDelegate()
+        view.setItemDelegate(delegate)
+        qtbot.addWidget(view)
+        view.resize(800, 200)
+        view.show()
+
+        today = date.today()
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+
+        overdue = self._make_overdue_item(days_overdue=3)
+        overdue.due_time = __import__("datetime").time(9, 0)
+        markers = _collect_markers_for_dates([overdue], [today], _dt.now())
+        model.set_items({})
+        model.set_markers(markers)
+
+        img = QImage(300, 64, QImage.Format.Format_ARGB32)
+        img.fill(QColor("white"))
+        p = QPainter(img)
+        opt = QStyleOptionViewItem()
+        opt.rect = QRect(0, 0, 300, 64)
+        delegate.paint(p, opt, model.index(0, 0))
+        p.end()
+
+        # Sample pixel near top-left of cell where marker chip lives
+        # (avoid white border, hit the chip body)
+        sample_pixel = img.pixel(100, 12)
+        sample = QColor(
+            (sample_pixel >> 16) & 0xFF,
+            (sample_pixel >> 8) & 0xFF,
+            sample_pixel & 0xFF,
+        )
+
+        palette = get_palette("light")
+        expected = QColor(palette[BarState.OVERDUE_ACTIVE].base)
+
+        # Allow for alpha blending and antialiasing — the sampled
+        # pixel should be in the same color family (red-dominant)
+        # rather than white or grey
+        assert sample.red() > sample.green(), (
+            f"Marker chip pixel {sample.getRgb()} should be red-dominant "
+            f"to match OVERDUE_ACTIVE palette {expected.getRgb()}."
+        )
+        assert sample.red() > sample.blue(), (
+            f"Marker chip pixel {sample.getRgb()} should be red-dominant "
+            f"(red > blue) to match OVERDUE_ACTIVE palette."
+        )
+
+    # ------------------------------------------------------------------
+    # Hit-test routing
+    # ------------------------------------------------------------------
+
+    def test_marker_chip_click_returns_underlying_item(self, qtbot):
+        """Clicking a marker chip in the All Day row must return
+        ('task', item, index) where item.id is the REAL underlying
+        item id, not the wrapper. The mousePressEvent then emits
+        task_clicked.emit(item.id) which downstream handlers use
+        to open the editor."""
+        from datetime import datetime as _dt
+
+        from PyQt6.QtCore import QPoint
+
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _collect_markers_for_dates,
+            _WeekModel,
+            _WeekTableView,
+        )
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        qtbot.addWidget(view)
+        view.resize(800, 600)
+        view.show()
+
+        today = date.today()
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+
+        overdue = self._make_overdue_item(days_overdue=3)
+        overdue.due_time = __import__("datetime").time(9, 0)
+        markers = _collect_markers_for_dates([overdue], [today], _dt.now())
+        model.set_items({})
+        model.set_markers(markers)
+
+        # Click in the All Day row, today's column
+        idx = model.index(0, 0)
+        rect = view.visualRect(idx)
+        click = QPoint(rect.center().x(), rect.top() + 8)
+        hit = view._hit_test(click)
+        assert hit is not None
+        assert hit[0] == "task"
+        # Hit returns the marker chip, but its .id forwards to the
+        # underlying item — that's what task_clicked.emit will fire.
+        assert hit[1].id == overdue.id
+
+
 class TestPinnedContainerAlignment:
     """Step 9 follow-up: the all-day and hour-grid tables must have
     perfectly aligned columns, identical vertical header width, and the
