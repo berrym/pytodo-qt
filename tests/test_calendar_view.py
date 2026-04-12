@@ -2318,7 +2318,9 @@ class TestQ6OverdueMarkers:
         now = _dt.now()
 
         # Step 2: hour 13 (1pm-2pm) — workback origin cell — has the bar
-        layout_13 = _compute_cell_bar_layout(column_items, target_date, 13 * 60, 14 * 60, 0, 200, now)
+        layout_13 = _compute_cell_bar_layout(
+            column_items, target_date, 13 * 60, 14 * 60, 0, 200, now
+        )
         assert len(layout_13.starting) == 1, (
             f"Hour 13 (workback origin) should have a starting bar slot "
             f"for the 1-hour recurring task, got starting={len(layout_13.starting)}"
@@ -2326,7 +2328,9 @@ class TestQ6OverdueMarkers:
 
         # Step 3: hour 14 (2pm-3pm) — the cell of the due_time — must be empty
         # because the bar ENDS at the boundary, doesn't extend into hour 14
-        layout_14 = _compute_cell_bar_layout(column_items, target_date, 14 * 60, 15 * 60, 0, 200, now)
+        layout_14 = _compute_cell_bar_layout(
+            column_items, target_date, 14 * 60, 15 * 60, 0, 200, now
+        )
         assert len(layout_14.continuing) == 0 and len(layout_14.starting) == 0, (
             f"Hour 14 (due_time cell) should be empty for a bar ending at "
             f"14:00 exactly, got continuing={len(layout_14.continuing)}, "
@@ -2334,7 +2338,9 @@ class TestQ6OverdueMarkers:
         )
 
         # Step 4: hour 12 (12pm-1pm) — before workback origin — must also be empty
-        layout_12 = _compute_cell_bar_layout(column_items, target_date, 12 * 60, 13 * 60, 0, 200, now)
+        layout_12 = _compute_cell_bar_layout(
+            column_items, target_date, 12 * 60, 13 * 60, 0, 200, now
+        )
         assert len(layout_12.continuing) == 0 and len(layout_12.starting) == 0, (
             f"Hour 12 should be empty for a 1pm-2pm bar, got "
             f"continuing={len(layout_12.continuing)}, starting={len(layout_12.starting)}"
