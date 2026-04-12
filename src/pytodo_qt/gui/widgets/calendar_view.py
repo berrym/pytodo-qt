@@ -3003,7 +3003,7 @@ class _WeekDelegate(QStyledItemDelegate):
         # that's a wide chip; for continuing slices that's a thin
         # ribbon on the left edge that doesn't crowd in-cell tasks.
         # ------------------------------------------------------------------
-        for item, window, seg, slot_left, slot_right_edge, is_ribbon in all_slots:
+        for item, window, seg, slot_left, slot_right_edge, _is_ribbon in all_slots:
             visible_start = max(seg.start_minute, cell_minute_start)
             visible_end = min(seg.end_minute, cell_minute_end)
             raw_top = rect.top() + int(
@@ -3096,13 +3096,16 @@ class _WeekDelegate(QStyledItemDelegate):
                 painter.drawRoundedRect(bar_rect.adjusted(-1, -1, 1, 1), 4, 4)
                 painter.restore()
 
-            # Label — only for non-ribbon (in-cell starting) slots,
-            # only when the slice has enough vertical space, and only
-            # when the slot is wide enough that an elided reminder is
-            # actually readable (see _MIN_LABEL_WIDTH). Continuation
-            # ribbons never get labels — their full text lives in the
-            # START cell where the bar begins.
-            if not is_ribbon and (bot_y - top_y) >= 14:
+            # Label — rendered in any slot with sufficient vertical
+            # height and horizontal width, regardless of whether the
+            # slice is a starting or continuing cell. This ensures bars
+            # whose start-cell slice is too thin (e.g., a 5-minute
+            # sliver from 19:55-20:00 that the painter skips entirely)
+            # still get a readable label in the body cell. Thin 5 px
+            # ribbons (continuing slices squeezed by competing in-cell
+            # tasks) naturally fall below _MIN_LABEL_WIDTH so they
+            # still never get labels — the width check handles it.
+            if (bot_y - top_y) >= 14:
                 label_width = slot_right_edge - slot_left - 8
                 if label_width >= _MIN_LABEL_WIDTH:
                     painter.save()

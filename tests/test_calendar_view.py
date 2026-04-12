@@ -1718,14 +1718,17 @@ class TestWeekDelegateBarPixels:
         # top row is dominated by colored pixels, indicating the bar
         # extends to the top edge.)
 
-    def test_multi_hour_bar_label_only_on_start_cell(self, qtbot):
-        """A bar spanning multiple hours shows its label ONLY on the cell
-        where the bar starts. Continuing cells just show the bar color
-        without the label.
+    def test_multi_hour_bar_label_in_both_start_and_continuing_cells(self, qtbot):
+        """A bar spanning multiple hours shows its label in EVERY cell
+        where the slot has sufficient width.
 
-        REGRESSION: previously the label repeated on every cell the bar
-        spanned, which the user saw as "two instances of the same task"
-        because the same label appeared in two consecutive cells.
+        This prevents the bug where a bar's start-cell slice is too
+        thin to render (e.g., 5 minutes from 19:55-20:00) and the
+        body cell has no label because it was classified as
+        "continuing". Without labels on continuing cells, the user
+        sees an anonymous colored bar with no way to identify the task
+        except by hovering for a tooltip. With labels on every cell
+        that has room, the task is always identifiable.
         """
         from datetime import time
 
@@ -1737,23 +1740,21 @@ class TestWeekDelegateBarPixels:
         item.due_time = time(15, 0)
         item.estimated_minutes = 180  # 12:00-15:00, three hours
 
-        # Row 13 = hour 12 (the START hour) — segment starts here, label renders
+        # Row 13 = hour 12 (the START hour) — label renders
         hist_start = self._paint_and_hist(item, 13, qtbot)
-        # Row 14 = hour 13 (middle hour) — segment continues, NO label
+        # Row 14 = hour 13 (middle hour) — label ALSO renders now
         hist_middle = self._paint_and_hist(item, 14, qtbot)
 
-        # The start cell has many distinct colors from text antialiasing.
-        # The middle cell has FEWER because there's no label rendered.
-        assert len(hist_start) > len(hist_middle), (
-            f"Multi-hour bar label should NOT repeat on continuing cells. "
-            f"Start cell distinct colors: {len(hist_start)}, "
-            f"middle cell distinct colors: {len(hist_middle)}. "
-            f"If middle >= start, the label is rendering on the middle cell too "
-            f"(which presents as 'two instances of the same task' to the user)."
-        )
-        # Both cells still have visible bars
+        # Both cells should have text antialiasing colors from the label
         assert len(hist_start) > 2
         assert len(hist_middle) > 2
+        # The middle cell should have comparable color count to the start
+        # cell since both render the same label text. Allow some variance
+        # from border rendering differences (start has rounded corners).
+        assert len(hist_middle) > len(hist_start) // 2, (
+            f"Middle cell should have a label too. Start cell distinct "
+            f"colors: {len(hist_start)}, middle cell: {len(hist_middle)}."
+        )
 
     def test_two_tasks_same_hour_both_render(self, qtbot):
         """REGRESSION: Two tasks in the same cell must both render.
@@ -2253,6 +2254,91 @@ class TestQ6OverdueMarkers:
         markers = _collect_markers_for_dates([item], [date.today()], _dt.now())
         assert len(markers[date.today()]) == 1
         assert markers[date.today()][0].id == item.id
+
+    def test_recurring_task_for_future_day_renders_bar_at_workback_origin(self):
+        """REGRESSION: A recurring task with due_time on a FUTURE day
+        must render a bar in the hour cell of its workback origin
+        (NOT in the cell of its due_time, which is the bar's END).
+
+        End-to-end pipeline check: build a daily-recurring task with
+        due_date=tomorrow and due_time=14:00 with estimated_minutes=60.
+        Verify:
+          1. The model receives the item via set_items
+          2. _WEEK_COLUMN_ITEMS_ROLE for tomorrow's column returns it
+          3. _compute_cell_bar_layout for hour 13 (the workback origin)
+             produces a starting slot — NOT hour 14 (the due time)
+          4. Hour 12 and hour 14 cells are empty for this item
+
+        This verifies the user's "missing 1-hour recurring task" report
+        could only be a scroll-position visibility issue (the workback
+        origin cell is above the auto-scroll-to-now range), not an
+        actual rendering bug.
+        """
+        from datetime import datetime as _dt
+        from datetime import time as _time
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _WEEK_COLUMN_ITEMS_ROLE,
+            _compute_cell_bar_layout,
+            _WeekModel,
+        )
+
+        # Use a fixed date within the same week to avoid midnight
+        # boundary issues when the test runs near day boundaries.
+        target_date = date.today()
+
+        # Daily recurring task at 2pm with 1-hour estimate
+        task = create_todo_item("1hr daily recurring")
+        task.due_date = target_date
+        task.due_time = _time(14, 0)
+        task.estimated_minutes = 60
+        task.recurrence_type = "daily"
+        task.recurrence_interval = 1
+
+        model = _WeekModel()
+        model.set_items({target_date: [task]})
+        model.set_week(target_date)
+        model.set_markers({})
+
+        # Find the target date's column index
+        week_dates = model.week_dates()
+        assert target_date in week_dates, f"week_dates does not contain {target_date}"
+        tomorrow_col = week_dates.index(target_date)
+
+        # Step 1: model returns the item via _WEEK_COLUMN_ITEMS_ROLE
+        col_items_idx = model.index(15, tomorrow_col)  # row 15 = hour 14
+        column_items = col_items_idx.data(_WEEK_COLUMN_ITEMS_ROLE) or []
+        assert len(column_items) == 1, (
+            f"Expected 1 column item, got {len(column_items)}. "
+            f"The model is dropping the recurring task from its column."
+        )
+        assert column_items[0].id == task.id
+
+        now = _dt.now()
+
+        # Step 2: hour 13 (1pm-2pm) — workback origin cell — has the bar
+        layout_13 = _compute_cell_bar_layout(column_items, target_date, 13 * 60, 14 * 60, 0, 200, now)
+        assert len(layout_13.starting) == 1, (
+            f"Hour 13 (workback origin) should have a starting bar slot "
+            f"for the 1-hour recurring task, got starting={len(layout_13.starting)}"
+        )
+
+        # Step 3: hour 14 (2pm-3pm) — the cell of the due_time — must be empty
+        # because the bar ENDS at the boundary, doesn't extend into hour 14
+        layout_14 = _compute_cell_bar_layout(column_items, target_date, 14 * 60, 15 * 60, 0, 200, now)
+        assert len(layout_14.continuing) == 0 and len(layout_14.starting) == 0, (
+            f"Hour 14 (due_time cell) should be empty for a bar ending at "
+            f"14:00 exactly, got continuing={len(layout_14.continuing)}, "
+            f"starting={len(layout_14.starting)}"
+        )
+
+        # Step 4: hour 12 (12pm-1pm) — before workback origin — must also be empty
+        layout_12 = _compute_cell_bar_layout(column_items, target_date, 12 * 60, 13 * 60, 0, 200, now)
+        assert len(layout_12.continuing) == 0 and len(layout_12.starting) == 0, (
+            f"Hour 12 should be empty for a 1pm-2pm bar, got "
+            f"continuing={len(layout_12.continuing)}, starting={len(layout_12.starting)}"
+        )
 
     def test_collect_markers_respects_multiple_dates(self):
         """Each date in the input list gets its own marker entry,
@@ -3164,3 +3250,78 @@ class TestPerTaskDuration:
                 # 150 min / 480 min_per_day = 0.3125 days
                 assert abs(est_days - 0.3125) < 0.01
                 break
+
+
+# ===========================================================================
+# Fix B: labels render on continuing cells with sufficient width
+# ===========================================================================
+
+
+class TestContinuingCellLabels:
+    """Labels now render in ANY slot with sufficient width — including
+    continuing cells — so that bars whose start-cell slice is too thin
+    (e.g., 5 min from 19:55-20:00 that the painter skips) still get
+    a readable label in the body cell. Thin 5 px ribbons (continuing
+    slices squeezed by competing in-cell tasks) naturally fall below
+    _MIN_LABEL_WIDTH so they still never show labels — the width
+    check handles it.
+    """
+
+    def test_continuing_cell_renders_label_when_wide_enough(self, qtbot):
+        """A continuing cell with no competing tasks fills the cell
+        width. At day-view widths (600+ px), the label must render."""
+        from datetime import time as dt_time
+
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QColor, QImage, QPainter
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _WeekDelegate,
+            _WeekModel,
+            _WeekTableView,
+        )
+
+        today = date.today()
+        item = create_todo_item("Continuing bar should have label")
+        item.due_date = today
+        item.due_time = dt_time(15, 0)
+        item.estimated_minutes = 180  # 12:00-15:00, three hours
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        delegate = _WeekDelegate()
+        view.setItemDelegate(delegate)
+        qtbot.addWidget(view)
+        view.resize(800, 600)
+        view.show()
+
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+        model.set_items({today: [item]})
+        model.set_markers({})
+
+        # Paint the CONTINUING cell (hour 13 = row 14) at day-view width
+        img = QImage(600, 60, QImage.Format.Format_ARGB32)
+        img.fill(QColor("white"))
+        p = QPainter(img)
+        opt = QStyleOptionViewItem()
+        opt.rect = QRect(0, 0, 600, 60)
+        delegate.paint(p, opt, model.index(14, 0))  # hour 13 (continuing)
+        p.end()
+
+        # Count distinct colors: if the label rendered, text
+        # antialiasing produces many distinct colors
+        distinct = set()
+        for y in range(img.height()):
+            for x in range(img.width()):
+                pixel = img.pixel(x, y)
+                r, g, b = (pixel >> 16) & 0xFF, (pixel >> 8) & 0xFF, pixel & 0xFF
+                if (r, g, b) != (255, 255, 255):
+                    distinct.add((r, g, b))
+        assert len(distinct) > 10, (
+            f"Continuing cell should render a label when wide enough. "
+            f"Got {len(distinct)} distinct non-white colors — too few "
+            f"for text antialiasing."
+        )

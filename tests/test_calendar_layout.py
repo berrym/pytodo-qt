@@ -950,11 +950,14 @@ class TestQ6LifecycleTableComplete:
         assert segs[0].state == BarState.OVERDUE_ACTIVE
 
     def test_row4_not_complete_viewing_future_day(self):
-        """Today is Apr 11, navigating to Apr 13 (a projection)."""
+        """Today is Apr 11, navigating to Apr 13 (a future projection).
+
+        Markers are suppressed on future viewing days — they are
+        historical truth and current state only. Projected overdue
+        markers would flood the All Day row with spurious chips."""
         item, window = self._setup()
         segs = compute_bar_segments(item, window, date(2026, 4, 13), datetime(2026, 4, 11, 12, 0))
-        assert len(segs) == 1
-        assert segs[0].is_marker is True
+        assert segs == []
 
     def test_row5_complete_viewing_completion_day(self):
         """Bar in hour grid with two-zone visual via COMPLETED_LATE state."""
@@ -1032,3 +1035,179 @@ class TestBarSegmentDataclass:
         )
         with pytest.raises(AttributeError):
             seg.start_minute = 100  # type: ignore[misc]
+
+
+# ===========================================================================
+# Fix A: future-day overdue markers are suppressed
+# ===========================================================================
+
+
+class TestFutureDayMarkersSuppressed:
+    """Markers are historical truth and current state only. On future
+    viewing days, the task lives in its actual bar/chip — projected
+    overdue markers are noise that floods the All Day row."""
+
+    def test_hour_grid_no_marker_on_future_day(self):
+        """An overdue hour-grid task viewed on a future day produces no
+        marker segment."""
+        item = _make_item(
+            due_date=date(2026, 4, 10),
+            due_time=time(15, 0),
+            estimated_minutes=120,
+            complete=False,
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        # Today is Apr 11, viewing Apr 13 (a future day)
+        segs = compute_bar_segments(item, window, date(2026, 4, 13), datetime(2026, 4, 11, 12, 0))
+        assert segs == []
+
+    def test_all_day_no_marker_on_future_day(self):
+        """An overdue all-day task viewed on a future day produces no
+        marker segment."""
+        item = _make_item(due_date=date(2026, 4, 10), complete=False)
+        window = compute_bar_window(item)
+        assert window is not None
+        # Today is Apr 11, viewing Apr 13 (a future day)
+        segs = compute_bar_segments(item, window, date(2026, 4, 13), datetime(2026, 4, 11, 12, 0))
+        assert segs == []
+
+    def test_marker_still_emitted_on_today(self):
+        """Markers are still produced when viewing_day == current_time.date()."""
+        item = _make_item(
+            due_date=date(2026, 4, 10),
+            due_time=time(15, 0),
+            estimated_minutes=120,
+            complete=False,
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        # Today is Apr 13 and we are viewing today
+        segs = compute_bar_segments(item, window, date(2026, 4, 13), datetime(2026, 4, 13, 12, 0))
+        assert len(segs) == 1
+        assert segs[0].is_marker is True
+        assert segs[0].state == BarState.OVERDUE_ACTIVE
+
+    def test_marker_still_emitted_on_past_day(self):
+        """Markers are still produced when viewing a past day."""
+        item = _make_item(
+            due_date=date(2026, 4, 10),
+            due_time=time(15, 0),
+            estimated_minutes=120,
+            complete=False,
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        # Today is Apr 15, viewing Apr 12 (a past day after due)
+        segs = compute_bar_segments(item, window, date(2026, 4, 12), datetime(2026, 4, 15, 12, 0))
+        assert len(segs) == 1
+        assert segs[0].is_marker is True
+
+    def test_completed_late_future_day_no_marker(self):
+        """Even a completed-late task produces no marker on a future viewing
+        day that would normally be an intermediate day."""
+        item = _make_item(
+            due_date=date(2026, 4, 10),
+            due_time=time(15, 0),
+            estimated_minutes=120,
+            complete=True,
+            completed_at=_ms(datetime(2026, 4, 15, 11, 0)),
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        # Today is Apr 11, viewing Apr 13 (future, but would be intermediate)
+        segs = compute_bar_segments(item, window, date(2026, 4, 13), datetime(2026, 4, 11, 12, 0))
+        assert segs == []
+
+
+# ===========================================================================
+# Fix C: recurring tasks exempt from midnight rollback
+# ===========================================================================
+
+
+class TestRecurringMidnightRollbackExempt:
+    """Recurring tasks with due_time=00:00 render on their due_date,
+    not the previous day. The midnight rollback is for one-time tasks
+    only — recurring tasks mean 'start of that day'."""
+
+    def test_recurring_midnight_renders_on_due_date(self):
+        """A recurring task with due_time=00:00 on Apr 12 renders a bar
+        segment on Apr 12, NOT Apr 11."""
+        item = _make_item(
+            due_date=date(2026, 4, 12),
+            due_time=time(0, 0),
+            estimated_minutes=60,
+            recurrence_type="daily",
+            recurrence_interval=1,
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        # Window should end at midnight of Apr 12 (= 00:00 on Apr 12)
+        assert window.end == datetime(2026, 4, 12, 0, 0)
+
+        # Viewing Apr 12 — should get a segment (the bar lives here)
+        segs_apr12 = compute_bar_segments(
+            item, window, date(2026, 4, 12), datetime(2026, 4, 12, 8, 0)
+        )
+        # The bar's end_day for recurring should be Apr 12 (no rollback),
+        # and viewing Apr 12 means we are within [origin_day, end_day].
+        # The bar origin is 23:00 Apr 11 (workback 1 hour from midnight).
+        # So on Apr 12, start_minute=0, end_minute=0 which is an empty
+        # slice — the segment actually lives on Apr 11. But crucially,
+        # Apr 12 should NOT produce a Q6 marker (which was the bug:
+        # without the fix, end_day rolled back to Apr 11, and viewing
+        # Apr 12 was > end_day, triggering spurious marker mode).
+        # With the fix, end_day stays Apr 12, viewing Apr 12 <= end_day,
+        # so no marker is produced.
+        for seg in segs_apr12:
+            assert seg.is_marker is False
+
+    def test_nonrecurring_midnight_still_rolls_back(self):
+        """A one-time task with due_time=00:00 still gets the midnight
+        rollback behavior — the bar belongs to the previous day."""
+        item = _make_item(
+            due_date=date(2026, 4, 12),
+            due_time=time(0, 0),
+            estimated_minutes=60,
+            # No recurrence_type — one-time task
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        assert window.end == datetime(2026, 4, 12, 0, 0)
+
+        # Viewing Apr 11 — bar should render here (workback from midnight
+        # gives origin 23:00 Apr 11, same day as the rolled-back end_day)
+        segs_apr11 = compute_bar_segments(
+            item, window, date(2026, 4, 11), datetime(2026, 4, 11, 20, 0)
+        )
+        assert len(segs_apr11) == 1
+        seg = segs_apr11[0]
+        assert seg.is_marker is False
+        assert seg.start_minute == 23 * 60  # 11 PM
+        assert seg.end_minute == 1440  # midnight
+
+    def test_recurring_midnight_no_spurious_marker_day_after(self):
+        """The key regression this fix prevents: a recurring task with
+        due_time=00:00 on Apr 12 must NOT produce a Q6 overdue marker
+        on Apr 12 (which would happen if end_day rolled back to Apr 11)."""
+        item = _make_item(
+            due_date=date(2026, 4, 12),
+            due_time=time(0, 0),
+            estimated_minutes=60,
+            recurrence_type="weekly",
+            recurrence_interval=1,
+            complete=False,
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+
+        # Without the fix, end_day would be Apr 11 (rolled back), and
+        # viewing Apr 12 > Apr 11 would trigger _maybe_marker_segment.
+        # With the fix, end_day stays Apr 12, viewing Apr 12 <= end_day,
+        # so we go through _hour_grid_segment (or empty slice) instead.
+        segs = compute_bar_segments(item, window, date(2026, 4, 12), datetime(2026, 4, 12, 8, 0))
+        for seg in segs:
+            assert seg.is_marker is False, (
+                f"Recurring task should not produce a marker on its due_date; "
+                f"got marker with label={seg.marker_label}"
+            )

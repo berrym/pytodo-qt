@@ -426,9 +426,15 @@ def compute_bar_segments(
     # (because _minute_of_day clamps midnight to 0 for both origin and
     # end, yielding start==end==0) and would never render anywhere.
     end_day = window.end.date()
-    if window.end.time() == time(0, 0, 0) and window.end > window.origin:
-        # Treat the bar as belonging to the previous day for layout
-        # purposes — it ends at end-of-that-day, not start-of-next-day.
+    # Midnight rollback: a one-time task ending at midnight semantically
+    # belongs to the previous day's last hour. But recurring tasks are
+    # exempt — the user set due_date explicitly, and "recurs at midnight"
+    # means "start of that day", not "end of previous day".
+    if (
+        window.end.time() == time(0, 0, 0)
+        and window.end > window.origin
+        and not getattr(item, "is_recurring", False)
+    ):
         end_day = end_day - timedelta(days=1)
 
     origin_day = window.origin.date()
@@ -527,6 +533,12 @@ def _maybe_marker_segment(
     and viewing_day is after the completion day).
     """
     end_day = effective_end_day
+
+    # Q6 markers are historical truth and current state. On future viewing
+    # days, the task lives in its actual bar/chip — projected overdue
+    # markers are noise that floods the All Day row with spurious chips.
+    if viewing_day > current_time.date():
+        return []
 
     if not item.complete:
         # Active overdue marker on every day after the due day.
