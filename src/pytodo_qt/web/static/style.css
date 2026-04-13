@@ -1169,21 +1169,35 @@ body {
   padding: 1px 4px;
 }
 
-/* Week and day hour-grid calendar — Canvas 2D. The canvas paints
-   the whole grid (headers, hour labels, all-day row, marker row,
-   and the hour bars) so the wrap only scrolls the content and
-   the loading placeholder sits on top. */
+/* Week and day hour-grid calendar — Canvas 2D, split into two
+   stacked zones. The pinned canvas (header row + all-day chips +
+   overdue markers) stays visible at the top; the scrollable zone
+   carries the 24-hour grid and scrolls independently. Both zones
+   share the same width so day columns line up pixel-for-pixel. */
 .cal-hour-grid-wrap {
   position: relative;
+  display: flex;
+  flex-direction: column;
   overflow-x: auto;
   padding: 8px;
-}
-.cal-hour-grid {
-  display: block;
-  cursor: pointer;
-  background: var(--bg-card);
+  max-height: calc(100dvh - 200px);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  background: var(--bg-card);
+}
+.cal-hour-grid-pinned {
+  display: block;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.cal-hour-grid-scroll {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.cal-hour-grid-hours {
+  display: block;
+  cursor: pointer;
 }
 .cal-hour-grid-loading {
   position: absolute;
@@ -1194,7 +1208,6 @@ body {
   color: var(--text-secondary);
   font-size: 14px;
   background: var(--bg-card);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
 }
 

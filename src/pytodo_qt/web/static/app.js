@@ -2916,18 +2916,10 @@
   var _HOUR_ROW_HEIGHT = 30;
   var _GRID_HEADER_HEIGHT = 32;
   var _HOUR_LABEL_WIDTH = 50;
-  var _ALL_DAY_ROW_HEIGHT = 34;
-  var _MARKER_ROW_HEIGHT = 22;
+  var _CHIP_HEIGHT = 22;
+  var _CHIP_SPACING = 2;
+  var _ROW_PADDING = 4;
   var _GRID_CANVAS_MIN_WIDTH = 560;
-
-  function _gridTotalHeight() {
-    return (
-      _GRID_HEADER_HEIGHT +
-      _ALL_DAY_ROW_HEIGHT +
-      _MARKER_ROW_HEIGHT +
-      24 * _HOUR_ROW_HEIGHT
-    );
-  }
 
   function _startOfWeek(dt) {
     var d = new Date(dt);
@@ -2996,11 +2988,26 @@
   function _renderHourGrid(startDate, days) {
     calContainer.innerHTML = "";
 
+    // The hour-grid view is two stacked canvases sharing the same
+    // width so their day columns line up pixel-for-pixel. The pinned
+    // canvas carries the header row, the all-day chip row, and the
+    // overdue marker row; it stays visible while the user scrolls.
+    // The hours canvas carries the 24-hour grid and its bars; it
+    // lives inside a scrolling div so the pinned rows stay anchored.
     var wrap = document.createElement("div");
     wrap.className = "cal-hour-grid-wrap";
-    var canvas = document.createElement("canvas");
-    canvas.className = "cal-hour-grid";
-    wrap.appendChild(canvas);
+
+    var pinnedCanvas = document.createElement("canvas");
+    pinnedCanvas.className = "cal-hour-grid-pinned";
+    wrap.appendChild(pinnedCanvas);
+
+    var scrollDiv = document.createElement("div");
+    scrollDiv.className = "cal-hour-grid-scroll";
+    var hoursCanvas = document.createElement("canvas");
+    hoursCanvas.className = "cal-hour-grid-hours";
+    scrollDiv.appendChild(hoursCanvas);
+    wrap.appendChild(scrollDiv);
+
     calContainer.appendChild(wrap);
 
     var loading = document.createElement("div");
@@ -3008,16 +3015,8 @@
     loading.textContent = "Loading\u2026";
     wrap.appendChild(loading);
 
-    // Size the canvas to fit the container. Minimum width keeps the
-    // 7-column layout legible on phones by allowing horizontal scroll
-    // rather than cramming.
     var containerWidth = calContainer.clientWidth || 720;
     var canvasWidth = Math.max(containerWidth - 4, _GRID_CANVAS_MIN_WIDTH);
-    var canvasHeight = _gridTotalHeight();
-    canvas.width = canvasWidth;
-    canvas.height = canvasHeight;
-    canvas.style.width = canvasWidth + "px";
-    canvas.style.height = canvasHeight + "px";
 
     var startIso = _dayKey(startDate);
 
@@ -3029,48 +3028,101 @@
     )
       .then(function (data) {
         loading.remove();
-        _paintHourGrid(canvas, data, days);
+        _paintPinnedAndHours(pinnedCanvas, hoursCanvas, data, days, canvasWidth);
       })
       .catch(function () {
         loading.textContent = "Failed to load calendar data";
       });
   }
 
-  function _paintHourGrid(canvas, data, days) {
+  function _paintPinnedAndHours(pinned, hours, data, days, W) {
+    // Measure the tallest column so the pinned canvas is just the
+    // height it actually needs — empty days collapse the row.
+    var maxAllDay = 0;
+    var maxMarkers = 0;
+    for (var d = 0; d < days; d++) {
+      var allDayCount = 0;
+      var markerCount = 0;
+      data.days[d].segments.forEach(function (seg) {
+        if (seg.is_all_day) allDayCount++;
+        else if (seg.is_marker) markerCount++;
+      });
+      if (allDayCount > maxAllDay) maxAllDay = allDayCount;
+      if (markerCount > maxMarkers) maxMarkers = markerCount;
+    }
+
+    var chipSlot = _CHIP_HEIGHT + _CHIP_SPACING;
+    var allDayRowH =
+      maxAllDay > 0 ? maxAllDay * chipSlot + _ROW_PADDING : 0;
+    var markerRowH =
+      maxMarkers > 0 ? maxMarkers * chipSlot + _ROW_PADDING : 0;
+
+    var pinnedH = _GRID_HEADER_HEIGHT + allDayRowH + markerRowH;
+    var hoursH = 24 * _HOUR_ROW_HEIGHT;
+
+    pinned.width = W;
+    pinned.height = pinnedH;
+    pinned.style.width = W + "px";
+    pinned.style.height = pinnedH + "px";
+
+    hours.width = W;
+    hours.height = hoursH;
+    hours.style.width = W + "px";
+    hours.style.height = hoursH + "px";
+
+    var layout = {
+      W: W,
+      days: days,
+      colWidth: (W - _HOUR_LABEL_WIDTH) / days,
+      todayKey: _dayKey(new Date()),
+      allDayRowH: allDayRowH,
+      markerRowH: markerRowH,
+    };
+
+    _paintPinnedZone(pinned, data, layout);
+    _paintHoursZone(hours, data, layout);
+
+    _installHourGridClickHandler(pinned);
+    _installHourGridClickHandler(hours);
+  }
+
+  function _paintPinnedZone(canvas, data, layout) {
     var ctx = canvas.getContext("2d");
     var W = canvas.width;
     var H = canvas.height;
     ctx.clearRect(0, 0, W, H);
 
     var border = _themeColor("border", "#e0e0e0");
-    var textSecondary = _themeColor("text-secondary", "#888");
     var textPrimary = _themeColor("text", "#333");
     var bgCard = _themeColor("bg-card", "#fff");
     var todayBg = _themeColor("accent-subtle", "rgba(33,150,243,0.08)");
 
-    var colWidth = (W - _HOUR_LABEL_WIDTH) / days;
+    var colWidth = layout.colWidth;
+    var days = layout.days;
     var headerY = 0;
     var allDayY = _GRID_HEADER_HEIGHT;
-    var markerY = allDayY + _ALL_DAY_ROW_HEIGHT;
-    var gridY = markerY + _MARKER_ROW_HEIGHT;
-    var todayKey = _dayKey(new Date());
+    var markerY = allDayY + layout.allDayRowH;
+    var todayKey = layout.todayKey;
+
+    // Header background + today-column tint across the full pinned
+    // height so the tint stays visible above the scrollable grid.
+    ctx.fillStyle = bgCard;
+    ctx.fillRect(0, 0, W, H);
+
+    for (var t = 0; t < days; t++) {
+      if (data.days[t].date === todayKey) {
+        ctx.fillStyle = todayBg;
+        ctx.fillRect(_HOUR_LABEL_WIDTH + t * colWidth, 0, colWidth, H);
+      }
+    }
 
     // --- Header row: day labels ---
-    ctx.fillStyle = bgCard;
-    ctx.fillRect(0, headerY, W, _GRID_HEADER_HEIGHT);
     ctx.strokeStyle = border;
     ctx.lineWidth = 1;
     var dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    var dayLabels = [];
     for (var i = 0; i < days; i++) {
       var colX = _HOUR_LABEL_WIDTH + i * colWidth;
       var day = new Date(data.days[i].date + "T00:00:00");
-      var key = data.days[i].date;
-      var isToday = key === todayKey;
-      if (isToday) {
-        ctx.fillStyle = todayBg;
-        ctx.fillRect(colX, 0, colWidth, H);
-      }
       ctx.fillStyle = textPrimary;
       ctx.font = "bold 13px sans-serif";
       ctx.textAlign = "center";
@@ -3083,44 +3135,30 @@
               day: "numeric",
             });
       ctx.fillText(label, colX + colWidth / 2, headerY + 20);
-      dayLabels.push({ x: colX, w: colWidth, date: key });
     }
     ctx.textAlign = "left";
-    // Header underline
+
+    // Header underline.
     ctx.beginPath();
     ctx.moveTo(0, _GRID_HEADER_HEIGHT);
     ctx.lineTo(W, _GRID_HEADER_HEIGHT);
     ctx.stroke();
 
-    // --- All-day and marker row separators ---
-    ctx.beginPath();
-    ctx.moveTo(0, allDayY + _ALL_DAY_ROW_HEIGHT);
-    ctx.lineTo(W, allDayY + _ALL_DAY_ROW_HEIGHT);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, markerY + _MARKER_ROW_HEIGHT);
-    ctx.lineTo(W, markerY + _MARKER_ROW_HEIGHT);
-    ctx.stroke();
-
-    // --- Hour labels + horizontal grid lines ---
-    ctx.fillStyle = textSecondary;
-    ctx.font = "10px sans-serif";
-    for (var h = 0; h < 24; h++) {
-      var y = gridY + h * _HOUR_ROW_HEIGHT;
-      ctx.fillText(
-        String(h).padStart(2, "0") + ":00",
-        6,
-        y + _HOUR_ROW_HEIGHT / 2 + 3,
-      );
-      ctx.strokeStyle = border;
+    // Row separators — only when the row actually exists.
+    if (layout.allDayRowH > 0) {
       ctx.beginPath();
-      ctx.moveTo(_HOUR_LABEL_WIDTH, y);
-      ctx.lineTo(W, y);
+      ctx.moveTo(0, allDayY + layout.allDayRowH);
+      ctx.lineTo(W, allDayY + layout.allDayRowH);
+      ctx.stroke();
+    }
+    if (layout.markerRowH > 0) {
+      ctx.beginPath();
+      ctx.moveTo(0, markerY + layout.markerRowH);
+      ctx.lineTo(W, markerY + layout.markerRowH);
       ctx.stroke();
     }
 
-    // --- Vertical grid lines between day columns ---
-    ctx.strokeStyle = border;
+    // Vertical grid lines between day columns.
     for (var v = 0; v <= days; v++) {
       var vx = _HOUR_LABEL_WIDTH + v * colWidth;
       ctx.beginPath();
@@ -3129,53 +3167,117 @@
       ctx.stroke();
     }
 
-    // --- Paint segments per day ---
-    // Hit-test rects accumulated during paint for click routing.
+    // --- All-day chips + markers ---
     canvas._hitRects = [];
 
+    var chipSlot = _CHIP_HEIGHT + _CHIP_SPACING;
     for (var d = 0; d < days; d++) {
       var dayData = data.days[d];
-      var colX = _HOUR_LABEL_WIDTH + d * colWidth;
-      var allDayCursor = allDayY + 2;
-      var markerCursor = markerY + 2;
+      var colX2 = _HOUR_LABEL_WIDTH + d * colWidth;
+      var allDaySlot = 0;
+      var markerSlot = 0;
 
       dayData.segments.forEach(function (seg) {
         var item = data.items[seg.item_id];
         if (!item) return;
 
-        if (seg.is_marker) {
-          _paintMarkerChip(
-            ctx,
-            canvas._hitRects,
-            item,
-            seg,
-            colX + 2,
-            markerCursor,
-            colWidth - 4,
-          );
-          markerCursor += _MARKER_ROW_HEIGHT - 4;
-          return;
-        }
-
         if (seg.is_all_day) {
+          var y = allDayY + _ROW_PADDING / 2 + allDaySlot * chipSlot;
           _paintAllDayChip(
             ctx,
             canvas._hitRects,
             item,
             seg,
-            colX + 2,
-            allDayCursor,
+            colX2 + 2,
+            y,
             colWidth - 4,
           );
-          allDayCursor += _ALL_DAY_ROW_HEIGHT - 4;
-          return;
+          allDaySlot++;
+        } else if (seg.is_marker) {
+          var ym = markerY + _ROW_PADDING / 2 + markerSlot * chipSlot;
+          _paintMarkerChip(
+            ctx,
+            canvas._hitRects,
+            item,
+            seg,
+            colX2 + 2,
+            ym,
+            colWidth - 4,
+          );
+          markerSlot++;
         }
+      });
+    }
+  }
 
-        // Hour-grid bar: convert minute range to pixels.
-        var segTopY =
-          gridY + (seg.start_minute / 60) * _HOUR_ROW_HEIGHT;
-        var segBottomY =
-          gridY + (seg.end_minute / 60) * _HOUR_ROW_HEIGHT;
+  function _paintHoursZone(canvas, data, layout) {
+    var ctx = canvas.getContext("2d");
+    var W = canvas.width;
+    var H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    var border = _themeColor("border", "#e0e0e0");
+    var textSecondary = _themeColor("text-secondary", "#888");
+    var bgCard = _themeColor("bg-card", "#fff");
+    var todayBg = _themeColor("accent-subtle", "rgba(33,150,243,0.08)");
+
+    var colWidth = layout.colWidth;
+    var days = layout.days;
+    var todayKey = layout.todayKey;
+
+    ctx.fillStyle = bgCard;
+    ctx.fillRect(0, 0, W, H);
+
+    // Today-column tint inside the hours zone.
+    for (var t = 0; t < days; t++) {
+      if (data.days[t].date === todayKey) {
+        ctx.fillStyle = todayBg;
+        ctx.fillRect(_HOUR_LABEL_WIDTH + t * colWidth, 0, colWidth, H);
+      }
+    }
+
+    // Horizontal hour lines + hour labels.
+    ctx.fillStyle = textSecondary;
+    ctx.font = "10px sans-serif";
+    ctx.strokeStyle = border;
+    for (var h = 0; h < 24; h++) {
+      var y = h * _HOUR_ROW_HEIGHT;
+      ctx.fillText(
+        String(h).padStart(2, "0") + ":00",
+        6,
+        y + _HOUR_ROW_HEIGHT / 2 + 3,
+      );
+      if (h > 0) {
+        ctx.beginPath();
+        ctx.moveTo(_HOUR_LABEL_WIDTH, y);
+        ctx.lineTo(W, y);
+        ctx.stroke();
+      }
+    }
+
+    // Vertical grid lines between day columns.
+    for (var v = 0; v <= days; v++) {
+      var vx = _HOUR_LABEL_WIDTH + v * colWidth;
+      ctx.beginPath();
+      ctx.moveTo(vx, 0);
+      ctx.lineTo(vx, H);
+      ctx.stroke();
+    }
+
+    // --- Paint hour-grid bars per day ---
+    canvas._hitRects = [];
+
+    for (var d = 0; d < days; d++) {
+      var dayData = data.days[d];
+      var colX = _HOUR_LABEL_WIDTH + d * colWidth;
+
+      dayData.segments.forEach(function (seg) {
+        if (seg.is_marker || seg.is_all_day) return;
+        var item = data.items[seg.item_id];
+        if (!item) return;
+
+        var segTopY = (seg.start_minute / 60) * _HOUR_ROW_HEIGHT;
+        var segBottomY = (seg.end_minute / 60) * _HOUR_ROW_HEIGHT;
         var segH = Math.max(segBottomY - segTopY, 3);
         var segX = colX + 2;
         var segW = colWidth - 4;
@@ -3192,8 +3294,6 @@
         );
       });
     }
-
-    _installHourGridClickHandler(canvas);
   }
 
   function _paintHourBar(ctx, hitRects, item, seg, x, y, w, h) {
