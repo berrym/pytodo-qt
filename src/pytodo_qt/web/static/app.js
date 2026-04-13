@@ -3370,7 +3370,7 @@
   }
 
   function _paintAllDayChip(ctx, hitRects, item, seg, x, y, w) {
-    var h = _ALL_DAY_ROW_HEIGHT - 6;
+    var h = _CHIP_HEIGHT;
     var color = _paletteColor(seg.state);
     var labelColor = _themeColor("text", "#333");
 
@@ -3386,7 +3386,7 @@
   }
 
   function _paintMarkerChip(ctx, hitRects, item, seg, x, y, w) {
-    var h = _MARKER_ROW_HEIGHT - 6;
+    var h = _CHIP_HEIGHT;
     var color = _paletteColor(seg.state);
     ctx.fillStyle = color;
     ctx.fillRect(x, y, w, h);
