@@ -37,6 +37,17 @@ _COLOR_GRID = "#e5e7eb"  # light gray
 _COLOR_TEXT = "#111827"  # near-black
 _COLOR_TEXT_MUTED = "#6b7280"
 
+# Work-done overlay colors mirror the desktop Timeline tab
+# (chart_pomodoro / chart_stopwatch theme keys) so the Wong palette
+# tradition holds across Qt and matplotlib renderings of the same data.
+_COLOR_POMODORO = "#D55E00"  # orange — focused/intentional sessions
+_COLOR_STOPWATCH = "#0072B2"  # blue — tracked unstructured time
+
+# Event date milestone marker — magenta diamond, traditional Gantt
+# milestone glyph shifted into a hue that doesn't clash with the
+# lifecycle palette.
+_COLOR_EVENT = "#c026d3"
+
 _RC_PARAMS: dict = {
     "figure.facecolor": "white",
     "figure.dpi": 100,
@@ -173,24 +184,33 @@ def _set_title_with_subtitle(
         )
 
 
-def _filter_items_by_date(
-    items: list[TodoItem],
-    start_date: date | None,
-    end_date: date | None,
-) -> list[TodoItem]:
-    """Keep items whose due_date falls within [start_date, end_date]."""
-    if start_date is None and end_date is None:
-        return items
-    out = []
-    for item in items:
-        if item.due_date is None:
-            continue
-        if start_date and item.due_date < start_date:
-            continue
-        if end_date and item.due_date > end_date:
-            continue
-        out.append(item)
-    return out
+def _user_sort_key(item: TodoItem) -> tuple:
+    """Build a sort key matching the user's configured sort tiers.
+
+    Falls back to a sensible default ordering when the config can't
+    be loaded (test environments, fresh installs). Mirrors the desktop
+    Timeline tab so the export's row order is identical to what the
+    user sees on screen.
+    """
+    try:
+        from .config import get_config
+
+        sort_tiers = get_config().database.sort_tiers()
+    except Exception:
+        sort_tiers = [("completion", False), ("due_date", False), ("priority", False)]
+
+    try:
+        from ..gui.widgets.todo_table import _sort_fragment
+    except Exception:
+        # Pure-core fallback: ordering by due_date desc keeps tests
+        # that don't import the GUI deterministic.
+        return ((item.due_date or date.max).toordinal() * -1, (item.reminder or "").lower())
+
+    key: list = []
+    for dimension, reverse in sort_tiers:
+        key.extend(_sort_fragment(item, dimension, reverse))
+    key.append((item.reminder or "").lower())
+    return tuple(key)
 
 
 def _empty_figure(title: str, message: str):
@@ -291,37 +311,58 @@ def render_gantt(
     end_date: date | None = None,
     include_full_legend: bool = False,
 ):
-    """Horizontal Gantt chart of items with due dates.
+    """Horizontal Gantt chart of every top-level task.
+
+    Mirrors the desktop Timeline tab: every top-level item is shown,
+    ordered by the user's configured sort tiers, with a work-done
+    overlay (pomodoro + stopwatch) and event date diamond markers
+    stacked on top of the lifecycle bar so a retrospective export
+    communicates the same information the on-screen view does.
 
     Args:
-        items: list of TodoItems; only those with due_date are plotted
+        items: list of TodoItems; subtasks (parent_id set) are filtered
+            out because they render through their parent in the
+            calendar pipeline. Items without a due_date are kept and
+            given a synthetic bar window from their created_at through
+            today, matching the desktop renderer.
         today: override for today (for testing)
-        start_date, end_date: optional date range filter
-        include_full_legend: when True, append a numbered list of full (un-
-            truncated) task reminders below the chart. Used for PNG/PDF
-            export so no information is lost even when the in-chart labels
-            are ellipsis-truncated.
+        start_date, end_date: optional viewport hint. Used as a lower
+            bound on the chart's x-axis frame so the visible window
+            matches the export dialog selection. They do NOT filter
+            rows out of the chart — every top-level item appears in
+            the row list regardless of when it's due, so the row set
+            always matches what the desktop Timeline tab shows for
+            the same data.
+        include_full_legend: when True, append a numbered list of full
+            (un-truncated) task reminders below the chart
     """
     _, _, mdates = _import_matplotlib()
 
     if today is None:
         today = date.today()
 
-    due_items = [i for i in items if i.due_date is not None]
-    due_items = _filter_items_by_date(due_items, start_date, end_date)
-    due_items.sort(key=lambda i: i.due_date or date.max, reverse=True)
-    due_items = due_items[:25]
+    # Match the desktop Timeline tab: every top-level item, in the
+    # user's configured sort order. No date filter on the row set —
+    # start_date / end_date only frame the x-axis viewport so the
+    # export shows the same tasks the desktop shows for the same
+    # data set.
+    due_items = [i for i in items if i.parent_id is None]
+    due_items.sort(key=_user_sort_key)
 
     if not due_items:
-        return _empty_figure("Tasks Timeline", "No items with due dates in this range")
+        return _empty_figure("Tasks Timeline", "No top-level tasks to display")
 
     # Full (untruncated) reminder text, kept for the optional legend below
     full_labels = [(i.reminder or "") for i in due_items]
 
     # ------------------------------------------------------------------
-    # Figure sizing
+    # Figure sizing — let tall lists actually grow rather than silently
+    # truncating. Each row gets ~0.42 in of vertical space; the floor
+    # keeps very short lists looking balanced and the ceiling caps at
+    # 30 inches so a 60-task export is one tall page rather than an
+    # arbitrary mile of whitespace.
     # ------------------------------------------------------------------
-    chart_h = max(5.5, min(14.0, 1.5 + len(due_items) * 0.42))
+    chart_h = max(5.5, min(30.0, 1.5 + len(due_items) * 0.42))
     legend_h = 0.0
     if include_full_legend:
         # ~0.22 inches per legend row + a small header padding
@@ -390,20 +431,45 @@ def render_gantt(
     today_dt = datetime.combine(today, datetime.min.time())
     today_num = mdates.date2num(today)
 
-    # Pre-pass: classify every item, compute its bar window and the
-    # mdates extent of every visual element it will produce. We need
-    # the full x-axis range up front to enforce a minimum visible bar
-    # width — otherwise a 25-minute task on a 16-day chart paints a
-    # 1-pixel rectangle that's effectively invisible.
+    # Effective work duration for pomodoro→minutes conversion. Reads
+    # the user's current pomodoro default once and applies the per-task
+    # work_duration override when set, matching the desktop helper.
+    try:
+        from .config import get_config
+
+        config_work_mins = max(1, get_config().pomodoro.work_duration)
+    except Exception:
+        config_work_mins = 25
+
+    def _effective_work_mins(item: TodoItem) -> int:
+        return item.work_duration if item.work_duration > 0 else config_work_mins
+
+    # Pre-pass: classify every item, compute its bar window, work-done
+    # split, and event-date marker, plus the mdates extent of every
+    # visual element it will produce. We need the full x-axis range up
+    # front to enforce a minimum visible bar width — otherwise a
+    # 25-minute task on a 16-day chart paints a 1-pixel rectangle
+    # that's effectively invisible.
     bars: list[dict] = []
     x_min = today_num
     x_max = today_num
     for idx, item in enumerate(due_items):
         window = compute_bar_window(item)
+        synthetic_window = False
         if window is None:
-            continue
-        origin_num = mdates.date2num(window.origin)
-        end_num = mdates.date2num(window.end)
+            # Item with no due_date — synthesize a span from
+            # created_at through today so the row still has a
+            # meaningful temporal anchor. Matches the desktop's
+            # `end_date = today if not due_date else ...` rule.
+            created_dt = datetime.fromtimestamp(item.created_at / 1000)
+            origin_dt = min(created_dt, today_dt)
+            end_dt = max(today_dt, origin_dt + timedelta(hours=1))
+            origin_num = mdates.date2num(origin_dt)
+            end_num = mdates.date2num(end_dt)
+            synthetic_window = True
+        else:
+            origin_num = mdates.date2num(window.origin)
+            end_num = mdates.date2num(window.end)
         if end_num <= origin_num:
             continue
 
@@ -413,7 +479,32 @@ def render_gantt(
             completed_dt = datetime.fromtimestamp(item.completed_at / 1000)
             as_of = completed_dt
             completed_num = mdates.date2num(completed_dt)
-        state = compute_bar_state(item, window, as_of)
+        if synthetic_window:
+            # Without a real due_date, the lifecycle classifier doesn't
+            # have a meaningful end to compare against. Treat the row
+            # as a neutral "in progress" so it picks up a recognizable
+            # palette color rather than reading as overdue.
+            state = BarState.COMPLETED_ONTIME if item.complete else BarState.IN_WORK_WINDOW
+        else:
+            state = compute_bar_state(item, window, as_of)
+
+        # Work-done split: pomodoro contributes count * work_duration
+        # minutes, capped at the recorded total time_spent. Whatever is
+        # left over after the cap is attributed to stopwatch (untracked
+        # ad-hoc work). This matches the desktop Timeline tab so the
+        # two views tell the same retrospective story.
+        work_mins = _effective_work_mins(item)
+        pom_seconds = item.pomodoro_count * work_mins * 60
+        total_seconds = max(0, item.time_spent)
+        pom_seconds = min(pom_seconds, total_seconds)
+        sw_seconds = max(0, total_seconds - pom_seconds)
+        pom_days = pom_seconds / 86400.0
+        sw_days = sw_seconds / 86400.0
+
+        # Event date marker — only when set and distinct from None.
+        event_num: float | None = None
+        if getattr(item, "event_date", None) is not None:
+            event_num = mdates.date2num(item.event_date)
 
         bars.append(
             {
@@ -422,6 +513,9 @@ def render_gantt(
                 "origin_num": origin_num,
                 "end_num": end_num,
                 "completed_num": completed_num,
+                "pom_days": pom_days,
+                "sw_days": sw_days,
+                "event_num": event_num,
             }
         )
         x_min = min(x_min, origin_num)
@@ -429,6 +523,14 @@ def render_gantt(
         if completed_num is not None:
             x_min = min(x_min, completed_num)
             x_max = max(x_max, completed_num)
+        # Work overlay can extend past the planned end if the task ran
+        # long; include it in the extent so the overflow stays visible.
+        work_right = origin_num + pom_days + sw_days
+        if work_right > x_max:
+            x_max = work_right
+        if event_num is not None:
+            x_min = min(x_min, event_num)
+            x_max = max(x_max, event_num)
 
     # Honour an explicit user date range as a lower bound on the
     # x-axis extent so the chart frame matches the export dialog
@@ -455,6 +557,8 @@ def render_gantt(
         origin_num = bar["origin_num"]
         end_num = bar["end_num"]
         completed_num = bar["completed_num"]
+        pom_days = bar["pom_days"]
+        sw_days = bar["sw_days"]
         colors = palette[state]
 
         # The full planned span (origin → end) is always drawn.
@@ -503,6 +607,62 @@ def render_gantt(
                 hatch="///",
             )
 
+        # Work-done overlay — top half of the row, half-height. Two
+        # horizontal segments stacked at the lifecycle origin: pomodoro
+        # in orange first, then stopwatch in blue. Items with zero
+        # work done emit no overlay so the lifecycle bar reads cleanly.
+        # The overlay's right edge can extend past the planned end
+        # when work ran long — the x-axis extent already accounts for
+        # this so the overflow stays visible.
+        if pom_days > 0 or sw_days > 0:
+            overlay_y = idx - 0.18  # top portion of the 0.65-height row
+            overlay_h = 0.28
+            if pom_days > 0:
+                ax.barh(
+                    overlay_y,
+                    _visible_width(pom_days),
+                    left=origin_num,
+                    color=_COLOR_POMODORO,
+                    alpha=0.95,
+                    edgecolor="white",
+                    linewidth=0.4,
+                    height=overlay_h,
+                )
+            if sw_days > 0:
+                ax.barh(
+                    overlay_y,
+                    _visible_width(sw_days),
+                    left=origin_num + pom_days,
+                    color=_COLOR_STOPWATCH,
+                    alpha=0.95,
+                    edgecolor="white",
+                    linewidth=0.4,
+                    height=overlay_h,
+                )
+
+    # Event date markers — diamond glyphs at (event_date, idx) for
+    # tasks that carry an event_date. Drawn after all bars so the
+    # markers sit on top of any overlapping bar content. Magenta hue
+    # keeps them visually distinct from every lifecycle palette
+    # entry.
+    event_xs: list[float] = []
+    event_ys: list[float] = []
+    for bar in bars:
+        if bar["event_num"] is not None:
+            event_xs.append(bar["event_num"])
+            event_ys.append(bar["idx"])
+    if event_xs:
+        ax.scatter(
+            event_xs,
+            event_ys,
+            marker="D",
+            s=80,
+            color=_COLOR_EVENT,
+            edgecolors="white",
+            linewidths=0.8,
+            zorder=5,
+        )
+
     ax.set_yticks(range(len(due_items)))
     ax.set_yticklabels(display_labels, fontsize=10)
     ax.invert_yaxis()
@@ -540,10 +700,13 @@ def render_gantt(
 
     _set_title_with_subtitle(fig, ax, "Tasks Timeline", start_date, end_date)
 
+    from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
 
-    # Legend reflects every BarState that could appear, in lifecycle order.
-    # Two-zone completed bars get their own deviation entries.
+    # Legend reflects every BarState that could appear, in lifecycle
+    # order, plus the work-done overlay layers and the event-date
+    # milestone marker. Two-zone completed bars get their own deviation
+    # entries.
     legend_handles = [
         Patch(
             facecolor=palette[BarState.IN_WORK_WINDOW].base,
@@ -575,6 +738,26 @@ def render_gantt(
             alpha=0.85,
             hatch="///",
             label="Late overflow",
+        ),
+        Patch(
+            facecolor=_COLOR_POMODORO,
+            alpha=0.95,
+            label="Pomodoro",
+        ),
+        Patch(
+            facecolor=_COLOR_STOPWATCH,
+            alpha=0.95,
+            label="Stopwatch",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="D",
+            color="none",
+            markerfacecolor=_COLOR_EVENT,
+            markeredgecolor="white",
+            markersize=8,
+            label="Event date",
         ),
     ]
     ax.legend(handles=legend_handles, loc="lower right", framealpha=0.9, frameon=True)

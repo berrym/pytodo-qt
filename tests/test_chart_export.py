@@ -188,6 +188,194 @@ class TestRenderGantt:
         assert xlim[1] >= mdates.date2num(end)
 
 
+class TestGanttTaskSetParity:
+    """The exported chart pulls the same set of tasks the desktop
+    Timeline tab pulls — top-level only, sorted by user tiers, no
+    silent truncation. Subtasks render through their parent in the
+    calendar pipeline so the Gantt export filters them out."""
+
+    def test_subtasks_excluded(self):
+        from uuid import uuid4
+
+        today = date.today()
+        parent = TodoItem(reminder="Parent", due_date=today)
+        sub = TodoItem(reminder="Subtask", due_date=today, parent_id=parent.id)
+        # Defensive uuid hygiene — the model assigns ids on construct
+        # but we want to be explicit here.
+        if parent.id is None:
+            parent.id = uuid4()
+        sub.parent_id = parent.id
+
+        fig = render_gantt([parent, sub], today=today)
+        ytick_labels = [t.get_text() for t in fig.axes[0].get_yticklabels()]
+        # Only the parent renders.
+        assert any("Parent" in lbl for lbl in ytick_labels)
+        assert not any("Subtask" in lbl for lbl in ytick_labels)
+
+    def test_no_silent_cap_on_large_lists(self):
+        """A 50-item input renders all 50 rows. The previous render
+        capped at 25 which dropped half the data without warning."""
+        today = date.today()
+        items = [
+            TodoItem(reminder=f"Task {i:02d}", due_date=today + timedelta(days=i % 14))
+            for i in range(50)
+        ]
+        fig = render_gantt(items, today=today)
+        ytick_labels = [t.get_text() for t in fig.axes[0].get_yticklabels()]
+        assert len(ytick_labels) == 50
+
+    def test_items_without_due_date_still_render(self):
+        """Items without a due_date are kept and given a synthetic
+        bar window from created_at through today, matching the
+        desktop Timeline tab. Filtering them out caused a real
+        complaint about missing tasks."""
+        today = date.today()
+        plain = TodoItem(reminder="No due date task")
+        scheduled = TodoItem(reminder="Scheduled task", due_date=today)
+        fig = render_gantt([plain, scheduled], today=today)
+        ytick_labels = [t.get_text() for t in fig.axes[0].get_yticklabels()]
+        assert any("No due date task" in lbl for lbl in ytick_labels)
+        assert any("Scheduled task" in lbl for lbl in ytick_labels)
+
+    def test_date_range_does_not_filter_rows(self):
+        """start_date / end_date are a viewport hint, not a row filter.
+        Items outside the requested range still appear in the row list
+        — only the x-axis frame is constrained."""
+        today = date.today()
+        in_range = TodoItem(reminder="Today", due_date=today)
+        out_of_range = TodoItem(reminder="Far future", due_date=today + timedelta(days=365))
+        fig = render_gantt(
+            [in_range, out_of_range],
+            today=today,
+            start_date=today - timedelta(days=7),
+            end_date=today + timedelta(days=7),
+        )
+        ytick_labels = [t.get_text() for t in fig.axes[0].get_yticklabels()]
+        assert any("Today" in lbl for lbl in ytick_labels)
+        assert any("Far future" in lbl for lbl in ytick_labels)
+
+
+class TestGanttWorkOverlay:
+    """The work-done overlay on the Gantt export shows pomodoro and
+    stopwatch time as horizontally stacked segments in a top-half
+    band over the lifecycle bar, so retrospective exports communicate
+    actual work performed instead of looking empty when planned
+    windows are sub-day."""
+
+    def test_overlay_present_for_pomodoro(self):
+        today = date.today()
+        item = TodoItem(reminder="Pom task", due_date=today)
+        item.pomodoro_count = 3
+        item.work_duration = 25  # 75 minutes total
+        item.time_spent = 75 * 60
+
+        fig = render_gantt([item], today=today)
+        # Find rectangles painted in the pomodoro orange.
+        from pytodo_qt.core.chart_export import _COLOR_POMODORO
+
+        pom_color_lower = _COLOR_POMODORO.lower()
+        pom_patches = [
+            p
+            for p in fig.axes[0].patches
+            if hasattr(p, "get_facecolor")
+            and _hex_from_rgba(p.get_facecolor()).lower() == pom_color_lower
+        ]
+        assert len(pom_patches) >= 1
+
+    def test_overlay_present_for_stopwatch(self):
+        today = date.today()
+        item = TodoItem(reminder="Stopwatch task", due_date=today)
+        item.pomodoro_count = 0  # all stopwatch
+        item.time_spent = 45 * 60  # 45 minutes via stopwatch
+
+        fig = render_gantt([item], today=today)
+        from pytodo_qt.core.chart_export import _COLOR_STOPWATCH
+
+        sw_color_lower = _COLOR_STOPWATCH.lower()
+        sw_patches = [
+            p
+            for p in fig.axes[0].patches
+            if hasattr(p, "get_facecolor")
+            and _hex_from_rgba(p.get_facecolor()).lower() == sw_color_lower
+        ]
+        assert len(sw_patches) >= 1
+
+    def test_overlay_present_for_both(self):
+        today = date.today()
+        item = TodoItem(reminder="Mixed work", due_date=today)
+        item.pomodoro_count = 2
+        item.work_duration = 25  # 50 minutes pomodoro
+        item.time_spent = 80 * 60  # 80 minutes total → 30 minutes stopwatch
+
+        fig = render_gantt([item], today=today)
+        from pytodo_qt.core.chart_export import _COLOR_POMODORO, _COLOR_STOPWATCH
+
+        all_colors = [
+            _hex_from_rgba(p.get_facecolor()).lower()
+            for p in fig.axes[0].patches
+            if hasattr(p, "get_facecolor")
+        ]
+        assert _COLOR_POMODORO.lower() in all_colors
+        assert _COLOR_STOPWATCH.lower() in all_colors
+
+    def test_no_overlay_when_no_work(self):
+        today = date.today()
+        item = TodoItem(reminder="No work", due_date=today)
+        item.pomodoro_count = 0
+        item.time_spent = 0
+
+        fig = render_gantt([item], today=today)
+        from pytodo_qt.core.chart_export import _COLOR_POMODORO, _COLOR_STOPWATCH
+
+        all_colors = [
+            _hex_from_rgba(p.get_facecolor()).lower()
+            for p in fig.axes[0].patches
+            if hasattr(p, "get_facecolor")
+        ]
+        assert _COLOR_POMODORO.lower() not in all_colors
+        assert _COLOR_STOPWATCH.lower() not in all_colors
+
+
+class TestGanttEventMarkers:
+    """Items with an event_date carry a magenta diamond milestone
+    marker — the traditional Gantt vocabulary for a deadline anchor
+    that's distinct from the work window."""
+
+    def test_event_date_produces_marker(self):
+        from datetime import time as _time
+
+        today = date.today()
+        item = TodoItem(reminder="Event task", due_date=today, due_time=_time(14, 0))
+        item.event_date = today + timedelta(days=5)
+
+        fig = render_gantt([item], today=today)
+        ax = fig.axes[0]
+        # The scatter call adds at least one collection with diamond
+        # markers — verify by checking the collection count grew
+        # (>= 1) and that at least one collection's offset exists.
+        assert len(ax.collections) >= 1
+        any_diamond = any(len(c.get_offsets()) > 0 for c in ax.collections)
+        assert any_diamond
+
+    def test_no_event_date_no_marker(self):
+        today = date.today()
+        item = TodoItem(reminder="Plain task", due_date=today)
+        item.event_date = None
+
+        fig = render_gantt([item], today=today)
+        ax = fig.axes[0]
+        # No event marker collection should be created when no items
+        # carry an event_date.
+        non_empty = [c for c in ax.collections if len(c.get_offsets()) > 0]
+        assert len(non_empty) == 0
+
+
+def _hex_from_rgba(rgba) -> str:
+    """Convert a matplotlib RGBA tuple to a #rrggbb hex string."""
+    r, g, b = rgba[0], rgba[1], rgba[2]
+    return f"#{int(round(r * 255)):02x}{int(round(g * 255)):02x}{int(round(b * 255)):02x}"
+
+
 class TestGanttTwoZoneRendering:
     """Two-zone rendering for completed bars based on completed_at."""
 
