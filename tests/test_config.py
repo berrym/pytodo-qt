@@ -208,27 +208,22 @@ class TestConfigManagerExtended:
     def test_reload_forces_disk_read(self):
         """Test reload forces reload from disk."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            from unittest.mock import patch
-
             config_dir = Path(tmpdir) / "config"
             data_dir = Path(tmpdir) / "data"
             state_dir = Path(tmpdir) / "state"
 
             manager = ConfigManager(config_dir=config_dir, data_dir=data_dir)
             manager.state_dir = state_dir
-            manager.legacy_ini_file = config_dir / "pytodo-qt.ini"
 
             # Load initial config
-            with patch("pytodo_qt.core.config.paths.migrate_from_legacy"):
-                manager.load()
+            manager.load()
 
             # Modify in memory
             assert manager._config is not None
             manager._config.server.port = 9999
 
             # Reload should reset
-            with patch("pytodo_qt.core.config.paths.migrate_from_legacy"):
-                config = manager.reload()
+            config = manager.reload()
 
             # Should be default since file was overwritten with defaults
             assert config.server.port == 5364
@@ -241,112 +236,6 @@ class TestConfigManagerExtended:
         result = manager.save()
 
         assert result is False
-
-
-class TestINIMigration:
-    """Tests for INI config migration."""
-
-    def test_migrate_from_ini_all_sections(self):
-        """Test migrating full INI config."""
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config_dir = Path(tmpdir) / "config"
-            data_dir = Path(tmpdir) / "data"
-            state_dir = Path(tmpdir) / "state"
-
-            config_dir.mkdir(parents=True)
-            data_dir.mkdir(parents=True)
-            state_dir.mkdir(parents=True)
-
-            ini_file = config_dir / "pytodo-qt.ini"
-            ini_file.write_text("""
-[database]
-active_list = WorkItems
-sort_key = reminder
-reverse_sort = yes
-
-[server]
-run = no
-address = 192.168.1.1
-port = 7777
-pull = yes
-push = no
-""")
-
-            manager = ConfigManager(config_dir=config_dir, data_dir=data_dir)
-            manager.state_dir = state_dir
-            manager.legacy_ini_file = ini_file
-
-            config = manager._migrate_from_ini()
-
-            assert config.database.active_list == "WorkItems"
-            # Old sort_key/reverse_sort INI fields are no longer migrated;
-            # new sort tier fields get defaults
-            assert config.database.sort_tier1 == "completion"
-            assert config.server.enabled is False
-            assert config.server.address == "192.168.1.1"
-            assert config.server.port == 7777
-            assert config.server.allow_pull is True
-            assert config.server.allow_push is False
-
-    def test_migrate_from_ini_invalid_port_fallback(self):
-        """Test migration handles invalid port value."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config_dir = Path(tmpdir) / "config"
-            data_dir = Path(tmpdir) / "data"
-            state_dir = Path(tmpdir) / "state"
-
-            config_dir.mkdir(parents=True)
-
-            ini_file = config_dir / "pytodo-qt.ini"
-            ini_file.write_text("""
-[server]
-port = notanumber
-""")
-
-            manager = ConfigManager(config_dir=config_dir, data_dir=data_dir)
-            manager.state_dir = state_dir
-            manager.legacy_ini_file = ini_file
-
-            config = manager._migrate_from_ini()
-
-            # Should fallback to default
-            assert config.server.port == 5364
-
-    def test_load_migrates_ini_when_no_toml(self):
-        """Test load migrates from INI when no TOML exists."""
-        from unittest.mock import patch
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config_dir = Path(tmpdir) / "config"
-            data_dir = Path(tmpdir) / "data"
-            state_dir = Path(tmpdir) / "state"
-
-            config_dir.mkdir(parents=True)
-            data_dir.mkdir(parents=True)
-            state_dir.mkdir(parents=True)
-
-            ini_file = config_dir / "pytodo-qt.ini"
-            ini_file.write_text("""
-[database]
-active_list = FromINI
-
-[server]
-port = 6666
-""")
-
-            manager = ConfigManager(config_dir=config_dir, data_dir=data_dir)
-            manager.state_dir = state_dir
-            manager.legacy_ini_file = ini_file
-
-            with patch("pytodo_qt.core.config.paths.migrate_from_legacy"):
-                config = manager.load()
-
-            assert config.database.active_list == "FromINI"
-            assert config.server.port == 6666
-
-            # TOML should have been created
-            assert manager.config_file.exists()
 
 
 class TestGlobalFunctions:
@@ -371,8 +260,6 @@ class TestGlobalFunctions:
 
     def test_get_config_returns_appconfig(self):
         """Test get_config returns AppConfig instance."""
-        from unittest.mock import patch
-
         import pytodo_qt.core.config as config_module
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -381,14 +268,10 @@ class TestGlobalFunctions:
                 data_dir=Path(tmpdir) / "data",
             )
             config_module._config_manager.state_dir = Path(tmpdir) / "state"
-            config_module._config_manager.legacy_ini_file = (
-                Path(tmpdir) / "config" / "pytodo-qt.ini"
-            )
 
             from pytodo_qt.core.config import get_config
 
-            with patch("pytodo_qt.core.config.paths.migrate_from_legacy"):
-                config = get_config()
+            config = get_config()
 
             assert isinstance(config, AppConfig)
 

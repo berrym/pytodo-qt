@@ -376,32 +376,6 @@ class TestConfigErrorPaths:
                 result = mgr.save()
                 assert result is False
 
-    def test_migrate_from_ini_error(self):
-        """Cover lines 276-277: error during INI migration."""
-        from pytodo_qt.core.config import ConfigManager
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config_dir = Path(tmpdir) / "config"
-            config_dir.mkdir()
-            data_dir = Path(tmpdir) / "data"
-            data_dir.mkdir()
-
-            # Create a legacy INI file that will cause an error
-            legacy_ini = config_dir / "pytodo-qt.ini"
-            legacy_ini.write_text("[database]\nactive_list = Test\n")
-
-            mgr = ConfigManager(
-                config_dir=config_dir,
-                data_dir=data_dir,
-            )
-
-            # Patch copy2 to fail during INI migration
-            with patch("shutil.copy2", side_effect=OSError("backup failed")):
-                # Should handle error gracefully, returning config with what it could read
-                config = mgr._migrate_from_ini()
-                assert config is not None
-                assert config.database.active_list == "Test"
-
 
 # ── paths.py gaps ───────────────────────────────────────────────────────
 

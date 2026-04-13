@@ -1,11 +1,10 @@
 """config.py
 
-TOML-based configuration system with dataclass support and INI migration.
+TOML-based configuration system with dataclass support.
 """
 
 from __future__ import annotations
 
-import shutil
 import socket
 import tomllib
 from dataclasses import dataclass, field
@@ -447,7 +446,7 @@ class AppConfig:
 
 
 class ConfigManager:
-    """Manages application configuration with TOML storage and INI migration."""
+    """Manages application configuration with TOML storage."""
 
     def __init__(self, config_dir: Path | None = None, data_dir: Path | None = None):
         """Initialize config manager.
@@ -461,9 +460,7 @@ class ConfigManager:
         self.state_dir = paths.get_state_dir()
 
         self.config_file = self.config_dir / "config.toml"
-        self.legacy_ini_file = self.config_dir / "pytodo-qt.ini"
         self.db_file = self.data_dir / "pytodo-qt.db"  # SQLite database
-        self.legacy_json_file = self.data_dir / "pytodo-qt-db.json"  # For migration
         self.log_file = self.state_dir / "pytodo-qt.log"
 
         self._config: AppConfig | None = None
@@ -487,10 +484,7 @@ class ConfigManager:
         return self._config
 
     def load(self) -> AppConfig:
-        """Load configuration from TOML file, migrating from INI if needed."""
-        # Migrate from legacy ~/.pytodo-qt directory if needed
-        paths.migrate_from_legacy()
-
+        """Load configuration from the TOML file, falling back to defaults."""
         self.ensure_directories()
 
         # Try loading TOML config
@@ -504,55 +498,11 @@ class ConfigManager:
             except Exception as e:
                 logger.log.exception("Error loading TOML config: %s", e)
 
-        # Check for legacy INI file and migrate
-        if self.legacy_ini_file.exists():
-            logger.log.info("Found legacy INI config, migrating...")
-            self._config = self._migrate_from_ini()
-            self.save()
-            return self._config
-
         # Create default config
         logger.log.info("Creating default configuration")
         self._config = AppConfig()
         self.save()
         return self._config
-
-    def _migrate_from_ini(self) -> AppConfig:
-        """Migrate configuration from legacy INI format."""
-        import configparser
-
-        config = AppConfig()
-        ini = configparser.ConfigParser()
-
-        try:
-            ini.read(self.legacy_ini_file)
-
-            # Migrate database section
-            if "database" in ini:
-                db_section = ini["database"]
-                config.database.active_list = db_section.get("active_list", "")
-
-            # Migrate server section
-            if "server" in ini:
-                srv_section = ini["server"]
-                config.server.enabled = srv_section.get("run", "yes").lower() == "yes"
-                config.server.address = srv_section.get("address", "0.0.0.0")
-                try:
-                    config.server.port = int(srv_section.get("port", "5364"))
-                except ValueError:
-                    config.server.port = 5364
-                config.server.allow_pull = srv_section.get("pull", "yes").lower() == "yes"
-                config.server.allow_push = srv_section.get("push", "yes").lower() == "yes"
-
-            # Backup old INI file
-            backup_path = self.legacy_ini_file.with_suffix(".ini.backup")
-            shutil.copy2(self.legacy_ini_file, backup_path)
-            logger.log.info("Backed up legacy config to %s", backup_path)
-
-        except Exception as e:
-            logger.log.exception("Error migrating INI config: %s", e)
-
-        return config
 
     def save(self) -> bool:
         """Save current configuration to TOML file."""
