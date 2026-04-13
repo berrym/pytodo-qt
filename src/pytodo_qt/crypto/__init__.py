@@ -5,7 +5,6 @@ Provides:
 - Ed25519/X25519 key exchange
 - Argon2id key derivation
 - Secure keyring storage
-- Legacy AES-CBC support for migration
 """
 
 from .aes_gcm import (
@@ -47,7 +46,6 @@ from .keyring_storage import (
     store_identity,
     store_local_encryption_key,
 )
-from .legacy import LegacyAESCipher, decrypt_legacy_data
 
 __all__ = [
     # AES-GCM
@@ -85,7 +83,4 @@ __all__ = [
     "derive_key_argon2",
     "derive_key_pair_from_session",
     "derive_session_key",
-    # Legacy
-    "LegacyAESCipher",
-    "decrypt_legacy_data",
 ]
