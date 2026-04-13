@@ -26,12 +26,6 @@ from .database import (
     DatabaseStorage,
 )
 from .instance_lock import InstanceLock
-from .migration import (
-    MigrationError,
-    get_migration_status,
-    migrate_json_to_sqlite,
-    needs_migration,
-)
 from .models import (
     Database,
     TodoItem,
@@ -82,11 +76,6 @@ __all__ = [
     "parse",
     "DatabaseError",
     "SCHEMA_VERSION",
-    # Migration
-    "MigrationError",
-    "migrate_json_to_sqlite",
-    "needs_migration",
-    "get_migration_status",
     # Paths
     "get_config_dir",
     "get_config_file",

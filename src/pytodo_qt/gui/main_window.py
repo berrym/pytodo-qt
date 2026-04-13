@@ -44,7 +44,6 @@ from ..core import settings
 from ..core.config import get_config, get_config_manager
 from ..core.database import DatabaseStorage
 from ..core.logger import Logger
-from ..core.migration import MigrationError, migrate_json_to_sqlite, needs_migration
 from ..core.models import Database, Device, PendingSync, TodoItem, TodoList
 from ..core.offline_queue import OfflineQueue
 from ..crypto.keyring_storage import get_or_create_identity
@@ -1804,26 +1803,8 @@ class MainWindow(QMainWindow):
         return merged_count, local_newer_count, identical_count, changed_list_ids
 
     def _load_database(self) -> None:
-        """Load the database from SQLite, migrating from JSON if needed."""
-        json_path = self._config_manager.legacy_json_file
+        """Load the database from SQLite."""
         sqlite_path = self._config_manager.db_file
-
-        # Check if migration from JSON to SQLite is needed
-        if needs_migration(json_path, sqlite_path):
-            try:
-                logger.log.info("Migrating database from JSON to SQLite...")
-                migrate_json_to_sqlite(json_path, sqlite_path, backup=True)
-                logger.log.info("Database migration completed successfully")
-            except MigrationError as e:
-                logger.log.exception("Database migration failed: %s", e)
-                QMessageBox.warning(
-                    self,
-                    self.tr("Migration Error"),
-                    self.tr(
-                        f"Failed to migrate database to new format: {e}\n\n"
-                        "The application will continue with an empty database."
-                    ),
-                )
 
         # Open SQLite storage and load database
         try:

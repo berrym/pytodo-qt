@@ -1,11 +1,9 @@
 """Integration tests for SQLite storage."""
 
-import json
 import tempfile
 from pathlib import Path
 
 from pytodo_qt.core.database import DatabaseStorage
-from pytodo_qt.core.migration import migrate_json_to_sqlite, needs_migration
 from pytodo_qt.core.models import Database, TodoItem, TodoList
 from pytodo_qt.core.sync_engine import merge_databases
 
@@ -143,105 +141,6 @@ class TestFullWorkflow:
             assert active_items[0].reminder == "Keep this"
 
             storage.close()
-
-
-class TestMigrationIntegration:
-    """Integration tests for JSON to SQLite migration."""
-
-    def test_full_migration_workflow(self):
-        """Test complete migration from JSON to SQLite."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            json_path = Path(tmpdir) / "pytodo-qt-db.json"
-            sqlite_path = Path(tmpdir) / "pytodo-qt.db"
-
-            # Create JSON database
-            db = Database()
-            lst = TodoList(name="Migrated List")
-            lst.add_item(TodoItem(reminder="Migrated Task 1", priority=1))
-            lst.add_item(TodoItem(reminder="Migrated Task 2", priority=3))
-            db.add_list(lst)
-            db.active_list_id = lst.id
-
-            json_path.write_text(json.dumps(db.to_dict()))
-
-            # Verify migration is needed
-            assert needs_migration(json_path, sqlite_path) is True
-
-            # Perform migration
-            migrate_json_to_sqlite(json_path, sqlite_path, backup=True)
-
-            # Verify migration no longer needed
-            assert needs_migration(json_path, sqlite_path) is False
-
-            # Verify backup was created
-            backups = list(Path(tmpdir).glob("*.backup_*"))
-            assert len(backups) == 1
-
-            # Load from SQLite and verify
-            storage = DatabaseStorage(sqlite_path)
-            storage.open()
-            loaded = storage.load_database()
-            storage.close()
-
-            assert len(loaded.lists) == 1
-            assert loaded.active_list_id == lst.id
-
-            loaded_list = list(loaded.lists.values())[0]
-            assert loaded_list.name == "Migrated List"
-            assert len(loaded_list.items) == 2
-
-    def test_migration_preserves_all_data(self):
-        """Test that migration preserves all data exactly."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            json_path = Path(tmpdir) / "test.json"
-            sqlite_path = Path(tmpdir) / "test.db"
-
-            # Create complex database
-            db = Database()
-
-            for i in range(5):
-                lst = TodoList(name=f"List {i}")
-                for j in range(10):
-                    item = TodoItem(
-                        reminder=f"Task {i}-{j}",
-                        priority=(j % 3) + 1,
-                        complete=j % 2 == 0,
-                    )
-                    if j % 4 == 0:  # Some deleted items
-                        item.mark_deleted()
-                    lst.items[item.id] = item
-                db.add_list(lst)
-
-            db.active_list_id = list(db.lists.keys())[2]  # Third list active
-
-            json_path.write_text(json.dumps(db.to_dict()))
-
-            # Migrate
-            migrate_json_to_sqlite(json_path, sqlite_path, backup=False)
-
-            # Load and compare
-            storage = DatabaseStorage(sqlite_path)
-            storage.open()
-            loaded = storage.load_database()
-            storage.close()
-
-            # Compare counts
-            assert len(loaded.lists) == len(db.lists)
-            assert loaded.active_list_id == db.active_list_id
-
-            for list_id, original_list in db.lists.items():
-                loaded_list = loaded.get_list(list_id)
-                assert loaded_list is not None
-                assert loaded_list.name == original_list.name
-                assert len(loaded_list.items) == len(original_list.items)
-
-                for item_id, original_item in original_list.items.items():
-                    loaded_item = loaded_list.items.get(item_id)
-                    assert loaded_item is not None
-                    assert loaded_item.reminder == original_item.reminder
-                    assert loaded_item.priority == original_item.priority
-                    assert loaded_item.complete == original_item.complete
-                    assert loaded_item.deleted == original_item.deleted
 
 
 class TestSyncWithSQLite:
