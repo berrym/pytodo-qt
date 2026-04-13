@@ -15,6 +15,7 @@ from uuid import UUID
 from aiohttp import web
 
 from ..core import settings
+from ..core.calendar_layout import compute_bar_state, compute_bar_window
 from ..core.models import (
     TodoItem,
     TodoList,
@@ -141,6 +142,32 @@ async def auth_middleware(request: web.Request, handler: Callable[..., Any]) -> 
     return await handler(request)
 
 
+def _bar_fields(item: TodoItem) -> dict[str, Any]:
+    """Compute the calendar bar window and lifecycle state for an item.
+
+    Returns a dict with four keys: bar_origin_ms, bar_end_ms, bar_kind,
+    bar_state. All four are None when the item has no due date (and
+    therefore no place on a calendar grid). The lifecycle state is
+    computed against the current wall clock at serialization time;
+    callers that need a fresh value should re-fetch the item.
+    """
+    window = compute_bar_window(item)
+    if window is None:
+        return {
+            "bar_origin_ms": None,
+            "bar_end_ms": None,
+            "bar_kind": None,
+            "bar_state": None,
+        }
+    state = compute_bar_state(item, window, datetime.now())
+    return {
+        "bar_origin_ms": int(window.origin.timestamp() * 1000),
+        "bar_end_ms": int(window.end.timestamp() * 1000),
+        "bar_kind": window.kind.value,
+        "bar_state": state.value,
+    }
+
+
 def _item_to_json(item: TodoItem) -> dict[str, Any]:
     """Serialize a TodoItem for the JSON API."""
     return {
@@ -181,6 +208,7 @@ def _item_to_json(item: TodoItem) -> dict[str, Any]:
         "notified_at": item.notified_at,
         "conditions": item.conditions,
         "completed_at": item.completed_at,
+        **_bar_fields(item),
     }
 
 

@@ -806,6 +806,198 @@ class TestItemJsonFields:
             await client.close()
 
 
+class TestItemBarFields:
+    """The serialized item carries the temporal window and lifecycle
+    state used by calendar views — origin/end millisecond timestamps,
+    the window kind enum, and the current lifecycle state. These let
+    the web frontend render the same Gantt-style bars as the desktop
+    without re-implementing the layout pipeline in JavaScript."""
+
+    @pytest.mark.asyncio
+    async def test_no_due_date_yields_null_bar_fields(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_date = None
+        item.due_time = None
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}")
+            data = await resp.json()
+            found = next(i for i in data["items"] if i["id"] == str(item.id))
+            assert found["bar_origin_ms"] is None
+            assert found["bar_end_ms"] is None
+            assert found["bar_kind"] is None
+            assert found["bar_state"] is None
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_all_day_window(self):
+        from datetime import date as _date
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_date = _date(2030, 6, 15)
+        item.due_time = None
+        item.due_time_end = None
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}")
+            data = await resp.json()
+            found = next(i for i in data["items"] if i["id"] == str(item.id))
+            assert found["bar_kind"] == "all_day"
+            assert found["bar_origin_ms"] is not None
+            assert found["bar_end_ms"] is not None
+            # Window spans exactly 24 hours.
+            assert found["bar_end_ms"] - found["bar_origin_ms"] == 86_400_000
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_event_window(self):
+        from datetime import date as _date
+        from datetime import time as _time
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_date = _date(2030, 6, 15)
+        item.due_time = _time(14, 0)
+        item.due_time_end = _time(16, 0)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}")
+            data = await resp.json()
+            found = next(i for i in data["items"] if i["id"] == str(item.id))
+            assert found["bar_kind"] == "event"
+            # 2-hour window.
+            assert found["bar_end_ms"] - found["bar_origin_ms"] == 2 * 3_600_000
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_workback_window(self):
+        from datetime import date as _date
+        from datetime import time as _time
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_date = _date(2030, 6, 15)
+        item.due_time = _time(14, 0)
+        item.due_time_end = None
+        item.estimated_minutes = 90
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}")
+            data = await resp.json()
+            found = next(i for i in data["items"] if i["id"] == str(item.id))
+            assert found["bar_kind"] == "workback"
+            # 90-minute window backed off from the deadline.
+            assert found["bar_end_ms"] - found["bar_origin_ms"] == 90 * 60_000
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_deadline_from_created_window(self):
+        from datetime import date as _date
+        from datetime import time as _time
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_date = _date(2030, 6, 15)
+        item.due_time = _time(14, 0)
+        item.due_time_end = None
+        item.estimated_minutes = 0
+        item.estimated_pomodoros = 0
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}")
+            data = await resp.json()
+            found = next(i for i in data["items"] if i["id"] == str(item.id))
+            assert found["bar_kind"] == "deadline_from_created"
+            assert found["bar_origin_ms"] is not None
+            assert found["bar_end_ms"] is not None
+            assert found["bar_end_ms"] > found["bar_origin_ms"]
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_future_state(self):
+        from datetime import date as _date
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_date = _date(2099, 1, 1)
+        item.due_time = None
+        item.complete = False
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}")
+            data = await resp.json()
+            found = next(i for i in data["items"] if i["id"] == str(item.id))
+            assert found["bar_state"] == "future"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_overdue_state(self):
+        from datetime import date as _date
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_date = _date(2000, 1, 1)
+        item.due_time = None
+        item.complete = False
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}")
+            data = await resp.json()
+            found = next(i for i in data["items"] if i["id"] == str(item.id))
+            assert found["bar_state"] == "overdue_active"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_completed_state(self):
+        from datetime import date as _date
+        from datetime import datetime as _datetime
+        from datetime import time as _time
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_date = _date(2030, 6, 15)
+        item.due_time = _time(14, 0)
+        item.due_time_end = None
+        item.estimated_minutes = 0
+        item.complete = True
+        # Completed an hour before the deadline → "early".
+        early = _datetime.combine(item.due_date, _time(13, 0))
+        item.completed_at = int(early.timestamp() * 1000)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}")
+            data = await resp.json()
+            found = next(i for i in data["items"] if i["id"] == str(item.id))
+            assert found["bar_state"] == "completed_early"
+        finally:
+            await client.close()
+
+
 # ===========================================================================
 # Phase 1: NLP parse endpoint
 # ===========================================================================
