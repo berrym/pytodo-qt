@@ -410,6 +410,23 @@ class TaskDetailPanel(QDockWidget):
         self._detail_widget.show()
         self._populate(item)
 
+    def set_edit_mode(self, enabled: bool) -> None:
+        """Enter or leave edit mode programmatically.
+
+        Routes through the existing edit-toggle button so the visible
+        button state, the editable-widget enable/disable cascade, and
+        the stylesheet swap all stay in sync regardless of who flipped
+        the mode.
+        """
+        if self._edit_toggle_btn.isChecked() == enabled:
+            # Button is already in the requested state — fire the
+            # internal handler directly so callers can rely on the
+            # call having an effect even when no toggled signal would
+            # otherwise emit.
+            self._set_edit_mode(enabled)
+            return
+        self._edit_toggle_btn.setChecked(enabled)
+
     def current_item_id(self) -> UUID | None:
         return self._item.id if self._item else None
 

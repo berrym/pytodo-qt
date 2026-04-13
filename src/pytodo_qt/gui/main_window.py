@@ -857,6 +857,29 @@ class MainWindow(QMainWindow):
         self.calendar_view.focus_requested.connect(self._on_context_menu_focus)
         self.calendar_view.add_subtask_requested.connect(self._on_add_subtask)
         self.calendar_view.item_selected.connect(lambda _: self._update_detail_panel())
+        self.calendar_view.item_edit_requested.connect(self._on_calendar_edit_requested)
+
+    def _on_calendar_edit_requested(self, item_id: object) -> None:
+        """Open the detail panel for an item and switch to edit mode.
+
+        The calendar view fires this when the user picks a task from
+        the all-day overflow popover. The popover's whole purpose is
+        the "I picked one, now let me change it" path, so the panel
+        opens already in edit mode rather than the default read-only
+        view.
+        """
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        item = active_list.items.get(item_id)
+        if item is None:
+            return
+        if not self._detail_panel.isVisible():
+            self._detail_panel.show()
+            if hasattr(self, "_detail_panel_action"):
+                self._detail_panel_action.setChecked(True)
+        self._detail_panel.set_item(item)
+        self._detail_panel.set_edit_mode(True)
 
     def _connect_detail_panel_signals(self) -> None:
         """Connect TaskDetailPanel edit signals to the same handlers

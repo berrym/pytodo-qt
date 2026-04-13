@@ -4184,6 +4184,29 @@ class _CalendarLegend(QWidget):
 # ---------------------------------------------------------------------------
 
 
+# Bounds for the pinned all-day row. Minimum matches a single hour
+# row (60 px) so an empty calendar still has a recognizable row; the
+# maximum is twice that, after which the +N overflow path takes over.
+_ALL_DAY_MIN_HEIGHT = 60
+_ALL_DAY_MAX_HEIGHT = 120
+# Vertical footprint of one chip in the all-day row, including the
+# 2 px gap between stacked chips. _ALL_DAY_ROW_PADDING is the top +
+# bottom margin inside the row.
+_ALL_DAY_CHIP_SLOT = 24
+_ALL_DAY_ROW_PADDING = 8
+
+
+def _compute_all_day_height(chip_count: int) -> int:
+    """Return the pinned all-day row height for a given chip count.
+
+    Clamped to [_ALL_DAY_MIN_HEIGHT, _ALL_DAY_MAX_HEIGHT]. Beyond the
+    maximum the delegate's existing "+N more" overflow indicator
+    handles the spillover.
+    """
+    natural = chip_count * _ALL_DAY_CHIP_SLOT + _ALL_DAY_ROW_PADDING
+    return max(_ALL_DAY_MIN_HEIGHT, min(_ALL_DAY_MAX_HEIGHT, natural))
+
+
 class _PinnedWeekContainer(QWidget):
     """Stacks an all-day _WeekTableView pinned above an hour-grid _WeekTableView.
 
@@ -4192,14 +4215,10 @@ class _PinnedWeekContainer(QWidget):
     table hides row 0 (showing only the scrollable hours). Horizontal
     scroll positions are kept in sync so columns stay aligned.
 
-    The all-day table has fixed height (one row, slightly taller than a
-    normal hour cell to give bars room) and never scrolls vertically.
-    The hour-grid table fills the remaining vertical space and scrolls
-    as before.
-
-    Per spec Q6 / Step 9: this is the structural change that lets all-day
-    bars and Q6 overdue markers stay visible while the user scrolls the
-    hour grid.
+    The all-day table has a fixed height that the parent widget tunes
+    after each refresh based on how many chips actually need to fit.
+    It never scrolls vertically; the hour-grid table fills the
+    remaining vertical space and scrolls as before.
     """
 
     def __init__(
@@ -4208,7 +4227,7 @@ class _PinnedWeekContainer(QWidget):
         delegate: _WeekDelegate,
         parent: QWidget | None = None,
         *,
-        all_day_height: int = 64,
+        all_day_height: int = _ALL_DAY_MIN_HEIGHT,
     ) -> None:
         super().__init__(parent)
         from PyQt6.QtWidgets import QHeaderView, QStyle
@@ -4348,6 +4367,17 @@ class _PinnedWeekContainer(QWidget):
             if viewport is not None:
                 viewport.update()
 
+    def set_all_day_height(self, height: int) -> None:
+        """Resize the pinned all-day table to a fresh height.
+
+        Called by the parent widget after each refresh so the row
+        grows or shrinks to fit the actual chip count in the visible
+        date range.
+        """
+        if self.all_day_table.height() == height:
+            return
+        self.all_day_table.setFixedHeight(height)
+
     def connect_task_signals(
         self,
         on_task_clicked,
@@ -4391,6 +4421,7 @@ class CalendarViewWidget(QWidget):
     focus_requested = pyqtSignal(object)
     add_subtask_requested = pyqtSignal(object)
     item_selected = pyqtSignal(object)  # (item_id or None)
+    item_edit_requested = pyqtSignal(object)  # (item_id) — open detail panel in edit mode
     toggle_requested = pyqtSignal()
     delete_requested = pyqtSignal()
     edit_recurrence_requested = pyqtSignal()
@@ -4555,9 +4586,7 @@ class CalendarViewWidget(QWidget):
         # Day view — single-column version of week view with pinned All Day row
         self._day_model = _WeekModel()
         self._day_delegate = _WeekDelegate()
-        self._day_container = _PinnedWeekContainer(
-            self._day_model, self._day_delegate, all_day_height=80
-        )
+        self._day_container = _PinnedWeekContainer(self._day_model, self._day_delegate)
         # Larger slots for day view — more room for detail
         for table in (self._day_container.all_day_table, self._day_container.hour_grid_table):
             v_header = table.verticalHeader()
@@ -4581,9 +4610,7 @@ class CalendarViewWidget(QWidget):
         # Week view — pinned All Day row over scrollable hour grid
         self._week_model = _WeekModel()
         self._week_delegate = _WeekDelegate()
-        self._week_container = _PinnedWeekContainer(
-            self._week_model, self._week_delegate, all_day_height=64
-        )
+        self._week_container = _PinnedWeekContainer(self._week_model, self._week_delegate)
         self._week_container.connect_task_signals(
             self._on_task_clicked,
             self._on_task_double_clicked,
@@ -4867,6 +4894,17 @@ class CalendarViewWidget(QWidget):
         if h_header:
             h_header.hide()  # Single column doesn't need day header
 
+        # Resize the pinned all-day rows so they fit the actual chip
+        # count for whatever date range is now visible. Both views use
+        # the same min/max bounds so empty calendars share a baseline
+        # height and crowded calendars expand identically.
+        self._week_container.set_all_day_height(
+            self._max_all_day_height(self._week_model, week_dates_for_markers)
+        )
+        self._day_container.set_all_day_height(
+            self._max_all_day_height(self._day_model, [self._current_date])
+        )
+
         # Timeline view — top-level items, used for the Gantt chart.
         # Reuse the already-computed top_level list.
         self._timeline_tasks_widget.set_data(top_level, self._current_date, self._todo_list)
@@ -4876,6 +4914,26 @@ class CalendarViewWidget(QWidget):
             self._refresh_timeline_sub_view()
 
         self._unscheduled.set_items(unscheduled, todo_list=self._todo_list)
+
+    def _max_all_day_height(self, model: _WeekModel, visible_dates: list[date]) -> int:
+        """Return the all-day row height needed to fit the busiest column.
+
+        Counts overdue markers + all-day chips for each visible date,
+        takes the maximum across columns, and converts to a pixel
+        height clamped to the configured min/max bounds. Beyond the
+        maximum the delegate's existing "+N more" overflow indicator
+        handles the spillover, so the row never grows past two hour
+        rows even on extremely crowded days.
+        """
+        max_count = 0
+        for d in visible_dates:
+            items = model._items_by_date.get(d, [])
+            markers = model._markers_by_date.get(d, [])
+            all_day = model._all_day_items(items, d)
+            deduped = _dedup_by_id(list(markers) + all_day)
+            if len(deduped) > max_count:
+                max_count = len(deduped)
+        return _compute_all_day_height(max_count)
 
     def _project_recurrences_into(self, scheduled: dict[date, list]) -> None:
         """Project recurring tasks into future date buckets.
@@ -5338,7 +5396,7 @@ class CalendarViewWidget(QWidget):
                 )
                 row_layout.addWidget(detail_lbl)
 
-            row.clicked.connect(lambda _checked=False, iid=item.id: self._select_from_popover(iid))
+            row.clicked.connect(lambda _checked=False, iid=item.id: self._edit_from_popover(iid))
             row.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             row.customContextMenuRequested.connect(
                 lambda pos, btn=row, iid=item.id: self._popover_context_menu(
@@ -5403,6 +5461,19 @@ class CalendarViewWidget(QWidget):
                             f"background: {c['alternate_base']}", "background: none"
                         )
                     )
+
+    def _edit_from_popover(self, item_id: UUID) -> None:
+        """Open the day popover task in the detail panel for editing.
+
+        The popover is the user's escape hatch when too many tasks
+        share a day for the calendar grid to show them all. Once
+        they pick one, they want to edit it — not just highlight it
+        — so we close the popover and ask the parent window to
+        surface the detail panel in edit mode.
+        """
+        self._select_from_popover(item_id)
+        self._close_popover()
+        self.item_edit_requested.emit(item_id)
 
     def _popover_context_menu(self, item_id: UUID, global_pos) -> None:
         """Right-click on popover item — select and show context menu."""
