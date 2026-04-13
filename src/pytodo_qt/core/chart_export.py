@@ -388,37 +388,79 @@ def render_gantt(
 
     palette = get_palette("light")  # chart export always uses light theme
     today_dt = datetime.combine(today, datetime.min.time())
+    today_num = mdates.date2num(today)
 
+    # Pre-pass: classify every item, compute its bar window and the
+    # mdates extent of every visual element it will produce. We need
+    # the full x-axis range up front to enforce a minimum visible bar
+    # width — otherwise a 25-minute task on a 16-day chart paints a
+    # 1-pixel rectangle that's effectively invisible.
+    bars: list[dict] = []
+    x_min = today_num
+    x_max = today_num
     for idx, item in enumerate(due_items):
         window = compute_bar_window(item)
         if window is None:
-            # Defensive: due_items already filtered to has-due-date, but
-            # an item could still have an invalid window in pathological
-            # cases. Skip it rather than crash.
             continue
-
-        # Reference time for state computation: today for live items,
-        # capped at completed_at for completed items so the state is
-        # frozen rather than "still active years later."
-        as_of = today_dt
-        if item.complete and item.completed_at is not None:
-            completed_dt = datetime.fromtimestamp(item.completed_at / 1000)
-            if as_of > completed_dt or item.completed_at:
-                as_of = completed_dt
-        state = compute_bar_state(item, window, as_of)
-        colors = palette[state]
-
-        # Bar geometry: matplotlib barh uses (left, width) in mdates units.
         origin_num = mdates.date2num(window.origin)
         end_num = mdates.date2num(window.end)
         if end_num <= origin_num:
-            # Defensive: empty window
             continue
+
+        as_of = today_dt
+        completed_num: float | None = None
+        if item.complete and item.completed_at is not None:
+            completed_dt = datetime.fromtimestamp(item.completed_at / 1000)
+            as_of = completed_dt
+            completed_num = mdates.date2num(completed_dt)
+        state = compute_bar_state(item, window, as_of)
+
+        bars.append(
+            {
+                "idx": idx,
+                "state": state,
+                "origin_num": origin_num,
+                "end_num": end_num,
+                "completed_num": completed_num,
+            }
+        )
+        x_min = min(x_min, origin_num)
+        x_max = max(x_max, end_num)
+        if completed_num is not None:
+            x_min = min(x_min, completed_num)
+            x_max = max(x_max, completed_num)
+
+    # Honour an explicit user date range as a lower bound on the
+    # x-axis extent so the chart frame matches the export dialog
+    # selection even when actual task data is narrower.
+    if start_date is not None:
+        x_min = min(x_min, mdates.date2num(start_date))
+    if end_date is not None:
+        x_max = max(x_max, mdates.date2num(end_date))
+
+    x_range = max(x_max - x_min, 1.0)
+    # 0.6 % of the chart's x-axis range is roughly seven pixels on a
+    # 1200-pixel-wide figure — enough to register as a real shape
+    # rather than a hairline. Sub-day tasks below this threshold get
+    # painted at the minimum width with their left edge held at the
+    # actual origin so the start-of-window position stays correct.
+    min_visible_width = x_range * 0.006
+
+    def _visible_width(actual: float) -> float:
+        return max(actual, min_visible_width)
+
+    for bar in bars:
+        idx = bar["idx"]
+        state = bar["state"]
+        origin_num = bar["origin_num"]
+        end_num = bar["end_num"]
+        completed_num = bar["completed_num"]
+        colors = palette[state]
 
         # The full planned span (origin → end) is always drawn.
         ax.barh(
             idx,
-            end_num - origin_num,
+            _visible_width(end_num - origin_num),
             left=origin_num,
             color=colors.base,
             alpha=0.85,
@@ -428,15 +470,14 @@ def render_gantt(
         )
 
         # Deviation zone for completed bars
-        if state == BarState.COMPLETED_EARLY and item.completed_at is not None:
+        if state == BarState.COMPLETED_EARLY and completed_num is not None:
             # Early surplus: translucent deviation color from completed_at
             # to end. Communicates "this time was allocated but not used."
-            completed_num = mdates.date2num(datetime.fromtimestamp(item.completed_at / 1000))
             if origin_num <= completed_num < end_num:
                 # Overlay a lighter translucent rectangle over the surplus
                 ax.barh(
                     idx,
-                    end_num - completed_num,
+                    _visible_width(end_num - completed_num),
                     left=completed_num,
                     color=colors.deviation,
                     alpha=0.45,
@@ -444,29 +485,36 @@ def render_gantt(
                     linewidth=0.5,
                     height=0.65,
                 )
-        elif state == BarState.COMPLETED_LATE and item.completed_at is not None:
+        elif (
+            state == BarState.COMPLETED_LATE
+            and completed_num is not None
+            and completed_num > end_num
+        ):
             # Late overflow: hatched deviation zone from end to completed_at
-            completed_num = mdates.date2num(datetime.fromtimestamp(item.completed_at / 1000))
-            if completed_num > end_num:
-                ax.barh(
-                    idx,
-                    completed_num - end_num,
-                    left=end_num,
-                    color=colors.deviation,
-                    alpha=0.85,
-                    edgecolor="white",
-                    linewidth=0.5,
-                    height=0.65,
-                    hatch="///",
-                )
+            ax.barh(
+                idx,
+                _visible_width(completed_num - end_num),
+                left=end_num,
+                color=colors.deviation,
+                alpha=0.85,
+                edgecolor="white",
+                linewidth=0.5,
+                height=0.65,
+                hatch="///",
+            )
 
     ax.set_yticks(range(len(due_items)))
     ax.set_yticklabels(display_labels, fontsize=10)
     ax.invert_yaxis()
 
+    # Lock the x-axis to the pre-computed extent so auto-scale doesn't
+    # collapse the frame around the bars after they're drawn (which
+    # would defeat the minimum-width math).
+    ax.set_xlim(x_min, x_max)
+
     # Today marker
     ax.axvline(
-        mdates.date2num(today),
+        today_num,
         color=_COLOR_DANGER,
         linestyle="--",
         linewidth=1.2,

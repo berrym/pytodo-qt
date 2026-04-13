@@ -121,6 +121,72 @@ class TestRenderGantt:
         assert "early surplus" in joined
         assert "late overflow" in joined
 
+    def test_short_bars_meet_minimum_visible_width(self):
+        """Sub-day tasks on a multi-day chart get a minimum visible
+        width so they don't collapse to invisible 1-pixel rectangles.
+
+        A 25-minute task on a 16-day chart would naturally render at
+        ~0.1 % of the chart width — about 1 px on a 1200 px figure
+        and effectively invisible. Every bar should occupy at least
+        a small but readable fraction of the chart's x-axis range
+        regardless of the raw duration.
+        """
+        from datetime import time as _time
+
+        today = date.today()
+        items = []
+        for days_ago in (15, 12, 10, 7, 5, 3, 1, 0):
+            d = today - timedelta(days=days_ago)
+            it = TodoItem(reminder=f"Task {days_ago}d ago", due_date=d, due_time=_time(14, 0))
+            it.estimated_minutes = 25
+            items.append(it)
+
+        fig = render_gantt(
+            items,
+            today=today,
+            start_date=today - timedelta(days=15),
+            end_date=today + timedelta(days=1),
+        )
+        ax = fig.axes[0]
+        x_range = ax.get_xlim()[1] - ax.get_xlim()[0]
+        # Every plotted patch covers at least 0.5 % of the x-axis range
+        # (a hair below the 0.6 % threshold in the renderer to absorb
+        # any rounding).
+        for patch in ax.patches:
+            if hasattr(patch, "get_width"):
+                width_fraction = patch.get_width() / x_range
+                assert width_fraction >= 0.005
+
+    def test_naturally_wide_bars_keep_actual_width(self):
+        """Bars whose natural duration already exceeds the minimum
+        visible width keep their accurate width — the floor only
+        applies to sub-threshold bars."""
+        today = date.today()
+        # An all-day task on a single-day chart spans the entire range.
+        item = TodoItem(reminder="All-day", due_date=today)
+        fig = render_gantt([item], today=today, start_date=today, end_date=today)
+        ax = fig.axes[0]
+        # A 1.0-day bar in a 1.0-day window is exactly 100 %.
+        widest = max(p.get_width() for p in ax.patches if hasattr(p, "get_width"))
+        x_range = ax.get_xlim()[1] - ax.get_xlim()[0]
+        assert widest / x_range == pytest.approx(1.0, abs=0.01)
+
+    def test_xlim_honours_explicit_date_range(self):
+        """When the caller passes a start_date and end_date, the chart
+        x-axis stretches to at least that range so the visible frame
+        matches the export dialog selection."""
+        from matplotlib import dates as mdates
+
+        today = date.today()
+        item = TodoItem(reminder="Today only", due_date=today)
+        start = today - timedelta(days=10)
+        end = today + timedelta(days=10)
+        fig = render_gantt([item], today=today, start_date=start, end_date=end)
+        ax = fig.axes[0]
+        xlim = ax.get_xlim()
+        assert xlim[0] <= mdates.date2num(start)
+        assert xlim[1] >= mdates.date2num(end)
+
 
 class TestGanttTwoZoneRendering:
     """Two-zone rendering for completed bars based on completed_at."""
