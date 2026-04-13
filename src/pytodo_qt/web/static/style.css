@@ -1287,6 +1287,14 @@ body {
   display: block;
   max-width: 100%;
 }
+.timeline-stat-row {
+  padding: 12px 16px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
 .cal-empty {
   text-align: center;
   color: var(--text-secondary);

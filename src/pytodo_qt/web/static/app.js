@@ -3163,16 +3163,173 @@
     var wrap = document.createElement("div");
     wrap.className = "timeline-charts";
 
-    // 1. Gantt chart — tasks with due dates
+    // Gantt chart — tasks with a scheduled bar
     wrap.appendChild(_chartGantt(items));
-    // 2. Daily activity — completed items per day (30 days)
+    // Daily activity — completed items per day (30 days)
     wrap.appendChild(_chartDailyActivity(items));
-    // 3. Time block distribution — items per time block
+    // Time block distribution — items per time block
     wrap.appendChild(_chartTimeBlocks(items));
-    // 4. Estimate accuracy — estimated vs actual
+    // Estimate accuracy — estimated vs actual
     wrap.appendChild(_chartAccuracy(items));
 
+    // Completion timing — async, populated from analytics endpoints.
+    // The canvas is appended immediately so layout doesn't jump when
+    // the data lands; the render call fills in bars and title once
+    // the fetch resolves.
+    var timingChart = _chartCanvas("Completion Timing", 700, 140);
+    wrap.appendChild(timingChart.container);
+    _loadCompletionTiming(timingChart);
+
+    // Cycle time stat row — mean / median / p90 of completed-task
+    // created-to-completed durations. Rendered as a single text row
+    // rather than a chart because the underlying data is scalar.
+    var cycleRow = document.createElement("div");
+    cycleRow.className = "timeline-stat-row";
+    cycleRow.textContent = "Cycle time — loading\u2026";
+    wrap.appendChild(cycleRow);
+    _loadCycleTime(cycleRow);
+
     calContainer.appendChild(wrap);
+  }
+
+  async function _loadCompletionTiming(chart) {
+    try {
+      var results = await Promise.all([
+        api("/analytics/completion_timing"),
+        api("/analytics/slip_rate"),
+      ]);
+      _renderCompletionTiming(chart, results[0], results[1]);
+    } catch (e) {
+      _renderAnalyticsUnavailable(chart, "Completion Timing");
+    }
+  }
+
+  function _renderCompletionTiming(chart, timing, slip) {
+    var ctx = chart.ctx;
+    var W = chart.canvas.width;
+    var H = chart.canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    var rootStyle = getComputedStyle(document.documentElement);
+    var labelColor = rootStyle.getPropertyValue("--text").trim() || "#333";
+    var mutedColor =
+      rootStyle.getPropertyValue("--text-secondary").trim() || "#888";
+
+    var h3 = chart.container.querySelector("h3");
+    if (h3) {
+      if (slip && slip.rate != null) {
+        h3.textContent =
+          "Completion Timing \u2014 slip rate " +
+          Math.round(slip.rate * 100) +
+          "%";
+      } else {
+        h3.textContent = "Completion Timing";
+      }
+    }
+
+    if (!timing || timing.total === 0) {
+      ctx.fillStyle = mutedColor;
+      ctx.font = "13px sans-serif";
+      ctx.fillText("No completed tasks in range", 20, H / 2);
+      return;
+    }
+
+    var rows = [
+      {
+        label: "Early",
+        count: timing.early_count,
+        color: rootStyle.getPropertyValue("--bar-completed-early").trim(),
+      },
+      {
+        label: "On time",
+        count: timing.ontime_count,
+        color: rootStyle.getPropertyValue("--bar-completed-ontime").trim(),
+      },
+      {
+        label: "Late",
+        count: timing.late_count,
+        color: rootStyle.getPropertyValue("--bar-completed-late").trim(),
+      },
+    ];
+    var classifiable =
+      timing.early_count + timing.ontime_count + timing.late_count;
+    var maxCount = Math.max(classifiable, 1);
+    var barH = 22;
+    var labelW = 80;
+    var valueW = 50;
+    var chartW = W - labelW - valueW - 20;
+
+    rows.forEach(function (row, idx) {
+      var y = 20 + idx * (barH + 8);
+      var frac = row.count / maxCount;
+      ctx.fillStyle = labelColor;
+      ctx.font = "13px sans-serif";
+      ctx.fillText(row.label, 10, y + barH - 6);
+      ctx.fillStyle = row.color || mutedColor;
+      ctx.fillRect(labelW, y, Math.max(frac * chartW, row.count > 0 ? 3 : 0), barH);
+      ctx.fillStyle = labelColor;
+      ctx.fillText(String(row.count), labelW + chartW + 5, y + barH - 6);
+    });
+
+    if (timing.unknown_count > 0) {
+      ctx.fillStyle = mutedColor;
+      ctx.font = "11px sans-serif";
+      ctx.fillText(
+        "(" + timing.unknown_count + " completed without timestamp)",
+        10,
+        H - 6,
+      );
+    }
+  }
+
+  async function _loadCycleTime(row) {
+    try {
+      var data = await api("/analytics/cycle_time");
+      _renderCycleTime(row, data);
+    } catch (e) {
+      row.textContent = "Cycle time unavailable";
+    }
+  }
+
+  function _renderCycleTime(row, data) {
+    if (!data || data.count === 0 || data.mean_minutes == null) {
+      row.textContent = "Cycle time \u2014 no data yet";
+      return;
+    }
+    var mean = _formatDurationMinutes(data.mean_minutes);
+    var median = _formatDurationMinutes(data.median_minutes);
+    var p90 = _formatDurationMinutes(data.p90_minutes);
+    row.textContent =
+      "Cycle time \u2014 mean " +
+      mean +
+      ", median " +
+      median +
+      ", p90 " +
+      p90 +
+      " (over " +
+      data.count +
+      " tasks)";
+  }
+
+  function _formatDurationMinutes(m) {
+    if (m == null) return "\u2014";
+    if (m < 60) return Math.round(m) + "m";
+    if (m < 1440) return (m / 60).toFixed(1) + "h";
+    return (m / 1440).toFixed(1) + "d";
+  }
+
+  function _renderAnalyticsUnavailable(chart, title) {
+    var ctx = chart.ctx;
+    var W = chart.canvas.width;
+    var H = chart.canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    var mutedColor =
+      getComputedStyle(document.documentElement)
+        .getPropertyValue("--text-secondary")
+        .trim() || "#888";
+    ctx.fillStyle = mutedColor;
+    ctx.font = "13px sans-serif";
+    ctx.fillText(title + " unavailable", 20, H / 2);
   }
 
   function _chartCanvas(title, width, height) {
