@@ -713,11 +713,6 @@ class TestDatabaseDueTime:
 # Backward compatibility
 # ---------------------------------------------------------------------------
 class TestBackwardCompat:
-    def test_legacy_item_no_time(self):
-        legacy = {"reminder": "Old item", "priority": 1, "complete": False}
-        item = TodoItem.from_legacy(legacy)
-        assert item.due_time is None
-
     def test_sync_dict_missing_time_key(self):
         d = {
             "id": "12345678-1234-1234-1234-123456789abc",

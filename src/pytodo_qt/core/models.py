@@ -198,21 +198,6 @@ class TodoItem:
             completed_at=data.get("completed_at"),
         )
 
-    @classmethod
-    def from_legacy(cls, legacy: dict[str, Any]) -> TodoItem:
-        """Create from legacy format (v0.2.x)."""
-        now = _now_timestamp()
-        return cls(
-            id=uuid4(),
-            reminder=legacy.get("reminder", ""),
-            priority=legacy.get("priority", 2),
-            complete=legacy.get("complete", False),
-            due_date=None,
-            created_at=now,
-            updated_at=now,
-            deleted=False,
-        )
-
 
 @dataclass
 class TodoList:
@@ -331,24 +316,6 @@ class TodoList:
             private=data.get("private", False),
             board_columns=data.get("board_columns", ["To Do", "In Progress", "Done"]),
             wip_limits=data.get("wip_limits", {}),
-        )
-
-    @classmethod
-    def from_legacy(cls, name: str, legacy_items: list[dict[str, Any]]) -> TodoList:
-        """Create from legacy format (v0.2.x)."""
-        now = _now_timestamp()
-        items = {}
-        for legacy in legacy_items:
-            item = TodoItem.from_legacy(legacy)
-            items[item.id] = item
-
-        return cls(
-            id=uuid4(),
-            name=name,
-            items=items,
-            created_at=now,
-            updated_at=now,
-            deleted=False,
         )
 
 
@@ -513,23 +480,6 @@ class Database:
     def from_bytes(cls, data: bytes) -> Database:
         """Create from bytes."""
         return cls.from_json(data.decode("utf-8"))
-
-    @classmethod
-    def from_legacy(cls, legacy_data: dict[str, list[dict[str, Any]]]) -> Database:
-        """Create from legacy format (v0.2.x).
-
-        Legacy format is: {"list_name": [{"reminder": ..., "priority": ..., "complete": ...}, ...]}
-        """
-        db = cls()
-        for name, items in legacy_data.items():
-            lst = TodoList.from_legacy(name, items)
-            db.add_list(lst)
-
-        # Set first list as active if any exist
-        if db.lists:
-            db.active_list_id = next(iter(db.lists.keys()))
-
-        return db
 
 
 @dataclass

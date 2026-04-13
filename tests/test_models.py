@@ -140,21 +140,6 @@ class TestTodoItem:
         item4 = TodoItem.from_dict(data3)
         assert item4.completed_at is None
 
-    def test_from_legacy(self):
-        """Test creating from legacy format."""
-        legacy = {
-            "reminder": "Old item",
-            "priority": 1,
-            "complete": True,
-        }
-
-        item = TodoItem.from_legacy(legacy)
-
-        assert item.reminder == "Old item"
-        assert item.priority == 1
-        assert item.complete is True
-        assert isinstance(item.id, UUID)
-
 
 class TestTodoList:
     """Tests for TodoList model."""
@@ -227,18 +212,6 @@ class TestTodoList:
         assert lst2.id == lst.id
         assert lst2.name == lst.name
         assert len(lst2.items) == 1
-
-    def test_from_legacy(self):
-        """Test creating from legacy format."""
-        legacy_items = [
-            {"reminder": "Task 1", "priority": 1, "complete": False},
-            {"reminder": "Task 2", "priority": 2, "complete": True},
-        ]
-
-        lst = TodoList.from_legacy("Old List", legacy_items)
-
-        assert lst.name == "Old List"
-        assert lst.active_item_count() == 2
 
 
 class TestDatabase:
@@ -321,19 +294,3 @@ class TestDatabase:
 
         assert len(db2.lists) == 1
         assert db2.active_list_id == lst.id
-
-    def test_from_legacy(self):
-        """Test creating from legacy format."""
-        legacy = {
-            "Shopping": [
-                {"reminder": "Buy milk", "priority": 2, "complete": False},
-            ],
-            "Work": [
-                {"reminder": "Email boss", "priority": 1, "complete": True},
-            ],
-        }
-
-        db = Database.from_legacy(legacy)
-
-        assert len(list(db.active_lists())) == 2
-        assert db.total_items() == 2
