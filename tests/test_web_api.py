@@ -998,6 +998,89 @@ class TestItemBarFields:
             await client.close()
 
 
+class TestEffectiveTimeBlock:
+    """The serialized item carries a resolved time block label: either
+    the stored due_time_block when the parser or a deliberate edit set
+    one, or a value derived from the due_time hour against the active
+    TimeBlockConfig. The web frontend reads this field directly rather
+    than replicating the derivation rules in JavaScript."""
+
+    @pytest.mark.asyncio
+    async def test_stored_block_passes_through(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_time_block = "late_afternoon"
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}")
+            data = await resp.json()
+            found = next(i for i in data["items"] if i["id"] == str(item.id))
+            assert found["effective_time_block"] == "late_afternoon"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_derived_from_hour_when_block_missing(self):
+        from datetime import time as _time
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_time_block = None
+        # 15:00 falls into the default afternoon range [12, 17) past
+        # the midpoint, so it should resolve to late_afternoon.
+        item.due_time = _time(15, 0)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}")
+            data = await resp.json()
+            found = next(i for i in data["items"] if i["id"] == str(item.id))
+            assert found["effective_time_block"] == "late_afternoon"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_stored_wins_over_derivation(self):
+        from datetime import time as _time
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        # Explicit block and an hour that would derive to a different
+        # block — the stored value wins.
+        item.due_time_block = "evening"
+        item.due_time = _time(9, 0)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}")
+            data = await resp.json()
+            found = next(i for i in data["items"] if i["id"] == str(item.id))
+            assert found["effective_time_block"] == "evening"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_null_when_no_anchor(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_time_block = None
+        item.due_time = None
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/lists/{lst.id}")
+            data = await resp.json()
+            found = next(i for i in data["items"] if i["id"] == str(item.id))
+            assert found["effective_time_block"] is None
+        finally:
+            await client.close()
+
+
 # ===========================================================================
 # Phase 1: NLP parse endpoint
 # ===========================================================================

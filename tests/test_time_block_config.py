@@ -93,6 +93,94 @@ class TestTimeBlockConfigTomlRoundTrip:
         assert c.time_blocks.morning_end == 12  # default
 
 
+class TestBlockForHourDefaults:
+    """The default config covers all 24 hours. Each range is split at
+    its midpoint into early and late halves, matching the vocabulary
+    users speak ("early morning", "late afternoon", etc.)."""
+
+    def test_morning_early(self):
+        # Morning range is [6, 12), midpoint 9 → hours 6-8 are early.
+        c = TimeBlockConfig()
+        assert c.block_for_hour(6) == "early_morning"
+        assert c.block_for_hour(7) == "early_morning"
+        assert c.block_for_hour(8) == "early_morning"
+
+    def test_morning_late(self):
+        c = TimeBlockConfig()
+        assert c.block_for_hour(9) == "late_morning"
+        assert c.block_for_hour(10) == "late_morning"
+        assert c.block_for_hour(11) == "late_morning"
+
+    def test_afternoon_split(self):
+        # Afternoon range is [12, 17), midpoint 14.5 → hours 12-14
+        # are early_afternoon, hours 15-16 are late_afternoon.
+        c = TimeBlockConfig()
+        assert c.block_for_hour(12) == "early_afternoon"
+        assert c.block_for_hour(14) == "early_afternoon"
+        assert c.block_for_hour(15) == "late_afternoon"
+        assert c.block_for_hour(16) == "late_afternoon"
+
+    def test_evening_split(self):
+        # Evening range is [17, 21), midpoint 19 → hours 17-18 are
+        # early_evening, hours 19-20 are late_evening.
+        c = TimeBlockConfig()
+        assert c.block_for_hour(17) == "early_evening"
+        assert c.block_for_hour(18) == "early_evening"
+        assert c.block_for_hour(19) == "late_evening"
+        assert c.block_for_hour(20) == "late_evening"
+
+    def test_night_crosses_midnight(self):
+        # Night range crosses midnight: [21, 24) then [0, 6).
+        # Span is 9 hours, midpoint 4.5 hours in = hour 1.5, so
+        # hours 21/22/23/0/1 are early (night) and hours 2/3/4/5 are
+        # late (late_night).
+        c = TimeBlockConfig()
+        assert c.block_for_hour(21) == "night"
+        assert c.block_for_hour(22) == "night"
+        assert c.block_for_hour(23) == "night"
+        assert c.block_for_hour(0) == "night"
+        assert c.block_for_hour(1) == "night"
+        assert c.block_for_hour(2) == "late_night"
+        assert c.block_for_hour(3) == "late_night"
+        assert c.block_for_hour(5) == "late_night"
+
+    def test_wraparound(self):
+        # Hours outside 0-23 are normalized modulo 24.
+        c = TimeBlockConfig()
+        assert c.block_for_hour(24) == c.block_for_hour(0)
+        assert c.block_for_hour(30) == c.block_for_hour(6)
+
+
+class TestBlockForHourCustom:
+    def test_custom_range(self):
+        # Shifted schedule — early riser.
+        c = TimeBlockConfig(
+            morning_start=4,
+            morning_end=10,
+            afternoon_start=10,
+            afternoon_end=15,
+            evening_start=15,
+            evening_end=19,
+            night_start=19,
+            night_end=4,
+        )
+        # Morning [4, 10), midpoint 7.
+        assert c.block_for_hour(4) == "early_morning"
+        assert c.block_for_hour(6) == "early_morning"
+        assert c.block_for_hour(7) == "late_morning"
+        assert c.block_for_hour(9) == "late_morning"
+        # Afternoon [10, 15), midpoint 12.5.
+        assert c.block_for_hour(10) == "early_afternoon"
+        assert c.block_for_hour(12) == "early_afternoon"
+        assert c.block_for_hour(13) == "late_afternoon"
+        # Evening [15, 19), midpoint 17.
+        assert c.block_for_hour(15) == "early_evening"
+        assert c.block_for_hour(17) == "late_evening"
+        # Night [19, 24) ∪ [0, 4) spans 9 hours.
+        assert c.block_for_hour(19) == "night"
+        assert c.block_for_hour(3) == "late_night"
+
+
 class TestNotificationConfigDefaults:
     def test_defaults(self):
         n = NotificationConfig()

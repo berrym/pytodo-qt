@@ -137,6 +137,48 @@ class TimeBlockConfig:
     night_start: int = 21
     night_end: int = 6  # crosses midnight
 
+    def block_for_hour(self, hour: int) -> str:
+        """Return the canonical time block name for an hour of the day.
+
+        Each configured range (morning/afternoon/evening/night) is
+        split at its midpoint into the early and late halves, matching
+        the vocabulary users speak ("early morning", "late afternoon",
+        etc.). The night range crosses midnight and is handled with
+        wraparound arithmetic.
+
+        Hours outside every configured range are impossible with the
+        default configuration, which covers all 24 hours contiguously.
+        If a user has set custom values that leave a gap, the function
+        falls back to "morning" rather than raising — the caller is
+        usually rendering a chart and would rather get a label than
+        crash.
+        """
+        h = hour % 24
+
+        if self.morning_start <= h < self.morning_end:
+            midpoint = (self.morning_start + self.morning_end) / 2
+            return "early_morning" if h < midpoint else "late_morning"
+
+        if self.afternoon_start <= h < self.afternoon_end:
+            midpoint = (self.afternoon_start + self.afternoon_end) / 2
+            return "early_afternoon" if h < midpoint else "late_afternoon"
+
+        if self.evening_start <= h < self.evening_end:
+            midpoint = (self.evening_start + self.evening_end) / 2
+            return "early_evening" if h < midpoint else "late_evening"
+
+        # Night range may cross midnight: [night_start, 24) ∪ [0, night_end).
+        in_night = h >= self.night_start or h < self.night_end
+        if in_night:
+            span = (24 - self.night_start) + self.night_end
+            if span <= 0:
+                # Degenerate config — no night range at all.
+                return "morning"
+            offset = h - self.night_start if h >= self.night_start else (24 - self.night_start) + h
+            return "night" if offset < span / 2 else "late_night"
+
+        return "morning"
+
 
 @dataclass
 class NotificationConfig:

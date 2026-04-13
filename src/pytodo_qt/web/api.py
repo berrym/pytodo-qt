@@ -168,6 +168,31 @@ def _bar_fields(item: TodoItem) -> dict[str, Any]:
     }
 
 
+def _effective_time_block(item: TodoItem) -> str | None:
+    """Resolve the time block to display for an item.
+
+    Returns the stored `due_time_block` when the task was parsed or
+    edited with an explicit block (morning / afternoon / evening /
+    night and their early/late variants). Falls back to deriving
+    from `due_time`'s hour via the active TimeBlockConfig when only
+    a numeric deadline is set. Returns None when neither anchor is
+    present, meaning the task has no time-of-day position.
+    """
+    if item.due_time_block:
+        return item.due_time_block
+    if item.due_time is None:
+        return None
+    try:
+        from ..core.config import get_config
+
+        cfg = get_config()
+        return cfg.time_blocks.block_for_hour(item.due_time.hour)
+    except Exception:
+        from ..core.config import TimeBlockConfig
+
+        return TimeBlockConfig().block_for_hour(item.due_time.hour)
+
+
 def _item_to_json(item: TodoItem) -> dict[str, Any]:
     """Serialize a TodoItem for the JSON API."""
     return {
@@ -208,6 +233,7 @@ def _item_to_json(item: TodoItem) -> dict[str, Any]:
         "notified_at": item.notified_at,
         "conditions": item.conditions,
         "completed_at": item.completed_at,
+        "effective_time_block": _effective_time_block(item),
         **_bar_fields(item),
     }
 

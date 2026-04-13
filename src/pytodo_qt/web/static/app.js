@@ -3058,26 +3058,30 @@
   // --- Now-aware urgency bar for items due today ---
 
   function _urgencyData(item) {
-    // Compute urgency state from item created_at + due_date + due_time.
-    if (!item.due_date || !item.due_time) return null;
+    // Urgency bars only appear on active tasks with a computed
+    // temporal window scheduled for today. The server ships the
+    // window (bar_origin_ms, bar_end_ms) and the lifecycle state
+    // (bar_state); the JS only does the progress interpolation
+    // and reads the color from the shared lifecycle palette.
+    if (item.bar_origin_ms == null || item.bar_end_ms == null) return null;
+    if (item.complete) return null;
+    if (!item.bar_state) return null;
     var todayKey = _dayKey(new Date());
     if (item.due_date !== todayKey) return null;
-    if (item.complete) return null;
-    var now = Date.now();
-    var dueDt = new Date(item.due_date + "T" + item.due_time);
-    var dueMs = dueDt.getTime();
-    var createdMs = item.created_at || dueMs - 24 * 3600 * 1000;
-    if (createdMs >= dueMs) createdMs = dueMs - 60 * 60 * 1000;
-    var totalSpan = dueMs - createdMs;
-    var elapsed = now - createdMs;
-    var fraction = Math.max(0, Math.min(1, elapsed / totalSpan));
-    var minsLeft = Math.round((dueMs - now) / 60000);
 
-    var color;
-    if (minsLeft < 0) color = "#ef4444"; // red — overdue
-    else if (minsLeft < 15) color = "#ef4444"; // red — final
-    else if (minsLeft < 60) color = "#f59e0b"; // amber
-    else color = "#10b981"; // green
+    var now = Date.now();
+    var origin = item.bar_origin_ms;
+    var end = item.bar_end_ms;
+    var span = end - origin;
+    var fraction =
+      span > 0 ? Math.max(0, Math.min(1, (now - origin) / span)) : 1;
+    var minsLeft = Math.round((end - now) / 60000);
+
+    var paletteKey = "--bar-" + item.bar_state.replace(/_/g, "-");
+    var color =
+      getComputedStyle(document.documentElement)
+        .getPropertyValue(paletteKey)
+        .trim() || "#888";
 
     var label;
     if (minsLeft < 0) {
@@ -3474,10 +3478,14 @@
 
     items.forEach(function (i) {
       if (!i.complete) return;
-      var key = (i.due_date || "").substring(0, 10);
-      if (!key) {
-        key = new Date(i.updated_at).toISOString().substring(0, 10);
-      }
+      // Prefer the real completion timestamp when it's available.
+      // Tasks completed before schema v19 fall back to the last
+      // update time so they still contribute to the historical
+      // trend; tasks without any timestamp are skipped rather than
+      // guessed.
+      var ts = i.completed_at || i.updated_at;
+      if (!ts) return;
+      var key = new Date(ts).toISOString().substring(0, 10);
       if (buckets[key] !== undefined) {
         if (i.priority === 1) buckets[key].high++;
         else if (i.priority === 3) buckets[key].low++;
@@ -3551,12 +3559,9 @@
     blocks.forEach(function (b) { counts[b] = 0; });
 
     items.forEach(function (i) {
-      if (i.due_time_block && counts[i.due_time_block] !== undefined) {
-        counts[i.due_time_block]++;
-      } else if (i.due_time) {
-        var hour = parseInt(i.due_time.substring(0, 2));
-        var idx = Math.min(Math.floor(hour / 2), 11);
-        counts[blocks[idx]]++;
+      var block = i.effective_time_block;
+      if (block && counts[block] !== undefined) {
+        counts[block]++;
       }
     });
 
