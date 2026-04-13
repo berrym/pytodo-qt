@@ -3503,14 +3503,20 @@ class _WeekDelegate(QStyledItemDelegate):
                     strike_y,
                 )
 
-        # Overflow indicator
+        # Overflow indicator. Mirrors the chip-text color rule so the
+        # "+N more" stays readable on the today-all-day highlight
+        # background — using completed_text (muted gray) on top of the
+        # accent-colored highlight produces near-zero contrast.
         overflow = len(items) - max_chips
         if overflow > 0:
             overflow_y = y + max_chips * chip_height
             overflow_rect = rect.adjusted(4, 0, -4, 0)
             overflow_rect.setTop(overflow_y)
             overflow_rect.setHeight(overflow_height)
-            painter.setPen(QColor(c["completed_text"]))
+            if is_today and is_all_day:
+                painter.setPen(col_highlight_text)
+            else:
+                painter.setPen(QColor(c["completed_text"]))
             painter.drawText(
                 overflow_rect,
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
