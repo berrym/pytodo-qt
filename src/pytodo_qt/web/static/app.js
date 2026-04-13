@@ -2912,9 +2912,55 @@
     });
   }
 
+  // Hour-grid constants — shared by week and day Canvas 2D views.
+  var _HOUR_ROW_HEIGHT = 30;
+  var _GRID_HEADER_HEIGHT = 32;
+  var _HOUR_LABEL_WIDTH = 50;
+  var _ALL_DAY_ROW_HEIGHT = 34;
+  var _MARKER_ROW_HEIGHT = 22;
+  var _GRID_CANVAS_MIN_WIDTH = 560;
+
+  function _gridTotalHeight() {
+    return (
+      _GRID_HEADER_HEIGHT +
+      _ALL_DAY_ROW_HEIGHT +
+      _MARKER_ROW_HEIGHT +
+      24 * _HOUR_ROW_HEIGHT
+    );
+  }
+
+  function _startOfWeek(dt) {
+    var d = new Date(dt);
+    d.setDate(d.getDate() - d.getDay());
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+
+  function _paletteColor(state) {
+    var key = (state || "future").replace(/_/g, "-");
+    var v = getComputedStyle(document.documentElement)
+      .getPropertyValue("--bar-" + key)
+      .trim();
+    return v || "#60a5fa";
+  }
+
+  function _paletteDeviation(state) {
+    var key = (state || "future").replace(/_/g, "-");
+    var v = getComputedStyle(document.documentElement)
+      .getPropertyValue("--bar-" + key + "-deviation")
+      .trim();
+    return v || _paletteColor(state);
+  }
+
+  function _themeColor(name, fallback) {
+    var v = getComputedStyle(document.documentElement)
+      .getPropertyValue("--" + name)
+      .trim();
+    return v || fallback;
+  }
+
   function renderWeekView() {
-    var startOfWeek = new Date(calDate);
-    startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+    var startOfWeek = _startOfWeek(calDate);
     var endLabel = new Date(startOfWeek);
     endLabel.setDate(endLabel.getDate() + 6);
     if (calTitle) {
@@ -2930,59 +2976,7 @@
           year: "numeric",
         });
     }
-
-    var items = _calItems();
-    var byDate = _itemsByDate(items);
-    var todayKey = _dayKey(new Date());
-    var dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-    var html = '<div class="cal-week-grid">';
-    for (var i = 0; i < 7; i++) {
-      var day = new Date(startOfWeek);
-      day.setDate(day.getDate() + i);
-      var key = _dayKey(day);
-      var isToday = key === todayKey;
-      html += '<div class="cal-week-col' + (isToday ? " today" : "") + '">';
-      html +=
-        '<div class="cal-week-header">' +
-        dayNames[i] +
-        " " +
-        day.getDate() +
-        "</div>";
-      var dayItems = byDate[key] || [];
-      dayItems.forEach(function (it) {
-        var pCls =
-          it.priority === 1
-            ? "priority-high"
-            : it.priority === 3
-              ? "priority-low"
-              : "";
-        html +=
-          '<div class="cal-item ' +
-          pCls +
-          (it.complete ? " completed" : "") +
-          '" data-id="' +
-          it.id +
-          '">';
-        html += _escHtml(it.reminder.substring(0, 25));
-        if (it.due_time)
-          html += " <small>" + it.due_time.substring(0, 5) + "</small>";
-        if (it.due_time_block)
-          html +=
-            " <small>(" + it.due_time_block.replace(/_/g, " ") + ")</small>";
-        html += _urgencyBarHtml(it);
-        html += "</div>";
-      });
-      html += "</div>";
-    }
-    html += "</div>";
-    calContainer.innerHTML = html;
-
-    calContainer.querySelectorAll(".cal-item[data-id]").forEach(function (el) {
-      el.addEventListener("click", function () {
-        location.hash = "#/item/" + el.dataset.id;
-      });
-    });
+    _renderHourGrid(startOfWeek, 7);
   }
 
   function renderDayView() {
@@ -2994,59 +2988,335 @@
         year: "numeric",
       });
     }
+    var start = new Date(calDate);
+    start.setHours(0, 0, 0, 0);
+    _renderHourGrid(start, 1);
+  }
 
-    var items = _calItems();
-    var key = _dayKey(calDate);
-    var dayItems = items.filter(function (i) {
-      return i.due_date === key;
-    });
+  function _renderHourGrid(startDate, days) {
+    calContainer.innerHTML = "";
 
-    var html = '<div class="cal-day-view">';
-    if (dayItems.length === 0) {
-      html += '<p class="cal-empty">No tasks scheduled for this day</p>';
-    } else {
-      dayItems.forEach(function (it) {
-        var pCls =
-          it.priority === 1
-            ? "priority-high"
-            : it.priority === 3
-              ? "priority-low"
-              : "";
-        html +=
-          '<div class="cal-day-item ' +
-          pCls +
-          (it.complete ? " completed" : "") +
-          '" data-id="' +
-          it.id +
-          '">';
-        html += '<div class="cal-day-item-time">';
-        if (it.due_time) html += it.due_time.substring(0, 5);
-        else if (it.due_time_block)
-          html += it.due_time_block.replace(/_/g, " ");
-        else html += "All day";
-        html += "</div>";
-        html += '<div class="cal-day-item-text">';
-        html += "<strong>" + _escHtml(it.reminder) + "</strong>";
-        html += _urgencyBarHtml(it);
-        if (it.tags && it.tags.length > 0) {
-          html += "<br>";
-          it.tags.forEach(function (tag) {
-            html += '<span class="tag">' + tag + "</span> ";
-          });
+    var wrap = document.createElement("div");
+    wrap.className = "cal-hour-grid-wrap";
+    var canvas = document.createElement("canvas");
+    canvas.className = "cal-hour-grid";
+    wrap.appendChild(canvas);
+    calContainer.appendChild(wrap);
+
+    var loading = document.createElement("div");
+    loading.className = "cal-hour-grid-loading";
+    loading.textContent = "Loading\u2026";
+    wrap.appendChild(loading);
+
+    // Size the canvas to fit the container. Minimum width keeps the
+    // 7-column layout legible on phones by allowing horizontal scroll
+    // rather than cramming.
+    var containerWidth = calContainer.clientWidth || 720;
+    var canvasWidth = Math.max(containerWidth - 4, _GRID_CANVAS_MIN_WIDTH);
+    var canvasHeight = _gridTotalHeight();
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
+    canvas.style.width = canvasWidth + "px";
+    canvas.style.height = canvasHeight + "px";
+
+    var startIso = _dayKey(startDate);
+
+    api(
+      "/calendar/segments?start=" +
+        encodeURIComponent(startIso) +
+        "&days=" +
+        days,
+    )
+      .then(function (data) {
+        loading.remove();
+        _paintHourGrid(canvas, data, days);
+      })
+      .catch(function () {
+        loading.textContent = "Failed to load calendar data";
+      });
+  }
+
+  function _paintHourGrid(canvas, data, days) {
+    var ctx = canvas.getContext("2d");
+    var W = canvas.width;
+    var H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    var border = _themeColor("border", "#e0e0e0");
+    var textSecondary = _themeColor("text-secondary", "#888");
+    var textPrimary = _themeColor("text", "#333");
+    var bgCard = _themeColor("bg-card", "#fff");
+    var todayBg = _themeColor("accent-subtle", "rgba(33,150,243,0.08)");
+
+    var colWidth = (W - _HOUR_LABEL_WIDTH) / days;
+    var headerY = 0;
+    var allDayY = _GRID_HEADER_HEIGHT;
+    var markerY = allDayY + _ALL_DAY_ROW_HEIGHT;
+    var gridY = markerY + _MARKER_ROW_HEIGHT;
+    var todayKey = _dayKey(new Date());
+
+    // --- Header row: day labels ---
+    ctx.fillStyle = bgCard;
+    ctx.fillRect(0, headerY, W, _GRID_HEADER_HEIGHT);
+    ctx.strokeStyle = border;
+    ctx.lineWidth = 1;
+    var dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    var dayLabels = [];
+    for (var i = 0; i < days; i++) {
+      var colX = _HOUR_LABEL_WIDTH + i * colWidth;
+      var day = new Date(data.days[i].date + "T00:00:00");
+      var key = data.days[i].date;
+      var isToday = key === todayKey;
+      if (isToday) {
+        ctx.fillStyle = todayBg;
+        ctx.fillRect(colX, 0, colWidth, H);
+      }
+      ctx.fillStyle = textPrimary;
+      ctx.font = "bold 13px sans-serif";
+      ctx.textAlign = "center";
+      var label =
+        days === 7
+          ? dayNames[day.getDay()] + " " + day.getDate()
+          : day.toLocaleDateString(undefined, {
+              weekday: "long",
+              month: "short",
+              day: "numeric",
+            });
+      ctx.fillText(label, colX + colWidth / 2, headerY + 20);
+      dayLabels.push({ x: colX, w: colWidth, date: key });
+    }
+    ctx.textAlign = "left";
+    // Header underline
+    ctx.beginPath();
+    ctx.moveTo(0, _GRID_HEADER_HEIGHT);
+    ctx.lineTo(W, _GRID_HEADER_HEIGHT);
+    ctx.stroke();
+
+    // --- All-day and marker row separators ---
+    ctx.beginPath();
+    ctx.moveTo(0, allDayY + _ALL_DAY_ROW_HEIGHT);
+    ctx.lineTo(W, allDayY + _ALL_DAY_ROW_HEIGHT);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, markerY + _MARKER_ROW_HEIGHT);
+    ctx.lineTo(W, markerY + _MARKER_ROW_HEIGHT);
+    ctx.stroke();
+
+    // --- Hour labels + horizontal grid lines ---
+    ctx.fillStyle = textSecondary;
+    ctx.font = "10px sans-serif";
+    for (var h = 0; h < 24; h++) {
+      var y = gridY + h * _HOUR_ROW_HEIGHT;
+      ctx.fillText(
+        String(h).padStart(2, "0") + ":00",
+        6,
+        y + _HOUR_ROW_HEIGHT / 2 + 3,
+      );
+      ctx.strokeStyle = border;
+      ctx.beginPath();
+      ctx.moveTo(_HOUR_LABEL_WIDTH, y);
+      ctx.lineTo(W, y);
+      ctx.stroke();
+    }
+
+    // --- Vertical grid lines between day columns ---
+    ctx.strokeStyle = border;
+    for (var v = 0; v <= days; v++) {
+      var vx = _HOUR_LABEL_WIDTH + v * colWidth;
+      ctx.beginPath();
+      ctx.moveTo(vx, _GRID_HEADER_HEIGHT);
+      ctx.lineTo(vx, H);
+      ctx.stroke();
+    }
+
+    // --- Paint segments per day ---
+    // Hit-test rects accumulated during paint for click routing.
+    canvas._hitRects = [];
+
+    for (var d = 0; d < days; d++) {
+      var dayData = data.days[d];
+      var colX = _HOUR_LABEL_WIDTH + d * colWidth;
+      var allDayCursor = allDayY + 2;
+      var markerCursor = markerY + 2;
+
+      dayData.segments.forEach(function (seg) {
+        var item = data.items[seg.item_id];
+        if (!item) return;
+
+        if (seg.is_marker) {
+          _paintMarkerChip(
+            ctx,
+            canvas._hitRects,
+            item,
+            seg,
+            colX + 2,
+            markerCursor,
+            colWidth - 4,
+          );
+          markerCursor += _MARKER_ROW_HEIGHT - 4;
+          return;
         }
-        html += "</div></div>";
+
+        if (seg.is_all_day) {
+          _paintAllDayChip(
+            ctx,
+            canvas._hitRects,
+            item,
+            seg,
+            colX + 2,
+            allDayCursor,
+            colWidth - 4,
+          );
+          allDayCursor += _ALL_DAY_ROW_HEIGHT - 4;
+          return;
+        }
+
+        // Hour-grid bar: convert minute range to pixels.
+        var segTopY =
+          gridY + (seg.start_minute / 60) * _HOUR_ROW_HEIGHT;
+        var segBottomY =
+          gridY + (seg.end_minute / 60) * _HOUR_ROW_HEIGHT;
+        var segH = Math.max(segBottomY - segTopY, 3);
+        var segX = colX + 2;
+        var segW = colWidth - 4;
+
+        _paintHourBar(
+          ctx,
+          canvas._hitRects,
+          item,
+          seg,
+          segX,
+          segTopY,
+          segW,
+          segH,
+        );
       });
     }
-    html += "</div>";
-    calContainer.innerHTML = html;
 
-    calContainer
-      .querySelectorAll(".cal-day-item[data-id]")
-      .forEach(function (el) {
-        el.addEventListener("click", function () {
-          location.hash = "#/item/" + el.dataset.id;
-        });
-      });
+    _installHourGridClickHandler(canvas);
+  }
+
+  function _paintHourBar(ctx, hitRects, item, seg, x, y, w, h) {
+    var base = _paletteColor(seg.state);
+    var deviation = _paletteDeviation(seg.state);
+    var labelColor = _themeColor("text", "#333");
+
+    // Two-zone overlay for completed bars: base color for the
+    // relevant span, deviation color for the surplus or overflow.
+    // Zone boundary math uses the item's full bar window (ms
+    // timestamps) mapped back into this cell's start_minute/end_minute
+    // coordinate system — the server-computed fractions stay exact
+    // when the bar is fully within one day.
+    var paintedTwoZone = false;
+    if (
+      (seg.state === "completed_early" || seg.state === "completed_late") &&
+      item.completed_at != null &&
+      item.bar_origin_ms != null &&
+      item.bar_end_ms != null
+    ) {
+      var origin = item.bar_origin_ms;
+      var end = item.bar_end_ms;
+      var completed = item.completed_at;
+      var totalSpan = end - origin;
+      if (totalSpan > 0) {
+        if (seg.state === "completed_early" && completed < end) {
+          var frac = Math.max(0, Math.min(1, (completed - origin) / totalSpan));
+          var splitX = x + frac * w;
+          ctx.fillStyle = base;
+          ctx.fillRect(x, y, splitX - x, h);
+          ctx.fillStyle = deviation;
+          ctx.fillRect(splitX, y, x + w - splitX, h);
+          paintedTwoZone = true;
+        } else if (seg.state === "completed_late" && completed > end) {
+          // Planned span fills the bar; overflow can't be drawn
+          // inside this cell (it's on a later day's marker row),
+          // so we paint the base color across the whole cell and
+          // let the marker on the completion day carry the overflow.
+          ctx.fillStyle = base;
+          ctx.fillRect(x, y, w, h);
+          paintedTwoZone = true;
+        }
+      }
+    }
+    if (!paintedTwoZone) {
+      ctx.fillStyle = base;
+      ctx.fillRect(x, y, w, h);
+    }
+
+    // Clipped-edge marks for multi-day bars: a thin contrasting
+    // stripe at the clipped edge communicates "continues off-screen".
+    if (seg.clipped_top) {
+      ctx.fillStyle = labelColor;
+      ctx.globalAlpha = 0.4;
+      ctx.fillRect(x, y, w, 2);
+      ctx.globalAlpha = 1;
+    }
+    if (seg.clipped_bottom) {
+      ctx.fillStyle = labelColor;
+      ctx.globalAlpha = 0.4;
+      ctx.fillRect(x, y + h - 2, w, 2);
+      ctx.globalAlpha = 1;
+    }
+
+    // Label — only when the bar is tall enough for text to fit.
+    if (h >= 14) {
+      ctx.fillStyle = labelColor;
+      ctx.font = "11px sans-serif";
+      var text = (item.reminder || "").substring(0, Math.floor(w / 7));
+      ctx.fillText(text, x + 4, y + 12);
+    }
+
+    hitRects.push({ x: x, y: y, w: w, h: h, item_id: seg.item_id });
+  }
+
+  function _paintAllDayChip(ctx, hitRects, item, seg, x, y, w) {
+    var h = _ALL_DAY_ROW_HEIGHT - 6;
+    var color = _paletteColor(seg.state);
+    var labelColor = _themeColor("text", "#333");
+
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, w, h);
+
+    ctx.fillStyle = labelColor;
+    ctx.font = "11px sans-serif";
+    var text = (item.reminder || "").substring(0, Math.floor(w / 7));
+    ctx.fillText(text, x + 4, y + h - 6);
+
+    hitRects.push({ x: x, y: y, w: w, h: h, item_id: seg.item_id });
+  }
+
+  function _paintMarkerChip(ctx, hitRects, item, seg, x, y, w) {
+    var h = _MARKER_ROW_HEIGHT - 6;
+    var color = _paletteColor(seg.state);
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, w, h);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 10px sans-serif";
+    var text = seg.marker_label || (item.reminder || "").substring(0, 14);
+    ctx.fillText(text, x + 4, y + h - 5);
+
+    hitRects.push({ x: x, y: y, w: w, h: h, item_id: seg.item_id });
+  }
+
+  function _installHourGridClickHandler(canvas) {
+    canvas.addEventListener("click", function (e) {
+      var rect = canvas.getBoundingClientRect();
+      var scaleX = canvas.width / rect.width;
+      var scaleY = canvas.height / rect.height;
+      var x = (e.clientX - rect.left) * scaleX;
+      var y = (e.clientY - rect.top) * scaleY;
+      var hits = canvas._hitRects || [];
+      // Iterate newest-first so overlapping segments favor the last
+      // painted one (typically the most specific).
+      for (var i = hits.length - 1; i >= 0; i--) {
+        var r = hits[i];
+        if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+          location.hash = "#/item/" + r.item_id;
+          return;
+        }
+      }
+    });
   }
 
   function _escHtml(str) {
@@ -3054,107 +3324,6 @@
     div.textContent = str;
     return div.innerHTML;
   }
-
-  // --- Now-aware urgency bar for items due today ---
-
-  function _urgencyData(item) {
-    // Urgency bars only appear on active tasks with a computed
-    // temporal window scheduled for today. The server ships the
-    // window (bar_origin_ms, bar_end_ms) and the lifecycle state
-    // (bar_state); the JS only does the progress interpolation
-    // and reads the color from the shared lifecycle palette.
-    if (item.bar_origin_ms == null || item.bar_end_ms == null) return null;
-    if (item.complete) return null;
-    if (!item.bar_state) return null;
-    var todayKey = _dayKey(new Date());
-    if (item.due_date !== todayKey) return null;
-
-    var now = Date.now();
-    var origin = item.bar_origin_ms;
-    var end = item.bar_end_ms;
-    var span = end - origin;
-    var fraction =
-      span > 0 ? Math.max(0, Math.min(1, (now - origin) / span)) : 1;
-    var minsLeft = Math.round((end - now) / 60000);
-
-    var paletteKey = "--bar-" + item.bar_state.replace(/_/g, "-");
-    var color =
-      getComputedStyle(document.documentElement)
-        .getPropertyValue(paletteKey)
-        .trim() || "#888";
-
-    var label;
-    if (minsLeft < 0) {
-      label = "Overdue " + _formatMins(-minsLeft);
-    } else {
-      label = _formatMins(minsLeft) + " left";
-    }
-    return {
-      fraction: fraction,
-      color: color,
-      label: label,
-      minsLeft: minsLeft,
-    };
-  }
-
-  function _formatMins(m) {
-    if (m < 60) return m + "m";
-    var h = Math.floor(m / 60);
-    var rem = m % 60;
-    return rem > 0 ? h + "h " + rem + "m" : h + "h";
-  }
-
-  function _urgencyBarHtml(item) {
-    var u = _urgencyData(item);
-    if (!u) return "";
-    var pct = Math.round(u.fraction * 100);
-    return (
-      '<div class="urgency-bar" data-urgency-id="' +
-      item.id +
-      '">' +
-      '<div class="urgency-fill" style="width:' +
-      pct +
-      "%;background:" +
-      u.color +
-      ';"></div>' +
-      '<div class="urgency-label" style="color:' +
-      u.color +
-      ';">' +
-      u.label +
-      "</div>" +
-      "</div>"
-    );
-  }
-
-  function refreshUrgencyBars() {
-    // Refresh all urgency bars in place without re-rendering the calendar.
-    var bars = document.querySelectorAll(".urgency-bar[data-urgency-id]");
-    bars.forEach(function (bar) {
-      var id = bar.getAttribute("data-urgency-id");
-      var item = cachedItems.find(function (i) {
-        return i.id === id;
-      });
-      if (!item) return;
-      var u = _urgencyData(item);
-      if (!u) {
-        bar.style.display = "none";
-        return;
-      }
-      var fill = bar.querySelector(".urgency-fill");
-      var label = bar.querySelector(".urgency-label");
-      if (fill) {
-        fill.style.width = Math.round(u.fraction * 100) + "%";
-        fill.style.background = u.color;
-      }
-      if (label) {
-        label.textContent = u.label;
-        label.style.color = u.color;
-      }
-    });
-  }
-
-  // Tick urgency bars every 30 seconds
-  setInterval(refreshUrgencyBars, 30000);
 
   // Timeline charts (Canvas 2D)
   // ====================================================================

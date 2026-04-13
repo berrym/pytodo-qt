@@ -297,6 +297,8 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_get("/api/analytics/completion_timing", handle_analytics_completion_timing)
     app.router.add_get("/api/analytics/slip_rate", handle_analytics_slip_rate)
     app.router.add_get("/api/analytics/cycle_time", handle_analytics_cycle_time)
+    # Calendar hour-grid segments
+    app.router.add_get("/api/calendar/segments", handle_calendar_segments)
     # Board layout presets
     app.router.add_get("/api/presets", handle_get_presets)
     app.router.add_post("/api/lists/{list_id}/apply-preset", handle_apply_preset)
@@ -1734,6 +1736,105 @@ async def handle_analytics_cycle_time(request: web.Request) -> web.Response:
             "mean_minutes": result.mean_minutes,
             "median_minutes": result.median_minutes,
             "p90_minutes": result.p90_minutes,
+        }
+    )
+
+
+async def handle_calendar_segments(request: web.Request) -> web.Response:
+    """GET /api/calendar/segments — Bar segments per viewing day.
+
+    Query params:
+        start: ISO date (YYYY-MM-DD). Defaults to today.
+        days:  int, 1..31. Number of consecutive days starting at
+               start. Defaults to 7 (week view). Use 1 for day view.
+
+    Returns:
+        start_date: first day in range (ISO)
+        end_date:   last day in range (ISO, inclusive)
+        items:      { uuid: item_json } for every item referenced by
+                    any segment in the range. Deduplicated so
+                    multi-day bars don't repeat metadata.
+        days:       [{ date, segments: [...] }, ...] in chronological
+                    order, one entry per viewing day. Segments are
+                    the raw output of compute_bar_segments and carry
+                    start_minute/end_minute/state/clipping/marker
+                    metadata ready for Canvas 2D rendering.
+    """
+    from .. import core  # noqa: F401 — ensure core is importable
+    from ..core.calendar_layout import compute_bar_segments, compute_bar_window
+
+    database: Database | None = request.app.get(database_key)
+    if database is None:
+        return _error(503, "Database not available")
+
+    start_param = request.query.get("start")
+    days_param = request.query.get("days", "7")
+    try:
+        start_date = date.fromisoformat(start_param) if start_param else date.today()
+    except ValueError:
+        return _error(400, "Invalid start date")
+    try:
+        days_count = int(days_param)
+    except ValueError:
+        return _error(400, "Invalid days parameter")
+    days_count = max(1, min(days_count, 31))
+
+    current_time = datetime.now()
+    items_out: dict[str, dict[str, Any]] = {}
+    days_out: list[dict[str, Any]] = []
+
+    viewing_days = [start_date + timedelta(days=d) for d in range(days_count)]
+
+    # Gather every non-private, non-deleted top-level item once. Bars
+    # for subtasks render via their parent in the desktop pipeline,
+    # so the web mirrors that by skipping items with a parent_id.
+    all_items: list[TodoItem] = []
+    for lst in database.lists.values():
+        if lst.deleted or lst.private:
+            continue
+        for item in lst.active_items():
+            if item.parent_id is not None:
+                continue
+            all_items.append(item)
+
+    # Pre-compute each item's bar window once, then reuse for every
+    # viewing day in the range.
+    windows: list[tuple[TodoItem, Any]] = []
+    for item in all_items:
+        window = compute_bar_window(item)
+        if window is None:
+            continue
+        windows.append((item, window))
+
+    for day in viewing_days:
+        day_segments: list[dict[str, Any]] = []
+        for item, window in windows:
+            segments = compute_bar_segments(item, window, day, current_time)
+            for seg in segments:
+                item_id_str = str(seg.item_id)
+                if item_id_str not in items_out:
+                    items_out[item_id_str] = _item_to_json(item)
+                day_segments.append(
+                    {
+                        "item_id": item_id_str,
+                        "start_minute": seg.start_minute,
+                        "end_minute": seg.end_minute,
+                        "state": seg.state.value,
+                        "clipped_top": seg.clipped_top,
+                        "clipped_bottom": seg.clipped_bottom,
+                        "is_marker": seg.is_marker,
+                        "marker_label": seg.marker_label,
+                        "is_all_day": seg.is_all_day,
+                    }
+                )
+        days_out.append({"date": day.isoformat(), "segments": day_segments})
+
+    return web.json_response(
+        {
+            "start_date": start_date.isoformat(),
+            "end_date": viewing_days[-1].isoformat(),
+            "items": items_out,
+            "days": days_out,
         }
     )
 

@@ -1081,6 +1081,176 @@ class TestEffectiveTimeBlock:
             await client.close()
 
 
+class TestCalendarSegments:
+    """The hour-grid calendar endpoint returns bar segments ready for
+    client-side Canvas 2D rendering. Segments come from the same pure
+    layout pipeline the desktop uses, so the web and desktop calendars
+    land on identical positions and lifecycle colors for every task."""
+
+    @pytest.mark.asyncio
+    async def test_response_shape(self):
+        from datetime import date as _date
+        from datetime import time as _time
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_date = _date(2030, 6, 15)
+        item.due_time = _time(14, 0)
+        item.estimated_minutes = 60
+
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/calendar/segments?start=2030-06-13&days=7")
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["start_date"] == "2030-06-13"
+            assert data["end_date"] == "2030-06-19"
+            assert "items" in data
+            assert isinstance(data["items"], dict)
+            assert "days" in data
+            assert len(data["days"]) == 7
+            for day in data["days"]:
+                assert "date" in day
+                assert "segments" in day
+                assert isinstance(day["segments"], list)
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_day_view(self):
+        from datetime import date as _date
+        from datetime import time as _time
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_date = _date(2030, 6, 15)
+        item.due_time = _time(14, 0)
+        item.estimated_minutes = 60
+
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/calendar/segments?start=2030-06-15&days=1")
+            data = await resp.json()
+            assert len(data["days"]) == 1
+            assert data["days"][0]["date"] == "2030-06-15"
+            # Should contain at least one segment for our item on its
+            # due date.
+            segments = data["days"][0]["segments"]
+            matching = [s for s in segments if s["item_id"] == str(item.id)]
+            assert len(matching) >= 1
+            seg = matching[0]
+            # Workback from 14:00 with a 60-minute estimate → 13:00..14:00.
+            assert seg["start_minute"] == 13 * 60
+            assert seg["end_minute"] == 14 * 60
+            assert seg["state"] in (
+                "future",
+                "in_work_window",
+                "due_now",
+                "overdue_active",
+            )
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_items_deduplicated(self):
+        from datetime import date as _date
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        # All-day item should appear on exactly one day and the items
+        # dict should carry it exactly once.
+        item.due_date = _date(2030, 6, 16)
+        item.due_time = None
+        item.due_time_end = None
+
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/calendar/segments?start=2030-06-15&days=3")
+            data = await resp.json()
+            assert str(item.id) in data["items"]
+            # The items dict key appears once regardless of how many
+            # days reference it.
+            item_count = sum(1 for k in data["items"] if k == str(item.id))
+            assert item_count == 1
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_defaults(self):
+        db = _make_db_with_data()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            # No query params → defaults to today for 7 days.
+            resp = await client.get("/api/calendar/segments")
+            assert resp.status == 200
+            data = await resp.json()
+            assert len(data["days"]) == 7
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_invalid_start_date(self):
+        db = _make_db_with_data()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/calendar/segments?start=not-a-date")
+            assert resp.status == 400
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_days_clamped(self):
+        db = _make_db_with_data()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            # days=100 should clamp to 31.
+            resp = await client.get("/api/calendar/segments?start=2030-06-15&days=100")
+            data = await resp.json()
+            assert len(data["days"]) == 31
+            # days=0 should clamp to 1.
+            resp2 = await client.get("/api/calendar/segments?start=2030-06-15&days=0")
+            data2 = await resp2.json()
+            assert len(data2["days"]) == 1
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_private_list_excluded(self):
+        from datetime import date as _date
+
+        db = _make_db_with_private()
+        # The private list's item gets a due date to make sure it's
+        # actively excluded rather than just filtered by absence.
+        for lst in db.lists.values():
+            if lst.private:
+                for item in lst.active_items():
+                    item.due_date = _date(2030, 6, 15)
+
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/calendar/segments?start=2030-06-15&days=1")
+            data = await resp.json()
+            # None of the items in the response should come from the
+            # private list.
+            for lst in db.lists.values():
+                if not lst.private:
+                    continue
+                for item in lst.active_items():
+                    assert str(item.id) not in data["items"]
+        finally:
+            await client.close()
+
+
 # ===========================================================================
 # Phase 1: NLP parse endpoint
 # ===========================================================================

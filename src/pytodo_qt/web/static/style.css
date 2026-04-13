@@ -1169,100 +1169,33 @@ body {
   padding: 1px 4px;
 }
 
-/* Week grid */
-.cal-week-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 1px;
-  background: var(--border);
+/* Week and day hour-grid calendar — Canvas 2D. The canvas paints
+   the whole grid (headers, hour labels, all-day row, marker row,
+   and the hour bars) so the wrap only scrolls the content and
+   the loading placeholder sits on top. */
+.cal-hour-grid-wrap {
+  position: relative;
+  overflow-x: auto;
+  padding: 8px;
+}
+.cal-hour-grid {
+  display: block;
+  cursor: pointer;
+  background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
-  min-height: 300px;
 }
-.cal-week-col {
-  background: var(--bg-card);
-  padding: 4px;
-}
-.cal-week-col.today {
-  background: var(--accent-subtle);
-}
-.cal-week-header {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  padding: 4px 0 6px;
-  text-align: center;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 4px;
-}
-
-/* Day view */
-.cal-day-view {
-  padding: 8px 16px;
-}
-.cal-day-item {
-  display: flex;
-  gap: 12px;
-  padding: 10px 12px;
-  margin-bottom: 6px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  border-left: 4px solid var(--normal);
-  cursor: pointer;
-}
-.cal-day-item.priority-high {
-  border-left-color: var(--high);
-}
-.cal-day-item.priority-low {
-  border-left-color: var(--low);
-}
-.cal-day-item.completed {
-  opacity: 0.6;
-}
-.cal-day-item.completed .cal-day-item-text strong {
-  text-decoration: line-through;
-}
-.cal-day-item-time {
-  min-width: 60px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  text-transform: capitalize;
-}
-.cal-day-item-text {
-  flex: 1;
-  font-size: 14px;
-}
-.urgency-bar {
-  margin-top: 4px;
-  position: relative;
-  height: 18px;
-  background: var(--bg-secondary, rgba(0, 0, 0, 0.05));
-  border-radius: 9px;
-  overflow: hidden;
-}
-.urgency-fill {
+.cal-hour-grid-loading {
   position: absolute;
-  top: 0;
-  left: 0;
-  height: 100%;
-  opacity: 0.35;
-  transition: width 0.5s ease-out, background 0.3s ease-out;
-}
-.urgency-label {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 100%;
+  inset: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.3px;
-  pointer-events: none;
+  color: var(--text-secondary);
+  font-size: 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }
 
 .timeline-charts {
