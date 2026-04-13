@@ -45,6 +45,31 @@
   --header-height: auto;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);
+
+  /* Calendar bar lifecycle palette — kept in lockstep with
+     core/bar_palette.py so the web and desktop render every
+     task in the same color. Each state has a base and a
+     companion deviation color used for two-zone overlays on
+     completed bars (early surplus / late overflow). All hex
+     values are chosen for >=4.5:1 contrast against the matching
+     theme background and to remain distinguishable to viewers
+     with red-green color vision deficiency. */
+  --bar-future: #60a5fa;
+  --bar-future-deviation: #60a5fa;
+  --bar-in-work-window: #0d9488;
+  --bar-in-work-window-deviation: #0d9488;
+  --bar-due-now: #d97706;
+  --bar-due-now-deviation: #d97706;
+  --bar-overdue-active: #dc2626;
+  --bar-overdue-active-deviation: #dc2626;
+  --bar-completed-early: #059669;
+  --bar-completed-early-deviation: #a7f3d0;
+  --bar-completed-ontime: #059669;
+  --bar-completed-ontime-deviation: #059669;
+  --bar-completed-late: #059669;
+  --bar-completed-late-deviation: #fca5a5;
+  --bar-completed-unknown: #6b7280;
+  --bar-completed-unknown-deviation: #6b7280;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -68,6 +93,24 @@
     --surface: #1e1e1e;
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
     --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.4);
+
+    /* Dark-theme calendar bar lifecycle palette */
+    --bar-future: #93c5fd;
+    --bar-future-deviation: #93c5fd;
+    --bar-in-work-window: #5eead4;
+    --bar-in-work-window-deviation: #5eead4;
+    --bar-due-now: #fbbf24;
+    --bar-due-now-deviation: #fbbf24;
+    --bar-overdue-active: #f87171;
+    --bar-overdue-active-deviation: #f87171;
+    --bar-completed-early: #34d399;
+    --bar-completed-early-deviation: #064e3b;
+    --bar-completed-ontime: #34d399;
+    --bar-completed-ontime-deviation: #34d399;
+    --bar-completed-late: #34d399;
+    --bar-completed-late-deviation: #7f1d1d;
+    --bar-completed-unknown: #9ca3af;
+    --bar-completed-unknown-deviation: #9ca3af;
   }
 }
 
@@ -91,6 +134,24 @@
   --surface: #1e1e1e;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.4);
+
+  /* Dark-theme calendar bar lifecycle palette */
+  --bar-future: #93c5fd;
+  --bar-future-deviation: #93c5fd;
+  --bar-in-work-window: #5eead4;
+  --bar-in-work-window-deviation: #5eead4;
+  --bar-due-now: #fbbf24;
+  --bar-due-now-deviation: #fbbf24;
+  --bar-overdue-active: #f87171;
+  --bar-overdue-active-deviation: #f87171;
+  --bar-completed-early: #34d399;
+  --bar-completed-early-deviation: #064e3b;
+  --bar-completed-ontime: #34d399;
+  --bar-completed-ontime-deviation: #34d399;
+  --bar-completed-late: #34d399;
+  --bar-completed-late-deviation: #7f1d1d;
+  --bar-completed-unknown: #9ca3af;
+  --bar-completed-unknown-deviation: #9ca3af;
 }
 
 body {
@@ -1727,6 +1788,16 @@ body {
 .detail-field select:focus,
 .detail-field textarea:focus {
   border-color: var(--accent);
+}
+
+.detail-readonly {
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 15px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-family: inherit;
 }
 
 .detail-priority-btns {

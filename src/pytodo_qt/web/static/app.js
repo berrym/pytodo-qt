@@ -3601,6 +3601,24 @@
     statusDiv.appendChild(statusBtn);
     detailBody.appendChild(statusDiv);
 
+    // Completion timestamp — read-only, only shown when set.
+    // The timestamp is managed automatically by the toggle path
+    // (set on completion, cleared on un-completion), so the UI
+    // displays it for transparency rather than offering it as an
+    // editable field.
+    if (item.completed_at) {
+      var completedDiv = document.createElement("div");
+      completedDiv.className = "detail-field";
+      var completedLabel = document.createElement("label");
+      completedLabel.textContent = "Completed";
+      completedDiv.appendChild(completedLabel);
+      var completedValue = document.createElement("div");
+      completedValue.className = "detail-readonly";
+      completedValue.textContent = new Date(item.completed_at).toLocaleString();
+      completedDiv.appendChild(completedValue);
+      detailBody.appendChild(completedDiv);
+    }
+
     // Reminder
     var reminderField = makeField(
       "Task",
