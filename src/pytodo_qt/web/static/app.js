@@ -3191,11 +3191,15 @@
   }
 
   function _chartGantt(items) {
+    // Only items that have a temporal window computed server-side
+    // (via the core calendar layout rules) are plottable. Items with
+    // no due date ship all four bar fields as null and are filtered
+    // here.
     var dueItems = items.filter(function (i) {
-      return i.due_date && i.created_at;
+      return i.bar_origin_ms != null && i.bar_end_ms != null;
     });
     dueItems.sort(function (a, b) {
-      return (a.due_date || "").localeCompare(b.due_date || "");
+      return a.bar_origin_ms - b.bar_origin_ms;
     });
     dueItems = dueItems.slice(0, 20);
 
@@ -3206,41 +3210,89 @@
     var ch = _chartCanvas("Tasks / Gantt", W, H);
     var ctx = ch.ctx;
 
+    var rootStyle = getComputedStyle(document.documentElement);
+    var textColor =
+      rootStyle.getPropertyValue("--text-secondary").trim() || "#888";
+
     if (dueItems.length === 0) {
-      ctx.fillStyle = "var(--text-secondary, #888)";
+      ctx.fillStyle = textColor;
       ctx.font = "13px sans-serif";
-      ctx.fillText("No items with due dates", 20, 30);
+      ctx.fillText("No items with a scheduled bar", 20, 30);
       return ch.container;
     }
 
-    var allDates = [];
-    dueItems.forEach(function (i) {
-      allDates.push(new Date(i.created_at));
-      allDates.push(new Date(i.due_date));
-    });
-    var minDate = Math.min.apply(null, allDates);
-    var maxDate = Math.max.apply(null, allDates);
-    var range = Math.max(maxDate - minDate, 86400000);
-    var chartW = W - labelW - 20;
-
-    function xPos(d) {
-      return labelW + ((d - minDate) / range) * chartW;
+    // Look up the base and deviation colors for a lifecycle state.
+    // The CSS variable names use dashes (--bar-in-work-window) while
+    // the enum values use underscores (in_work_window).
+    function palette(state) {
+      var key = (state || "future").replace(/_/g, "-");
+      var base = rootStyle.getPropertyValue("--bar-" + key).trim();
+      var dev = rootStyle.getPropertyValue("--bar-" + key + "-deviation").trim();
+      return {
+        base: base || "#60a5fa",
+        deviation: dev || base || "#60a5fa",
+      };
     }
 
-    var colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"];
+    // Chart extent needs to include post-deadline completion time
+    // for late completions, otherwise the overflow zone gets clipped
+    // off the right edge.
+    var minMs = Infinity;
+    var maxMs = -Infinity;
+    dueItems.forEach(function (item) {
+      if (item.bar_origin_ms < minMs) minMs = item.bar_origin_ms;
+      var endExtent = item.bar_end_ms;
+      if (item.bar_state === "completed_late" && item.completed_at != null) {
+        endExtent = Math.max(endExtent, item.completed_at);
+      }
+      if (endExtent > maxMs) maxMs = endExtent;
+    });
+    var rangeMs = Math.max(maxMs - minMs, 86_400_000);
+    var chartW = W - labelW - 20;
+
+    function xPos(ms) {
+      return labelW + ((ms - minMs) / rangeMs) * chartW;
+    }
+
+    var labelColor = rootStyle.getPropertyValue("--text").trim() || "#333";
+
     dueItems.forEach(function (item, idx) {
       var y = idx * (barH + 4) + 10;
-      var created = new Date(item.created_at).getTime();
-      var due = new Date(item.due_date).getTime();
-      var x1 = xPos(created);
-      var x2 = xPos(due);
+      var colors = palette(item.bar_state);
+      var origin = item.bar_origin_ms;
+      var end = item.bar_end_ms;
+      var x1 = xPos(origin);
+      var xEnd = xPos(end);
 
-      ctx.fillStyle = colors[idx % colors.length];
-      ctx.globalAlpha = item.complete ? 0.4 : 0.8;
-      ctx.fillRect(x1, y, Math.max(x2 - x1, 3), barH);
-      ctx.globalAlpha = 1;
+      if (
+        item.bar_state === "completed_early" &&
+        item.completed_at != null
+      ) {
+        // Actual work from origin to completed_at, then a translucent
+        // deviation zone for the unused planned span running to the
+        // original deadline.
+        var xMidE = xPos(item.completed_at);
+        ctx.fillStyle = colors.base;
+        ctx.fillRect(x1, y, Math.max(xMidE - x1, 2), barH);
+        ctx.fillStyle = colors.deviation;
+        ctx.fillRect(xMidE, y, Math.max(xEnd - xMidE, 2), barH);
+      } else if (
+        item.bar_state === "completed_late" &&
+        item.completed_at != null
+      ) {
+        // Planned span in base, overflow past the deadline in
+        // deviation to communicate that the task ran long.
+        var xOverflow = xPos(item.completed_at);
+        ctx.fillStyle = colors.base;
+        ctx.fillRect(x1, y, Math.max(xEnd - x1, 2), barH);
+        ctx.fillStyle = colors.deviation;
+        ctx.fillRect(xEnd, y, Math.max(xOverflow - xEnd, 2), barH);
+      } else {
+        ctx.fillStyle = colors.base;
+        ctx.fillRect(x1, y, Math.max(xEnd - x1, 3), barH);
+      }
 
-      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--text") || "#333";
+      ctx.fillStyle = labelColor;
       ctx.font = "11px sans-serif";
       var label = (item.reminder || "").substring(0, 18);
       ctx.fillText(label, 4, y + barH - 6);
