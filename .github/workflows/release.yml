@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version number (e.g., 0.3.10)'
+        description: 'Version number (e.g., 0.3.11.dev1)'
         required: true
-        default: '0.3.10'
+        default: '0.3.11.dev1'
 
 permissions:
   contents: write
@@ -175,16 +175,53 @@ jobs:
           echo "ASSET_PATH=${packageName}.zip" >> $env:GITHUB_ENV
           echo "ASSET_NAME=${packageName}.zip" >> $env:GITHUB_ENV
 
+      # SHA256 checksum sits next to each artifact as a sibling
+      # `<artifact>.sha256` file in the standard sha256sum -c format
+      # (`<hex>  <basename>`). Users verify a single download with
+      # `sha256sum -c file.tar.gz.sha256`. The format is identical
+      # across all three platforms even though each host produces
+      # it with its own native tool.
+      - name: Generate checksum (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cd "$(dirname "$ASSET_PATH")"
+          sha256sum "$(basename "$ASSET_PATH")" > "$(basename "$ASSET_PATH").sha256"
+          cat "$(basename "$ASSET_PATH").sha256"
+
+      - name: Generate checksum (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cd "$(dirname "$ASSET_PATH")"
+          shasum -a 256 "$(basename "$ASSET_PATH")" > "$(basename "$ASSET_PATH").sha256"
+          cat "$(basename "$ASSET_PATH").sha256"
+
+      - name: Generate checksum (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $assetPath = $env:ASSET_PATH
+          $basename = Split-Path -Leaf $assetPath
+          $hash = (Get-FileHash -Algorithm SHA256 $assetPath).Hash.ToLower()
+          $line = "$hash  $basename"
+          $sha256Path = "$assetPath.sha256"
+          # ASCII (no BOM) so the file is byte-identical to sha256sum output
+          [System.IO.File]::WriteAllText($sha256Path, "$line`n", [System.Text.UTF8Encoding]::new($false))
+          Get-Content $sha256Path
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ASSET_NAME }}
-          path: ${{ env.ASSET_PATH }}
+          path: |
+            ${{ env.ASSET_PATH }}
+            ${{ env.ASSET_PATH }}.sha256
 
       - name: Upload release asset
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.ASSET_PATH }}
+          files: |
+            ${{ env.ASSET_PATH }}
+            ${{ env.ASSET_PATH }}.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

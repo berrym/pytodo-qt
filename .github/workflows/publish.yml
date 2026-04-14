@@ -4,8 +4,14 @@ on:
   release:
     types: [published]
 
+# PyPI is reserved for finals only — prerelease tags (alpha, beta, rc,
+# dev) trigger this workflow but skip both jobs so nothing reaches
+# pypi.org until the official x.y.z release goes out. Without this
+# guard, every prerelease tag would attempt a PyPI upload, which is
+# exactly the noise we want to avoid in the v0.3.11 test cycle.
 jobs:
   build:
+    if: ${{ !github.event.release.prerelease }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -30,6 +36,7 @@ jobs:
           path: dist/
 
   publish:
+    if: ${{ !github.event.release.prerelease }}
     needs: build
     runs-on: ubuntu-latest
     environment: pypi
