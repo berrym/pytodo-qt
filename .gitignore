@@ -51,6 +51,9 @@ uv.lock
 # macOS icon build artifact
 pytodo-qt.iconset/
 
+# Generated at build time by packaging/macos/make_dmg_background.py
+packaging/macos/dmg_background.png
+
 # macOS metadata
 .DS_Store
 ._*
