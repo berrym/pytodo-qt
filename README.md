@@ -50,7 +50,19 @@ Download the latest release for your platform from the [Releases page](https://g
 
 #### Linux
 
-1. Download `pytodo-qt-VERSION-linux-x86_64.tar.gz` or `pytodo-qt-VERSION-linux-arm64.tar.gz`
+Two formats are provided for each architecture (`x86_64` and `arm64`).
+
+**AppImage** — single-file, self-contained, no install required:
+
+1. Download `pytodo-qt-VERSION-linux-x86_64.AppImage` (or `-linux-arm64.AppImage`)
+2. Make it executable: `chmod +x pytodo-qt-VERSION-linux-x86_64.AppImage`
+3. Run it: `./pytodo-qt-VERSION-linux-x86_64.AppImage`
+
+If your distribution dropped `libfuse2` (Ubuntu 22.04+, Fedora 38+), pass `--appimage-extract-and-run` the first time, or install `libfuse2` with your package manager.
+
+**Tarball** — traditional install to `~/.local/`:
+
+1. Download `pytodo-qt-VERSION-linux-x86_64.tar.gz` (or `-linux-arm64.tar.gz`)
 2. Extract: `tar -xzf pytodo-qt-VERSION-linux-*.tar.gz`
 3. Run the install script: `cd pytodo-qt-*/ && ./install.sh`
 4. Or run directly: `./pytodo-qt`
@@ -58,6 +70,18 @@ Download the latest release for your platform from the [Releases page](https://g
 The install script places the binary in `~/.local/bin/` and creates a desktop entry.
 
 To uninstall: `~/.local/lib/pytodo-qt/uninstall.sh` (or run `./uninstall.sh` from the extracted archive)
+
+##### Making the AppImage file show the PyTodo-Qt icon in your file manager
+
+Our AppImage ships with the PyTodo-Qt logo baked in (`.DirIcon`, root PNG, desktop entry at `usr/share/applications/`). Whether the icon actually appears next to the `.AppImage` file in your file manager depends on what your desktop environment has installed — the AppImage ecosystem deliberately keeps this opt-in rather than patching every runtime. Pick whichever of the three fixes below matches your setup:
+
+- **KDE Plasma** (Dolphin, Krusader): install `kio-extras` and `libappimage` — most KDE distributions already ship them. Dolphin will read the embedded `.DirIcon` directly and no further action is needed.
+
+- **GNOME / Cinnamon / XFCE / MATE / elementary** (Nautilus, Nemo, Thunar, Caja, Files): install `xapp-thumbnailers`. It ships by default on Linux Mint and Cinnamon; on Ubuntu, Fedora, Debian, and Arch you will need to install it explicitly (`sudo apt install xapp-thumbnailers`, etc.). Once installed, thumbnails of `.AppImage` files render with the embedded icon.
+
+- **Any desktop, "just works" path**: install [AppImageLauncher](https://github.com/TheAssassin/AppImageLauncher). Double-clicking any AppImage the first time will prompt you to integrate it; it then moves the file to `~/Applications/`, extracts the icon, and creates a real desktop entry. From that point on every file manager shows the right icon because the AppImage is a registered application.
+
+None of the above require changes to the AppImage itself — PyTodo-Qt already carries all the metadata these tools look for.
 
 #### Windows
 
