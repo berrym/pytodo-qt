@@ -37,7 +37,13 @@ AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppSupportURL}
 AppUpdatesURL={#MyAppUpdatesURL}
 AppComments={#MyAppDescription}
-VersionInfoVersion={#AppVersion}
+
+; VersionInfoVersion is intentionally omitted. It requires a strict
+; 4-part numeric format (e.g. 1.2.3.4) and would reject any PEP 440
+; pre-release suffix we ship (0.3.11.dev6, 0.3.11b1, 0.3.11rc1).
+; AppVersion above is the user-visible version in Add/Remove
+; Programs and the uninstaller — that's the display we actually
+; care about.
 
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
