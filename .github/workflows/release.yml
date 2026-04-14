@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version number (e.g., 0.3.11.dev4)'
+        description: 'Version number (e.g., 0.3.11.dev5)'
         required: true
-        default: '0.3.11.dev4'
+        default: '0.3.11.dev5'
 
 permissions:
   contents: write
@@ -150,6 +150,68 @@ jobs:
           echo "ASSET_PATH=${PACKAGE_NAME}.tar.gz" >> $GITHUB_ENV
           echo "ASSET_NAME=${PACKAGE_NAME}.tar.gz" >> $GITHUB_ENV
 
+      # AppImage ships alongside the tar.gz as a self-contained
+      # executable. We pull the matching-arch appimagetool from its
+      # `continuous` release and run with --appimage-extract-and-run
+      # so the build doesn't need FUSE on the GHA runner (Ubuntu
+      # 22.04+ dropped libfuse2 from the default image). The AppDir
+      # layout keeps the PyInstaller onedir output untouched at
+      # AppDir/pytodo-qt/ and uses a thin AppRun shell wrapper that
+      # execs the existing binary — so relative-path lookups inside
+      # the bundle (Path(__file__).parent.parent / "fonts" etc.)
+      # resolve exactly the same way they do from the tar.gz.
+      - name: Build AppImage (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          VERSION="${VERSION#v}"
+          APPIMAGE_NAME="pytodo-qt-${VERSION}-linux-${{ matrix.arch }}.AppImage"
+
+          # Map matrix arch to AppImage naming convention
+          case "${{ matrix.arch }}" in
+            x86_64) APPIMAGE_ARCH=x86_64 ;;
+            arm64)  APPIMAGE_ARCH=aarch64 ;;
+            *) echo "Unsupported arch: ${{ matrix.arch }}" >&2; exit 1 ;;
+          esac
+
+          curl -fSL -o appimagetool \
+            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${APPIMAGE_ARCH}.AppImage"
+          chmod +x appimagetool
+
+          # Stage the AppDir
+          mkdir -p AppDir/usr/share/applications \
+                   AppDir/usr/share/icons/hicolor/256x256/apps
+
+          # PyInstaller onedir output, untouched
+          cp -r dist/pytodo-qt AppDir/pytodo-qt
+
+          # Desktop entry — both at AppDir root (appimagetool hard
+          # requirement) and at the FHS path so desktop integration
+          # works once the AppImage is installed by user tooling.
+          cp packaging/linux/pytodo-qt.desktop AppDir/pytodo-qt.desktop
+          cp packaging/linux/pytodo-qt.desktop AppDir/usr/share/applications/pytodo-qt.desktop
+
+          # Icon — root copy (appimagetool requirement) + FHS hicolor
+          # path + .DirIcon symlink (AppImage convention).
+          cp src/pytodo_qt/gui/icons/pytodo-qt-256.png \
+             AppDir/usr/share/icons/hicolor/256x256/apps/pytodo-qt.png
+          cp src/pytodo_qt/gui/icons/pytodo-qt-256.png AppDir/pytodo-qt.png
+          ln -s pytodo-qt.png AppDir/.DirIcon
+
+          # AppRun — tiny exec wrapper, must be executable
+          cat > AppDir/AppRun <<'APPRUN'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          exec "$HERE/pytodo-qt/pytodo-qt" "$@"
+          APPRUN
+          chmod +x AppDir/AppRun
+
+          ARCH="${APPIMAGE_ARCH}" ./appimagetool --appimage-extract-and-run \
+            AppDir "${APPIMAGE_NAME}"
+
+          echo "APPIMAGE_PATH=${APPIMAGE_NAME}" >> $GITHUB_ENV
+          echo "APPIMAGE_NAME=${APPIMAGE_NAME}" >> $GITHUB_ENV
+
       # create-dmg wraps the already-signed .app in a DMG with a custom
       # background, a drag-to-Applications alias, and first-launch
       # instructions baked into the background image. We deliberately
@@ -218,9 +280,12 @@ jobs:
       - name: Generate checksum (Linux)
         if: runner.os == 'Linux'
         run: |
-          cd "$(dirname "$ASSET_PATH")"
-          sha256sum "$(basename "$ASSET_PATH")" > "$(basename "$ASSET_PATH").sha256"
-          cat "$(basename "$ASSET_PATH").sha256"
+          sha256sum "$ASSET_PATH" > "${ASSET_PATH}.sha256"
+          cat "${ASSET_PATH}.sha256"
+          if [ -n "${APPIMAGE_PATH:-}" ]; then
+            sha256sum "$APPIMAGE_PATH" > "${APPIMAGE_PATH}.sha256"
+            cat "${APPIMAGE_PATH}.sha256"
+          fi
 
       - name: Generate checksum (macOS)
         if: runner.os == 'macOS'
@@ -250,6 +315,15 @@ jobs:
             ${{ env.ASSET_PATH }}
             ${{ env.ASSET_PATH }}.sha256
 
+      - name: Upload AppImage artifact (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.APPIMAGE_NAME }}
+          path: |
+            ${{ env.APPIMAGE_PATH }}
+            ${{ env.APPIMAGE_PATH }}.sha256
+
       - name: Upload release asset
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
@@ -257,5 +331,15 @@ jobs:
           files: |
             ${{ env.ASSET_PATH }}
             ${{ env.ASSET_PATH }}.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload AppImage release asset (Linux)
+        if: github.event_name == 'release' && runner.os == 'Linux'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.APPIMAGE_PATH }}
+            ${{ env.APPIMAGE_PATH }}.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
