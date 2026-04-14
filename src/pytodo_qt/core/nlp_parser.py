@@ -945,6 +945,98 @@ def _extract_estimated_minutes(tokens: list[_Token], tracker: _SpanTracker) -> i
                 )
                 return total
 
+    # Pattern 3.5: Fractional-hour idioms that don't fit the bare
+    # "N unit" shape. Handles "half an hour" → 30, "a quarter of an
+    # hour" → 15, "three quarters of an hour" → 45, and so on. Must
+    # run before Pattern 4 or the bare number at the front of "three
+    # quarters of an hour" would be consumed as if "three" were a
+    # unit count.
+    #
+    # Guard: skip if preceded by "in" (that's a relative time, not
+    # an estimate — "in half an hour" means schedule for 30min from
+    # now).
+    def _fractional_hour_match(start: int) -> tuple[int, int] | None:
+        """Return (minutes, end_idx_inclusive) if tokens[start:] starts
+        with a fractional-hour idiom, else None.
+        """
+        n_toks = len(tokens)
+        if start >= n_toks:
+            return None
+        t0 = tokens[start].text
+        # "half an hour" / "half hour" / "a half hour" / "a half an hour"
+        if t0 == "half":
+            # "half an hour" / "half hour"
+            if (
+                start + 2 < n_toks
+                and tokens[start + 1].text in ("an", "a")
+                and tokens[start + 2].text in ("hour", "hr")
+            ):
+                return 30, start + 2
+            if start + 1 < n_toks and tokens[start + 1].text in ("hour", "hr"):
+                return 30, start + 1
+        if t0 in ("a", "an") and start + 1 < n_toks and tokens[start + 1].text == "half":
+            # "a half an hour" / "a half hour"
+            if (
+                start + 3 < n_toks
+                and tokens[start + 2].text in ("an", "a")
+                and tokens[start + 3].text in ("hour", "hr")
+            ):
+                return 30, start + 3
+            if start + 2 < n_toks and tokens[start + 2].text in ("hour", "hr"):
+                return 30, start + 2
+        # "a quarter of an hour" / "quarter of an hour" / "quarter hour"
+        if t0 == "quarter" or (
+            t0 in ("a", "an") and start + 1 < n_toks and tokens[start + 1].text == "quarter"
+        ):
+            q_start = start + 1 if t0 in ("a", "an") else start
+            # "quarter of an hour"
+            if (
+                q_start + 3 < n_toks
+                and tokens[q_start + 1].text == "of"
+                and tokens[q_start + 2].text in ("an", "a")
+                and tokens[q_start + 3].text in ("hour", "hr")
+            ):
+                return 15, q_start + 3
+            # "quarter hour"
+            if q_start + 1 < n_toks and tokens[q_start + 1].text in ("hour", "hr"):
+                return 15, q_start + 1
+        # "N quarters of an hour" — N=2→30, N=3→45
+        n_val, n_end = _tokens_to_number(tokens, start)
+        if (
+            n_val is not None
+            and 1 <= int(n_val) <= 3
+            and n_end + 1 < n_toks
+            and tokens[n_end + 1].text in ("quarters", "quarter")
+        ):
+            q_end = n_end + 1
+            if (
+                q_end + 3 < n_toks
+                and tokens[q_end + 1].text == "of"
+                and tokens[q_end + 2].text in ("an", "a")
+                and tokens[q_end + 3].text in ("hour", "hr")
+            ):
+                return int(n_val) * 15, q_end + 3
+            if q_end + 1 < n_toks and tokens[q_end + 1].text in ("hour", "hr"):
+                return int(n_val) * 15, q_end + 1
+        return None
+
+    for i, tok in enumerate(tokens):
+        if not tracker.is_free(tok.start, tok.end):
+            continue
+        if i > 0 and tokens[i - 1].text == "in":
+            continue  # "in half an hour" → relative time, not estimate
+        match = _fractional_hour_match(i)
+        if match is None:
+            continue
+        minutes, end_idx = match
+        span_end = tokens[end_idx].end
+        if not tracker.is_free(tok.start, span_end):
+            continue
+        tracker.reserve(
+            EntitySpan(tok.start, span_end, EntityKind.ESTIMATE, _make_display(minutes))
+        )
+        return minutes
+
     # Pattern 4: bare N unit(s) [and M unit(s)] without prefix
     # "thirty minutes", "ninety minutes", "one hour and thirty minutes", "two and a half hours"
     # Guard: skip if preceded by "in" (relative time) or "length"/"session" (work duration)
@@ -980,14 +1072,40 @@ def _extract_estimated_minutes(tokens: list[_Token], tracker: _SpanTracker) -> i
         total = int(num * time_units[unit_tok.text])
         span_end = unit_tok.end
 
-        # Check for compound: "N hours and M minutes"
-        if unit_idx + 3 < len(tokens) and tokens[unit_idx + 1].text == "and":
+        # Check for compound forms after "N unit":
+        #   (a) "N unit and a half" → + half the unit value
+        #   (b) "N unit and M unit2" → + M * unit2
+        #   (c) "N hour(s) M" (bare number, implies minutes)
+        if (
+            unit_idx + 3 < len(tokens)
+            and tokens[unit_idx + 1].text == "and"
+            and tokens[unit_idx + 2].text in ("a", "an")
+            and tokens[unit_idx + 3].text == "half"
+        ):
+            half_minutes = time_units[unit_tok.text] // 2
+            if half_minutes > 0 and tracker.is_free(tok.start, tokens[unit_idx + 3].end):
+                total += half_minutes
+                span_end = tokens[unit_idx + 3].end
+        elif unit_idx + 3 < len(tokens) and tokens[unit_idx + 1].text == "and":
             num2, num2_end = _tokens_to_number(tokens, unit_idx + 2)
             if num2 is not None and num2_end + 1 < len(tokens):
                 unit2_tok = tokens[num2_end + 1]
                 if unit2_tok.text in time_units and tracker.is_free(tok.start, unit2_tok.end):
                     total += int(num2 * time_units[unit2_tok.text])
                     span_end = unit2_tok.end
+        elif (
+            unit_tok.text in ("hour", "hours", "hr", "hrs")
+            and unit_idx + 1 < len(tokens)
+        ):
+            # "one hour thirty" → 90, "two hours fifteen" → 135
+            num2, num2_end = _tokens_to_number(tokens, unit_idx + 1)
+            if (
+                num2 is not None
+                and 0 < int(num2) < 60
+                and tracker.is_free(tok.start, tokens[num2_end].end)
+            ):
+                total += int(num2)
+                span_end = tokens[num2_end].end
 
         tracker.reserve(EntitySpan(tok.start, span_end, EntityKind.ESTIMATE, _make_display(total)))
         return total
@@ -1396,6 +1514,86 @@ def _extract_dates_and_times(
                     future = now + timedelta(hours=1)
                     _set_time(time(future.hour, future.minute), tok.start, tokens[i + 2].end)
                     i += 2
+
+        # Nth weekday of month: "first Monday of April",
+        # "last Friday of next month", "second Tuesday of this month".
+        # Must precede the bare day-name branch or a standalone
+        # "Monday" token would be consumed before this pattern fires.
+        elif (
+            (tok.text in intents["ordinal_words"] or tok.text == "last")
+            and i + 3 < len(tokens)
+            and tokens[i + 1].text in day_names
+            and tokens[i + 2].text == "of"
+        ):
+            weekday_idx = day_names[tokens[i + 1].text]
+            n = -1 if tok.text == "last" else intents["ordinal_words"][tok.text]
+            # Month specifier: single-token month name, or
+            # "next month" / "this month" / "the month".
+            target_month: int | None = None
+            target_year = today.year
+            month_spec_end = i + 2
+            spec_tok = tokens[i + 3]
+            if spec_tok.text in month_names:
+                target_month = month_names[spec_tok.text]
+                month_spec_end = i + 3
+            elif (
+                i + 4 < len(tokens)
+                and spec_tok.text in ("next", "this", "the")
+                and tokens[i + 4].text == "month"
+            ):
+                if spec_tok.text == "next":
+                    nm = _add_months(today.replace(day=1), 1)
+                    target_month = nm.month
+                    target_year = nm.year
+                else:
+                    target_month = today.month
+                month_spec_end = i + 4
+
+            if target_month is not None and (1 <= n <= 5 or n == -1):
+                import calendar as _cal_mod
+
+                first_of_month = date(target_year, target_month, 1)
+                def _resolve_nth_weekday(y: int, m: int) -> date:
+                    fom = date(y, m, 1)
+                    if n == -1:
+                        _, last_day_num = _cal_mod.monthrange(y, m)
+                        last_d = date(y, m, last_day_num)
+                        back = (last_d.weekday() - weekday_idx) % 7
+                        return last_d - timedelta(days=back)
+                    off = (weekday_idx - fom.weekday()) % 7
+                    candidate = fom + timedelta(days=off + (n - 1) * 7)
+                    if candidate.month != m:
+                        # Nth doesn't exist (e.g. "fifth Monday" in
+                        # a 4-Monday month). Graceful fall back to
+                        # the last occurrence so we always return
+                        # something sensible instead of leaking
+                        # the phrase to dateparser.
+                        _, last_day_num = _cal_mod.monthrange(y, m)
+                        last_d = date(y, m, last_day_num)
+                        back = (last_d.weekday() - weekday_idx) % 7
+                        return last_d - timedelta(days=back)
+                    return candidate
+
+                resolved = _resolve_nth_weekday(target_year, target_month)
+
+                # Push to next year if the resolved date is already past.
+                # Only applies to bare month-name forms; "next/this/the
+                # month" already picked their target month explicitly.
+                if (
+                    resolved is not None
+                    and spec_tok.text in month_names
+                    and resolved < today
+                ):
+                    target_year += 1
+                    resolved = _resolve_nth_weekday(target_year, target_month)
+
+                if resolved is not None:
+                    _set_date(resolved, tok.start, tokens[month_spec_end].end)
+                # Always advance past the matched phrase so a non-
+                # existent Nth (e.g. "fifth Monday" in a 4-Monday
+                # month) doesn't fall through to the bare-weekday
+                # branch and set a completely wrong date.
+                i = month_spec_end
 
         # Day name (bare): "Friday", "Monday" etc.
         elif tok.text in day_names:

@@ -290,6 +290,120 @@ class TestCrossUnitDurations:
         assert r.recurrence_type == "minutely"
         assert r.recurrence_interval == 45
 
+    # --- Extended fractional-hour durations (item 5 feature completion) ---
+
+    def test_39a_one_hour_thirty_no_and(self) -> None:
+        """'one hour thirty' without 'and' still resolves to 90 min."""
+        r = parse("workout one hour thirty", today=TODAY)
+        assert "workout" in r.reminder.lower()
+        assert r.estimated_minutes == 90
+
+    def test_39b_two_hours_fifteen_no_and(self) -> None:
+        r = parse("workout two hours fifteen", today=TODAY)
+        assert r.estimated_minutes == 135
+
+    def test_39c_an_hour_and_a_half(self) -> None:
+        """'an hour and a half' → 90 min (unit-based fraction)."""
+        r = parse("workout an hour and a half", today=TODAY)
+        assert r.estimated_minutes == 90
+
+    def test_39d_two_hours_and_a_half(self) -> None:
+        r = parse("workout two hours and a half", today=TODAY)
+        assert r.estimated_minutes == 150
+
+    def test_39e_three_quarters_of_an_hour(self) -> None:
+        """'three quarters of an hour' → 45 min."""
+        r = parse("workout three quarters of an hour", today=TODAY)
+        assert r.estimated_minutes == 45
+
+    def test_39f_a_quarter_of_an_hour(self) -> None:
+        r = parse("workout a quarter of an hour", today=TODAY)
+        assert r.estimated_minutes == 15
+
+    def test_39g_half_an_hour_as_duration(self) -> None:
+        """'half an hour' as task duration → 30 min."""
+        r = parse("workout half an hour", today=TODAY)
+        assert r.estimated_minutes == 30
+
+    def test_39h_a_half_hour_as_duration(self) -> None:
+        r = parse("workout a half hour", today=TODAY)
+        assert r.estimated_minutes == 30
+
+    def test_39i_in_half_an_hour_is_relative(self) -> None:
+        """'in half an hour' is a relative time, NOT a duration — the
+        'in' preamble must guard estimate extraction from grabbing it.
+        """
+        r = parse("lunch in half an hour", today=TODAY)
+        assert r.estimated_minutes is None
+
+
+# ===========================================================================
+# D2. Nth Weekday of Month — "first Monday of April", "last Friday of May"
+# ===========================================================================
+
+
+class TestNthWeekdayOfMonth:
+    """Section D2: Ordinal weekday + month specifier.
+
+    TODAY is 2026-04-05 (Sunday). Expected dates are derived from the
+    calendar, not hard-coded from parser output, so these tests are
+    genuine assertions of correct resolution.
+    """
+
+    def test_100_first_monday_of_next_month(self) -> None:
+        # May 2026 Mondays: 4, 11, 18, 25 → first = May 4
+        r = parse("first monday of next month", today=TODAY)
+        assert r.due_date == date(2026, 5, 4)
+
+    def test_101_last_friday_of_april(self) -> None:
+        # April 2026 Fridays: 3, 10, 17, 24 → last = Apr 24
+        r = parse("pay rent last friday of april", today=TODAY)
+        assert r.due_date == date(2026, 4, 24)
+
+    def test_102_second_tuesday_of_may(self) -> None:
+        # May 2026 Tuesdays: 5, 12, 19, 26 → second = May 12
+        r = parse("board meeting second tuesday of may", today=TODAY)
+        assert r.due_date == date(2026, 5, 12)
+
+    def test_103_third_wednesday_of_june(self) -> None:
+        # June 2026 Wednesdays: 3, 10, 17, 24 → third = Jun 17
+        r = parse("review third wednesday of june", today=TODAY)
+        assert r.due_date == date(2026, 6, 17)
+
+    def test_104_first_thursday_of_this_month(self) -> None:
+        # April 2026 first Thursday = Apr 2. "this month" skips the
+        # year-push logic, so past-date is preserved.
+        r = parse("archive first thursday of this month", today=TODAY)
+        assert r.due_date == date(2026, 4, 2)
+
+    def test_105_last_sunday_of_december(self) -> None:
+        # December 2026 Sundays: 6, 13, 20, 27 → last = Dec 27
+        r = parse("family dinner last sunday of december", today=TODAY)
+        assert r.due_date == date(2026, 12, 27)
+
+    def test_106_last_friday_of_past_month_pushes_year(self) -> None:
+        # January is before April → roll to January next year.
+        # Jan 2027 Fridays: 1, 8, 15, 22, 29 → last = Jan 29 2027
+        r = parse("payroll last friday of january", today=TODAY)
+        assert r.due_date == date(2027, 1, 29)
+
+    def test_107_fifth_monday_falls_back_gracefully(self) -> None:
+        """May 2026 has only 4 Mondays. 'fifth Monday of May' falls
+        back to the last Monday (May 25) rather than leaking to
+        dateparser and producing a nonsensical date.
+        """
+        r = parse("fifth monday of may", today=TODAY)
+        assert r.due_date == date(2026, 5, 25)
+
+    def test_108_does_not_eat_bare_weekday_after(self) -> None:
+        """'first Monday of next month' must not cause subsequent
+        bare weekday references in the same sentence to be mis-
+        parsed. Regression guard for the token-advancement logic.
+        """
+        r = parse("retrospective first monday of next month high priority", today=TODAY)
+        assert r.due_date == date(2026, 5, 4)
+        assert r.priority == 1
+
 
 # ===========================================================================
 # E. Filler Words & Spoken Punctuation
