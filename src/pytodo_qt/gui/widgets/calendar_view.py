@@ -4321,8 +4321,13 @@ class _PinnedWeekContainer(QWidget):
         layout.setSpacing(0)
 
         # Shared geometry — both tables use these so columns line up
-        # perfectly regardless of scrollbar reservations.
-        self._shared_v_header_width = 56
+        # perfectly regardless of scrollbar reservations. 72 px gives
+        # the "All Day" header label comfortable margin across fonts:
+        # macOS Noto Sans 10pt + header padding fits at ~56, but Linux
+        # and Windows render "All Day" wider and clip at 56. 72 is
+        # measured to fit on all three platforms with the bundled
+        # Noto Sans and reasonable future growth.
+        self._shared_v_header_width = 72
         self._scrollbar_width = self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
 
         # All Day pinned table — shows row 0 only. This is the ONLY
@@ -4671,11 +4676,13 @@ class CalendarViewWidget(QWidget):
         self._day_model = _WeekModel()
         self._day_delegate = _WeekDelegate()
         self._day_container = _PinnedWeekContainer(self._day_model, self._day_delegate)
-        # Larger slots for day view — more room for detail
-        for table in (self._day_container.all_day_table, self._day_container.hour_grid_table):
-            v_header = table.verticalHeader()
-            if v_header:
-                v_header.setDefaultSectionSize(80)
+        # Larger hour slots for day view — more room for detail. Applied
+        # ONLY to the hour-grid table so the all-day row stays on the
+        # shared 60 px baseline and day/week views match pixel-for-pixel
+        # above the hour grid.
+        _day_hg_v_header = self._day_container.hour_grid_table.verticalHeader()
+        if _day_hg_v_header:
+            _day_hg_v_header.setDefaultSectionSize(80)
         # Hide columns 1-6 in both inner tables, show only column 0 (the single day)
         self._day_container.hide_columns(list(range(1, 7)))
         self._day_container.connect_task_signals(
