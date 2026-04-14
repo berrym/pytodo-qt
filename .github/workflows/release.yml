@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version number (e.g., 0.3.11.dev2)'
+        description: 'Version number (e.g., 0.3.11.dev3)'
         required: true
-        default: '0.3.11.dev2'
+        default: '0.3.11.dev3'
 
 permissions:
   contents: write
@@ -152,10 +152,15 @@ jobs:
 
       # create-dmg wraps the already-signed .app in a DMG with a custom
       # background, a drag-to-Applications alias, and first-launch
-      # instructions baked into the background image. --sandbox-safe
-      # and --hdiutil-retries 10 mitigate the intermittent hdiutil
-      # failures observed on macos-14-arm64 runners
-      # (actions/runner-images#12323).
+      # instructions baked into the background image. We deliberately
+      # DO NOT pass --sandbox-safe: in the version shipped by the
+      # macOS runners, that flag skips blessing and in practice
+      # produces a DMG with no applied layout (no background, default
+      # icon positions, default window size). Cryptomator ships the
+      # same create-dmg path daily on macos-15 without it. The
+      # job-level timeout-minutes makes a hung osascript fail fast
+      # instead of burning the full runner budget if Finder ever
+      # gets wedged.
       - name: Install create-dmg (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -168,6 +173,7 @@ jobs:
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
+        timeout-minutes: 15
         run: |
           VERSION="${{ github.event.inputs.version || github.ref_name }}"
           VERSION="${VERSION#v}"
@@ -185,7 +191,6 @@ jobs:
             --icon "pytodo-qt.app" 150 180 \
             --app-drop-link 450 180 \
             --hide-extension "pytodo-qt.app" \
-            --sandbox-safe \
             --hdiutil-retries 10 \
             "${PACKAGE_NAME}.dmg" \
             dmg-staging

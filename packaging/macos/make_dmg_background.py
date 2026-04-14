@@ -85,7 +85,7 @@ def main() -> None:
     )
 
     lines = (
-        'Right-click the app in Applications  >  Open  >  Open again',
+        "Right-click the app in Applications  >  Open",
         '>  enter your password  >  check "Always allow".',
         "macOS asks once because the app uses an ad-hoc signature.",
     )
