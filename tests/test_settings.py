@@ -1,19 +1,21 @@
 """Tests for settings module."""
 
+import re
 from unittest.mock import MagicMock, patch
 
 from pytodo_qt.core import settings
+
+# PEP 440: N.N.N optionally followed by a pre-release (aN/bN/rcN)
+# and/or a .devN segment. Covers 0.3.10, 0.3.11, 0.3.11b1, 0.3.11.dev1, etc.
+_PEP440_RE = re.compile(r"^\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?(?:\.dev\d+)?$")
 
 
 class TestVersion:
     """Tests for version constant."""
 
     def test_version_format(self):
-        """Test version is in semver format."""
-        version = settings.__version__
-        parts = version.split(".")
-        assert len(parts) == 3
-        assert all(part.isdigit() for part in parts)
+        """Test version is PEP 440 compliant."""
+        assert _PEP440_RE.match(settings.__version__)
 
 
 class TestInitConfig:
