@@ -6,6 +6,7 @@ Modern logging system using rich for beautiful console output.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -37,12 +38,22 @@ THEME = Theme(
 # Global console for rich output
 console = Console(theme=THEME, stderr=True)
 
-# App directories
-APP_DIR = Path.home() / ".pytodo-qt"
-LOG_FILE = APP_DIR / "pytodo-qt.log"
 
-# Ensure app directory exists
-APP_DIR.mkdir(parents=True, exist_ok=True)
+def _xdg_state_log_file() -> Path:
+    """Return the XDG state home log file path.
+
+    Duplicates the small slice of paths.get_log_file() needed here
+    to avoid a circular import: paths.py instantiates Logger during
+    its own module body, which is BEFORE paths.get_log_file is
+    defined, so neither a top-level nor a lazy `from . import paths`
+    here works. Keeping the XDG layout in lockstep with paths.py is
+    a one-time copy — the layout is locked by the XDG spec and the
+    APP_NAME constant has been stable since the project started.
+    """
+    xdg_state = os.environ.get("XDG_STATE_HOME")
+    base = Path(xdg_state) if xdg_state else Path.home() / ".local" / "state"
+    return base / "pytodo-qt" / "pytodo-qt.log"
+
 
 # Configure root logger once
 _configured = False
@@ -53,6 +64,9 @@ def _configure_logging() -> None:
     global _configured
     if _configured:
         return
+
+    log_file = _xdg_state_log_file()
+    log_file.parent.mkdir(parents=True, exist_ok=True)
 
     # Rich handler for console
     rich_handler = RichHandler(
@@ -66,7 +80,7 @@ def _configure_logging() -> None:
     rich_handler.setLevel(logging.DEBUG)
 
     # File handler for persistent logs
-    file_handler = logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8")
+    file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(
         logging.Formatter(
