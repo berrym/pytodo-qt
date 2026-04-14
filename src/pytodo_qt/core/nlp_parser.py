@@ -864,6 +864,81 @@ def _extract_pomodoro(tokens: list[_Token], tracker: _SpanTracker) -> int | None
 # ---------------------------------------------------------------------------
 
 
+def _fractional_hour_phrase(tokens: list[_Token], start: int) -> tuple[int, int] | None:
+    """Match a fractional-hour idiom starting at tokens[start].
+
+    Returns ``(minutes, end_idx_inclusive)`` or None. Handles:
+        half an hour / half hour / a half hour / a half an hour → 30
+        a quarter of an hour / quarter of an hour / quarter hour → 15
+        N quarters of an hour  (N ∈ {1,2,3}) → N × 15
+        three quarters hour → 45
+
+    Used by both _extract_estimated_minutes (bare idiom → duration)
+    and the "in" branch of _extract_dates_and_times (prefixed by
+    "in" → relative future time). Keeping the match logic in one
+    place guarantees the two extractors agree on what counts as a
+    fractional-hour phrase, so a new form added here is picked up
+    by both paths with no further changes.
+    """
+    n_toks = len(tokens)
+    if start >= n_toks:
+        return None
+    t0 = tokens[start].text
+    # "half an hour" / "half hour"
+    if t0 == "half":
+        if (
+            start + 2 < n_toks
+            and tokens[start + 1].text in ("an", "a")
+            and tokens[start + 2].text in ("hour", "hr")
+        ):
+            return 30, start + 2
+        if start + 1 < n_toks and tokens[start + 1].text in ("hour", "hr"):
+            return 30, start + 1
+    # "a half hour" / "a half an hour"
+    if t0 in ("a", "an") and start + 1 < n_toks and tokens[start + 1].text == "half":
+        if (
+            start + 3 < n_toks
+            and tokens[start + 2].text in ("an", "a")
+            and tokens[start + 3].text in ("hour", "hr")
+        ):
+            return 30, start + 3
+        if start + 2 < n_toks and tokens[start + 2].text in ("hour", "hr"):
+            return 30, start + 2
+    # "a quarter of an hour" / "quarter of an hour" / "quarter hour"
+    if t0 == "quarter" or (
+        t0 in ("a", "an") and start + 1 < n_toks and tokens[start + 1].text == "quarter"
+    ):
+        q_start = start + 1 if t0 in ("a", "an") else start
+        if (
+            q_start + 3 < n_toks
+            and tokens[q_start + 1].text == "of"
+            and tokens[q_start + 2].text in ("an", "a")
+            and tokens[q_start + 3].text in ("hour", "hr")
+        ):
+            return 15, q_start + 3
+        if q_start + 1 < n_toks and tokens[q_start + 1].text in ("hour", "hr"):
+            return 15, q_start + 1
+    # "N quarters of an hour" (N ∈ {1,2,3})
+    n_val, n_end = _tokens_to_number(tokens, start)
+    if (
+        n_val is not None
+        and 1 <= int(n_val) <= 3
+        and n_end + 1 < n_toks
+        and tokens[n_end + 1].text in ("quarters", "quarter")
+    ):
+        q_end = n_end + 1
+        if (
+            q_end + 3 < n_toks
+            and tokens[q_end + 1].text == "of"
+            and tokens[q_end + 2].text in ("an", "a")
+            and tokens[q_end + 3].text in ("hour", "hr")
+        ):
+            return int(n_val) * 15, q_end + 3
+        if q_end + 1 < n_toks and tokens[q_end + 1].text in ("hour", "hr"):
+            return int(n_val) * 15, q_end + 1
+    return None
+
+
 def _extract_estimated_minutes(tokens: list[_Token], tracker: _SpanTracker) -> int | None:
     """Extract time estimate: ~90m, ~2h, ~1h30m, approximately 2 hours, about 90 min."""
     intents = _get_intents()
@@ -952,80 +1027,28 @@ def _extract_estimated_minutes(tokens: list[_Token], tracker: _SpanTracker) -> i
     # quarters of an hour" would be consumed as if "three" were a
     # unit count.
     #
-    # Guard: skip if preceded by "in" (that's a relative time, not
-    # an estimate — "in half an hour" means schedule for 30min from
-    # now).
-    def _fractional_hour_match(start: int) -> tuple[int, int] | None:
-        """Return (minutes, end_idx_inclusive) if tokens[start:] starts
-        with a fractional-hour idiom, else None.
-        """
-        n_toks = len(tokens)
-        if start >= n_toks:
-            return None
-        t0 = tokens[start].text
-        # "half an hour" / "half hour" / "a half hour" / "a half an hour"
-        if t0 == "half":
-            # "half an hour" / "half hour"
-            if (
-                start + 2 < n_toks
-                and tokens[start + 1].text in ("an", "a")
-                and tokens[start + 2].text in ("hour", "hr")
-            ):
-                return 30, start + 2
-            if start + 1 < n_toks and tokens[start + 1].text in ("hour", "hr"):
-                return 30, start + 1
-        if t0 in ("a", "an") and start + 1 < n_toks and tokens[start + 1].text == "half":
-            # "a half an hour" / "a half hour"
-            if (
-                start + 3 < n_toks
-                and tokens[start + 2].text in ("an", "a")
-                and tokens[start + 3].text in ("hour", "hr")
-            ):
-                return 30, start + 3
-            if start + 2 < n_toks and tokens[start + 2].text in ("hour", "hr"):
-                return 30, start + 2
-        # "a quarter of an hour" / "quarter of an hour" / "quarter hour"
-        if t0 == "quarter" or (
-            t0 in ("a", "an") and start + 1 < n_toks and tokens[start + 1].text == "quarter"
-        ):
-            q_start = start + 1 if t0 in ("a", "an") else start
-            # "quarter of an hour"
-            if (
-                q_start + 3 < n_toks
-                and tokens[q_start + 1].text == "of"
-                and tokens[q_start + 2].text in ("an", "a")
-                and tokens[q_start + 3].text in ("hour", "hr")
-            ):
-                return 15, q_start + 3
-            # "quarter hour"
-            if q_start + 1 < n_toks and tokens[q_start + 1].text in ("hour", "hr"):
-                return 15, q_start + 1
-        # "N quarters of an hour" — N=2→30, N=3→45
-        n_val, n_end = _tokens_to_number(tokens, start)
-        if (
-            n_val is not None
-            and 1 <= int(n_val) <= 3
-            and n_end + 1 < n_toks
-            and tokens[n_end + 1].text in ("quarters", "quarter")
-        ):
-            q_end = n_end + 1
-            if (
-                q_end + 3 < n_toks
-                and tokens[q_end + 1].text == "of"
-                and tokens[q_end + 2].text in ("an", "a")
-                and tokens[q_end + 3].text in ("hour", "hr")
-            ):
-                return int(n_val) * 15, q_end + 3
-            if q_end + 1 < n_toks and tokens[q_end + 1].text in ("hour", "hr"):
-                return int(n_val) * 15, q_end + 1
-        return None
+    # Guard: skip when any token in the matched phrase is preceded
+    # (within 4 tokens) by "in". That's a relative-time prefix that
+    # the date extractor will pick up later via the same
+    # _fractional_hour_phrase helper, so we must leave the span
+    # unreserved for it. The single-token lookback (prev tok == "in")
+    # isn't enough because phrases like "in a quarter of an hour"
+    # start matching two tokens after the "in" trigger.
+    def _preceded_by_in(start: int) -> bool:
+        for k in range(1, 5):
+            j = start - k
+            if j < 0:
+                return False
+            if tokens[j].text == "in":
+                return True
+        return False
 
     for i, tok in enumerate(tokens):
         if not tracker.is_free(tok.start, tok.end):
             continue
-        if i > 0 and tokens[i - 1].text == "in":
-            continue  # "in half an hour" → relative time, not estimate
-        match = _fractional_hour_match(i)
+        if _preceded_by_in(i):
+            continue
+        match = _fractional_hour_phrase(tokens, i)
         if match is None:
             continue
         minutes, end_idx = match
@@ -1039,12 +1062,18 @@ def _extract_estimated_minutes(tokens: list[_Token], tracker: _SpanTracker) -> i
 
     # Pattern 4: bare N unit(s) [and M unit(s)] without prefix
     # "thirty minutes", "ninety minutes", "one hour and thirty minutes", "two and a half hours"
-    # Guard: skip if preceded by "in" (relative time) or "length"/"session" (work duration)
-    _ESTIMATE_SKIP_PREV = {"in", "length", "session", "half", "every"}
+    # Guard: skip if the immediately preceding token is a work-duration
+    # or fraction anchor, OR if any token within the last 4 positions
+    # is "in" (relative-time prefix). The 4-token lookback catches
+    # "in three quarters of an hour" matching at "an hour", where the
+    # immediate prev is "of".
+    _ESTIMATE_SKIP_PREV = {"length", "session", "half", "every"}
     for i, tok in enumerate(tokens):
         if not tracker.is_free(tok.start, tok.end):
             continue
         if i > 0 and tokens[i - 1].text in _ESTIMATE_SKIP_PREV:
+            continue
+        if _preceded_by_in(i):
             continue
         # Check 2 tokens back through articles: "in a couple days"
         if (
@@ -1428,20 +1457,23 @@ def _extract_dates_and_times(
         elif tok.text == "in" and i + 1 < len(tokens):
             next_tok = tokens[i + 1]
 
-            # "in half an hour" / "in half a hour" → now + 30 minutes
-            if (
-                next_tok.text == "half"
-                and i + 3 < len(tokens)
-                and tokens[i + 2].text in ("an", "a")
-                and tokens[i + 3].text == "hour"
-            ):
+            # "in <fractional hour phrase>" → now + N minutes.
+            # Covers "in half an hour", "in a quarter of an hour",
+            # "in three quarters of an hour", etc. The shared
+            # _fractional_hour_phrase helper is the single source of
+            # truth for what counts as a fractional-hour idiom, so
+            # the relative-time branch and the duration extractor
+            # always agree.
+            frac = _fractional_hour_phrase(tokens, i + 1)
+            if frac is not None:
                 from datetime import datetime as _dt_now
 
+                minutes, end_idx = frac
                 now = _dt_now.now()
-                future = now + timedelta(minutes=30)
-                _set_time(time(future.hour, future.minute), tok.start, tokens[i + 3].end)
+                future = now + timedelta(minutes=minutes)
+                _set_time(time(future.hour, future.minute), tok.start, tokens[end_idx].end)
                 due_date = today  # Set directly — span already reserved for time
-                i += 4
+                i = end_idx + 1
                 continue
 
             num = _token_to_number(next_tok.text)

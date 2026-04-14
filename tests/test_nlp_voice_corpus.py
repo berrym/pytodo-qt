@@ -406,6 +406,55 @@ class TestNthWeekdayOfMonth:
 
 
 # ===========================================================================
+# D3. "in <fractional hour>" → relative future time (NOT duration)
+# ===========================================================================
+
+
+class TestRelativeFractionalHour:
+    """Section D3: phrases like "in half an hour" / "in a quarter of
+    an hour" / "in three quarters of an hour" are relative times, not
+    task durations. The shared _fractional_hour_phrase helper feeds
+    both the date extractor (via the "in" branch) and the estimate
+    extractor, and the latter is guarded by a 4-token lookback for
+    "in" so the same tokens never get counted as a duration estimate.
+
+    These tests assert the negative invariant (estimated_minutes is
+    None) and verify due_time is set. We don't pin due_time to an
+    exact value because the parser uses datetime.now() at call time,
+    so the test just checks that due_time is populated.
+    """
+
+    def test_110_in_half_an_hour_is_relative(self) -> None:
+        r = parse("lunch in half an hour", today=TODAY)
+        assert r.estimated_minutes is None
+        assert r.due_time is not None
+
+    def test_111_in_a_quarter_of_an_hour_is_relative(self) -> None:
+        r = parse("lunch in a quarter of an hour", today=TODAY)
+        assert r.estimated_minutes is None
+        assert r.due_time is not None
+
+    def test_112_in_three_quarters_of_an_hour_is_relative(self) -> None:
+        r = parse("lunch in three quarters of an hour", today=TODAY)
+        assert r.estimated_minutes is None
+        assert r.due_time is not None
+
+    def test_113_in_a_half_hour_is_relative(self) -> None:
+        r = parse("lunch in a half hour", today=TODAY)
+        assert r.estimated_minutes is None
+        assert r.due_time is not None
+
+    def test_114_bare_fractional_still_duration(self) -> None:
+        """Counter-test: without "in", the same phrase is still a
+        duration estimate. The "in" guard must not accidentally
+        swallow bare phrases.
+        """
+        r = parse("workout three quarters of an hour", today=TODAY)
+        assert r.estimated_minutes == 45
+        assert r.due_time is None
+
+
+# ===========================================================================
 # E. Filler Words & Spoken Punctuation
 # ===========================================================================
 
