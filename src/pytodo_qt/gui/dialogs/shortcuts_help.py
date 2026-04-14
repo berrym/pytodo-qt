@@ -18,8 +18,8 @@ from PyQt6.QtWidgets import (
 # Shortcut definitions: (category, shortcut_key, description)
 _SHORTCUTS: list[tuple[str, str, str]] = [
     # Items
-    ("Items", "+", "Add new to-do"),
-    ("Items", "-", "Delete selected to-do(s)"),
+    ("Items", "+", "Add new todo"),
+    ("Items", "-", "Delete selected todo(s)"),
     ("Items", "%", "Toggle completion"),
     ("Items", "Ctrl+Shift+T", "Edit tags"),
     ("Items", "Ctrl+D", "Edit due date"),

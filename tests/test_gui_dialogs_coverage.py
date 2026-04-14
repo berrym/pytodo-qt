@@ -41,7 +41,7 @@ class TestAddTodoDialogSmartMode:
 
     def test_construction(self, app):
         dialog = AddTodoDialog()
-        assert dialog.windowTitle() == "Add To-Do"
+        assert dialog.windowTitle() == "Add Todo"
         assert dialog.get_item() is None
 
     def test_smart_input_visible_by_default(self, app):

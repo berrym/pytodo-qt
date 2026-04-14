@@ -47,7 +47,7 @@ class AddTodoDialog(QDialog):
 
     def __init__(self, parent=None, *, known_tags: list[str] | None = None):
         super().__init__(parent)
-        self.setWindowTitle(self.tr("Add To-Do"))
+        self.setWindowTitle(self.tr("Add Todo"))
         self.setMinimumWidth(720)
 
         self._item: TodoItem | None = None
@@ -679,7 +679,7 @@ class AddTodoDialog(QDialog):
     def create_item(
         cls,
         parent=None,
-        title: str = "Add To-Do",
+        title: str = "Add Todo",
         known_tags: list[str] | None = None,
     ) -> TodoItem | None:
         """Convenience method to show dialog and get result."""

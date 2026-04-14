@@ -811,6 +811,17 @@ class _CalendarTableView(QTableView):
         self._drag_item_id = None
         self._drag_item_reminder = ""
         self._dragging = False
+        # Drop-target highlight overlay — child of the viewport
+        # positioned over the cell currently under the drag cursor so
+        # users see exactly which day they are about to drop into.
+        # Transparent to mouse events so it never swallows drops.
+        self._drop_highlight = QFrame(self.viewport())
+        self._drop_highlight.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._drop_highlight.setStyleSheet(
+            "QFrame { background: rgba(37, 99, 235, 40); "
+            "border: 2px solid #2563eb; border-radius: 4px; }"
+        )
+        self._drop_highlight.hide()
 
     def resizeEvent(self, a0) -> None:  # noqa: N802
         super().resizeEvent(a0)
@@ -970,10 +981,23 @@ class _CalendarTableView(QTableView):
             a0.acceptProposedAction()
 
     def dragMoveEvent(self, a0) -> None:  # noqa: N802
-        if a0 and a0.mimeData() and a0.mimeData().hasFormat("application/x-pytodo-item-id"):
-            a0.acceptProposedAction()
+        if not (a0 and a0.mimeData() and a0.mimeData().hasFormat("application/x-pytodo-item-id")):
+            return
+        a0.acceptProposedAction()
+        index = self.indexAt(a0.position().toPoint())
+        if index.isValid() and index.data(_DATE_ROLE) is not None:
+            self._drop_highlight.setGeometry(self.visualRect(index))
+            self._drop_highlight.show()
+            self._drop_highlight.raise_()
+        else:
+            self._drop_highlight.hide()
+
+    def dragLeaveEvent(self, a0) -> None:  # noqa: N802
+        self._drop_highlight.hide()
+        super().dragLeaveEvent(a0)
 
     def dropEvent(self, a0) -> None:  # noqa: N802
+        self._drop_highlight.hide()
         if a0 is None or a0.mimeData() is None:
             return
         mime = a0.mimeData()
@@ -3640,6 +3664,30 @@ class _WeekTableView(QTableView):
         self._drag_item_id = None
         self._drag_item_reminder = ""
         self._dragging = False
+        # Drop-target highlight overlay — child of the viewport
+        # positioned over the cell currently under the drag cursor.
+        # Transparent to mouse events so it never swallows drops.
+        self._drop_highlight = QFrame(self.viewport())
+        self._drop_highlight.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._drop_highlight.setStyleSheet(
+            "QFrame { background: rgba(37, 99, 235, 40); "
+            "border: 2px solid #2563eb; border-radius: 4px; }"
+        )
+        self._drop_highlight.hide()
+        # Floating preview label that follows the cursor during a drag
+        # and shows the exact date + time the drop will land on. Uses
+        # the same tool-window pattern as _tooltip_label so repaints
+        # from the now-timer don't flicker it.
+        self._drag_preview_label = QLabel(self)
+        self._drag_preview_label.setWindowFlags(
+            Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
+        )
+        self._drag_preview_label.setStyleSheet(
+            "QLabel { background: #2563eb; color: white; "
+            "border-radius: 6px; padding: 6px 10px; "
+            "font-size: 12px; font-weight: bold; }"
+        )
+        self._drag_preview_label.hide()
 
     def _hit_test(self, pos):
         """Find what was clicked at `pos`.
@@ -3895,10 +3943,36 @@ class _WeekTableView(QTableView):
             a0.acceptProposedAction()
 
     def dragMoveEvent(self, a0) -> None:  # noqa: N802
-        if a0 and a0.mimeData() and a0.mimeData().hasFormat("application/x-pytodo-item-id"):
-            a0.acceptProposedAction()
+        if not (a0 and a0.mimeData() and a0.mimeData().hasFormat("application/x-pytodo-item-id")):
+            return
+        a0.acceptProposedAction()
+        index = self.indexAt(a0.position().toPoint())
+        target_date = index.data(_WEEK_DATE_ROLE) if index.isValid() else None
+        target_hour = index.data(_WEEK_HOUR_ROLE) if index.isValid() else None
+        if target_date is not None and target_hour is not None:
+            self._drop_highlight.setGeometry(self.visualRect(index))
+            self._drop_highlight.show()
+            self._drop_highlight.raise_()
+            self._drag_preview_label.setText(
+                _format_drop_target(target_date, int(target_hour))
+            )
+            self._drag_preview_label.adjustSize()
+            cursor = a0.position().toPoint()
+            global_cursor = self.viewport().mapToGlobal(cursor)
+            self._drag_preview_label.move(global_cursor.x() + 18, global_cursor.y() + 12)
+            self._drag_preview_label.show()
+        else:
+            self._drop_highlight.hide()
+            self._drag_preview_label.hide()
+
+    def dragLeaveEvent(self, a0) -> None:  # noqa: N802
+        self._drop_highlight.hide()
+        self._drag_preview_label.hide()
+        super().dragLeaveEvent(a0)
 
     def dropEvent(self, a0) -> None:  # noqa: N802
+        self._drop_highlight.hide()
+        self._drag_preview_label.hide()
         if a0 is None or a0.mimeData() is None:
             return
         mime = a0.mimeData()
@@ -3922,6 +3996,27 @@ class _WeekTableView(QTableView):
         target_time = _time(target_hour, 0) if target_hour >= 0 else None
         self.task_dropped.emit(item_id, target_date, target_time)
         a0.acceptProposedAction()
+
+
+def _format_drop_target(target_date: date, target_hour: int) -> str:
+    """Format the floating drag preview label text for week/day view drops.
+
+    `target_hour == -1` is the all-day row sentinel. Regular hours
+    render as 12-hour clock with AM/PM so the tooltip matches the
+    conventions used elsewhere in the calendar.
+    """
+    day = target_date.strftime("%a %b %d")
+    if target_hour < 0:
+        return f"{day}  \u00b7  All day"
+    if target_hour == 0:
+        time_str = "12:00 AM"
+    elif target_hour < 12:
+        time_str = f"{target_hour}:00 AM"
+    elif target_hour == 12:
+        time_str = "12:00 PM"
+    else:
+        time_str = f"{target_hour - 12}:00 PM"
+    return f"{day}  \u00b7  {time_str}"
 
 
 class _DayHeaders(QWidget):
@@ -5302,8 +5397,25 @@ class CalendarViewWidget(QWidget):
         self._day_container.update_viewports()
 
     def _on_task_double_clicked(self, item_id: UUID) -> None:
+        """Double-click opens the Edit Reminder dialog — same entry
+        point that the context menu's Edit Reminder action uses, and
+        mirrors the kanban board's card-double-click behavior."""
+        from PyQt6.QtWidgets import QInputDialog
+
         self._selected_item_id = item_id
-        # TODO: open task detail/edit dialog
+        if self._todo_list is None:
+            return
+        item = self._todo_list.items.get(item_id)
+        if item is None:
+            return
+        text, ok = QInputDialog.getText(
+            self,
+            self.tr("Edit Reminder"),
+            self.tr("Reminder:"),
+            text=item.reminder,
+        )
+        if ok and text.strip() and text.strip() != item.reminder:
+            self.item_reminder_changed.emit(item_id, text.strip())
 
     def _on_task_right_clicked(self, item_id: UUID, global_pos) -> None:
         """Show context menu — parity with list/kanban context menus."""

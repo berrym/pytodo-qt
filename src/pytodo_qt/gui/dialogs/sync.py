@@ -66,9 +66,9 @@ class SyncDialog(QDialog):
 
         # Operation description
         if self._operation == "pull":
-            desc = self.tr("Pull to-do lists from a remote host.")
+            desc = self.tr("Pull todo lists from a remote host.")
         else:
-            desc = self.tr("Push your to-do lists to a remote host.")
+            desc = self.tr("Push your todo lists to a remote host.")
         desc_label = QLabel(desc)
         desc_label.setWordWrap(True)
         layout.addWidget(desc_label)

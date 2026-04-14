@@ -309,16 +309,16 @@ class MainWindow(QMainWindow):
         self.exit_action.triggered.connect(self._quit_application)
 
         # Todo actions
-        self.add_todo_action = QAction(self._get_icon("plus.svg"), self.tr("&Add To-Do"), self)
+        self.add_todo_action = QAction(self._get_icon("plus.svg"), self.tr("&Add Todo"), self)
         self.add_todo_action.setShortcut("+")
-        self.add_todo_action.setToolTip(self._tip(self.tr("Add new to-do"), "+"))
+        self.add_todo_action.setToolTip(self._tip(self.tr("Add new todo"), "+"))
         self.add_todo_action.triggered.connect(self._on_add_todo)
 
         self.delete_todo_action = QAction(
-            self._get_icon("minus.svg"), self.tr("&Delete To-Do"), self
+            self._get_icon("minus.svg"), self.tr("&Delete Todo"), self
         )
         self.delete_todo_action.setShortcut("-")
-        self.delete_todo_action.setToolTip(self._tip(self.tr("Delete selected to-do"), "-"))
+        self.delete_todo_action.setToolTip(self._tip(self.tr("Delete selected todo"), "-"))
         self.delete_todo_action.triggered.connect(self._on_delete_todo)
 
         self.toggle_todo_action = QAction(
@@ -572,7 +572,7 @@ class MainWindow(QMainWindow):
             view_menu.addAction(self._detail_panel_action)
 
         # Todo menu
-        todo_menu = menu_bar.addMenu(self.tr("&To-Do"))
+        todo_menu = menu_bar.addMenu(self.tr("&Todo"))
         if todo_menu:
             todo_menu.addAction(self.add_todo_action)
             todo_menu.addAction(self.add_subtask_action)
@@ -4081,7 +4081,7 @@ class MainWindow(QMainWindow):
             self.tr("About PyTodo-Qt"),
             self.tr(
                 f"<b>PyTodo-Qt v{settings.__version__}</b><br><br>"
-                "A modern cross-platform to-do application with "
+                "A modern cross-platform todo application with "
                 "encrypted peer-to-peer synchronization.<br><br>"
                 "License: <a href='http://www.fsf.org/licenses/gpl.html'>GPLv3</a><br><br>"
                 "<b>Copyright (C) 2024-2026 Michael Berry</b>"
