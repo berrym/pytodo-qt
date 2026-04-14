@@ -57,7 +57,6 @@ Time values stored as `HH:MM` strings (YAML 1.2 keeps them as strings, no quotin
 | `core/nlp_parser.py` | Complete rewrite, same public API |
 | `core/intents/__init__.py` | NEW — YAML loader with caching |
 | `core/intents/en.yaml` | NEW — English intent dictionary |
-| `core/nlp_parser_regex_backup.py` | Backup of old regex parser |
 | `gui/widgets/smart_input.py` | EntityChip rewritten as QLabel subclass |
 | `gui/dialogs/add_todo.py` | Preset pills removed, tr() wrapped |
 | All 22 GUI files | tr() wrapped for i18n readiness |
