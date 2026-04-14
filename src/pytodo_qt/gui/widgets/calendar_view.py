@@ -28,11 +28,12 @@ from PyQt6.QtCore import (
     QCoreApplication,
     QMimeData,
     QModelIndex,
+    QPoint,
     QRect,
     Qt,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QDrag, QFont, QFontMetrics, QPainter, QPen
+from PyQt6.QtGui import QColor, QDrag, QFont, QFontMetrics, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -713,6 +714,60 @@ class _CalendarDelegate(QStyledItemDelegate):
         return QSize(100, 90)
 
 
+def _make_drag_pixmap(text: str) -> QPixmap:
+    """Build a small accent-blue pill drag preview for a task.
+
+    Used by every drag source in the calendar (month chip, week/day
+    bar, unscheduled-panel button) so the cursor carries a visible
+    preview of what's being moved instead of just a generic Qt
+    "grabbing" hand.
+    """
+    from PyQt6.QtCore import QRectF
+    from PyQt6.QtGui import QBrush, QFontMetrics, QPainter, QPen, QPixmap
+
+    label = (text or "Task").strip() or "Task"
+    if len(label) > 32:
+        label = label[:30] + "\u2026"
+
+    font = QFont()
+    font.setPointSize(10)
+    font.setBold(True)
+    fm = QFontMetrics(font)
+
+    pad_x, pad_y = 14, 7
+    text_w = fm.horizontalAdvance(label)
+    text_h = fm.height()
+
+    pill_w = text_w + 2 * pad_x
+    pill_h = text_h + 2 * pad_y
+
+    # 4 px extra so the soft drop shadow has room to render.
+    pm = QPixmap(pill_w + 4, pill_h + 4)
+    pm.fill(Qt.GlobalColor.transparent)
+
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    # Single offset rounded rect approximates a soft shadow without
+    # the overhead of QGraphicsDropShadowEffect.
+    p.setBrush(QBrush(QColor(0, 0, 0, 80)))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawRoundedRect(QRectF(2, 3, pill_w, pill_h), 8, 8)
+
+    # Main pill: accent blue with a slightly darker outline.
+    p.setBrush(QBrush(QColor("#2563eb")))
+    p.setPen(QPen(QColor("#1e40af"), 1))
+    p.drawRoundedRect(QRectF(0, 0, pill_w, pill_h), 8, 8)
+
+    # White bold text — high contrast against the blue.
+    p.setFont(font)
+    p.setPen(QColor("white"))
+    p.drawText(QRectF(0, 0, pill_w, pill_h), Qt.AlignmentFlag.AlignCenter, label)
+
+    p.end()
+    return pm
+
+
 class _CalendarTableView(QTableView):
     """Month grid table view with guaranteed equal columns and rows."""
 
@@ -754,6 +809,7 @@ class _CalendarTableView(QTableView):
         self._tooltip_item_id = None
         self._drag_start_pos = None
         self._drag_item_id = None
+        self._drag_item_reminder = ""
         self._dragging = False
 
     def resizeEvent(self, a0) -> None:  # noqa: N802
@@ -807,6 +863,7 @@ class _CalendarTableView(QTableView):
         self._tooltip_item_id = None
         self._drag_start_pos = None
         self._drag_item_id = None
+        self._drag_item_reminder = ""
         self._dragging = False
         if a0 is None:
             return
@@ -818,6 +875,7 @@ class _CalendarTableView(QTableView):
             if a0.button() == Qt.MouseButton.LeftButton:
                 self._drag_start_pos = a0.pos()
                 self._drag_item_id = hit[1].id
+                self._drag_item_reminder = getattr(hit[1], "reminder", "") or ""
         elif hit[0] == "more":
             self.more_clicked.emit(hit[1], hit[2])
 
@@ -831,6 +889,7 @@ class _CalendarTableView(QTableView):
     def mouseReleaseEvent(self, a0) -> None:  # noqa: N802
         self._drag_start_pos = None
         self._drag_item_id = None
+        self._drag_item_reminder = ""
         self._dragging = False
         super().mouseReleaseEvent(a0)
 
@@ -853,10 +912,14 @@ class _CalendarTableView(QTableView):
                 str(self._drag_item_id).encode(),
             )
             drag.setMimeData(mime)
+            pm = _make_drag_pixmap(self._drag_item_reminder)
+            drag.setPixmap(pm)
+            drag.setHotSpot(QPoint(pm.width() // 2, pm.height() // 2))
             drag.exec(Qt.DropAction.MoveAction)
             # Reset after exec — mouseReleaseEvent won't fire
             self._drag_start_pos = None
             self._drag_item_id = None
+            self._drag_item_reminder = ""
             self._dragging = False
             return
         # Tooltip on hover — persistent QLabel, not QToolTip.showText()
@@ -3575,6 +3638,7 @@ class _WeekTableView(QTableView):
         self._tooltip_item_id = None
         self._drag_start_pos = None
         self._drag_item_id = None
+        self._drag_item_reminder = ""
         self._dragging = False
 
     def _hit_test(self, pos):
@@ -3720,6 +3784,7 @@ class _WeekTableView(QTableView):
         self._tooltip_item_id = None
         self._drag_start_pos = None
         self._drag_item_id = None
+        self._drag_item_reminder = ""
         self._dragging = False
         if a0 is None:
             return
@@ -3731,12 +3796,14 @@ class _WeekTableView(QTableView):
             if a0.button() == Qt.MouseButton.LeftButton:
                 self._drag_start_pos = a0.pos()
                 self._drag_item_id = hit[1].id
+                self._drag_item_reminder = getattr(hit[1], "reminder", "") or ""
         elif hit[0] == "more":
             self.more_clicked.emit(hit[1], hit[2])
 
     def mouseReleaseEvent(self, a0) -> None:  # noqa: N802
         self._drag_start_pos = None
         self._drag_item_id = None
+        self._drag_item_reminder = ""
         self._dragging = False
         super().mouseReleaseEvent(a0)
 
@@ -3759,9 +3826,13 @@ class _WeekTableView(QTableView):
                 str(self._drag_item_id).encode(),
             )
             drag.setMimeData(mime)
+            pm = _make_drag_pixmap(self._drag_item_reminder)
+            drag.setPixmap(pm)
+            drag.setHotSpot(QPoint(pm.width() // 2, pm.height() // 2))
             drag.exec(Qt.DropAction.MoveAction)
             self._drag_start_pos = None
             self._drag_item_id = None
+            self._drag_item_reminder = ""
             self._dragging = False
             return
         # Tooltip handling — uses a persistent QLabel instead of
@@ -3902,6 +3973,13 @@ class _DraggableTaskButton(QPushButton):
             mime.setText(str(self._item_id))
             mime.setData("application/x-pytodo-item-id", str(self._item_id).encode())
             drag.setMimeData(mime)
+            # Use the button's own appearance as the drag pixmap so
+            # the cursor carries an exact preview of what the user
+            # grabbed. The hotspot stays at the press position so
+            # the pixmap doesn't jump under the cursor.
+            pm = self.grab()
+            drag.setPixmap(pm)
+            drag.setHotSpot(self._drag_start)
             drag.exec(Qt.DropAction.MoveAction)
             self._drag_start = None
         else:
