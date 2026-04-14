@@ -11,7 +11,6 @@ Follows the XDG Base Directory Specification:
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 
 from .logger import Logger
@@ -60,29 +59,14 @@ def get_state_dir() -> Path:
     return get_xdg_state_home() / APP_NAME
 
 
-def get_legacy_dir() -> Path:
-    """Get legacy ~/.pytodo-qt directory for migration."""
-    return Path.home() / ".pytodo-qt"
-
-
 def get_config_file() -> Path:
     """Get path to config.toml."""
     return get_config_dir() / "config.toml"
 
 
-def get_legacy_ini_file() -> Path:
-    """Get path to legacy INI config (for migration)."""
-    return get_legacy_dir() / "pytodo-qt.ini"
-
-
 def get_database_file() -> Path:
     """Get path to SQLite database file."""
     return get_data_dir() / "pytodo-qt.db"
-
-
-def get_legacy_json_database() -> Path:
-    """Get path to legacy JSON database file (for migration)."""
-    return get_data_dir() / "pytodo-qt-db.json"
 
 
 def get_log_file() -> Path:
@@ -100,67 +84,3 @@ def ensure_directories() -> None:
             except OSError as e:
                 logger.log.exception("Error creating directory %s: %s", dir_path, e)
                 raise
-
-
-def migrate_from_legacy() -> bool:
-    """Migrate files from legacy ~/.pytodo-qt directory to XDG locations.
-
-    Returns:
-        True if migration occurred, False otherwise.
-    """
-    legacy_dir = get_legacy_dir()
-    if not legacy_dir.exists():
-        return False
-
-    migrated = False
-
-    # Ensure new directories exist
-    ensure_directories()
-
-    # Migrate config.toml
-    legacy_config = legacy_dir / "config.toml"
-    new_config = get_config_file()
-    if legacy_config.exists() and not new_config.exists():
-        try:
-            shutil.copy2(legacy_config, new_config)
-            logger.log.info("Migrated config from %s to %s", legacy_config, new_config)
-            migrated = True
-        except OSError as e:
-            logger.log.warning("Failed to migrate config: %s", e)
-
-    # Migrate database file (to JSON location, will be migrated to SQLite later)
-    legacy_db = legacy_dir / "pytodo-qt-db.json"
-    new_db = get_legacy_json_database()
-    if legacy_db.exists() and not new_db.exists():
-        try:
-            shutil.copy2(legacy_db, new_db)
-            logger.log.info("Migrated database from %s to %s", legacy_db, new_db)
-            migrated = True
-        except OSError as e:
-            logger.log.warning("Failed to migrate database: %s", e)
-
-    # Migrate legacy INI file (for further migration to TOML)
-    legacy_ini = legacy_dir / "pytodo-qt.ini"
-    new_legacy_ini = get_config_dir() / "pytodo-qt.ini"
-    if legacy_ini.exists() and not new_legacy_ini.exists():
-        try:
-            shutil.copy2(legacy_ini, new_legacy_ini)
-            logger.log.info("Migrated legacy INI from %s to %s", legacy_ini, new_legacy_ini)
-            migrated = True
-        except OSError as e:
-            logger.log.warning("Failed to migrate legacy INI: %s", e)
-
-    if migrated:
-        # Create a marker file in legacy dir indicating migration occurred
-        marker = legacy_dir / ".migrated-to-xdg"
-        try:
-            marker.write_text(
-                f"Migrated to XDG directories.\nConfig: {get_config_dir()}\nData: {get_data_dir()}\n"
-            )
-            logger.log.info(
-                "Legacy data migrated to XDG directories. Old files preserved in %s", legacy_dir
-            )
-        except OSError:
-            pass
-
-    return migrated
