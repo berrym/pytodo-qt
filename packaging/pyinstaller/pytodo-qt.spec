@@ -25,9 +25,24 @@ else:
 # Collect all pytodo_qt submodules
 pytodo_qt_imports = collect_submodules("pytodo_qt")
 
-# Collect package data (icons only - styles are in Python code)
+# Collect package data — runtime assets loaded relative to __file__ via
+# Path(__file__).parent lookups in gui/. The stylesheet is in Python
+# code so it doesn't need bundling, but everything else loaded off disk
+# must be listed here or it silently fails to resolve inside the bundle.
 datas = [
+    # SVG icons used throughout the UI (toolbars, buttons, inline decorations)
     (os.path.join(ROOT, "src", "pytodo_qt", "gui", "icons", "*.svg"), "pytodo_qt/gui/icons"),
+    # PNG icons used for the application window icon via QIcon.addFile()
+    (os.path.join(ROOT, "src", "pytodo_qt", "gui", "icons", "pytodo-qt-256.png"), "pytodo_qt/gui/icons"),
+    (os.path.join(ROOT, "src", "pytodo_qt", "gui", "icons", "pytodo-qt-1024.png"), "pytodo_qt/gui/icons"),
+    # Bundled Noto Sans + Noto Color Emoji registered via QFontDatabase at
+    # startup. Without this, apply_bundled_font() sets QFont("Noto Sans")
+    # against a font that was never registered, and Qt falls back to a
+    # wider default font with visibly off metrics.
+    (os.path.join(ROOT, "src", "pytodo_qt", "gui", "fonts", "*.ttf"), "pytodo_qt/gui/fonts"),
+    (os.path.join(ROOT, "src", "pytodo_qt", "gui", "fonts", "OFL.txt"), "pytodo_qt/gui/fonts"),
+    # Pomodoro break/work notification sounds
+    (os.path.join(ROOT, "src", "pytodo_qt", "gui", "sounds", "*.wav"), "pytodo_qt/gui/sounds"),
     (os.path.join(SPECPATH, "qt.conf"), "."),  # Qt plugin path configuration
 ]
 
@@ -120,8 +135,8 @@ if sys.platform == "darwin":
             "CFBundleDisplayName": "PyTodo-Qt",
             "CFBundleExecutable": "pytodo-qt",
             "CFBundleName": "PyTodo-Qt",
-            "CFBundleShortVersionString": "0.3.11.dev3",
-            "CFBundleVersion": "0.3.11.dev3",
+            "CFBundleShortVersionString": "0.3.11.dev4",
+            "CFBundleVersion": "0.3.11.dev4",
             "CFBundlePackageType": "APPL",
             "NSPrincipalClass": "NSApplication",
             "NSHighResolutionCapable": True,
