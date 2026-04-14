@@ -2530,8 +2530,15 @@ class TestQ6OverdueMarkers:
 
     def test_marker_chip_uses_overdue_active_color(self, qtbot):
         """The marker chip background should be the OVERDUE_ACTIVE
-        color from the bar palette. Sample a pixel inside the chip
-        rect and verify it matches the palette color (alpha-blended)."""
+        color from the bar palette. Sampling a single pixel is
+        unreliable because the chip's white text glyphs occupy
+        unpredictable positions inside the chip rect — the assertion
+        scans across a range of x positions inside the chip body
+        and asserts the majority are red-dominant. This tests the
+        intent ("the chip is painted in OVERDUE_ACTIVE somewhere
+        in its body") without depending on font metrics, glyph
+        positioning, or which exact characters the marker label
+        contains."""
         from datetime import datetime as _dt
 
         from PyQt6.QtCore import QRect
@@ -2573,28 +2580,36 @@ class TestQ6OverdueMarkers:
         delegate.paint(p, opt, model.index(0, 0))
         p.end()
 
-        # Sample pixel near top-left of cell where marker chip lives
-        # (avoid white border, hit the chip body)
-        sample_pixel = img.pixel(100, 12)
-        sample = QColor(
-            (sample_pixel >> 16) & 0xFF,
-            (sample_pixel >> 8) & 0xFF,
-            sample_pixel & 0xFF,
-        )
-
         palette = get_palette("light")
         expected = QColor(palette[BarState.OVERDUE_ACTIVE].base)
 
-        # Allow for alpha blending and antialiasing — the sampled
-        # pixel should be in the same color family (red-dominant)
-        # rather than white or grey
-        assert sample.red() > sample.green(), (
-            f"Marker chip pixel {sample.getRgb()} should be red-dominant "
-            f"to match OVERDUE_ACTIVE palette {expected.getRgb()}."
-        )
-        assert sample.red() > sample.blue(), (
-            f"Marker chip pixel {sample.getRgb()} should be red-dominant "
-            f"(red > blue) to match OVERDUE_ACTIVE palette."
+        # Scan a row of pixels inside the chip body at y=4. The chip
+        # starts at the top of the cell with a thin border, so y=4 is
+        # just below the border and inside the chip background. The
+        # x range covers the visible chip area (inset 4px from the
+        # cell edge to skip the rounded-rect border) and stops well
+        # short of the right edge so we sample background even when
+        # the elided text is short. Some pixels in the scan will
+        # land on white text glyphs; the assertion only requires
+        # that the majority be red-dominant, which is true whenever
+        # the chip is correctly painted in any state (label position
+        # is irrelevant).
+        red_count = 0
+        non_red_count = 0
+        for x in range(8, 80):
+            px = img.pixel(x, 4)
+            r = (px >> 16) & 0xFF
+            g = (px >> 8) & 0xFF
+            b = px & 0xFF
+            if r > g and r > b:
+                red_count += 1
+            else:
+                non_red_count += 1
+
+        assert red_count > non_red_count, (
+            f"Marker chip body should be predominantly red-dominant in the "
+            f"OVERDUE_ACTIVE palette ({expected.getRgb()}). Scan found "
+            f"{red_count} red-dominant pixels vs {non_red_count} other."
         )
 
     # ------------------------------------------------------------------
