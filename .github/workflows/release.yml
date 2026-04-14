@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version number (e.g., 0.3.11.dev5)'
+        description: 'Version number (e.g., 0.3.11.dev6)'
         required: true
-        default: '0.3.11.dev5'
+        default: '0.3.11.dev6'
 
 permissions:
   contents: write
@@ -265,11 +265,38 @@ jobs:
         run: |
           $version = if ("${{ github.event.inputs.version }}") { "${{ github.event.inputs.version }}" } else { $env:GITHUB_REF_NAME -replace '^v', '' }
           $packageName = "pytodo-qt-${version}-windows-${{ matrix.arch }}"
-          # Rename the onedir output folder and zip it
-          Rename-Item -Path "dist\pytodo-qt" -NewName $packageName
+          # Copy (don't rename) the onedir output so the Inno Setup
+          # build below can still reference it at dist\pytodo-qt\.
+          Copy-Item -Recurse -Path "dist\pytodo-qt" -Destination "dist\${packageName}"
           Compress-Archive -Path "dist\${packageName}" -DestinationPath "${packageName}.zip"
           echo "ASSET_PATH=${packageName}.zip" >> $env:GITHUB_ENV
           echo "ASSET_NAME=${packageName}.zip" >> $env:GITHUB_ENV
+
+      # Inno Setup ships the .exe installer alongside the zip. We
+      # install it via Chocolatey on the windows-latest runner (the
+      # innosetup package is officially maintained), thread the
+      # version into the .iss via /DAppVersion, and let ISCC write
+      # the installer to the repo root where the upload steps can
+      # find it with a predictable name.
+      - name: Install Inno Setup (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+          echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
+
+      - name: Build installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = if ("${{ github.event.inputs.version }}") { "${{ github.event.inputs.version }}" } else { $env:GITHUB_REF_NAME -replace '^v', '' }
+          iscc /DAppVersion=$version packaging\windows\pytodo-qt.iss
+          $installerName = "pytodo-qt-${version}-windows-x86_64-setup.exe"
+          if (-not (Test-Path $installerName)) {
+            throw "Installer not produced at expected path: $installerName"
+          }
+          echo "INSTALLER_PATH=${installerName}" >> $env:GITHUB_ENV
+          echo "INSTALLER_NAME=${installerName}" >> $env:GITHUB_ENV
 
       # SHA256 checksum sits next to each artifact as a sibling
       # `<artifact>.sha256` file in the standard sha256sum -c format
@@ -298,14 +325,19 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $assetPath = $env:ASSET_PATH
-          $basename = Split-Path -Leaf $assetPath
-          $hash = (Get-FileHash -Algorithm SHA256 $assetPath).Hash.ToLower()
-          $line = "$hash  $basename"
-          $sha256Path = "$assetPath.sha256"
-          # ASCII (no BOM) so the file is byte-identical to sha256sum output
-          [System.IO.File]::WriteAllText($sha256Path, "$line`n", [System.Text.UTF8Encoding]::new($false))
-          Get-Content $sha256Path
+          function Write-Sha256([string]$path) {
+            $basename = Split-Path -Leaf $path
+            $hash = (Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()
+            $line = "$hash  $basename"
+            $sha256Path = "$path.sha256"
+            # ASCII (no BOM) so the file is byte-identical to sha256sum output
+            [System.IO.File]::WriteAllText($sha256Path, "$line`n", [System.Text.UTF8Encoding]::new($false))
+            Get-Content $sha256Path
+          }
+          Write-Sha256 $env:ASSET_PATH
+          if ($env:INSTALLER_PATH) {
+            Write-Sha256 $env:INSTALLER_PATH
+          }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
@@ -324,6 +356,15 @@ jobs:
             ${{ env.APPIMAGE_PATH }}
             ${{ env.APPIMAGE_PATH }}.sha256
 
+      - name: Upload installer artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.INSTALLER_NAME }}
+          path: |
+            ${{ env.INSTALLER_PATH }}
+            ${{ env.INSTALLER_PATH }}.sha256
+
       - name: Upload release asset
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
@@ -341,5 +382,15 @@ jobs:
           files: |
             ${{ env.APPIMAGE_PATH }}
             ${{ env.APPIMAGE_PATH }}.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installer release asset (Windows)
+        if: github.event_name == 'release' && runner.os == 'Windows'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.INSTALLER_PATH }}
+            ${{ env.INSTALLER_PATH }}.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
