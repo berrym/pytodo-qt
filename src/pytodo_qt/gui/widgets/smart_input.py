@@ -420,8 +420,22 @@ class SmartInputWidget(QWidget):
         self._tag_popup.hide()
 
     def _do_parse(self) -> None:
-        """Parse current text and update UI."""
-        text = self._text_edit.toPlainText()
+        """Parse current text and update UI.
+
+        Guarded against the underlying C++ widgets being torn down
+        while a debounce-timer tick is still queued — this happens
+        in headless tests that construct an AddTodoDialog, check an
+        attribute, and let the dialog fall out of scope before the
+        100 ms debounce fires. Without the guard, the queued tick
+        invokes `_do_parse` on a widget whose SmartInputHighlighter
+        QObject has already been deleted by Qt, producing the
+        ``RuntimeError: wrapped C/C++ object ... has been deleted``
+        that was failing CI on Linux/3.12.
+        """
+        try:
+            text = self._text_edit.toPlainText()
+        except RuntimeError:
+            return  # widget destroyed; nothing to do
         self._parse_result = parse(text)
 
         # Apply accepted state — user already confirmed these fuzzy matches
@@ -437,10 +451,16 @@ class SmartInputWidget(QWidget):
                 )
 
         # Update highlighter
-        self._highlighter.set_spans(self._parse_result.spans)
+        try:
+            self._highlighter.set_spans(self._parse_result.spans)
+        except RuntimeError:
+            return  # highlighter was torn down mid-tick
 
         # Update chips
-        self._update_chips()
+        try:
+            self._update_chips()
+        except RuntimeError:
+            return  # chip container was torn down mid-tick
 
         self.parse_changed.emit(self._parse_result)
 
