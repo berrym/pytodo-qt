@@ -841,6 +841,10 @@ class MainWindow(QMainWindow):
         self.kanban_board.add_item_in_column_requested.connect(self._on_add_item_in_column)
         self.kanban_board.wip_limit_changed.connect(self._on_wip_limit_changed)
         self.kanban_board.item_selected.connect(lambda _: self._update_detail_panel())
+        # Empty-state overlay actions
+        self.kanban_board.add_task_requested.connect(self._on_add_todo)
+        self.kanban_board.clear_filters_requested.connect(self.search_filter.clear_filters)
+        self.kanban_board.show_completed_requested.connect(self._on_show_completed_requested)
 
     def _connect_calendar_signals(self) -> None:
         """Connect CalendarViewWidget signals to handlers (same as table/board)."""
@@ -2585,6 +2589,12 @@ class MainWindow(QMainWindow):
         self.todo_table.set_filter(filter_state)
         self.kanban_board.set_filter(filter_state)
         self.calendar_view.set_filter(filter_state)
+
+    def _on_show_completed_requested(self) -> None:
+        """Kanban 'All done!' empty state — flip the status filter
+        to 'Completed' so the user's just-finished tasks come back
+        into view."""
+        self.search_filter.status_combo.setCurrentIndex(2)
 
     def _on_search_focus(self) -> None:
         """Handle Ctrl+F shortcut."""

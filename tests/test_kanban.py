@@ -326,6 +326,121 @@ class TestKanbanBoardWidget:
 
 
 # ===========================================================================
+# Empty-state overlay tests
+# ===========================================================================
+
+
+class TestKanbanEmptyState:
+    """The three-case empty-state overlay.
+
+    Case A "no_list"        — empty list → Add task button
+    Case B "all_done"       — status filter=incomplete + all complete
+                               → Show completed button
+    Case C "filtered_empty" — any other filter hides all matches
+                               → Clear filters button
+    """
+
+    def test_no_list_case_empty_list(self, qtbot):
+        board = KanbanBoardWidget()
+        qtbot.addWidget(board)
+        lst = create_todo_list("Test")
+        board.set_list(lst)
+        assert not board._empty_state.isHidden()
+        assert board._empty_state_action == "add"
+        assert "No tasks yet" in board._empty_state_label.text()
+
+    def test_no_list_add_button_emits_add_task(self, qtbot):
+        board = KanbanBoardWidget()
+        qtbot.addWidget(board)
+        board.set_list(create_todo_list("Test"))
+        with qtbot.waitSignal(board.add_task_requested, timeout=1000):
+            board._empty_state_button.click()
+
+    def test_all_done_case_with_status_incomplete_filter(self, qtbot):
+        board = KanbanBoardWidget()
+        qtbot.addWidget(board)
+        lst = create_todo_list("Test")
+        item = create_todo_item("Done task")
+        item.complete = True
+        lst.add_item(item)
+        board.set_list(lst)
+        board.set_filter(FilterState(status=1))  # Active/incomplete only
+        assert not board._empty_state.isHidden()
+        assert board._empty_state_action == "show_completed"
+        assert "All done" in board._empty_state_label.text()
+
+    def test_all_done_show_completed_button_emits_signal(self, qtbot):
+        board = KanbanBoardWidget()
+        qtbot.addWidget(board)
+        lst = create_todo_list("Test")
+        item = create_todo_item("Done task")
+        item.complete = True
+        lst.add_item(item)
+        board.set_list(lst)
+        board.set_filter(FilterState(status=1))
+        with qtbot.waitSignal(board.show_completed_requested, timeout=1000):
+            board._empty_state_button.click()
+
+    def test_filtered_empty_case_generic(self, qtbot):
+        board = KanbanBoardWidget()
+        qtbot.addWidget(board)
+        lst = create_todo_list("Test")
+        item = create_todo_item("Normal task")  # priority defaults to 2
+        lst.add_item(item)
+        board.set_list(lst)
+        board.set_filter(FilterState(priority=1))  # High — won't match
+        assert not board._empty_state.isHidden()
+        assert board._empty_state_action == "clear_filters"
+        assert "No tasks match" in board._empty_state_label.text()
+
+    def test_filtered_empty_clear_filters_button_emits_signal(self, qtbot):
+        board = KanbanBoardWidget()
+        qtbot.addWidget(board)
+        lst = create_todo_list("Test")
+        item = create_todo_item("Normal task")
+        lst.add_item(item)
+        board.set_list(lst)
+        board.set_filter(FilterState(priority=1))
+        with qtbot.waitSignal(board.clear_filters_requested, timeout=1000):
+            board._empty_state_button.click()
+
+    def test_overlay_hidden_when_content_visible(self, qtbot):
+        board = KanbanBoardWidget()
+        qtbot.addWidget(board)
+        lst = create_todo_list("Test")
+        lst.add_item(create_todo_item("Visible task"))
+        board.set_list(lst)
+        assert board._empty_state.isHidden()
+
+    def test_overlay_hidden_when_no_list(self, qtbot):
+        """Without a selected list, the overlay should not appear —
+        the existing behaviour is to show nothing at all, and we
+        should not regress that."""
+        board = KanbanBoardWidget()
+        qtbot.addWidget(board)
+        board.set_list(None)
+        assert board._empty_state.isHidden()
+
+    def test_all_done_priority_over_filtered_empty(self, qtbot):
+        """When the user has exactly the "all tasks complete with
+        incomplete filter" situation, the celebratory all_done state
+        must be chosen over the generic filtered_empty message.
+        """
+        board = KanbanBoardWidget()
+        qtbot.addWidget(board)
+        lst = create_todo_list("Test")
+        item = create_todo_item("Done task")
+        item.complete = True
+        lst.add_item(item)
+        board.set_list(lst)
+        # status=1 (incomplete) AND priority=1 — priority filter also
+        # rules the item out, but the all-complete invariant still
+        # holds so all_done wins.
+        board.set_filter(FilterState(status=1, priority=1))
+        assert board._empty_state_action == "show_completed"
+
+
+# ===========================================================================
 # Signal bridge tests
 # ===========================================================================
 

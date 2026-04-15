@@ -868,6 +868,12 @@ class KanbanBoardWidget(QWidget):
     wip_limit_changed = pyqtSignal(str, int)
     add_item_in_column_requested = pyqtSignal(str)  # (column_name) — new item
 
+    # Empty-state action signals — main_window wires these to add-task,
+    # search-filter clear, and status-filter "show completed" respectively.
+    add_task_requested = pyqtSignal()
+    clear_filters_requested = pyqtSignal()
+    show_completed_requested = pyqtSignal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._selected_item_id: UUID | None = None
@@ -899,6 +905,94 @@ class KanbanBoardWidget(QWidget):
         self._board_layout.addStretch()
         scroll.setWidget(self._board_container)
         outer_layout.addWidget(scroll)
+
+        # Empty-state overlay — child of self so it floats over the
+        # column area without disrupting the scroll layout. Columns
+        # stay visible underneath; this is a centered message card,
+        # not a full-viewport takeover.
+        self._empty_state = QFrame(self)
+        self._empty_state.setFrameShape(QFrame.Shape.StyledPanel)
+        self._empty_state_label = QLabel("", self._empty_state)
+        self._empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_state_label.setWordWrap(True)
+        self._empty_state_button = QPushButton("", self._empty_state)
+        self._empty_state_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        _es_layout = QVBoxLayout(self._empty_state)
+        _es_layout.setContentsMargins(28, 22, 28, 22)
+        _es_layout.setSpacing(14)
+        _es_layout.addWidget(self._empty_state_label)
+        _es_layout.addWidget(self._empty_state_button, 0, Qt.AlignmentFlag.AlignCenter)
+        self._empty_state.hide()
+        self._empty_state_action: str = ""
+        self._empty_state_button.clicked.connect(self._on_empty_state_button)
+
+    def _on_empty_state_button(self) -> None:
+        """Dispatch the empty-state button click to the right signal
+        based on which case is currently displayed."""
+        if self._empty_state_action == "add":
+            self.add_task_requested.emit()
+        elif self._empty_state_action == "show_completed":
+            self.show_completed_requested.emit()
+        elif self._empty_state_action == "clear_filters":
+            self.clear_filters_requested.emit()
+
+    def _show_empty_state(self, case: str) -> None:
+        """Populate the overlay for one of the three cases and show it.
+
+        case == "no_list"        → "No tasks yet" + Add task
+        case == "all_done"       → "All done!" + Show completed
+        case == "filtered_empty" → "No tasks match..." + Clear filters
+        """
+        from ..styles.themes import get_colors
+
+        colors = get_colors()
+        if case == "no_list":
+            self._empty_state_label.setText(
+                self.tr("No tasks yet.\nAdd your first one to get started.")
+            )
+            self._empty_state_button.setText(self.tr("Add task"))
+            self._empty_state_action = "add"
+        elif case == "all_done":
+            self._empty_state_label.setText(
+                self.tr("All done!\nEvery task in this list is complete.")
+            )
+            self._empty_state_button.setText(self.tr("Show completed"))
+            self._empty_state_action = "show_completed"
+        else:
+            self._empty_state_label.setText(
+                self.tr("No tasks match the current filter.")
+            )
+            self._empty_state_button.setText(self.tr("Clear filters"))
+            self._empty_state_action = "clear_filters"
+
+        self._empty_state.setStyleSheet(
+            f"QFrame {{ background: {colors['base']}; "
+            f"border: 1px solid {colors['border']}; border-radius: 10px; }}"
+            f"QLabel {{ color: {colors['text']}; font-size: 14px; "
+            f"background: transparent; border: none; }}"
+            f"QPushButton {{ background: {colors['highlight']}; "
+            f"color: {colors['highlight_text']}; border: none; "
+            f"padding: 8px 18px; border-radius: 6px; font-weight: bold; }}"
+            f"QPushButton:hover {{ background: {colors['link']}; }}"
+        )
+        self._empty_state.show()
+        self._empty_state.raise_()
+        self._position_empty_state()
+
+    def _hide_empty_state(self) -> None:
+        self._empty_state.hide()
+        self._empty_state_action = ""
+
+    def _position_empty_state(self) -> None:
+        self._empty_state.adjustSize()
+        cx = (self.width() - self._empty_state.width()) // 2
+        cy = (self.height() - self._empty_state.height()) // 2
+        self._empty_state.move(max(0, cx), max(0, cy))
+
+    def resizeEvent(self, a0) -> None:  # noqa: N802
+        super().resizeEvent(a0)
+        if self._empty_state.isVisible():
+            self._position_empty_state()
 
     def set_list(self, todo_list: TodoList | None) -> None:
         """Set the list to display."""
@@ -933,6 +1027,7 @@ class KanbanBoardWidget(QWidget):
             self._layout_btn = None
 
         if self._todo_list is None:
+            self._hide_empty_state()
             return
 
         colors = get_colors()
@@ -946,10 +1041,12 @@ class KanbanBoardWidget(QWidget):
                 children_by_parent.setdefault(item.parent_id, []).append(item)
 
         # Get top-level items only
-        top_items = [item for item in self._todo_list.active_items() if item.parent_id is None]
+        top_items_all = [
+            item for item in self._todo_list.active_items() if item.parent_id is None
+        ]
 
         # Apply filter
-        top_items = self._apply_filter(top_items)
+        top_items = self._apply_filter(top_items_all)
 
         # Sort items
         sort_tiers = self._get_sort_tiers()
@@ -1006,6 +1103,27 @@ class KanbanBoardWidget(QWidget):
         self._board_layout.insertWidget(
             self._board_layout.count() - 1, self._layout_btn, 0, Qt.AlignmentFlag.AlignTop
         )
+
+        # Empty-state overlay dispatch. The three cases mirror the
+        # three exit paths a user might want back into their data:
+        #   no_list        → empty list, needs to add a first task
+        #   all_done       → status-filter=incomplete and all items
+        #                    are complete, celebratory + "Show completed"
+        #   filtered_empty → any other filter combo produces zero
+        #                    matches, generic "Clear filters"
+        if not top_items:
+            if not top_items_all:
+                self._show_empty_state("no_list")
+            elif (
+                self._filter_state is not None
+                and getattr(self._filter_state, "status", 0) == 1
+                and all(item.complete for item in top_items_all)
+            ):
+                self._show_empty_state("all_done")
+            else:
+                self._show_empty_state("filtered_empty")
+        else:
+            self._hide_empty_state()
 
     def get_selected_item_ids(self) -> list[UUID]:
         """Return currently selected item IDs."""
