@@ -959,9 +959,7 @@ class KanbanBoardWidget(QWidget):
             self._empty_state_button.setText(self.tr("Show completed"))
             self._empty_state_action = "show_completed"
         else:
-            self._empty_state_label.setText(
-                self.tr("No tasks match the current filter.")
-            )
+            self._empty_state_label.setText(self.tr("No tasks match the current filter."))
             self._empty_state_button.setText(self.tr("Clear filters"))
             self._empty_state_action = "clear_filters"
 
@@ -1041,9 +1039,7 @@ class KanbanBoardWidget(QWidget):
                 children_by_parent.setdefault(item.parent_id, []).append(item)
 
         # Get top-level items only
-        top_items_all = [
-            item for item in self._todo_list.active_items() if item.parent_id is None
-        ]
+        top_items_all = [item for item in self._todo_list.active_items() if item.parent_id is None]
 
         # Apply filter
         top_items = self._apply_filter(top_items_all)

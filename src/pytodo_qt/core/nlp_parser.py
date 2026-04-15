@@ -1122,10 +1122,7 @@ def _extract_estimated_minutes(tokens: list[_Token], tracker: _SpanTracker) -> i
                 if unit2_tok.text in time_units and tracker.is_free(tok.start, unit2_tok.end):
                     total += int(num2 * time_units[unit2_tok.text])
                     span_end = unit2_tok.end
-        elif (
-            unit_tok.text in ("hour", "hours", "hr", "hrs")
-            and unit_idx + 1 < len(tokens)
-        ):
+        elif unit_tok.text in ("hour", "hours", "hr", "hrs") and unit_idx + 1 < len(tokens):
             # "one hour thirty" → 90, "two hours fifteen" → 135
             num2, num2_end = _tokens_to_number(tokens, unit_idx + 1)
             if (
@@ -1584,16 +1581,22 @@ def _extract_dates_and_times(
             if target_month is not None and (1 <= n <= 5 or n == -1):
                 import calendar as _cal_mod
 
-                first_of_month = date(target_year, target_month, 1)
-                def _resolve_nth_weekday(y: int, m: int) -> date:
+                # _n and _wd default args bind the loop variables at
+                # definition time so the inner function is safe under
+                # ruff's B023 (closure-over-loop-variable) check — the
+                # parent while loop mutates `n` and `weekday_idx` each
+                # iteration.
+                def _resolve_nth_weekday(
+                    y: int, m: int, _n: int = n, _wd: int = weekday_idx
+                ) -> date:
                     fom = date(y, m, 1)
-                    if n == -1:
+                    if _n == -1:
                         _, last_day_num = _cal_mod.monthrange(y, m)
                         last_d = date(y, m, last_day_num)
-                        back = (last_d.weekday() - weekday_idx) % 7
+                        back = (last_d.weekday() - _wd) % 7
                         return last_d - timedelta(days=back)
-                    off = (weekday_idx - fom.weekday()) % 7
-                    candidate = fom + timedelta(days=off + (n - 1) * 7)
+                    off = (_wd - fom.weekday()) % 7
+                    candidate = fom + timedelta(days=off + (_n - 1) * 7)
                     if candidate.month != m:
                         # Nth doesn't exist (e.g. "fifth Monday" in
                         # a 4-Monday month). Graceful fall back to
@@ -1602,7 +1605,7 @@ def _extract_dates_and_times(
                         # the phrase to dateparser.
                         _, last_day_num = _cal_mod.monthrange(y, m)
                         last_d = date(y, m, last_day_num)
-                        back = (last_d.weekday() - weekday_idx) % 7
+                        back = (last_d.weekday() - _wd) % 7
                         return last_d - timedelta(days=back)
                     return candidate
 
@@ -1611,11 +1614,7 @@ def _extract_dates_and_times(
                 # Push to next year if the resolved date is already past.
                 # Only applies to bare month-name forms; "next/this/the
                 # month" already picked their target month explicitly.
-                if (
-                    resolved is not None
-                    and spec_tok.text in month_names
-                    and resolved < today
-                ):
+                if resolved is not None and spec_tok.text in month_names and resolved < today:
                     target_year += 1
                     resolved = _resolve_nth_weekday(target_year, target_month)
 

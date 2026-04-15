@@ -3953,9 +3953,7 @@ class _WeekTableView(QTableView):
             self._drop_highlight.setGeometry(self.visualRect(index))
             self._drop_highlight.show()
             self._drop_highlight.raise_()
-            self._drag_preview_label.setText(
-                _format_drop_target(target_date, int(target_hour))
-            )
+            self._drag_preview_label.setText(_format_drop_target(target_date, int(target_hour)))
             self._drag_preview_label.adjustSize()
             cursor = a0.position().toPoint()
             global_cursor = self.viewport().mapToGlobal(cursor)
