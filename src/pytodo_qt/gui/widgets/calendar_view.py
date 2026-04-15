@@ -5029,6 +5029,13 @@ class CalendarViewWidget(QWidget):
             d: list(items) for d, items in scheduled_real.items()
         }
         self._project_recurrences_into(scheduled_with_projections)
+        # Cross-midnight spill: a task whose bar window spans multiple
+        # days must appear in EVERY day's bucket the window touches,
+        # not just its due_date bucket. Without this, a 23:30+60min
+        # task's 00:00-00:30 tail is invisible on the next day's hour
+        # grid (the next day's cells only look up items keyed on that
+        # day). Applies to both real items and projections.
+        self._spill_cross_midnight(scheduled_with_projections)
 
         sort_key = lambda i: (  # noqa: E731
             i.complete,
@@ -5135,6 +5142,49 @@ class CalendarViewWidget(QWidget):
             if len(deduped) > max_count:
                 max_count = len(deduped)
         return _compute_all_day_height(max_count)
+
+    def _spill_cross_midnight(self, scheduled: dict[date, list]) -> None:
+        """Add each item to every day its bar window intersects.
+
+        The buckets are keyed by ``item.due_date`` only. A task whose
+        window spans midnight (e.g. a 23:30+60min workback that reaches
+        00:30 the next day, or a due_time=00:30+60min workback that
+        reaches back to 23:30 the previous day) is otherwise invisible
+        on every day except its due_date, because the hour-grid cell
+        lookup does ``self._items_by_date.get(cell_date, [])``. Mutates
+        the dict in place; new buckets are created on demand. Dedup is
+        by ``id`` so an item is never added twice to the same day.
+        """
+        from ...core.calendar_layout import WindowKind, compute_bar_window
+
+        # Snapshot the (date, item) pairs before mutation so we don't
+        # iterate over newly-added entries.
+        pairs = [(d, item) for d, items in scheduled.items() for item in items]
+        for _origin_date, item in pairs:
+            window = compute_bar_window(item)
+            if window is None or window.kind == WindowKind.ALL_DAY:
+                continue
+            start_day = window.origin.date()
+            end_day = window.end.date()
+            if start_day == end_day:
+                continue
+            # Add to every day the window touches. For windows ending
+            # exactly at 00:00 of end_day (conventional hour-grid
+            # midnight boundary), end_day is conceptually the same as
+            # start_day for most purposes, but _hour_grid_segment's
+            # adjustment produces a valid slice at end_day-1 covering
+            # the full 24h. We conservatively include end_day in the
+            # spill set; if compute_bar_segments returns [] for a cell
+            # date it's a no-op.
+            day = start_day
+            while day <= end_day:
+                bucket = scheduled.setdefault(day, [])
+                if not any(
+                    getattr(existing, "id", None) == getattr(item, "id", None)
+                    for existing in bucket
+                ):
+                    bucket.append(item)
+                day = day + timedelta(days=1)
 
     def _project_recurrences_into(self, scheduled: dict[date, list]) -> None:
         """Project recurring tasks into future date buckets.

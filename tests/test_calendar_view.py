@@ -2458,6 +2458,110 @@ class TestQ6OverdueMarkers:
         assert all_day_items[0].id == overdue.id
         assert getattr(all_day_items[0], "marker_label", None) is not None
 
+    def test_cross_midnight_task_spills_into_next_day(self, qtbot):
+        """A workback task with due_time early enough to cross midnight
+        (e.g. due_time=00:30 + 60min → 23:30 yesterday → 00:30 today)
+        must appear in BOTH the origin day's and the end day's buckets.
+        Without the spill pass, the tail is invisible on the end day
+        because the hour-grid cell lookup is keyed strictly on due_date.
+        """
+        from datetime import time as _time
+
+        from PyQt6.QtWidgets import QApplication
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        # Ensure a QApplication exists for CalendarViewWidget init
+        app = QApplication.instance() or QApplication([])
+        widget = CalendarViewWidget()
+        qtbot.addWidget(widget)
+
+        today = date(2026, 4, 15)
+        yesterday = today - timedelta(days=1)
+
+        item = create_todo_item("Midnight crosser")
+        item.due_date = today
+        item.due_time = _time(0, 30)
+        item.estimated_minutes = 60  # workback → 23:30 yesterday to 00:30 today
+
+        scheduled: dict[date, list] = {today: [item]}
+        widget._spill_cross_midnight(scheduled)
+
+        assert today in scheduled
+        assert yesterday in scheduled
+        assert len(scheduled[today]) == 1
+        assert len(scheduled[yesterday]) == 1
+        assert scheduled[today][0].id == item.id
+        assert scheduled[yesterday][0].id == item.id
+        del app  # keep linters quiet
+
+    def test_spill_dedup_prevents_double_add(self, qtbot):
+        """If the item is somehow already in both buckets (e.g. a
+        projection plus a real item for the same id), the spill pass
+        must not create a duplicate."""
+        from datetime import time as _time
+
+        from PyQt6.QtWidgets import QApplication
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        app = QApplication.instance() or QApplication([])
+        widget = CalendarViewWidget()
+        qtbot.addWidget(widget)
+
+        today = date(2026, 4, 15)
+        yesterday = today - timedelta(days=1)
+        item = create_todo_item("Midnight crosser")
+        item.due_date = today
+        item.due_time = _time(0, 30)
+        item.estimated_minutes = 60
+
+        # Pre-populate both days so spill must dedup
+        scheduled: dict[date, list] = {today: [item], yesterday: [item]}
+        widget._spill_cross_midnight(scheduled)
+
+        assert len(scheduled[today]) == 1
+        assert len(scheduled[yesterday]) == 1
+        del app
+
+    def test_spill_skips_all_day_and_single_day_items(self, qtbot):
+        """Items whose window does not cross midnight (single-day
+        hour-grid bars) and items with ALL_DAY windows (no due_time)
+        must not be spilled into other days."""
+        from datetime import time as _time
+
+        from PyQt6.QtWidgets import QApplication
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        app = QApplication.instance() or QApplication([])
+        widget = CalendarViewWidget()
+        qtbot.addWidget(widget)
+
+        today = date(2026, 4, 15)
+
+        # Single-day hour-grid task
+        item1 = create_todo_item("Normal hour task")
+        item1.due_date = today
+        item1.due_time = _time(14, 0)
+        item1.estimated_minutes = 60
+
+        # All-day task (no due_time)
+        item2 = create_todo_item("All-day task")
+        item2.due_date = today
+        item2.due_time = None
+
+        scheduled: dict[date, list] = {today: [item1, item2]}
+        widget._spill_cross_midnight(scheduled)
+
+        # Both items stay on today only, no other days created
+        assert list(scheduled.keys()) == [today]
+        assert len(scheduled[today]) == 2
+        del app
+
     def test_week_model_markers_appear_before_regular_all_day_items(self, qtbot):
         """Markers come first in the All Day row's item list because
         they represent the most urgent thing on the row."""
