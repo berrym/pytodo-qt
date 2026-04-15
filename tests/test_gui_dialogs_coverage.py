@@ -528,6 +528,116 @@ class TestAddTodoDialogClassMethod:
         assert "@personal" in dialog._smart_input._tag_popup._all_tags
 
 
+class TestAddTodoDialogQuickActions:
+    """Smart-add quick action trigger buttons (Pattern #3).
+
+    Four category triggers (Priority / Date / Tag / Recurrence)
+    open preset menus that modify the smart-input text in place.
+    These tests drive the private `_apply_quick_action` method
+    directly to avoid the flakiness of popping a QMenu in a
+    headless harness.
+    """
+
+    def test_quick_action_row_exists(self, app):
+        dialog = AddTodoDialog()
+        assert hasattr(dialog, "_priority_btn")
+        assert hasattr(dialog, "_date_btn")
+        assert hasattr(dialog, "_tag_btn")
+        assert hasattr(dialog, "_recur_btn")
+
+    def test_priority_preset_replaces_existing(self, app):
+        from pytodo_qt.core.nlp_parser import EntityKind
+
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("fix bug low priority tomorrow")
+        dialog._apply_quick_action(EntityKind.PRIORITY, "high priority")
+        # Force the debounce to flush and re-read the text
+        updated = dialog._smart_input.get_text()
+        assert updated == "fix bug high priority tomorrow"
+
+    def test_priority_preset_appends_when_absent(self, app):
+        from pytodo_qt.core.nlp_parser import EntityKind
+
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("fix bug")
+        dialog._apply_quick_action(EntityKind.PRIORITY, "high priority")
+        assert dialog._smart_input.get_text() == "fix bug high priority"
+
+    def test_date_preset_replaces_existing(self, app):
+        from pytodo_qt.core.nlp_parser import EntityKind
+
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("call mom tomorrow")
+        dialog._apply_quick_action(EntityKind.DATE, "next monday")
+        assert dialog._smart_input.get_text() == "call mom next monday"
+
+    def test_tag_preset_appends_not_replace(self, app):
+        from pytodo_qt.core.nlp_parser import EntityKind
+
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("fix bug @work")
+        dialog._apply_quick_action(EntityKind.TAG, "@urgent", append_only=True)
+        assert dialog._smart_input.get_text() == "fix bug @work @urgent"
+
+    def test_recurrence_preset_replaces_existing(self, app):
+        from pytodo_qt.core.nlp_parser import EntityKind
+
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("standup daily")
+        dialog._apply_quick_action(EntityKind.RECURRENCE, "weekly")
+        assert dialog._smart_input.get_text() == "standup weekly"
+
+    def test_quick_action_noop_when_same_text(self, app):
+        """If the replacement produces the same text (e.g. user
+        clicks High when high priority is already set), the method
+        returns without changing anything — no unnecessary text
+        field churn."""
+        from pytodo_qt.core.nlp_parser import EntityKind
+
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("fix bug high priority")
+        original = dialog._smart_input.get_text()
+        dialog._apply_quick_action(EntityKind.PRIORITY, "high priority")
+        assert dialog._smart_input.get_text() == original
+
+    def test_priority_menu_has_three_presets(self, app):
+        dialog = AddTodoDialog()
+        menu = dialog._priority_btn.menu()
+        assert menu is not None
+        assert len(menu.actions()) == 3
+
+    def test_date_menu_has_presets(self, app):
+        dialog = AddTodoDialog()
+        menu = dialog._date_btn.menu()
+        assert menu is not None
+        assert len(menu.actions()) >= 5
+
+    def test_recurrence_menu_has_four_presets(self, app):
+        dialog = AddTodoDialog()
+        menu = dialog._recur_btn.menu()
+        assert menu is not None
+        assert len(menu.actions()) == 4
+
+    def test_tag_menu_placeholder_when_no_known_tags(self, app):
+        dialog = AddTodoDialog()
+        menu = dialog._tag_btn.menu()
+        assert menu is not None
+        actions = menu.actions()
+        assert len(actions) == 1
+        assert not actions[0].isEnabled()
+
+    def test_tag_menu_populates_from_known_tags(self, app):
+        dialog = AddTodoDialog(known_tags=["@work", "@home", "@urgent"])
+        # Rebuild the menu since known_tags is set after smart_input init
+        menu = dialog._build_tag_menu()
+        actions = menu.actions()
+        assert len(actions) == 3
+        labels = [a.text() for a in actions]
+        assert "@home" in labels
+        assert "@urgent" in labels
+        assert "@work" in labels
+
+
 class TestAddTodoDialogBoardColumn:
     """Tests for the board column dropdown (kanban column pre-select)."""
 

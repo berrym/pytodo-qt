@@ -2518,3 +2518,47 @@ def parse(text: str, today: date | None = None) -> ParseResult:
         subtask_reminders=subtask_reminders,
         spans=tracker.spans,
     )
+
+
+# ---------------------------------------------------------------------------
+# Span-aware text mutation helper for quick-action UI
+# ---------------------------------------------------------------------------
+
+
+def replace_or_append_category(
+    text: str,
+    spans: list[EntitySpan],
+    kind: EntityKind,
+    replacement: str,
+    *,
+    append_only: bool = False,
+) -> str:
+    """Replace the first span of ``kind`` with ``replacement``, or
+    append ``replacement`` (with a leading space) if no such span
+    exists in ``text``.
+
+    Used by the smart-add quick-action UI in AddTodoDialog: when the
+    user clicks a preset like "Priority: High", the existing priority
+    span in the input (e.g. ``"low priority"``) is replaced in place
+    with ``"high priority"``, preserving the surrounding reminder
+    text. If no priority span exists yet, the replacement is
+    appended.
+
+    ``append_only=True`` bypasses the replace step and always appends.
+    Tags use this mode because a single task can have multiple tags —
+    picking a tag preset must never remove an existing one.
+
+    This function is pure: it does not mutate ``spans`` or touch any
+    parser state. The caller is responsible for re-parsing the new
+    text (the smart input's debounced re-parse handles that when the
+    text field is updated via ``set_text``).
+    """
+    if not append_only:
+        target = next((s for s in spans if s.kind is kind), None)
+        if target is not None:
+            before = text[: target.start].rstrip()
+            after = text[target.end :].lstrip()
+            parts = [p for p in (before, replacement, after) if p]
+            return " ".join(parts)
+    sep = " " if text and not text.endswith(" ") else ""
+    return text + sep + replacement

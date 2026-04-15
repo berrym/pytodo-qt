@@ -9,6 +9,7 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QDate, Qt
+from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -21,17 +22,19 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QRadioButton,
     QScrollArea,
     QSpinBox,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from ...core.logger import Logger
 from ...core.models import TodoItem
-from ...core.nlp_parser import ParseResult
+from ...core.nlp_parser import EntityKind, ParseResult, replace_or_append_category
 from ..widgets.smart_input import SmartInputWidget
 from ..widgets.time_combo import TimeComboBox
 
@@ -78,6 +81,15 @@ class AddTodoDialog(QDialog):
         self._smart_input.parse_changed.connect(self._on_smart_parse_changed)
         self._smart_input.accepted.connect(self._on_accept)
         layout.addWidget(self._smart_input)
+
+        # Quick-action trigger buttons (Priority / Date / Tag / Recurrence).
+        # Each button pops a small preset menu; selecting a preset
+        # inserts the corresponding NLP token into the smart input
+        # (via replace_or_append_category), so the user sees what the
+        # parser would have parsed from typing it manually. Keeps the
+        # NLP-first flow intact while giving click-driven users a
+        # discoverable entry point for the common categories.
+        layout.addWidget(self._build_quick_actions_row())
 
         # Advanced toggle
         self._advanced_toggle = QLabel(self.tr('<a href="#">Advanced ▶</a>'))
@@ -557,6 +569,138 @@ class AddTodoDialog(QDialog):
         """Handle end condition radio button change."""
         self.end_date_edit.setEnabled(self.end_date_radio.isChecked())
         self.end_count_spin.setEnabled(self.end_count_radio.isChecked())
+
+    # --- Quick action trigger buttons ---
+
+    def _build_quick_actions_row(self) -> QWidget:
+        """Construct the row of category trigger buttons shown under
+        the smart input. Each button carries a dropdown menu of
+        presets for that category; selecting one mutates the text
+        input via replace_or_append_category."""
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 2, 0, 2)
+        row_layout.setSpacing(6)
+
+        self._priority_btn = self._make_trigger_button(
+            self.tr("Priority"), self._build_priority_menu()
+        )
+        self._date_btn = self._make_trigger_button(self.tr("Date"), self._build_date_menu())
+        self._tag_btn = self._make_trigger_button(self.tr("Tag"), self._build_tag_menu())
+        self._recur_btn = self._make_trigger_button(
+            self.tr("Recurrence"), self._build_recurrence_menu()
+        )
+
+        row_layout.addWidget(self._priority_btn)
+        row_layout.addWidget(self._date_btn)
+        row_layout.addWidget(self._tag_btn)
+        row_layout.addWidget(self._recur_btn)
+        row_layout.addStretch()
+        return row
+
+    def _make_trigger_button(self, label: str, menu: QMenu) -> QToolButton:
+        btn = QToolButton()
+        btn.setText(f"{label} \u25be")  # trailing small down arrow
+        btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        btn.setMenu(menu)
+        btn.setStyleSheet(
+            "QToolButton { padding: 4px 10px; border: 1px solid palette(mid);"
+            " border-radius: 4px; background: palette(base); font-size: 11px; }"
+            " QToolButton:hover { background: palette(midlight); }"
+            " QToolButton::menu-indicator { image: none; width: 0; }"
+        )
+        return btn
+
+    def _build_priority_menu(self) -> QMenu:
+        menu = QMenu(self)
+        for label, token in (
+            (self.tr("High"), "high priority"),
+            (self.tr("Normal"), "normal priority"),
+            (self.tr("Low"), "low priority"),
+        ):
+            action = QAction(label, self)
+            action.triggered.connect(
+                lambda _checked=False, t=token: self._apply_quick_action(EntityKind.PRIORITY, t)
+            )
+            menu.addAction(action)
+        return menu
+
+    def _build_date_menu(self) -> QMenu:
+        menu = QMenu(self)
+        for label, token in (
+            (self.tr("Today"), "today"),
+            (self.tr("Tomorrow"), "tomorrow"),
+            (self.tr("This Friday"), "friday"),
+            (self.tr("Next Monday"), "next monday"),
+            (self.tr("Next Week"), "next week"),
+        ):
+            action = QAction(label, self)
+            action.triggered.connect(
+                lambda _checked=False, t=token: self._apply_quick_action(EntityKind.DATE, t)
+            )
+            menu.addAction(action)
+        return menu
+
+    def _build_tag_menu(self) -> QMenu:
+        import contextlib
+
+        menu = QMenu(self)
+        # Pull known tags from the smart input's completer.
+        known: list[str] = []
+        with contextlib.suppress(AttributeError):
+            known = sorted(self._smart_input._tag_popup._all_tags)
+        if not known:
+            placeholder = QAction(self.tr("(no tags yet — type @name to add)"), self)
+            placeholder.setEnabled(False)
+            menu.addAction(placeholder)
+            return menu
+        # Cap at 12 to keep the menu readable
+        for tag in known[:12]:
+            # Ensure leading @
+            display = tag if tag.startswith("@") else f"@{tag}"
+            action = QAction(display, self)
+            action.triggered.connect(
+                lambda _checked=False, t=display: self._apply_quick_action(
+                    EntityKind.TAG, t, append_only=True
+                )
+            )
+            menu.addAction(action)
+        return menu
+
+    def _build_recurrence_menu(self) -> QMenu:
+        menu = QMenu(self)
+        for label, token in (
+            (self.tr("Daily"), "daily"),
+            (self.tr("Weekly"), "weekly"),
+            (self.tr("Monthly"), "monthly"),
+            (self.tr("Yearly"), "yearly"),
+        ):
+            action = QAction(label, self)
+            action.triggered.connect(
+                lambda _checked=False, t=token: self._apply_quick_action(EntityKind.RECURRENCE, t)
+            )
+            menu.addAction(action)
+        return menu
+
+    def _apply_quick_action(
+        self, kind: EntityKind, token: str, *, append_only: bool = False
+    ) -> None:
+        """Apply a quick-action preset to the smart input text.
+
+        Reads the current text + parse result, uses
+        replace_or_append_category to produce a mutated string, and
+        writes it back to the input. The input's debounced parser
+        re-runs naturally on text change so the chips update.
+        """
+        text = self._smart_input.get_text()
+        result = self._smart_input.get_parse_result()
+        new_text = replace_or_append_category(
+            text, result.spans, kind, token, append_only=append_only
+        )
+        if new_text == text:
+            return
+        self._smart_input.set_text(new_text)
+        self._smart_input.set_focus()
 
     def _on_accept(self) -> None:
         """Handle OK button."""

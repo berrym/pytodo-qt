@@ -1829,3 +1829,90 @@ class TestSubtaskExtraction:
     def test_and_only(self) -> None:
         r = parse("errands: laundry and dishes", today=TODAY)
         assert r.subtask_reminders == ["laundry", "dishes"]
+
+
+# ---------------------------------------------------------------------------
+# replace_or_append_category helper — used by smart-add quick action buttons
+# ---------------------------------------------------------------------------
+
+
+class TestReplaceOrAppendCategory:
+    """Pure text-mutation helper that replaces a span in the input
+    with a new token, or appends if no such span exists. Exercised
+    by AddTodoDialog's Priority / Date / Tag / Recurrence trigger
+    buttons so the smart-add text stays in sync with the user's
+    click-driven preset selections.
+    """
+
+    def test_replaces_existing_priority(self) -> None:
+        from pytodo_qt.core.nlp_parser import replace_or_append_category
+
+        text = "fix bug low priority tomorrow"
+        result = parse(text, today=TODAY)
+        new_text = replace_or_append_category(
+            text, result.spans, EntityKind.PRIORITY, "high priority"
+        )
+        assert new_text == "fix bug high priority tomorrow"
+
+    def test_appends_when_no_existing_priority(self) -> None:
+        from pytodo_qt.core.nlp_parser import replace_or_append_category
+
+        text = "fix bug"
+        result = parse(text, today=TODAY)
+        new_text = replace_or_append_category(
+            text, result.spans, EntityKind.PRIORITY, "high priority"
+        )
+        assert new_text == "fix bug high priority"
+
+    def test_replaces_existing_date(self) -> None:
+        from pytodo_qt.core.nlp_parser import replace_or_append_category
+
+        text = "call mom tomorrow"
+        result = parse(text, today=TODAY)
+        new_text = replace_or_append_category(text, result.spans, EntityKind.DATE, "next monday")
+        assert new_text == "call mom next monday"
+
+    def test_replaces_existing_recurrence(self) -> None:
+        from pytodo_qt.core.nlp_parser import replace_or_append_category
+
+        text = "standup daily"
+        result = parse(text, today=TODAY)
+        new_text = replace_or_append_category(text, result.spans, EntityKind.RECURRENCE, "weekly")
+        assert new_text == "standup weekly"
+
+    def test_append_only_mode_does_not_replace(self) -> None:
+        """Tag mode: must append, not replace existing tags,
+        because a task can have multiple tags."""
+        from pytodo_qt.core.nlp_parser import replace_or_append_category
+
+        text = "fix bug @work"
+        result = parse(text, today=TODAY)
+        new_text = replace_or_append_category(
+            text, result.spans, EntityKind.TAG, "@urgent", append_only=True
+        )
+        assert new_text == "fix bug @work @urgent"
+
+    def test_preserves_surrounding_reminder_text(self) -> None:
+        from pytodo_qt.core.nlp_parser import replace_or_append_category
+
+        text = "urgent fix report high priority friday"
+        result = parse(text, today=TODAY)
+        new_text = replace_or_append_category(
+            text, result.spans, EntityKind.PRIORITY, "low priority"
+        )
+        assert "urgent" in new_text
+        assert "low priority" in new_text
+        assert "friday" in new_text
+        assert "high priority" not in new_text
+
+    def test_empty_text_append(self) -> None:
+        from pytodo_qt.core.nlp_parser import replace_or_append_category
+
+        new_text = replace_or_append_category("", [], EntityKind.PRIORITY, "high priority")
+        assert new_text == "high priority"
+
+    def test_trailing_space_append_does_not_double_space(self) -> None:
+        from pytodo_qt.core.nlp_parser import replace_or_append_category
+
+        new_text = replace_or_append_category("fix bug ", [], EntityKind.PRIORITY, "high priority")
+        assert new_text == "fix bug high priority"
