@@ -528,6 +528,94 @@ class TestAddTodoDialogClassMethod:
         assert "@personal" in dialog._smart_input._tag_popup._all_tags
 
 
+class TestAddTodoDialogBoardColumn:
+    """Tests for the board column dropdown (kanban column pre-select)."""
+
+    def test_no_columns_hides_combo(self, app):
+        """Without a columns list, the combo widget is created but
+        never added to the form — behaviour-preserving default for
+        test / headless code paths that don't know about kanban state.
+        """
+        dialog = AddTodoDialog()
+        # Widget exists but is not inserted into the form layout
+        assert hasattr(dialog, "board_column_combo")
+        assert dialog.board_column_combo.count() == 0
+
+    def test_columns_populate_combo(self, app):
+        dialog = AddTodoDialog(columns=["To Do", "In Progress", "Done"])
+        assert dialog.board_column_combo.count() == 3
+        assert dialog.board_column_combo.itemData(0) == "To Do"
+        assert dialog.board_column_combo.itemData(1) == "In Progress"
+        assert dialog.board_column_combo.itemData(2) == "Done"
+
+    def test_columns_default_first_when_no_selected(self, app):
+        dialog = AddTodoDialog(columns=["To Do", "In Progress", "Done"])
+        assert dialog.board_column_combo.currentData() == "To Do"
+
+    def test_selected_column_preselected(self, app):
+        dialog = AddTodoDialog(
+            columns=["To Do", "In Progress", "Done"],
+            selected_column="In Progress",
+        )
+        assert dialog.board_column_combo.currentData() == "In Progress"
+
+    def test_selected_column_not_in_list_falls_back_to_first(self, app):
+        dialog = AddTodoDialog(
+            columns=["To Do", "In Progress", "Done"],
+            selected_column="Archived",  # not a valid column
+        )
+        assert dialog.board_column_combo.currentData() == "To Do"
+
+    def test_accept_writes_selected_column_to_item(self, app):
+        dialog = AddTodoDialog(
+            columns=["To Do", "In Progress", "Done"],
+            selected_column="In Progress",
+        )
+        dialog._smart_input.set_text("Refactor the widget")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.board_column == "In Progress"
+
+    def test_accept_writes_first_column_when_not_preselected(self, app):
+        dialog = AddTodoDialog(columns=["To Do", "In Progress", "Done"])
+        dialog._smart_input.set_text("New task")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.board_column == "To Do"
+
+    def test_accept_with_no_columns_leaves_board_column_unset(self, app):
+        """Tests that pass no columns list (headless paths) still
+        work and produce an item whose board_column is the empty
+        string default — same as before this change."""
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Plain task")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.board_column == ""
+
+    def test_accept_with_advanced_fields_and_column_override(self, app, monkeypatch):
+        """Advanced-mode build path must also respect the column
+        dropdown — not just the smart-input path."""
+        from PyQt6.QtCore import QDate
+
+        dialog = AddTodoDialog(
+            columns=["To Do", "In Progress", "Done"],
+            selected_column="To Do",
+        )
+        dialog._on_toggle_advanced()
+        dialog.reminder_edit.setText("Advanced task")
+        # User picks a different column via the dropdown
+        dialog.board_column_combo.setCurrentIndex(2)  # "Done"
+        _ = QDate.currentDate()  # silence unused import warning
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.board_column == "Done"
+
+
 class TestAddListDialog:
     """Tests for AddListDialog."""
 

@@ -1086,16 +1086,19 @@ class MainWindow(QMainWindow):
             return
 
         known_tags = self._collect_known_tags()
+        # Pass the column list + user's implicit choice. The dialog's
+        # column dropdown pre-selects `column_name` and writes whatever
+        # the user confirms onto item.board_column — no post-hoc
+        # override needed here.
         item = AddTodoDialog.create_item(
-            self, title=self.tr(f"Add Item \u2014 {column_name}"), known_tags=known_tags
+            self,
+            title=self.tr(f"Add Item \u2014 {column_name}"),
+            known_tags=known_tags,
+            columns=list(active_list.board_columns),
+            selected_column=column_name,
         )
         if item is None:
             return
-
-        item.board_column = column_name
-        # Assign default column if not already set by parser
-        if not item.board_column:
-            item.board_column = column_name
 
         from .commands import AddItemCommand
 
@@ -2099,18 +2102,27 @@ class MainWindow(QMainWindow):
                 self._database.set_active_list_by_name(list_name)
 
         known_tags = self._collect_known_tags()
-        dialog = AddTodoDialog(self, known_tags=known_tags)
+        # Pass the board-column list so the dialog's Column dropdown
+        # is populated and the item's board_column is written directly
+        # by the dialog (defaults to the first column when no explicit
+        # selected_column is passed).
+        cols = list(self._database.active_list.board_columns)
+        dialog = AddTodoDialog(
+            self,
+            known_tags=known_tags,
+            columns=cols,
+        )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         item = dialog.get_item()
         if item is None or self._database.active_list is None:
             return
 
-        # Assign default board column for kanban view consistency
-        if not item.board_column:
-            cols = self._database.active_list.board_columns
-            if cols:
-                item.board_column = cols[0]
+        # Fallback for the edge case where the dialog was constructed
+        # without columns (shouldn't happen from this entry point, but
+        # defensive) — first column wins.
+        if not item.board_column and cols:
+            item.board_column = cols[0]
 
         from .commands import AddItemCommand
 

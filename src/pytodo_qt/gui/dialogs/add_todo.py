@@ -45,7 +45,14 @@ logger = Logger(__name__)
 class AddTodoDialog(QDialog):
     """Dialog for adding a new to-do item."""
 
-    def __init__(self, parent=None, *, known_tags: list[str] | None = None):
+    def __init__(
+        self,
+        parent=None,
+        *,
+        known_tags: list[str] | None = None,
+        columns: list[str] | None = None,
+        selected_column: str | None = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Add Todo"))
         self.setMinimumWidth(720)
@@ -54,6 +61,8 @@ class AddTodoDialog(QDialog):
         self._subtask_reminders: list[str] = []
         self._advanced_shown = False
         self._syncing = False
+        self._columns: list[str] = list(columns) if columns else []
+        self._selected_column: str | None = selected_column
         self._setup_ui()
         self._clamp_to_screen()
 
@@ -103,6 +112,22 @@ class AddTodoDialog(QDialog):
         self.priority_combo.addItem(self.tr("Low"), 3)
         self.priority_combo.setCurrentIndex(1)
         top_form.addRow(self.tr("Priority:"), self.priority_combo)
+
+        # Kanban board column. Populated from the caller's list of
+        # columns; pre-selected to `selected_column` when provided (the
+        # "+" button in a specific kanban column passes this so the
+        # user sees their implicit choice). When no columns list is
+        # provided (e.g. unit tests without kanban state), the combo
+        # is hidden entirely and _on_accept skips writing board_column.
+        self.board_column_combo = QComboBox()
+        if self._columns:
+            for col_name in self._columns:
+                self.board_column_combo.addItem(col_name, col_name)
+            if self._selected_column and self._selected_column in self._columns:
+                self.board_column_combo.setCurrentIndex(self._columns.index(self._selected_column))
+            else:
+                self.board_column_combo.setCurrentIndex(0)
+            top_form.addRow(self.tr("Column:"), self.board_column_combo)
 
         adv_layout.addLayout(top_form)
 
@@ -664,6 +689,16 @@ class AddTodoDialog(QDialog):
                 break_duration=self.task_break_duration_spin.value(),
                 long_break_duration=self.task_long_break_spin.value(),
             )
+
+        # Apply the board column dropdown selection to the item
+        # regardless of which build path (smart input or advanced
+        # fields) ran above. Only touches items when the dialog was
+        # actually constructed with a columns list.
+        if self._item is not None and self._columns:
+            selected = self.board_column_combo.currentData()
+            if selected:
+                self._item.board_column = selected
+
         logger.log.info("Created new todo item: %s", reminder[:50])
         self.accept()
 
@@ -681,9 +716,16 @@ class AddTodoDialog(QDialog):
         parent=None,
         title: str = "Add Todo",
         known_tags: list[str] | None = None,
+        columns: list[str] | None = None,
+        selected_column: str | None = None,
     ) -> TodoItem | None:
         """Convenience method to show dialog and get result."""
-        dialog = cls(parent, known_tags=known_tags)
+        dialog = cls(
+            parent,
+            known_tags=known_tags,
+            columns=columns,
+            selected_column=selected_column,
+        )
         dialog.setWindowTitle(title)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             return dialog.get_item()
