@@ -4369,6 +4369,25 @@ class TestDeviceRevocation:
         assert ws.device_store is not None
         assert ws.device_store.get_device_by_token(token) is not None
 
+    def test_rename_device_passthrough(self):
+        ws, _token = _make_authed_client()
+        devices = ws.get_paired_devices()
+        assert len(devices) >= 1
+        device_id = devices[0].id
+
+        # Rename via the WebServer passthrough (the entry point used
+        # by the Mobile Access Wizard's rename button)
+        assert ws.rename_device(device_id, "Kitchen Tablet") is True
+
+        refreshed = ws.get_paired_devices()
+        renamed = next(d for d in refreshed if d.id == device_id)
+        assert renamed.device_name == "Kitchen Tablet"
+
+    def test_rename_device_passthrough_unknown_id(self):
+        ws, _token = _make_authed_client()
+        # Non-existent device id returns False, nothing crashes
+        assert ws.rename_device("ghost-device-id", "Anything") is False
+
     @pytest.mark.asyncio
     async def test_revoked_device_token_returns_401(self):
         ws, token = _make_authed_client()

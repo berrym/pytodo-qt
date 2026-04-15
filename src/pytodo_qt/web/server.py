@@ -165,6 +165,17 @@ class WebServer:
             return self._device_store.remove_device(device_id)
         return False
 
+    def rename_device(self, device_id: str, new_name: str) -> bool:
+        """Rename a paired device. Returns True if the device was updated.
+
+        Thin passthrough to the device store, matching the shape of
+        remove_device so the wizard and web API handler can call
+        through a single entry point.
+        """
+        if self._device_store:
+            return self._device_store.rename_device(device_id, new_name)
+        return False
+
     def get_paired_devices(self) -> list[PairedDevice]:
         """Return all paired devices."""
         if self._device_store:

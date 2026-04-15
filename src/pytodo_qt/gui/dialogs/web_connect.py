@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QGraphicsDropShadowEffect,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -334,6 +335,7 @@ class _DeviceRow(QFrame):
         is_stale: bool,
         on_forget: object,
         on_reconnect: object | None = None,
+        on_rename: object | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -411,6 +413,19 @@ class _DeviceRow(QFrame):
             )
             reconnect_btn.clicked.connect(on_reconnect)
             btn_col.addWidget(reconnect_btn)
+
+        if on_rename:
+            rename_btn = QPushButton(self.tr("Rename"))
+            rename_btn.setFixedWidth(72)
+            rename_btn.setObjectName("rename_btn")
+            rename_btn.setStyleSheet(
+                "QPushButton { color: palette(text); font-size: 11px;"
+                " border: 1px solid palette(mid);"
+                " border-radius: 4px; padding: 4px 8px; background: none; }"
+                " QPushButton:hover { background: palette(mid); color: palette(text); }"
+            )
+            rename_btn.clicked.connect(on_rename)
+            btn_col.addWidget(rename_btn)
 
         forget_btn = QPushButton(self.tr("Forget"))
         forget_btn.setFixedWidth(72)
@@ -625,6 +640,9 @@ class MobileAccessWizard(QDialog):
                     on_forget=lambda _checked=False, d=device: self._on_forget_device(d.id),
                     on_reconnect=lambda _checked=False, n=display_name: self._on_reconnect_device(
                         n
+                    ),
+                    on_rename=lambda _checked=False, d=device, n=display_name: (
+                        self._on_rename_device(d.id, n)
                     ),
                 )
                 layout.addWidget(row)
@@ -1181,6 +1199,32 @@ class MobileAccessWizard(QDialog):
         """Show reconnect QR code for an existing device."""
         self._reconnect_device_name = device_name
         self._go_to_page(self.PAGE_RECONNECT)
+
+    def _on_rename_device(self, device_id: str, current_name: str) -> None:
+        """Prompt for a new device name and call through to the web
+        server's rename_device passthrough, then refresh the list.
+
+        Empty or whitespace-only names are rejected (the user can
+        cancel the dialog instead). The rename is local-only — the
+        device itself keeps using its existing token, only the
+        human-visible label changes.
+        """
+        mw = self._main_window
+        if not (mw and mw._web_server):
+            return
+        new_name, ok = QInputDialog.getText(
+            self,
+            self.tr("Rename Device"),
+            self.tr("New name:"),
+            text=current_name,
+        )
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == current_name:
+            return
+        mw._web_server.rename_device(device_id, new_name)
+        self._populate_device_list()
 
     def _on_forget_device(self, device_id: str, *, refresh_reconfigure: bool = False) -> None:
         mw = self._main_window
