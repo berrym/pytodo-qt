@@ -237,6 +237,59 @@ def _compute_cell_bar_layout(
 #     rather than cramming 2-char gibberish, but still show labels at
 #     1–2 slots
 _MIN_LABEL_WIDTH = 40
+# Minimum slice height (in pixels after insets) at which a bar is
+# tall enough to render a label. Cells with slice height below this
+# threshold either skip the label entirely or delegate labeling to
+# the next cell that clears the threshold.
+_MIN_LABEL_HEIGHT = 14
+
+
+def _slice_is_first_labelable(
+    seg,
+    cell_minute_start: int,
+    cell_minute_width: int,
+    row_height_px: int,
+) -> bool:
+    """Return True if this cell should paint the bar label, False if
+    an earlier cell in the same segment already crosses the height
+    threshold and will own the label.
+
+    Rule: "the first cell whose slice is ≥ _MIN_LABEL_HEIGHT px
+    labels; every later cell suppresses." Preserves the thin-start-
+    sliver fallback (a 5-min 19:55-20:00 slice is below threshold
+    so the 20:00 body cell takes over) while eliminating the bug
+    where a 25-minute task crossing an hour boundary got labeled in
+    both slices and read as two separate tasks.
+
+    The helper computes per-slice pixel height using the same inset
+    model as the painter:
+        inset_top = 4 if slice starts in this cell (not continuing)
+        inset_bot = 4 if segment ends in this cell (not continuing)
+    For cells between the start and the end of the segment, both
+    insets are 0.
+    """
+    if seg.start_minute >= cell_minute_start:
+        # This cell IS the start cell — always the first labelable
+        # cell (if it has enough height; the caller separately
+        # checks its own height).
+        return True
+    # Walk earlier cells in the segment; if any has slice height
+    # ≥ threshold, that cell owns the label and this one suppresses.
+    earlier_hour = seg.start_minute // cell_minute_width
+    this_hour = cell_minute_start // cell_minute_width
+    while earlier_hour < this_hour:
+        earlier_start = earlier_hour * cell_minute_width
+        earlier_end = earlier_start + cell_minute_width
+        earlier_vs = max(seg.start_minute, earlier_start)
+        earlier_ve = min(seg.end_minute, earlier_end)
+        earlier_raw = int((earlier_ve - earlier_vs) / cell_minute_width * row_height_px)
+        earlier_itop = 4 if seg.start_minute >= earlier_start else 0
+        earlier_ibot = 4 if seg.end_minute <= earlier_end else 0
+        earlier_height = earlier_raw - earlier_itop - earlier_ibot
+        if earlier_height >= _MIN_LABEL_HEIGHT:
+            return False
+        earlier_hour += 1
+    return True
 
 
 def _compute_overflow_badge_rect(rect, overflow_count: int) -> QRect | None:
@@ -3190,32 +3243,16 @@ class _WeekDelegate(QStyledItemDelegate):
                 painter.drawRoundedRect(bar_rect.adjusted(-1, -1, 1, 1), 4, 4)
                 painter.restore()
 
-            # Label — rendered only ONCE per bar, even when the bar
-            # spans multiple hour cells. The current cell labels if
-            # AND ONLY IF its own slice is tall enough AND no earlier
-            # cell in the same segment already had a tall-enough
-            # slice. This preserves the thin-start-sliver fallback
-            # (a 5-min slice at 19:55-20:00 hands off labeling to the
-            # 20:00 body cell) while eliminating the bug where a
-            # 25-minute task crossing an hour boundary (10:45-11:10)
-            # got labeled in both slices and read as two tasks.
-            this_cell_is_first_labelable = True
-            if is_continuing_top:
-                earlier_hour = seg.start_minute // cell_minute_width
-                this_hour = cell_minute_start // cell_minute_width
-                while earlier_hour < this_hour:
-                    earlier_start = earlier_hour * cell_minute_width
-                    earlier_end = earlier_start + cell_minute_width
-                    earlier_vs = max(seg.start_minute, earlier_start)
-                    earlier_ve = min(seg.end_minute, earlier_end)
-                    earlier_raw = int((earlier_ve - earlier_vs) / cell_minute_width * rect.height())
-                    earlier_itop = 4 if seg.start_minute >= earlier_start else 0
-                    earlier_ibot = 4 if seg.end_minute <= earlier_end else 0
-                    earlier_height = earlier_raw - earlier_itop - earlier_ibot
-                    if earlier_height >= 14:
-                        this_cell_is_first_labelable = False
-                        break
-                    earlier_hour += 1
+            # Label — rendered only ONCE per bar. _slice_is_first_labelable
+            # does the cross-cell coordination: returns True only when
+            # this cell's slice is the FIRST one in the segment whose
+            # pixel height crosses the label threshold. Preserves the
+            # thin-start-sliver fallback (5-min 19:55-20:00 hands off
+            # labeling to the 20:00 body cell) while preventing every
+            # subsequent body cell from redundantly labeling.
+            this_cell_is_first_labelable = _slice_is_first_labelable(
+                seg, cell_minute_start, cell_minute_width, rect.height()
+            )
             if (bot_y - top_y) >= 14 and this_cell_is_first_labelable:
                 label_width = slot_right_edge - slot_left - 8
                 if label_width >= _MIN_LABEL_WIDTH:
