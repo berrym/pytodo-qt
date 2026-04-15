@@ -3190,16 +3190,33 @@ class _WeekDelegate(QStyledItemDelegate):
                 painter.drawRoundedRect(bar_rect.adjusted(-1, -1, 1, 1), 4, 4)
                 painter.restore()
 
-            # Label — rendered in any slot with sufficient vertical
-            # height and horizontal width, regardless of whether the
-            # slice is a starting or continuing cell. This ensures bars
-            # whose start-cell slice is too thin (e.g., a 5-minute
-            # sliver from 19:55-20:00 that the painter skips entirely)
-            # still get a readable label in the body cell. Thin 5 px
-            # ribbons (continuing slices squeezed by competing in-cell
-            # tasks) naturally fall below _MIN_LABEL_WIDTH so they
-            # still never get labels — the width check handles it.
-            if (bot_y - top_y) >= 14:
+            # Label — rendered only ONCE per bar, even when the bar
+            # spans multiple hour cells. The current cell labels if
+            # AND ONLY IF its own slice is tall enough AND no earlier
+            # cell in the same segment already had a tall-enough
+            # slice. This preserves the thin-start-sliver fallback
+            # (a 5-min slice at 19:55-20:00 hands off labeling to the
+            # 20:00 body cell) while eliminating the bug where a
+            # 25-minute task crossing an hour boundary (10:45-11:10)
+            # got labeled in both slices and read as two tasks.
+            this_cell_is_first_labelable = True
+            if is_continuing_top:
+                earlier_hour = seg.start_minute // cell_minute_width
+                this_hour = cell_minute_start // cell_minute_width
+                while earlier_hour < this_hour:
+                    earlier_start = earlier_hour * cell_minute_width
+                    earlier_end = earlier_start + cell_minute_width
+                    earlier_vs = max(seg.start_minute, earlier_start)
+                    earlier_ve = min(seg.end_minute, earlier_end)
+                    earlier_raw = int((earlier_ve - earlier_vs) / cell_minute_width * rect.height())
+                    earlier_itop = 4 if seg.start_minute >= earlier_start else 0
+                    earlier_ibot = 4 if seg.end_minute <= earlier_end else 0
+                    earlier_height = earlier_raw - earlier_itop - earlier_ibot
+                    if earlier_height >= 14:
+                        this_cell_is_first_labelable = False
+                        break
+                    earlier_hour += 1
+            if (bot_y - top_y) >= 14 and this_cell_is_first_labelable:
                 label_width = slot_right_edge - slot_left - 8
                 if label_width >= _MIN_LABEL_WIDTH:
                     painter.save()

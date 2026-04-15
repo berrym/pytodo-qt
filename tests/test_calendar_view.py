@@ -1718,17 +1718,17 @@ class TestWeekDelegateBarPixels:
         # top row is dominated by colored pixels, indicating the bar
         # extends to the top edge.)
 
-    def test_multi_hour_bar_label_in_both_start_and_continuing_cells(self, qtbot):
-        """A bar spanning multiple hours shows its label in EVERY cell
-        where the slot has sufficient width.
+    def test_multi_hour_bar_labels_only_once_at_start(self, qtbot):
+        """A multi-hour bar renders its label exactly ONCE — in the
+        starting cell if that slice is tall enough, otherwise handed
+        off to the first body cell with enough room. Continuing cells
+        after the labeled one never re-label.
 
-        This prevents the bug where a bar's start-cell slice is too
-        thin to render (e.g., 5 minutes from 19:55-20:00) and the
-        body cell has no label because it was classified as
-        "continuing". Without labels on continuing cells, the user
-        sees an anonymous colored bar with no way to identify the task
-        except by hovering for a tooltip. With labels on every cell
-        that has room, the task is always identifiable.
+        REGRESSION: a 25-minute task crossing an hour boundary was
+        reported rendering labels in both slices, making one task look
+        like two. The previous "label every tall-enough slice" rule
+        was too lax; the current rule is "label only the first cell
+        whose slice crosses the 14 px threshold".
         """
         from datetime import time
 
@@ -1740,21 +1740,63 @@ class TestWeekDelegateBarPixels:
         item.due_time = time(15, 0)
         item.estimated_minutes = 180  # 12:00-15:00, three hours
 
-        # Row 13 = hour 12 (the START hour) — label renders
+        # Row 13 = hour 12 (the START hour) — label renders here
         hist_start = self._paint_and_hist(item, 13, qtbot)
-        # Row 14 = hour 13 (middle hour) — label ALSO renders now
+        # Row 14 = hour 13 (middle hour) — label must NOT render
         hist_middle = self._paint_and_hist(item, 14, qtbot)
+        # Row 15 = hour 14 (end hour) — label must NOT render
+        hist_end = self._paint_and_hist(item, 15, qtbot)
 
-        # Both cells should have text antialiasing colors from the label
-        assert len(hist_start) > 2
-        assert len(hist_middle) > 2
-        # The middle cell should have comparable color count to the start
-        # cell since both render the same label text. Allow some variance
-        # from border rendering differences (start has rounded corners).
-        assert len(hist_middle) > len(hist_start) // 2, (
-            f"Middle cell should have a label too. Start cell distinct "
-            f"colors: {len(hist_start)}, middle cell: {len(hist_middle)}."
+        # Start cell has a label → many distinct colors from text AA.
+        assert len(hist_start) > 10
+        # Middle/end cells paint only the bar fill + border → few distinct
+        # colors (bar base, border, cell background — typically ≤ 6).
+        assert len(hist_middle) < len(hist_start) // 2, (
+            f"Middle cell must not render a duplicate label. "
+            f"Start colors: {len(hist_start)}, middle colors: {len(hist_middle)}."
         )
+        assert len(hist_end) < len(hist_start) // 2, (
+            f"End cell must not render a duplicate label. "
+            f"Start colors: {len(hist_start)}, end colors: {len(hist_end)}."
+        )
+
+    def test_thin_start_sliver_label_hands_off_to_body(self, qtbot):
+        """Thin-start fallback: a 5-minute sliver at 19:55-20:00 is
+        too short to label. The 20:00-20:55 body cell must pick up
+        the label instead so the user can still identify the task.
+        Exactly ONE cell labels — the first body cell, not every
+        cell the bar continues through.
+        """
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item
+
+        item = create_todo_item("Thin start body label hand-off")
+        today = date.today()
+        item.due_date = today
+        item.due_time = time(21, 30)  # ends 21:30
+        item.estimated_minutes = 95  # 19:55-21:30, 3 cells
+
+        # Row 20 = hour 19 (start hour, 5-min sliver)
+        hist_start = self._paint_and_hist(item, 20, qtbot)
+        # Row 21 = hour 20 (first body cell — should label)
+        hist_body1 = self._paint_and_hist(item, 21, qtbot)
+        # Row 22 = hour 21 (second body cell — should NOT label)
+        hist_body2 = self._paint_and_hist(item, 22, qtbot)
+
+        # Thin start has no label (tiny bar fill only)
+        # First body picks up the label (many colors from AA)
+        # Second body suppresses its label (first body already handled it)
+        assert len(hist_body1) > 10, (
+            f"First body cell must label the bar when start is thin. "
+            f"Body1 colors: {len(hist_body1)}"
+        )
+        assert len(hist_body2) < len(hist_body1) // 2, (
+            f"Second body must not double-label. Body1: {len(hist_body1)}, "
+            f"body2: {len(hist_body2)}."
+        )
+        # Sanity: start slice is actually tiny
+        assert len(hist_start) < len(hist_body1) // 2
 
     def test_two_tasks_same_hour_both_render(self, qtbot):
         """REGRESSION: Two tasks in the same cell must both render.
