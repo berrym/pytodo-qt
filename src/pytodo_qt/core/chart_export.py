@@ -9,7 +9,9 @@ All render functions accept optional start_date/end_date for filtering.
 Figures are created via matplotlib.figure.Figure (no pyplot), so they can
 be embedded in Qt widgets or saved headlessly without backend conflicts.
 
-Matplotlib is an optional dependency — install with `pytodo-qt[export]`.
+Matplotlib is a core dependency and is bundled in the PyInstaller builds
+so chart export works out of the box in the .app / .AppImage / installer
+artifacts without a separate install step.
 """
 
 from __future__ import annotations
@@ -83,11 +85,22 @@ _RC_PARAMS: dict = {
 
 
 class MatplotlibUnavailable(RuntimeError):
-    """Raised when matplotlib is not installed."""
+    """Raised when matplotlib cannot be imported.
+
+    Should not occur in normal use — matplotlib is a core dependency of
+    pytodo-qt and is bundled in all release artifacts. Indicates a
+    broken install (missing bundled files, corrupted wheel, etc).
+    """
 
 
 def _import_matplotlib():
-    """Import matplotlib lazily. Returns (Figure, PdfPages, mdates)."""
+    """Import matplotlib lazily. Returns (Figure, PdfPages, mdates).
+
+    Still lazy rather than a module-top import because matplotlib's
+    import time is substantial (200-500 ms) and the app's startup
+    path doesn't need it unless the user actually opens the export
+    dialog.
+    """
     try:
         # Silence matplotlib's chatty findfont/PDF backend DEBUG logs.
         import logging as _logging
@@ -103,7 +116,10 @@ def _import_matplotlib():
         return Figure, PdfPages, mdates
     except ImportError as e:
         raise MatplotlibUnavailable(
-            "matplotlib is not installed. Install with: pip install pytodo-qt[export]"
+            "matplotlib failed to import. This is a core dependency and "
+            "should be bundled in release builds; if you're running from a "
+            "release artifact, please file an issue. If running from source, "
+            "reinstall dependencies with `pip install -e .` or `uv sync`."
         ) from e
 
 

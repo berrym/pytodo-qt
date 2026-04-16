@@ -53,7 +53,7 @@ known-first-party = ["pytodo_qt"]
 
 [project]
 name = "pytodo-qt"
-version = "0.3.11.dev9"
+version = "0.3.11.dev10"
 description = "A cross-platform to-do list manager with encrypted peer-to-peer synchronization"
 readme = "README.md"
 authors = [
@@ -71,6 +71,7 @@ dependencies = [
     "qrcode>=7.0",
     "pyqtgraph>=0.13",
     "pandas>=2.0",
+    "matplotlib>=3.7",
     "dateparser>=1.2",
     "rapidfuzz>=3.0",
     "ruamel-yaml>=0.19.1",
@@ -93,10 +94,6 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.15",
     "basedpyright>=1.18",
-    "matplotlib>=3.7",
-]
-export = [
-    "matplotlib>=3.7",
 ]
 
 [project.urls]

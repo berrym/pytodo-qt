@@ -46,13 +46,25 @@ datas = [
     (os.path.join(SPECPATH, "qt.conf"), "."),  # Qt plugin path configuration
 ]
 
-# Hidden imports for PyQt6 plugins
+# Hidden imports for PyQt6 plugins. Matplotlib backends are listed
+# explicitly even though PyInstaller ships a matplotlib hook that
+# handles most of the bundling — the specific backend modules chart
+# export imports (backend_pdf, backend_agg) are not always picked up
+# automatically when the only reachable reference is a lazy import
+# inside a function body (see core/chart_export.py). Listing them
+# here makes the dependency tree deterministic across PyInstaller
+# versions.
 hiddenimports = [
     "PyQt6.QtCore",
     "PyQt6.QtGui",
     "PyQt6.QtWidgets",
     "PyQt6.QtNetwork",
     "qasync",
+    "matplotlib",
+    "matplotlib.figure",
+    "matplotlib.dates",
+    "matplotlib.backends.backend_pdf",
+    "matplotlib.backends.backend_agg",
 ] + pytodo_qt_imports
 
 # Exclude Qt modules we don't need (prevents problematic permission plugins on macOS)
@@ -135,8 +147,8 @@ if sys.platform == "darwin":
             "CFBundleDisplayName": "PyTodo-Qt",
             "CFBundleExecutable": "pytodo-qt",
             "CFBundleName": "PyTodo-Qt",
-            "CFBundleShortVersionString": "0.3.11.dev9",
-            "CFBundleVersion": "0.3.11.dev9",
+            "CFBundleShortVersionString": "0.3.11.dev10",
+            "CFBundleVersion": "0.3.11.dev10",
             "CFBundlePackageType": "APPL",
             "NSPrincipalClass": "NSApplication",
             "NSHighResolutionCapable": True,
