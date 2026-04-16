@@ -39,14 +39,14 @@ Download the latest release for your platform from the [Releases page](https://g
 
 #### macOS
 
-1. Download `pytodo-qt-VERSION-macos-arm64.zip` (Apple Silicon) or `pytodo-qt-VERSION-macos-x86_64.zip` (Intel)
-2. Extract the zip file
-3. Move `pytodo-qt.app` to `/Applications` or `~/Applications`
-4. **First run only:** Right-click the app and select "Open" to bypass Gatekeeper
-   - Alternatively, run: `xattr -rd com.apple.quarantine /Applications/pytodo-qt.app`
-5. After the first run, you can open normally by double-clicking
+1. Download `pytodo-qt-VERSION-macos-arm64.dmg` (Apple Silicon) or `pytodo-qt-VERSION-macos-x86_64.dmg` (Intel)
+2. Open the DMG — a window appears with the app icon and an Applications shortcut
+3. Drag `pytodo-qt.app` onto the Applications shortcut
+4. Eject the DMG, open `/Applications`, and locate the app
+5. **First run only:** right-click the app → **Open** → enter your password → check **Always allow**. macOS asks once because the app uses an ad-hoc signature.
+6. After the first launch, open normally by double-clicking
 
-> **Note:** The app is ad-hoc signed (not notarized with an Apple Developer ID), so macOS will show an "unidentified developer" warning on first launch. This is normal for open-source software distributed outside the App Store.
+> **Note:** The app is ad-hoc signed (not notarized with an Apple Developer ID), so macOS shows an "unidentified developer" warning on first launch. This is normal for open-source software distributed outside the App Store. The right-click → Open dance is required once per version — subsequent launches of the same version work normally. When upgrading to a new version, drag-replace the existing `/Applications/pytodo-qt.app` with the new one and repeat the right-click → Open flow once.
 
 #### Linux
 
@@ -85,9 +85,37 @@ None of the above require changes to the AppImage itself — PyTodo-Qt already c
 
 #### Windows
 
+Two formats are provided:
+
+**Installer (recommended)** — installs per-user, creates Start Menu entry, registers for uninstall:
+
+1. Download `pytodo-qt-VERSION-windows-x86_64-setup.exe`
+2. Double-click the installer and follow the prompts. No admin rights required — the default install directory is under your user profile, and the installer adds an entry to Windows' "Installed apps" list for clean uninstallation later.
+3. Optionally enable the "Create desktop icon" checkbox on the Select Additional Tasks page.
+
+**Zip** — portable, no install required:
+
 1. Download `pytodo-qt-VERSION-windows-x86_64.zip`
-2. Extract the zip file
-3. Run `pytodo-qt.exe`
+2. Extract the zip file to any directory (e.g. your Desktop, a USB drive, or `%LOCALAPPDATA%`)
+3. Run `pytodo-qt.exe` from the extracted folder
+
+> **Note:** The installer and the binaries inside the zip are not code-signed. Windows SmartScreen may show a "Windows protected your PC" warning on first launch — click **More info** → **Run anyway**.
+
+#### Checksums
+
+Every artifact ships with a sibling `<filename>.sha256` file in the standard `sha256sum -c` / `shasum -a 256 -c` compatible format. To verify a download:
+
+```bash
+# Linux / WSL
+sha256sum -c pytodo-qt-VERSION-linux-x86_64.tar.gz.sha256
+
+# macOS
+shasum -a 256 -c pytodo-qt-VERSION-macos-x86_64.dmg.sha256
+
+# Windows PowerShell
+(Get-FileHash -Algorithm SHA256 pytodo-qt-VERSION-windows-x86_64-setup.exe).Hash.ToLower()
+# Then compare against the hash printed in the .sha256 file
+```
 
 ### From PyPI
 
