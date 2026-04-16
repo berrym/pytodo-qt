@@ -84,10 +84,17 @@ def main() -> None:
         anchor="mm",
     )
 
+    # Instructions target macOS Sequoia (15.x) and later, which
+    # removed the right-click > Open bypass for unnotarized ad-hoc-
+    # signed apps. Users must now approve the app explicitly via
+    # System Settings. Older macOS (Ventura 13 / Sonoma 14) users
+    # will see the same Settings panel and the flow also works
+    # there, just with the alternate "right-click Open" path still
+    # available in parallel.
     lines = (
-        "Right-click the app in Applications  >  Open",
-        '>  enter your password  >  check "Always allow".',
-        "macOS asks once because the app uses an ad-hoc signature.",
+        "If macOS blocks the first launch, open",
+        "System Settings  >  Privacy & Security",
+        "and click 'Open Anyway'. See README for details.",
     )
     y = heading_y + 22
     for line in lines:

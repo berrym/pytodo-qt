@@ -43,10 +43,26 @@ Download the latest release for your platform from the [Releases page](https://g
 2. Open the DMG — a window appears with the app icon and an Applications shortcut
 3. Drag `pytodo-qt.app` onto the Applications shortcut
 4. Eject the DMG, open `/Applications`, and locate the app
-5. **First run only:** right-click the app → **Open** → enter your password → check **Always allow**. macOS asks once because the app uses an ad-hoc signature.
-6. After the first launch, open normally by double-clicking
+5. **First run only** — pick whichever unblock flow matches your macOS version:
 
-> **Note:** The app is ad-hoc signed (not notarized with an Apple Developer ID), so macOS shows an "unidentified developer" warning on first launch. This is normal for open-source software distributed outside the App Store. The right-click → Open dance is required once per version — subsequent launches of the same version work normally. When upgrading to a new version, drag-replace the existing `/Applications/pytodo-qt.app` with the new one and repeat the right-click → Open flow once.
+   **macOS Sequoia (15.x) and later** — Apple removed the right-click → Open bypass. Use this flow:
+   1. Double-click the app. macOS shows *"pytodo-qt Not Opened — Apple could not verify..."* with only **Done** / **Move to Trash** buttons. Click **Done**.
+   2. Open **System Settings → Privacy & Security**.
+   3. Scroll to the Security section. You'll see *"pytodo-qt was blocked to protect your Mac"*. Click **Open Anyway**.
+   4. Enter your password when prompted, then click **Open** on the re-prompt.
+
+   **macOS Sonoma (14.x) and earlier** — the legacy bypass still works:
+   1. Right-click the app → **Open** → click **Open** in the confirmation dialog → enter your password → check **Always allow**.
+
+   **Command-line shortcut (any macOS version)** — strip the quarantine attribute directly:
+   ```bash
+   xattr -rd com.apple.quarantine /Applications/pytodo-qt.app
+   ```
+   Then double-click normally.
+
+6. After the first approval, open the app normally by double-clicking.
+
+> **Note:** The app is ad-hoc signed (not notarized with an Apple Developer ID), which is why macOS requires explicit first-launch approval. This is standard for open-source software distributed outside the App Store. When upgrading to a new version, drag-replace the existing `/Applications/pytodo-qt.app` with the new one and re-run whichever approval flow above matches your macOS version.
 
 #### Linux
 
