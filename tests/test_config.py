@@ -96,6 +96,44 @@ class TestAppConfig:
         assert config.database.sort_tier2 == "due_date"
         assert config.database.sort_tier3 == "priority"
 
+    def test_remember_last_view_default_true(self):
+        """Default value preserves pre-overhaul behaviour — existing
+        users see no change."""
+        config = AppConfig()
+        assert config.database.remember_last_view is True
+
+    def test_remember_last_view_round_trip(self):
+        """TOML serialize/deserialize preserves the setting."""
+        config = AppConfig()
+        config.database.remember_last_view = False
+        config.database.view_mode = "calendar"
+
+        # Serialize
+        toml_str = config.to_toml()
+        assert "remember_last_view = false" in toml_str
+
+        # Deserialize — mirror what ConfigManager does
+        import tomllib
+
+        data = tomllib.loads(toml_str)
+        round_tripped = AppConfig.from_dict(data)
+        assert round_tripped.database.remember_last_view is False
+        assert round_tripped.database.view_mode == "calendar"
+
+    def test_from_dict_missing_remember_last_view_defaults_to_true(self):
+        """Pre-overhaul config.toml files that don't mention the
+        field load with remember_last_view=True — backward compat."""
+        data = {
+            "database": {
+                "active_list": "Old User",
+                "view_mode": "board",
+                # remember_last_view intentionally absent
+            },
+        }
+        config = AppConfig.from_dict(data)
+        assert config.database.remember_last_view is True
+        assert config.database.view_mode == "board"
+
     def test_sort_tiers_helper(self):
         """Test sort_tiers() returns list of (dimension, reverse) tuples."""
         config = DatabaseConfig(

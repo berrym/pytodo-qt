@@ -575,11 +575,18 @@ class TaskDetailPanel(QDockWidget):
         self._created_value.setText(created.strftime("%b %d %Y %I:%M %p"))
         updated = datetime.fromtimestamp(item.updated_at / 1000)
         self._updated_value.setText(updated.strftime("%b %d %Y %I:%M %p"))
+        # Use the MONO_FONT_FAMILIES stack rather than the CSS
+        # generic "monospace" — the generic triggers a Qt font-alias
+        # resolution cost and a console warning on systems where it
+        # doesn't resolve to an installed family.
+        from ..styles.themes import MONO_FONT_FAMILIES
+
+        mono_css = ", ".join(f'"{f}"' for f in MONO_FONT_FAMILIES)
         self._id_value.setText(str(item.id))
-        self._id_value.setStyleSheet("font-family: monospace; font-size: 10px;")
+        self._id_value.setStyleSheet(f"font-family: {mono_css}; font-size: 10px;")
         if item.parent_id:
             self._parent_value.setText(str(item.parent_id))
-            self._parent_value.setStyleSheet("font-family: monospace; font-size: 10px;")
+            self._parent_value.setStyleSheet(f"font-family: {mono_css}; font-size: 10px;")
         else:
             self._parent_value.setText("\u2014")
             self._parent_value.setStyleSheet("")

@@ -120,8 +120,13 @@ DARK_COLORS = {
 
 
 # Monospace font stack — platform-aware fallbacks for fingerprints etc.
+# Menlo is listed first on macOS because SF Mono is not universally
+# installed (it ships with Terminal.app / Xcode; fresh users without
+# either see a ~115 ms Qt font-alias resolution cost plus a console
+# warning on every app start). Menlo is always present on macOS and
+# renders nearly identically to SF Mono for fixed-width display.
 if sys.platform == "darwin":
-    MONO_FONT_FAMILIES = ["SF Mono", "Menlo", "Monaco"]
+    MONO_FONT_FAMILIES = ["Menlo", "Monaco"]
 elif sys.platform == "win32":
     MONO_FONT_FAMILIES = ["Cascadia Mono", "Consolas", "Courier New"]
 else:

@@ -46,8 +46,17 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Settings"))
-        self.setMinimumWidth(500)
-        self.setMinimumHeight(400)
+        self.setMinimumWidth(620)
+        self.setMinimumHeight(460)
+
+        # Consistent input-widget sizing across all tabs. Qt's default
+        # QSpinBox height clips suffix text on Linux and Windows when
+        # a stylesheet doesn't set an explicit min-height, and
+        # QLineEdit/QComboBox similarly render slightly too short on
+        # some platforms. One stylesheet rule applied at dialog scope
+        # fixes every tab at once and guarantees visual consistency
+        # regardless of platform font metrics.
+        self.setStyleSheet("QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { min-height: 26px; }")
 
         self._config_manager = get_config_manager()
         self._config_manager.reload()  # Reload from disk to get saved values
@@ -89,6 +98,16 @@ class SettingsDialog(QDialog):
             apply_btn.clicked.connect(self._on_apply)
         layout.addWidget(button_box)
 
+        # Apply AllNonFixedFieldsGrow to every QFormLayout in the
+        # dialog so field widgets expand with the dialog width on
+        # resize. Without this, each form's default policy (FieldsStayAtSizeHint)
+        # leaves QLineEdits short regardless of the surrounding layout
+        # — producing inconsistent widths across tabs on different
+        # platforms. Applying it here in one place is easier to
+        # maintain than editing every _create_*_tab method.
+        for form in self.findChildren(QFormLayout):
+            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+
     def _create_general_tab(self) -> QWidget:
         """Create the General settings tab."""
         widget = QWidget()
@@ -125,15 +144,37 @@ class SettingsDialog(QDialog):
         # View mode group
         view_group = QGroupBox(self.tr("View"))
         view_layout = QFormLayout(view_group)
+
+        # "Remember last view" — when checked, view switches at
+        # runtime overwrite config.database.view_mode and the
+        # dropdown below is ignored (it reflects whichever view
+        # was last active). When unchecked, the dropdown is the
+        # authoritative default view and view switches do NOT
+        # persist. This disambiguates what was a vestigial setting
+        # before — the dropdown had no effect because every view
+        # switch clobbered it.
+        self._remember_view_check = QCheckBox(self.tr("Remember last view between sessions"))
+        self._remember_view_check.stateChanged.connect(self._on_remember_view_toggled)
+        view_layout.addRow("", self._remember_view_check)
+
         self._view_mode_combo = QComboBox()
         self._view_mode_combo.addItem(self.tr("List"), "list")
         self._view_mode_combo.addItem(self.tr("Board (Kanban)"), "board")
+        self._view_mode_combo.addItem(self.tr("Calendar"), "calendar")
+        self._view_mode_combo.setMinimumWidth(220)
         view_layout.addRow(self.tr("Default view:"), self._view_mode_combo)
         layout.addWidget(view_group)
 
         layout.addStretch()
 
         return widget
+
+    def _on_remember_view_toggled(self, state: int) -> None:
+        """Grey out the Default View dropdown when 'Remember last
+        view' is checked, since the dropdown has no effect in that
+        mode — the runtime's last-selected view always wins."""
+        checked = state == Qt.CheckState.Checked.value
+        self._view_mode_combo.setEnabled(not checked)
 
     def _on_sort_tier_changed(self, changed_combo: QComboBox) -> None:
         """Enforce no-duplicate constraint by swapping dimensions."""
@@ -197,6 +238,7 @@ class SettingsDialog(QDialog):
 
         self.service_name_edit = QLineEdit()
         self.service_name_edit.setPlaceholderText("pytodo-{hostname}")
+        self.service_name_edit.setMinimumWidth(320)
         discovery_layout.addRow(self.tr("Service name:"), self.service_name_edit)
 
         self.auto_sync_check = QCheckBox(self.tr("Auto-sync when trusted devices come online"))
@@ -225,6 +267,9 @@ class SettingsDialog(QDialog):
 
         self.fingerprint_edit = QLineEdit(fingerprint)
         self.fingerprint_edit.setReadOnly(True)
+        # Full SHA-256 hex is 64 chars at monospace; reserve enough
+        # width that the string is readable without horizontal scrolling.
+        self.fingerprint_edit.setMinimumWidth(540)
         mono_css = ", ".join(f'"{f}"' for f in MONO_FONT_FAMILIES)
         self.fingerprint_edit.setStyleSheet(f"font-family: {mono_css};")
         identity_layout.addRow(self.tr("Your fingerprint:"), self.fingerprint_edit)
@@ -607,13 +652,23 @@ class SettingsDialog(QDialog):
         tls_label.setStyleSheet("color: palette(highlight); font-size: 11px;")
         form.addRow("", tls_label)
 
-        # Pairing PIN display
+        # Pairing PIN display — 28 px font + 8 px padding needs an
+        # explicit min-height because Qt's default sizeHint on a
+        # styled QLabel with large font + padding undershoots and
+        # clips the glyph descenders, especially on Linux. Uses the
+        # MONO_FONT_FAMILIES stack rather than the CSS generic
+        # "monospace" to avoid Qt's font-alias resolution cost and
+        # the associated "Replace uses of missing font family"
+        # warning on systems where "monospace" doesn't resolve to
+        # an installed family.
+        mono_css_pin = ", ".join(f'"{f}"' for f in MONO_FONT_FAMILIES)
         self.web_pin_label = QLabel("------")
         self.web_pin_label.setStyleSheet(
-            "font-size: 28px; font-weight: bold; font-family: monospace;"
+            f"font-size: 28px; font-weight: bold; font-family: {mono_css_pin};"
             " letter-spacing: 6px; padding: 8px; color: palette(highlight);"
         )
         self.web_pin_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.web_pin_label.setMinimumHeight(56)
         form.addRow(self.tr("Pairing PIN:"), self.web_pin_label)
 
         self.web_pin_hint = QLabel(self.tr("Enter this PIN on your phone to connect"))
@@ -633,7 +688,6 @@ class SettingsDialog(QDialog):
         # CalDAV credentials
         caldav_group = QGroupBox(self.tr("CalDAV (Calendar Sync)"))
         caldav_form = QFormLayout(caldav_group)
-        caldav_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self.caldav_url_label = QLabel("")
         self.caldav_url_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -720,6 +774,11 @@ class SettingsDialog(QDialog):
             if self._view_mode_combo.itemData(i) == view_mode:
                 self._view_mode_combo.setCurrentIndex(i)
                 break
+        # Remember-last-view: syncing the checkbox also triggers
+        # _on_remember_view_toggled which enables/disables the combo
+        # to match the current behaviour mode.
+        self._remember_view_check.setChecked(config.database.remember_last_view)
+        self._view_mode_combo.setEnabled(not config.database.remember_last_view)
 
         # Network
         self.server_enabled_check.setChecked(config.server.enabled)
@@ -853,7 +912,14 @@ class SettingsDialog(QDialog):
         config.database.sort_tier2_reverse = self._sort_reverses[1].isChecked()
         config.database.sort_tier3 = self._sort_combos[2].currentData()
         config.database.sort_tier3_reverse = self._sort_reverses[2].isChecked()
-        config.database.view_mode = self._view_mode_combo.currentData()
+        # Only write view_mode from the dropdown when the user has
+        # opted out of remember-last-view. In remember mode the
+        # dropdown is disabled and its value is whatever was last
+        # persisted by a runtime view switch — overwriting it here
+        # would clobber that on every Settings dialog save.
+        config.database.remember_last_view = self._remember_view_check.isChecked()
+        if not config.database.remember_last_view:
+            config.database.view_mode = self._view_mode_combo.currentData()
 
         # Network
         config.server.enabled = self.server_enabled_check.isChecked()

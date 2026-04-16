@@ -977,9 +977,15 @@ class MainWindow(QMainWindow):
         self.calendar_view_action.setChecked(view_id == 2)
         if view_id == 1:
             self._reconcile_board_columns()
-        mode = {0: "list", 1: "board", 2: "calendar"}.get(view_id, "list")
-        self._config.database.view_mode = mode
-        self._config_manager.save()
+        # Persist the active view only when the user opted in to
+        # "remember last view" (the default). When the user has an
+        # explicit default-view setting in Settings, view switches
+        # must NOT overwrite it — otherwise the dropdown is
+        # cosmetic and does nothing (the original bug).
+        if self._config.database.remember_last_view:
+            mode = {0: "list", 1: "board", 2: "calendar"}.get(view_id, "list")
+            self._config.database.view_mode = mode
+            self._config_manager.save()
         self._refresh_ui()
 
     def _reconcile_board_columns(self) -> None:

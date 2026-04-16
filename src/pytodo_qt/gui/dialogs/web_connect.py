@@ -181,9 +181,17 @@ def _qr_widget(url: str, size: int = 280) -> QLabel:
 
 
 def _pin_widget(pin: str) -> QLabel:
+    # Use the MONO_FONT_FAMILIES stack via setFamilies() rather than
+    # the generic "monospace" constructor argument — the latter
+    # triggers a Qt font-alias resolution cost and a console warning
+    # on systems where it doesn't resolve to an installed family.
+    from ..styles.themes import MONO_FONT_FAMILIES
+
     lbl = QLabel(pin)
     lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    font = QFont("monospace", 32)
+    font = QFont()
+    font.setFamilies(MONO_FONT_FAMILIES)
+    font.setPointSize(32)
     font.setBold(True)
     font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 8)
     lbl.setFont(font)
