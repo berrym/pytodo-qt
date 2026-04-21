@@ -1614,7 +1614,7 @@ def _extract_dates_and_times(
                 # Bind the local function to a typed name so pyright doesn't
                 # trip on the same-scope re-call below with
                 # "refers to itself" (false positive on the CI version).
-                resolve_fn: Callable[[int, int], date] = _resolve_nth_weekday
+                resolve_fn: Callable[[int, int], date] = _resolve_nth_weekday  # pyright: ignore[reportGeneralTypeIssues]
                 resolved: date = resolve_fn(target_year, target_month)
 
                 # Push to next year if the resolved date is already past.
