@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, time, timedelta
 from datetime import datetime as _datetime
@@ -1610,14 +1611,18 @@ def _extract_dates_and_times(
                         return last_d - timedelta(days=back)
                     return candidate
 
-                resolved: date = _resolve_nth_weekday(target_year, target_month)
+                # Bind the local function to a typed name so pyright doesn't
+                # trip on the same-scope re-call below with
+                # "refers to itself" (false positive on the CI version).
+                resolve_fn: Callable[[int, int], date] = _resolve_nth_weekday
+                resolved: date = resolve_fn(target_year, target_month)
 
                 # Push to next year if the resolved date is already past.
                 # Only applies to bare month-name forms; "next/this/the
                 # month" already picked their target month explicitly.
                 if spec_tok.text in month_names and resolved < today:
                     target_year += 1
-                    resolved = _resolve_nth_weekday(target_year, target_month)
+                    resolved = resolve_fn(target_year, target_month)
 
                 _set_date(resolved, tok.start, tokens[month_spec_end].end)
                 # Always advance past the matched phrase so a non-
