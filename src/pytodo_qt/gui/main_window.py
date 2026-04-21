@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from desktop_notifier import DesktopNotifier, Icon
 from PyQt6.QtCore import QDate, Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import (
     QAction,
@@ -203,6 +204,10 @@ class MainWindow(QMainWindow):
         # Show window
         self.show()
         logger.log.info("Main window created")
+
+        # Request OS notification permission once (macOS shows a system prompt
+        # on first launch; subsequent launches are no-ops).
+        asyncio.ensure_future(self._request_notification_permission())
 
         # Check for due/overdue items and notify (after window shown so tray is ready)
         QTimer.singleShot(2000, self._check_due_notifications)
@@ -1204,6 +1209,19 @@ class MainWindow(QMainWindow):
 
         # Full-color app icon for notification popups (not the monochrome tray icon)
         self._notification_icon = self._get_icon("pytodo-qt.svg")
+
+        # Cross-platform system notifications via desktop-notifier. On macOS this
+        # uses UNUserNotificationCenter with an explicit authorization request,
+        # which Qt's QSystemTrayIcon.showMessage fails to do — that omission is
+        # why the DMG build was rendering anonymous "PyTodo-Qt Notification"
+        # banners with empty bodies.
+        self._notifier: DesktopNotifier | None = None
+        try:
+            notifier_icon_path = Path(__file__).parent / "icons" / "pytodo-qt-256.png"
+            app_icon = Icon(path=notifier_icon_path) if notifier_icon_path.exists() else None
+            self._notifier = DesktopNotifier(app_name="PyTodo-Qt", app_icon=app_icon)
+        except Exception as exc:
+            logger.log.warning("Failed to initialize DesktopNotifier: %s", exc)
 
         # Use simple monochrome tray icon
         if sys.platform == "darwin":
@@ -3325,6 +3343,35 @@ class MainWindow(QMainWindow):
                 self._notify_milestone(
                     self.tr(f"{streak}-day streak!"), self.tr("New personal best")
                 )
+
+    async def _notify(self, title: str, body: str, *, timeout: int = 5) -> None:
+        """Send a system notification via desktop-notifier.
+
+        Fire-and-forget from sync Qt slots via ``asyncio.create_task(...)``.
+        Silently degrades on platforms/backends that cannot deliver
+        (notably ``uv run`` outside a ``.app`` bundle on macOS).
+        """
+        if self._notifier is None:
+            return
+        try:
+            await self._notifier.send(title=title, message=body, timeout=timeout)
+        except Exception as exc:
+            logger.log.debug("Notification send failed: %s", exc)
+
+    async def _request_notification_permission(self) -> None:
+        """Request OS permission to deliver notifications.
+
+        Idempotent on macOS — the system caches grant/deny and won't re-prompt.
+        On Linux and Windows this is a no-op or always-granted.
+        """
+        if self._notifier is None:
+            return
+        try:
+            granted = await self._notifier.request_authorisation()
+            if not granted:
+                logger.log.info("User declined notification permission")
+        except Exception as exc:
+            logger.log.debug("Notification authorization request failed: %s", exc)
 
     def _notify_milestone(self, title: str, message: str) -> None:
         """Show a milestone notification via system tray and status bar toast."""

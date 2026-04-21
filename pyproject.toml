@@ -75,6 +75,7 @@ dependencies = [
     "dateparser>=1.2",
     "rapidfuzz>=3.0",
     "ruamel-yaml>=0.19.1",
+    "desktop-notifier>=6.1",
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
