@@ -7,7 +7,7 @@ and streak tracking. Data powered by AnalyticsService (pandas DataFrames).
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont
@@ -102,8 +102,8 @@ class WeeklyChartWidget(QWidget):
         bottom_axis.setPen(pg.mkPen(col_border))
 
         max_count = float(counts.max()) if n > 0 else 1.0
-        plot.setXRange(0, max(max_count * 1.2, 1), padding=0)
-        plot.setYRange(-0.5, n - 0.5, padding=0.05)
+        plot.setXRange(0, max(max_count * 1.2, 1), padding=0)  # type: ignore[call-arg]
+        plot.setYRange(-0.5, n - 0.5, padding=0.05)  # type: ignore[call-arg]
 
         layout.addWidget(plot)
 
@@ -159,10 +159,14 @@ class FocusStatsDialog(QDialog):
         # Today card
         today_summary = self._analytics.daily_summary(start_date=today_str, end_date=today_str)
         today_sessions = (
-            int(today_summary["completed_sessions"].sum()) if not today_summary.empty else 0
+            int(cast(float, today_summary["completed_sessions"].sum()))
+            if not today_summary.empty
+            else 0
         )
         today_minutes = (
-            float(today_summary["total_minutes"].sum()) if not today_summary.empty else 0.0
+            float(cast(float, today_summary["total_minutes"].sum()))
+            if not today_summary.empty
+            else 0.0
         )
         today_duration = int(today_minutes * 60)
         today_card = self._create_card(self.tr("Today"), today_sessions, today_duration)
@@ -181,9 +185,15 @@ class FocusStatsDialog(QDialog):
             start_date=week_start.isoformat(), end_date=today_str
         )
         week_sessions = (
-            int(week_summary["completed_sessions"].sum()) if not week_summary.empty else 0
+            int(cast(float, week_summary["completed_sessions"].sum()))
+            if not week_summary.empty
+            else 0
         )
-        week_minutes = float(week_summary["total_minutes"].sum()) if not week_summary.empty else 0.0
+        week_minutes = (
+            float(cast(float, week_summary["total_minutes"].sum()))
+            if not week_summary.empty
+            else 0.0
+        )
         cards_layout.addWidget(
             self._create_card(self.tr("This Week"), week_sessions, int(week_minutes * 60))
         )
@@ -194,10 +204,14 @@ class FocusStatsDialog(QDialog):
             start_date=month_start.isoformat(), end_date=today_str
         )
         month_sessions = (
-            int(month_summary["completed_sessions"].sum()) if not month_summary.empty else 0
+            int(cast(float, month_summary["completed_sessions"].sum()))
+            if not month_summary.empty
+            else 0
         )
         month_minutes = (
-            float(month_summary["total_minutes"].sum()) if not month_summary.empty else 0.0
+            float(cast(float, month_summary["total_minutes"].sum()))
+            if not month_summary.empty
+            else 0.0
         )
         cards_layout.addWidget(
             self._create_card(self.tr("This Month"), month_sessions, int(month_minutes * 60))
@@ -210,7 +224,8 @@ class FocusStatsDialog(QDialog):
         chart_layout_box = QVBoxLayout(chart_group)
         weekly = self._analytics.weekly_chart(week_start)
         day_counts = [
-            (row["day_name"][:3], int(row["session_count"])) for _, row in weekly.iterrows()
+            (cast(str, row["day_name"])[:3], int(cast(int, row["session_count"])))
+            for _, row in weekly.iterrows()
         ]
         chart = WeeklyChartWidget(day_counts)
         chart_layout_box.addWidget(chart)
@@ -222,9 +237,9 @@ class FocusStatsDialog(QDialog):
             tasks_group = QGroupBox(self.tr("Top Tasks This Week"))
             tasks_layout = QVBoxLayout(tasks_group)
             for i, (_, row) in enumerate(top.iterrows(), 1):
-                name = self._resolve_item_name(row["item_id"])
-                count = int(row["session_count"])
-                duration = int(row["total_minutes"] * 60)
+                name = self._resolve_item_name(cast(str, row["item_id"]))
+                count = int(cast(int, row["session_count"]))
+                duration = int(cast(float, row["total_minutes"]) * 60)
                 label = QLabel(f"{i}. {name} \u2014 {count} ({_format_duration(duration)})")
                 label.setWordWrap(True)
                 tasks_layout.addWidget(label)
@@ -297,10 +312,16 @@ class FocusStatsDialog(QDialog):
 
     def _build_insights_section(self) -> QGroupBox | None:
         """Build the Insights group box. Returns None if no work sessions exist."""
+        import pandas as pd
+
         all_sessions = self._analytics.sessions()
-        work = all_sessions[
-            (all_sessions["session_type"] == "work") | (all_sessions["session_type"] == "stopwatch")
-        ]
+        work = cast(
+            pd.DataFrame,
+            all_sessions[
+                (all_sessions["session_type"] == "work")
+                | (all_sessions["session_type"] == "stopwatch")
+            ],
+        )
         if work.empty:
             return None
 
@@ -313,7 +334,7 @@ class FocusStatsDialog(QDialog):
             group_layout.addWidget(lbl)
 
         # Completion rate
-        completed = int(work["completed"].sum())
+        completed = int(cast(float, work["completed"].sum()))
         total = len(work)
         pct = round(completed / total * 100) if total > 0 else 0
         interrupted = total - completed
@@ -323,43 +344,45 @@ class FocusStatsDialog(QDialog):
             _add(self.tr(f"Completion rate: {pct}% ({total} sessions, none interrupted)"))
 
         # Average session duration
-        avg_dur = float(work["duration_seconds"].mean())
+        avg_dur = float(cast(float, work["duration_seconds"].mean()))
         _add(self.tr(f"Average session duration: {_format_duration(round(avg_dur))}"))
 
         # Time block analysis
         blocks = self._analytics.time_block_analysis()
-        active_blocks = blocks[blocks["session_count"] >= 2]
+        active_blocks = cast(pd.DataFrame, blocks[blocks["session_count"] >= 2])
         if not active_blocks.empty:
-            most_active = active_blocks.loc[active_blocks["session_count"].idxmax()]
+            most_active = active_blocks.loc[
+                cast(pd.Series, active_blocks["session_count"]).idxmax()
+            ]
             _add(
                 self.tr(
                     f"Most active time: {most_active['block_label']} "
-                    f"({int(most_active['session_count'])} sessions)"
+                    f"({int(cast(int, most_active['session_count']))} sessions)"
                 )
             )
 
         # Best focus time (highest completion rate, min 3 sessions)
-        qualified = blocks[blocks["session_count"] >= 3]
+        qualified = cast(pd.DataFrame, blocks[blocks["session_count"] >= 3])
         if not qualified.empty:
-            best = qualified.loc[qualified["completion_rate"].idxmax()]
-            if best["completion_rate"] > 0:
+            best = qualified.loc[cast(pd.Series, qualified["completion_rate"]).idxmax()]
+            if cast(float, best["completion_rate"]) > 0:
                 _add(
                     self.tr(
                         f"Best focus time: {best['block_label']} "
-                        f"({round(best['completion_rate'] * 100)}% completion, "
-                        f"{int(best['session_count'])} sessions)"
+                        f"({round(cast(float, best['completion_rate']) * 100)}% completion, "
+                        f"{int(cast(int, best['session_count']))} sessions)"
                     )
                 )
 
             # Worst focus time (lowest completion rate < 100%, min 3 sessions)
-            imperfect = qualified[qualified["completion_rate"] < 1.0]
+            imperfect = cast(pd.DataFrame, qualified[qualified["completion_rate"] < 1.0])
             if not imperfect.empty:
-                worst = imperfect.loc[imperfect["completion_rate"].idxmin()]
+                worst = imperfect.loc[cast(pd.Series, imperfect["completion_rate"]).idxmin()]
                 _add(
                     self.tr(
                         f"Worst focus time: {worst['block_label']} "
-                        f"({round(worst['completion_rate'] * 100)}% completion, "
-                        f"{int(worst['session_count'])} sessions)"
+                        f"({round(cast(float, worst['completion_rate']) * 100)}% completion, "
+                        f"{int(cast(int, worst['session_count']))} sessions)"
                     )
                 )
 
@@ -372,8 +395,8 @@ class FocusStatsDialog(QDialog):
         last_week = work[(work["date"] >= str(last_week_start)) & (work["date"] < str(week_start))]
 
         if len(this_week) >= 2 and len(last_week) >= 2:
-            this_pct = round(this_week["completed"].mean() * 100)
-            last_pct = round(last_week["completed"].mean() * 100)
+            this_pct = round(cast(float, this_week["completed"].mean()) * 100)
+            last_pct = round(cast(float, last_week["completed"].mean()) * 100)
             delta = this_pct - last_pct
             if abs(delta) < 3:
                 avg = round((this_pct + last_pct) / 2)
@@ -390,25 +413,30 @@ class FocusStatsDialog(QDialog):
         item_summary = self._analytics.item_summary()
         if not item_summary.empty:
             # Items with 2+ sessions and < 100% completion
-            candidates = item_summary[
-                (item_summary["work_sessions"] + item_summary["stopwatch_sessions"] >= 2)
-                & (item_summary["completion_rate"] < 1.0)
-            ].sort_values("completion_rate")
+            candidates = cast(
+                pd.DataFrame,
+                item_summary[
+                    (item_summary["work_sessions"] + item_summary["stopwatch_sessions"] >= 2)
+                    & (item_summary["completion_rate"] < 1.0)
+                ],
+            ).sort_values("completion_rate")
 
             if not candidates.empty:
                 _add(self.tr("<b>Most interrupted tasks:</b>"))
                 for _, row in candidates.head(3).iterrows():
-                    name = self._resolve_item_name(row["item_id"])
-                    item_total = int(row["work_sessions"] + row["stopwatch_sessions"])
-                    item_completed = int(row["completed_sessions"])
+                    name = self._resolve_item_name(cast(str, row["item_id"]))
+                    item_total = int(
+                        cast(int, row["work_sessions"]) + cast(int, row["stopwatch_sessions"])
+                    )
+                    item_completed = int(cast(int, row["completed_sessions"]))
                     _add(self.tr(f"  \u2022 {name} \u2014 {item_completed}/{item_total} completed"))
 
         # Interruption duration comparison
         completed_work = work[work["completed"]]
         interrupted_work = work[~work["completed"]]
         if len(completed_work) >= 2 and len(interrupted_work) >= 2:
-            avg_c = float(completed_work["duration_seconds"].mean())
-            avg_i = float(interrupted_work["duration_seconds"].mean())
+            avg_c = float(cast(float, completed_work["duration_seconds"].mean()))
+            avg_i = float(cast(float, interrupted_work["duration_seconds"].mean()))
             c_min = round(avg_c / 60)
             i_min = round(avg_i / 60)
             timing = "early" if avg_c > 0 and avg_i < avg_c * 0.5 else "near the end"
@@ -420,7 +448,7 @@ class FocusStatsDialog(QDialog):
             )
 
         # Longest streak
-        daily_goal = self._daily_goal if hasattr(self, "_daily_goal") else 0
+        daily_goal = self._config.daily_goal
         goal = daily_goal if daily_goal > 0 else 1
         longest = self._analytics.longest_streak(goal)
         current = self._analytics.streak(goal)

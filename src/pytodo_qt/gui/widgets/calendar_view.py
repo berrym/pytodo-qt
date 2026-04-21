@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import calendar
 from datetime import date, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 import pyqtgraph as pg
@@ -613,7 +613,11 @@ class _CalendarDelegate(QStyledItemDelegate):
     def set_selected(self, item_id: UUID | None) -> None:
         self._selected_item_id = item_id
 
-    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+    def paint(
+        self, painter: QPainter | None, option: QStyleOptionViewItem, index: QModelIndex
+    ) -> None:
+        if painter is None:
+            return
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setClipRect(option.rect)
@@ -876,8 +880,8 @@ class _CalendarTableView(QTableView):
         )
         self._drop_highlight.hide()
 
-    def resizeEvent(self, a0) -> None:  # noqa: N802
-        super().resizeEvent(a0)
+    def resizeEvent(self, e) -> None:  # noqa: N802
+        super().resizeEvent(e)
         model = self.model()
         if model is None:
             return
@@ -922,50 +926,50 @@ class _CalendarTableView(QTableView):
 
         return None
 
-    def mousePressEvent(self, a0) -> None:  # noqa: N802
+    def mousePressEvent(self, e) -> None:  # noqa: N802
         self._tooltip_label.hide()
         self._tooltip_item_id = None
         self._drag_start_pos = None
         self._drag_item_id = None
         self._drag_item_reminder = ""
         self._dragging = False
-        if a0 is None:
+        if e is None:
             return
-        hit = self._hit_test(a0.pos())
+        hit = self._hit_test(e.pos())
         if hit is None:
             return
         if hit[0] == "task":
             self.task_clicked.emit(hit[1].id)
-            if a0.button() == Qt.MouseButton.LeftButton:
-                self._drag_start_pos = a0.pos()
+            if e.button() == Qt.MouseButton.LeftButton:
+                self._drag_start_pos = e.pos()
                 self._drag_item_id = hit[1].id
                 self._drag_item_reminder = getattr(hit[1], "reminder", "") or ""
         elif hit[0] == "more":
             self.more_clicked.emit(hit[1], hit[2])
 
-    def mouseDoubleClickEvent(self, a0) -> None:  # noqa: N802
-        if a0 is None:
+    def mouseDoubleClickEvent(self, e) -> None:  # noqa: N802
+        if e is None:
             return
-        hit = self._hit_test(a0.pos())
+        hit = self._hit_test(e.pos())
         if hit is not None and hit[0] == "task":
             self.task_double_clicked.emit(hit[1].id)
 
-    def mouseReleaseEvent(self, a0) -> None:  # noqa: N802
+    def mouseReleaseEvent(self, e) -> None:  # noqa: N802
         self._drag_start_pos = None
         self._drag_item_id = None
         self._drag_item_reminder = ""
         self._dragging = False
-        super().mouseReleaseEvent(a0)
+        super().mouseReleaseEvent(e)
 
-    def mouseMoveEvent(self, a0) -> None:  # noqa: N802
-        if a0 is None:
+    def mouseMoveEvent(self, e) -> None:  # noqa: N802
+        if e is None:
             return
         # Drag initiation
         if (
             not self._dragging
             and self._drag_start_pos is not None
             and self._drag_item_id is not None
-            and (a0.pos() - self._drag_start_pos).manhattanLength()
+            and (e.pos() - self._drag_start_pos).manhattanLength()
             >= QApplication.startDragDistance()
         ):
             self._dragging = True
@@ -987,7 +991,7 @@ class _CalendarTableView(QTableView):
             self._dragging = False
             return
         # Tooltip on hover — persistent QLabel, not QToolTip.showText()
-        hit = self._hit_test(a0.pos())
+        hit = self._hit_test(e.pos())
         if hit is not None and hit[0] == "task":
             from ...core.models import build_rich_tooltip
 
@@ -997,7 +1001,7 @@ class _CalendarTableView(QTableView):
                 self._tooltip_item_id = item_id
                 self._tooltip_label.setText(build_rich_tooltip(item))
                 self._tooltip_label.adjustSize()
-            cursor = a0.globalPosition().toPoint()
+            cursor = e.globalPosition().toPoint()
             self._tooltip_label.move(cursor.x() + 16, cursor.y() + 8)
             self._tooltip_label.show()
         elif hit is not None and hit[0] == "more":
@@ -1007,7 +1011,7 @@ class _CalendarTableView(QTableView):
                 QCoreApplication.translate("CalendarViewWidget", f"Click to see all {n} tasks")
             )
             self._tooltip_label.adjustSize()
-            cursor = a0.globalPosition().toPoint()
+            cursor = e.globalPosition().toPoint()
             self._tooltip_label.move(cursor.x() + 16, cursor.y() + 8)
             self._tooltip_label.show()
         else:
@@ -1029,15 +1033,21 @@ class _CalendarTableView(QTableView):
         else:
             super().contextMenuEvent(a0)
 
-    def dragEnterEvent(self, a0) -> None:  # noqa: N802
-        if a0 and a0.mimeData() and a0.mimeData().hasFormat("application/x-pytodo-item-id"):
-            a0.acceptProposedAction()
-
-    def dragMoveEvent(self, a0) -> None:  # noqa: N802
-        if not (a0 and a0.mimeData() and a0.mimeData().hasFormat("application/x-pytodo-item-id")):
+    def dragEnterEvent(self, e) -> None:  # noqa: N802
+        if e is None:
             return
-        a0.acceptProposedAction()
-        index = self.indexAt(a0.position().toPoint())
+        mime = e.mimeData()
+        if mime and mime.hasFormat("application/x-pytodo-item-id"):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e) -> None:  # noqa: N802
+        if e is None:
+            return
+        mime = e.mimeData()
+        if not (mime and mime.hasFormat("application/x-pytodo-item-id")):
+            return
+        e.acceptProposedAction()
+        index = self.indexAt(e.position().toPoint())
         if index.isValid() and index.data(_DATE_ROLE) is not None:
             self._drop_highlight.setGeometry(self.visualRect(index))
             self._drop_highlight.show()
@@ -1045,19 +1055,19 @@ class _CalendarTableView(QTableView):
         else:
             self._drop_highlight.hide()
 
-    def dragLeaveEvent(self, a0) -> None:  # noqa: N802
+    def dragLeaveEvent(self, e) -> None:  # noqa: N802
         self._drop_highlight.hide()
-        super().dragLeaveEvent(a0)
+        super().dragLeaveEvent(e)
 
-    def dropEvent(self, a0) -> None:  # noqa: N802
+    def dropEvent(self, event) -> None:  # noqa: N802
         self._drop_highlight.hide()
-        if a0 is None or a0.mimeData() is None:
+        if event is None:
             return
-        mime = a0.mimeData()
-        if not mime.hasFormat("application/x-pytodo-item-id"):
+        mime = event.mimeData()
+        if mime is None or not mime.hasFormat("application/x-pytodo-item-id"):
             return
-        item_id_str = bytes(mime.data("application/x-pytodo-item-id")).decode()
-        index = self.indexAt(a0.position().toPoint())
+        item_id_str = bytes(mime.data("application/x-pytodo-item-id")).decode()  # type: ignore[arg-type]
+        index = self.indexAt(event.position().toPoint())
         if not index.isValid():
             return
         target_date = index.data(_DATE_ROLE)
@@ -1068,7 +1078,7 @@ class _CalendarTableView(QTableView):
         except ValueError:
             return
         self.task_dropped.emit(item_id, target_date)
-        a0.acceptProposedAction()
+        event.acceptProposedAction()
 
 
 # ---------------------------------------------------------------------------
@@ -1140,9 +1150,13 @@ class _TimelineTasksWidget(QWidget):
         self._plot.getAxis("bottom").setHeight(30)
 
         # Click and hover
-        self._plot.scene().sigMouseClicked.connect(self._on_plot_clicked)
+        scene = self._plot.scene()
+        assert scene is not None
+        scene.sigMouseClicked.connect(self._on_plot_clicked)  # type: ignore[attr-defined]
         self._hover_proxy = pg.SignalProxy(
-            self._plot.scene().sigMouseMoved, rateLimit=30, slot=self._on_mouse_moved
+            scene.sigMouseMoved,  # type: ignore[attr-defined]
+            rateLimit=30,
+            slot=self._on_mouse_moved,
         )
         self._last_hover_row = -1
         self._tooltip_label = QLabel(self)
@@ -1281,7 +1295,16 @@ class _TimelineTasksWidget(QWidget):
 
     def _update_realtime(self) -> None:
         """In-place update: only modify active item's pom/sw/overflow bars via setOpts."""
-        if self._pom_bar is None or self._pom_widths is None:
+        if (
+            self._pom_bar is None
+            or self._sw_bar is None
+            or self._overflow_bar is None
+            or self._pom_widths is None
+            or self._sw_x0s is None
+            or self._sw_widths is None
+            or self._overflow_x0s is None
+            or self._overflow_widths is None
+        ):
             return
         if self._active_item_id is None or self._active_item_id not in self._item_indices:
             return
@@ -1618,15 +1641,15 @@ class _TimelineTasksWidget(QWidget):
                 date_ticks.append((float(i), label))
         bottom_axis.setTicks([date_ticks])
 
-        plot.setXRange(-0.5, total_days + 0.5, padding=0)
-        plot.setYRange(-0.8, n - 0.2, padding=0.02)
+        plot.setXRange(-0.5, total_days + 0.5, padding=0)  # type: ignore[call-arg]
+        plot.setYRange(-0.8, n - 0.2, padding=0.02)  # type: ignore[call-arg]
 
         self._build_legend()
 
     def _build_legend(self) -> None:
         c = self._colors
         text_color = c.get("text", "#e0e0e0")
-        legend_layout = self._legend_widget.layout()
+        legend_layout = cast(QHBoxLayout, self._legend_widget.layout())
         _tr = QCoreApplication.translate
         for hex_c, name in [
             (c.get("chart_span", "#4992ff"), _tr("CalendarViewWidget", "Time Span")),
@@ -1710,7 +1733,9 @@ class _TimelineTasksWidget(QWidget):
 
     def _on_mouse_moved(self, event_args) -> None:
         pos = event_args[0]
-        vb = self._plot.plotItem.vb
+        plot_item = self._plot.plotItem
+        assert plot_item is not None
+        vb = plot_item.vb
         if vb is None:
             return
         mouse_point = vb.mapSceneToView(pos)
@@ -1746,7 +1771,9 @@ class _TimelineTasksWidget(QWidget):
 
     def _on_plot_clicked(self, event) -> None:
         pos = event.scenePos()
-        vb = self._plot.plotItem.vb
+        plot_item = self._plot.plotItem
+        assert plot_item is not None
+        vb = plot_item.vb
         if vb is None:
             return
         mouse_point = vb.mapSceneToView(pos)
@@ -1809,8 +1836,12 @@ class _TimelineDailyWidget(QWidget):
         self._plot.enableAutoRange(axis="y")
 
         # Hover tooltip
+        scene = self._plot.scene()
+        assert scene is not None
         self._hover_proxy = pg.SignalProxy(
-            self._plot.scene().sigMouseMoved, rateLimit=30, slot=self._on_mouse_moved
+            scene.sigMouseMoved,  # type: ignore[attr-defined]
+            rateLimit=30,
+            slot=self._on_mouse_moved,
         )
         self._last_hover_idx = -1
         self._tooltip_label = QLabel(self)
@@ -1837,7 +1868,9 @@ class _TimelineDailyWidget(QWidget):
     def _on_mouse_moved(self, event_args) -> None:
         """Show tooltip for hovered day bar."""
         pos = event_args[0]
-        vb = self._plot.plotItem.vb
+        plot_item = self._plot.plotItem
+        assert plot_item is not None
+        vb = plot_item.vb
         if vb is None:
             return
         mouse_point = vb.mapSceneToView(pos)
@@ -1845,7 +1878,11 @@ class _TimelineDailyWidget(QWidget):
 
         if day_idx != self._last_hover_idx:
             self._last_hover_idx = day_idx
-            if 0 <= day_idx < 7 and self._base_pom_mins is not None:
+            if (
+                0 <= day_idx < 7
+                and self._base_pom_mins is not None
+                and self._base_sw_mins is not None
+            ):
                 pom = float(self._base_pom_mins[day_idx])
                 sw = float(self._base_sw_mins[day_idx])
                 # Add active projection
@@ -1949,7 +1986,12 @@ class _TimelineDailyWidget(QWidget):
 
     def _update_realtime(self) -> None:
         """In-place update: setOpts on bars, setData on trend. Zero item creation."""
-        if self._pom_bar is None or self._base_pom_mins is None:
+        if (
+            self._pom_bar is None
+            or self._sw_bar is None
+            or self._base_pom_mins is None
+            or self._base_sw_mins is None
+        ):
             return
 
         pom = self._base_pom_mins.copy()
@@ -1969,7 +2011,12 @@ class _TimelineDailyWidget(QWidget):
         self._sw_bar.setOpts(height=sw, y0=pom)
 
         # Update trend line with projected today value
-        if self._trend_line is not None and self._trend_x is not None and len(self._trend_x) > 0:
+        if (
+            self._trend_line is not None
+            and self._trend_x is not None
+            and self._trend_y is not None
+            and len(self._trend_x) > 0
+        ):
             trend_y = self._trend_y.copy()
             # Adjust the last trend point if it falls on today
             week_start = self._current_date - timedelta(days=self._current_date.weekday())
@@ -2115,14 +2162,14 @@ class _TimelineDailyWidget(QWidget):
         bottom_axis.setTextPen(self._col_text)
         bottom_axis.setPen(pg.mkPen(self._col_border))
 
-        plot.setXRange(-0.5, 6.5, padding=0)
+        plot.setXRange(-0.5, 6.5, padding=0)  # type: ignore[call-arg]
         max_y = max(float((pom_mins + sw_mins).max()), 1)
-        plot.setYRange(0, max_y * 1.15, padding=0)
+        plot.setYRange(0, max_y * 1.15, padding=0)  # type: ignore[call-arg]
 
     def _build_legend(self) -> None:
         c = self._colors
         text_color = c.get("text", "#e0e0e0")
-        legend_layout = self._legend_widget.layout()
+        legend_layout = cast(QHBoxLayout, self._legend_widget.layout())
         _tr = QCoreApplication.translate
         for hex_c, name in [
             (c.get("chart_pomodoro", "#D55E00"), _tr("CalendarViewWidget", "Pomodoro")),
@@ -2187,8 +2234,12 @@ class _TimelineProductivityWidget(QWidget):
         self._plot.setMenuEnabled(False)
 
         # Hover tooltip
+        scene = self._plot.scene()
+        assert scene is not None
         self._hover_proxy = pg.SignalProxy(
-            self._plot.scene().sigMouseMoved, rateLimit=30, slot=self._on_mouse_moved
+            scene.sigMouseMoved,  # type: ignore[attr-defined]
+            rateLimit=30,
+            slot=self._on_mouse_moved,
         )
         self._last_hover_idx = -1
         self._tooltip_label = QLabel(self)
@@ -2216,7 +2267,9 @@ class _TimelineProductivityWidget(QWidget):
         if self._base_blocks is None:
             return
         pos = event_args[0]
-        vb = self._plot.plotItem.vb
+        plot_item = self._plot.plotItem
+        assert plot_item is not None
+        vb = plot_item.vb
         if vb is None:
             return
         mouse_point = vb.mapSceneToView(pos)
@@ -2386,7 +2439,7 @@ class _TimelineProductivityWidget(QWidget):
                 x0=[pom_mins], width=[sw_mins], brush=self._sw_brushes[bi]
             )
 
-        self._plot.setXRange(0, max_minutes * 1.75, padding=0)
+        self._plot.setXRange(0, max_minutes * 1.75, padding=0)  # type: ignore[call-arg]
 
     def rebuild(self) -> None:
         import pyqtgraph as pg
@@ -2472,15 +2525,15 @@ class _TimelineProductivityWidget(QWidget):
         bottom_axis.setPen(pg.mkPen(self._col_border))
         bottom_axis.setLabel(QCoreApplication.translate("CalendarViewWidget", "Minutes"))
 
-        plot.setXRange(0, max_minutes * 1.75, padding=0)
-        plot.setYRange(-0.7, n - 0.3, padding=0.02)
+        plot.setXRange(0, max_minutes * 1.75, padding=0)  # type: ignore[call-arg]
+        plot.setYRange(-0.7, n - 0.3, padding=0.02)  # type: ignore[call-arg]
 
         self._build_legend()
 
     def _build_legend(self) -> None:
         c = self._colors
         text_color = c.get("text", "#e0e0e0")
-        legend_layout = self._legend_widget.layout()
+        legend_layout = cast(QHBoxLayout, self._legend_widget.layout())
         _tr = QCoreApplication.translate
         for hex_c, name in [
             (c.get("chart_pomodoro", "#D55E00"), _tr("CalendarViewWidget", "Pomodoro")),
@@ -2555,8 +2608,12 @@ class _TimelineAccuracyWidget(QWidget):
         self._plot.setMenuEnabled(False)
 
         # Hover tooltip
+        scene = self._plot.scene()
+        assert scene is not None
         self._hover_proxy = pg.SignalProxy(
-            self._plot.scene().sigMouseMoved, rateLimit=30, slot=self._on_mouse_moved
+            scene.sigMouseMoved,  # type: ignore[attr-defined]
+            rateLimit=30,
+            slot=self._on_mouse_moved,
         )
         self._last_hover_idx = -1
         self._tooltip_label = QLabel(self)
@@ -2581,12 +2638,18 @@ class _TimelineAccuracyWidget(QWidget):
 
     def _on_mouse_moved(self, event_args) -> None:
         """Show tooltip for nearest scatter point."""
-        if self._base_estimated is None or len(self._base_estimated) == 0:
+        if (
+            self._base_estimated is None
+            or self._base_actual is None
+            or len(self._base_estimated) == 0
+        ):
             return
         import numpy as np
 
         pos = event_args[0]
-        vb = self._plot.plotItem.vb
+        plot_item = self._plot.plotItem
+        assert plot_item is not None
+        vb = plot_item.vb
         if vb is None:
             return
         mouse_point = vb.mapSceneToView(pos)
@@ -2693,7 +2756,7 @@ class _TimelineAccuracyWidget(QWidget):
 
     def _update_realtime(self) -> None:
         """In-place scatter update: active item's actual_minutes grows."""
-        if self._scatter is None or self._base_actual is None:
+        if self._scatter is None or self._base_actual is None or self._base_estimated is None:
             return
 
         actual = self._base_actual.copy()
@@ -2814,13 +2877,13 @@ class _TimelineAccuracyWidget(QWidget):
         plot.addItem(self._ref_line)
 
         max_val = max(float(estimated.max()), float(actual.max()), 10)
-        plot.setXRange(0, max_val * 1.1, padding=0)
-        plot.setYRange(0, max_val * 1.1, padding=0)
+        plot.setXRange(0, max_val * 1.1, padding=0)  # type: ignore[call-arg]
+        plot.setYRange(0, max_val * 1.1, padding=0)  # type: ignore[call-arg]
 
     def _build_legend(self) -> None:
         c = self._colors
         text_color = c.get("text", "#e0e0e0")
-        legend_layout = self._legend_widget.layout()
+        legend_layout = cast(QHBoxLayout, self._legend_widget.layout())
         _tr = QCoreApplication.translate
         for hex_c, name in [
             (c.get("chart_overdue", "#b12f25"), _tr("CalendarViewWidget", "Under-estimated")),
@@ -3472,7 +3535,11 @@ class _WeekDelegate(QStyledItemDelegate):
         )
         painter.restore()
 
-    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+    def paint(
+        self, painter: QPainter | None, option: QStyleOptionViewItem, index: QModelIndex
+    ) -> None:
+        if painter is None:
+            return
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setClipRect(option.rect)
@@ -3881,43 +3948,43 @@ class _WeekTableView(QTableView):
 
         return None
 
-    def mousePressEvent(self, a0) -> None:  # noqa: N802
+    def mousePressEvent(self, e) -> None:  # noqa: N802
         self._tooltip_label.hide()
         self._tooltip_item_id = None
         self._drag_start_pos = None
         self._drag_item_id = None
         self._drag_item_reminder = ""
         self._dragging = False
-        if a0 is None:
+        if e is None:
             return
-        hit = self._hit_test(a0.pos())
+        hit = self._hit_test(e.pos())
         if not hit:
             return
         if hit[0] == "task":
             self.task_clicked.emit(hit[1].id)
-            if a0.button() == Qt.MouseButton.LeftButton:
-                self._drag_start_pos = a0.pos()
+            if e.button() == Qt.MouseButton.LeftButton:
+                self._drag_start_pos = e.pos()
                 self._drag_item_id = hit[1].id
                 self._drag_item_reminder = getattr(hit[1], "reminder", "") or ""
         elif hit[0] == "more":
             self.more_clicked.emit(hit[1], hit[2])
 
-    def mouseReleaseEvent(self, a0) -> None:  # noqa: N802
+    def mouseReleaseEvent(self, e) -> None:  # noqa: N802
         self._drag_start_pos = None
         self._drag_item_id = None
         self._drag_item_reminder = ""
         self._dragging = False
-        super().mouseReleaseEvent(a0)
+        super().mouseReleaseEvent(e)
 
-    def mouseMoveEvent(self, a0) -> None:  # noqa: N802
-        if a0 is None:
+    def mouseMoveEvent(self, e) -> None:  # noqa: N802
+        if e is None:
             return
         # Drag initiation
         if (
             not self._dragging
             and self._drag_start_pos is not None
             and self._drag_item_id is not None
-            and (a0.pos() - self._drag_start_pos).manhattanLength()
+            and (e.pos() - self._drag_start_pos).manhattanLength()
             >= QApplication.startDragDistance()
         ):
             self._dragging = True
@@ -3940,7 +4007,7 @@ class _WeekTableView(QTableView):
         # Tooltip handling — uses a persistent QLabel instead of
         # QToolTip.showText() so viewport repaints from the now-timer
         # don't dismiss it prematurely.
-        hit = self._hit_test(a0.pos())
+        hit = self._hit_test(e.pos())
         if hit and hit[0] == "task":
             item = hit[1]
             item_id = getattr(item, "id", None)
@@ -3948,7 +4015,7 @@ class _WeekTableView(QTableView):
                 self._tooltip_item_id = item_id
                 self._tooltip_label.setText(self._build_bar_tooltip(item))
                 self._tooltip_label.adjustSize()
-            cursor = a0.globalPosition().toPoint()
+            cursor = e.globalPosition().toPoint()
             self._tooltip_label.move(cursor.x() + 16, cursor.y() + 8)
             self._tooltip_label.show()
         else:
@@ -3973,11 +4040,11 @@ class _WeekTableView(QTableView):
         self._tooltip_item_id = None
         super().leaveEvent(a0)
 
-    def mouseDoubleClickEvent(self, a0) -> None:  # noqa: N802
-        if a0 is None:
+    def mouseDoubleClickEvent(self, e) -> None:  # noqa: N802
+        if e is None:
             return
         self._tooltip_label.hide()
-        hit = self._hit_test(a0.pos())
+        hit = self._hit_test(e.pos())
         if hit and hit[0] == "task":
             self.task_double_clicked.emit(hit[1].id)
 
@@ -3992,15 +4059,21 @@ class _WeekTableView(QTableView):
         else:
             super().contextMenuEvent(a0)
 
-    def dragEnterEvent(self, a0) -> None:  # noqa: N802
-        if a0 and a0.mimeData() and a0.mimeData().hasFormat("application/x-pytodo-item-id"):
-            a0.acceptProposedAction()
-
-    def dragMoveEvent(self, a0) -> None:  # noqa: N802
-        if not (a0 and a0.mimeData() and a0.mimeData().hasFormat("application/x-pytodo-item-id")):
+    def dragEnterEvent(self, e) -> None:  # noqa: N802
+        if e is None:
             return
-        a0.acceptProposedAction()
-        index = self.indexAt(a0.position().toPoint())
+        mime = e.mimeData()
+        if mime and mime.hasFormat("application/x-pytodo-item-id"):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e) -> None:  # noqa: N802
+        if e is None:
+            return
+        mime = e.mimeData()
+        if not (mime and mime.hasFormat("application/x-pytodo-item-id")):
+            return
+        e.acceptProposedAction()
+        index = self.indexAt(e.position().toPoint())
         target_date = index.data(_WEEK_DATE_ROLE) if index.isValid() else None
         target_hour = index.data(_WEEK_HOUR_ROLE) if index.isValid() else None
         if target_date is not None and target_hour is not None:
@@ -4009,29 +4082,31 @@ class _WeekTableView(QTableView):
             self._drop_highlight.raise_()
             self._drag_preview_label.setText(_format_drop_target(target_date, int(target_hour)))
             self._drag_preview_label.adjustSize()
-            cursor = a0.position().toPoint()
-            global_cursor = self.viewport().mapToGlobal(cursor)
+            cursor = e.position().toPoint()
+            viewport = self.viewport()
+            assert viewport is not None
+            global_cursor = viewport.mapToGlobal(cursor)
             self._drag_preview_label.move(global_cursor.x() + 18, global_cursor.y() + 12)
             self._drag_preview_label.show()
         else:
             self._drop_highlight.hide()
             self._drag_preview_label.hide()
 
-    def dragLeaveEvent(self, a0) -> None:  # noqa: N802
+    def dragLeaveEvent(self, e) -> None:  # noqa: N802
         self._drop_highlight.hide()
         self._drag_preview_label.hide()
-        super().dragLeaveEvent(a0)
+        super().dragLeaveEvent(e)
 
-    def dropEvent(self, a0) -> None:  # noqa: N802
+    def dropEvent(self, event) -> None:  # noqa: N802
         self._drop_highlight.hide()
         self._drag_preview_label.hide()
-        if a0 is None or a0.mimeData() is None:
+        if event is None:
             return
-        mime = a0.mimeData()
-        if not mime.hasFormat("application/x-pytodo-item-id"):
+        mime = event.mimeData()
+        if mime is None or not mime.hasFormat("application/x-pytodo-item-id"):
             return
-        item_id_str = bytes(mime.data("application/x-pytodo-item-id")).decode()
-        index = self.indexAt(a0.position().toPoint())
+        item_id_str = bytes(mime.data("application/x-pytodo-item-id")).decode()  # type: ignore[arg-type]
+        index = self.indexAt(event.position().toPoint())
         if not index.isValid():
             return
         target_date = index.data(_WEEK_DATE_ROLE)
@@ -4047,7 +4122,7 @@ class _WeekTableView(QTableView):
 
         target_time = _time(target_hour, 0) if target_hour >= 0 else None
         self.task_dropped.emit(item_id, target_date, target_time)
-        a0.acceptProposedAction()
+        event.acceptProposedAction()
 
 
 def _format_drop_target(target_date: date, target_hour: int) -> str:
@@ -4104,15 +4179,15 @@ class _DraggableTaskButton(QPushButton):
         self._item_id = item_id
         self._drag_start = None
 
-    def mousePressEvent(self, a0) -> None:  # noqa: N802
-        if a0 and a0.button() == Qt.MouseButton.LeftButton:
-            self._drag_start = a0.pos()
-        super().mousePressEvent(a0)
+    def mousePressEvent(self, e) -> None:  # noqa: N802
+        if e is not None and e.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = e.pos()
+        super().mousePressEvent(e)
 
     def mouseMoveEvent(self, a0) -> None:  # noqa: N802
         if (
-            a0
-            and self._drag_start
+            a0 is not None
+            and self._drag_start is not None
             and (a0.pos() - self._drag_start).manhattanLength() >= QApplication.startDragDistance()
         ):
             drag = QDrag(self)
@@ -4132,9 +4207,9 @@ class _DraggableTaskButton(QPushButton):
         else:
             super().mouseMoveEvent(a0)
 
-    def mouseReleaseEvent(self, a0) -> None:  # noqa: N802
+    def mouseReleaseEvent(self, e) -> None:  # noqa: N802
         self._drag_start = None
-        super().mouseReleaseEvent(a0)
+        super().mouseReleaseEvent(e)
 
 
 class _UnscheduledPanel(QFrame):
@@ -4291,6 +4366,8 @@ class _CalendarLegend(QWidget):
         # Clear existing content
         while self._layout.count():
             item = self._layout.takeAt(0)
+            if item is None:
+                continue
             w = item.widget()
             if w is not None:
                 w.deleteLater()
@@ -4475,7 +4552,9 @@ class _PinnedWeekContainer(QWidget):
         # measured to fit on all three platforms with the bundled
         # Noto Sans and reasonable future growth.
         self._shared_v_header_width = 72
-        self._scrollbar_width = self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+        style = self.style()
+        assert style is not None
+        self._scrollbar_width = style.pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
 
         # All Day pinned table — shows row 0 only. This is the ONLY
         # table that shows the horizontal day header; the hour-grid's

@@ -16,6 +16,7 @@ Two modes:
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import TypeVar
 from uuid import UUID
 
 from PyQt6.QtCore import QDate, QSize, Qt, QTime, pyqtSignal
@@ -41,6 +42,8 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.models import TodoItem, format_duration
+
+_W = TypeVar("_W", bound=QWidget)
 
 
 class TaskDetailPanel(QDockWidget):
@@ -173,7 +176,7 @@ class TaskDetailPanel(QDockWidget):
         label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         return label
 
-    def _track_editable(self, widget: QWidget) -> QWidget:
+    def _track_editable(self, widget: _W) -> _W:
         """Register a widget for batch view/edit mode toggling."""
         self._editable_widgets.append(widget)
         return widget

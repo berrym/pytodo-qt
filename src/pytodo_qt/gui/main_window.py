@@ -164,7 +164,7 @@ class MainWindow(QMainWindow):
         from PyQt6.QtWidgets import QApplication
 
         app = QApplication.instance()
-        if app is not None:
+        if isinstance(app, QApplication):
             style_hints = app.styleHints()
             if style_hints is not None and hasattr(style_hints, "colorSchemeChanged"):
                 style_hints.colorSchemeChanged.connect(self._on_system_theme_changed)
@@ -865,7 +865,7 @@ class MainWindow(QMainWindow):
         self.calendar_view.item_selected.connect(lambda _: self._update_detail_panel())
         self.calendar_view.item_edit_requested.connect(self._on_calendar_edit_requested)
 
-    def _on_calendar_edit_requested(self, item_id: object) -> None:
+    def _on_calendar_edit_requested(self, item_id: UUID) -> None:
         """Open the detail panel for an item and switch to edit mode.
 
         The calendar view fires this when the user picks a task from
@@ -916,7 +916,7 @@ class MainWindow(QMainWindow):
             return
         setattr(item, field_name, value)
         item.mark_updated()
-        active_list.mark_dirty()
+        active_list.mark_updated()
         self._refresh_ui()
 
     def _on_view_toggle(self, view_id: int) -> None:
@@ -2120,7 +2120,9 @@ class MainWindow(QMainWindow):
         # is populated and the item's board_column is written directly
         # by the dialog (defaults to the first column when no explicit
         # selected_column is passed).
-        cols = list(self._database.active_list.board_columns)
+        active_list = self._database.active_list
+        assert active_list is not None
+        cols = list(active_list.board_columns)
         dialog = AddTodoDialog(
             self,
             known_tags=known_tags,
@@ -2757,7 +2759,9 @@ class MainWindow(QMainWindow):
         )
         btn_box.accepted.connect(dlg.accept)
         btn_box.rejected.connect(dlg.reject)
-        btn_box.button(_QBB.StandardButton.Reset).clicked.connect(lambda: dlg.done(2))
+        reset_btn = btn_box.button(_QBB.StandardButton.Reset)
+        assert reset_btn is not None
+        reset_btn.clicked.connect(lambda: dlg.done(2))
         lay.addWidget(btn_box)
 
         result = dlg.exec()
@@ -3186,11 +3190,11 @@ class MainWindow(QMainWindow):
                     5000,
                 )
 
-    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+    def eventFilter(self, a0, a1) -> bool:  # noqa: N802
         """Reset idle timer on any user input (keyboard/mouse)."""
         from PyQt6.QtCore import QEvent
 
-        if event is not None and event.type() in (
+        if a1 is not None and a1.type() in (
             QEvent.Type.MouseMove,
             QEvent.Type.MouseButtonPress,
             QEvent.Type.KeyPress,
@@ -3199,7 +3203,7 @@ class MainWindow(QMainWindow):
             timeout_mins = self._config.stopwatch.idle_timeout
             if timeout_mins > 0 and self._idle_timer.isActive():
                 self._idle_timer.start(timeout_mins * 60 * 1000)
-        return super().eventFilter(obj, event)
+        return super().eventFilter(a0, a1)
 
     def _record_focus_session(
         self,
@@ -3260,11 +3264,12 @@ class MainWindow(QMainWindow):
     def _get_today_session_count(self) -> int:
         """Count today's completed work/stopwatch sessions via analytics."""
         from datetime import date
+        from typing import cast
 
         today = date.today().isoformat()
         df = self._analytics.sessions(start_date=today, end_date=today)
         work_sw = df[df["session_type"] != "break"]
-        return int(work_sw["completed"].sum()) if not work_sw.empty else 0
+        return int(cast(float, work_sw["completed"].sum())) if not work_sw.empty else 0
 
     def _update_daily_goal(self) -> None:
         """Update daily goal display in status bar and floating dialog."""
@@ -3301,8 +3306,10 @@ class MainWindow(QMainWindow):
             return
 
         # Lifetime milestones
+        from typing import cast
+
         lifetime_df = self._analytics.sessions(session_type="work")
-        lifetime = int(lifetime_df["completed"].sum()) if not lifetime_df.empty else 0
+        lifetime = int(cast(float, lifetime_df["completed"].sum())) if not lifetime_df.empty else 0
         milestones = {10, 25, 50, 100, 250, 500, 1000}
         if lifetime in milestones:
             self._notify_milestone(

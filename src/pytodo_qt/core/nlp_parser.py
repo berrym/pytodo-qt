@@ -734,6 +734,7 @@ def _extract_recurrence(
                     if rec_type is None:
                         rec_type = unit_map[unit_tok.text]
                         rec_interval = 1
+                    assert rec_type is not None
                     display = f"{rec_type.capitalize()} for {num}"
                     tracker.reserve(EntitySpan(start, end, EntityKind.RECURRENCE, display))
                     break
@@ -1732,6 +1733,8 @@ def _extract_dates_and_times(
             # Multi-word time block phrases ("late afternoon", "early morning", "first thing")
             if phrase in time_block_words and due_time_block is None:
                 due_time_block = time_block_words[phrase]
+                if due_time_block is None:
+                    continue
                 if not tracker.is_free(start, end):
                     continue  # Already reserved by tod_phrases above — that's fine
                 tracker.reserve(
@@ -1920,7 +1923,7 @@ def _extract_dates_and_times(
             if ci >= len(tokens) or tokens[ci].text not in closers:
                 continue
             eh, em, ee = _range_hour(ci + 1)
-            if eh is None:
+            if eh is None or em is None or sm is None:
                 continue
             ampm, ampm_end = _check_ampm_at(ee + 1)
             span_end_pos = tokens[ampm_end].end if ampm else tokens[ee].end
@@ -1942,11 +1945,11 @@ def _extract_dates_and_times(
 
         # Bare connector: "3 to 5", "six till eight pm"
         sh, sm, se = _range_hour(j)
-        if sh is not None and se + 1 < len(tokens):
+        if sh is not None and sm is not None and se + 1 < len(tokens):
             ci = se + 1
             if tokens[ci].text in _range_closers_from:
                 eh, em, ee = _range_hour(ci + 1)
-                if eh is not None:
+                if eh is not None and em is not None:
                     ampm, ampm_end = _check_ampm_at(ee + 1)
                     span_end_pos = tokens[ampm_end].end if ampm else tokens[ee].end
                     sh_adj, eh_adj = _adjust_range_pair(sh, eh, ampm)

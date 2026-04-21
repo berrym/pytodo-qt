@@ -267,6 +267,8 @@ class ExportChartsDialog(QDialog):
         # Clear existing preview widgets
         while self.preview_layout.count():
             item = self.preview_layout.takeAt(0)
+            if item is None:
+                continue
             w = item.widget()
             if w:
                 w.deleteLater()
@@ -336,6 +338,8 @@ class ExportChartsDialog(QDialog):
     def _show_preview_error(self, msg: str) -> None:
         while self.preview_layout.count():
             item = self.preview_layout.takeAt(0)
+            if item is None:
+                continue
             w = item.widget()
             if w:
                 w.deleteLater()
@@ -355,9 +359,9 @@ class ExportChartsDialog(QDialog):
         if not path:
             return
 
-        try:
-            from ...core.chart_export import MatplotlibUnavailable, export_pdf_report
+        from ...core.chart_export import MatplotlibUnavailable, export_pdf_report
 
+        try:
             start_date, end_date = self._get_date_range()
             items = list(self._active_list.active_items())
             export_pdf_report(
@@ -407,17 +411,17 @@ class ExportChartsDialog(QDialog):
         if not path:
             return
 
-        try:
-            from ...core.chart_export import (
-                MatplotlibUnavailable,
-                export_png,
-                render_accuracy,
-                render_completion_timing,
-                render_daily_activity,
-                render_gantt,
-                render_time_blocks,
-            )
+        from ...core.chart_export import (
+            MatplotlibUnavailable,
+            export_png,
+            render_accuracy,
+            render_completion_timing,
+            render_daily_activity,
+            render_gantt,
+            render_time_blocks,
+        )
 
+        try:
             start_date, end_date = self._get_date_range()
             items = list(self._active_list.active_items())
             renderers = {

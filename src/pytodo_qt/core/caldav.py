@@ -128,7 +128,8 @@ def _item_to_vtodo(item: TodoItem) -> Todo:
     # exporting an unsupported RRULE that causes clients to drop the item.
     rrule = _build_rrule(item)
     if rrule:
-        freq_list = rrule.get("FREQ", [])
+        freq_value = rrule.get("FREQ", [])
+        freq_list = freq_value if isinstance(freq_value, list) else []
         if freq_list and freq_list[0] == "MINUTELY":
             # Most CalDAV clients can't handle FREQ=MINUTELY.
             # Add as DESCRIPTION instead of RRULE to avoid silent drops.

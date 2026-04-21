@@ -1081,9 +1081,9 @@ class SettingsDialog(QDialog):
         self.web_device_count_label.setText(self.tr("0 devices paired"))
         self.web_pin_label.setText(web_server.pairing_pin)
         # Update status bar PIN
-        main_window = parent
-        if hasattr(main_window, "status_bar_widget"):
-            main_window.status_bar_widget.set_web_status(
+        status_bar_widget = getattr(parent, "status_bar_widget", None)
+        if status_bar_widget is not None:
+            status_bar_widget.set_web_status(
                 True, port=self._config.web.port, pin=web_server.pairing_pin
             )
         logger.log.info("Revoked %d device(s) from settings", count)

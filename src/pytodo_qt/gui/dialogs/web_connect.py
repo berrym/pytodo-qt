@@ -807,7 +807,8 @@ class MobileAccessWizard(QDialog):
                     assert target is not None
                     lbl.setText(target)
                     new_qr = _qr_widget(target, 260)
-                    old_qr = container.itemAt(0).widget()
+                    old_item = container.itemAt(0)
+                    old_qr = old_item.widget() if old_item is not None else None
                     if old_qr:
                         container.replaceWidget(old_qr, new_qr)
                         old_qr.deleteLater()

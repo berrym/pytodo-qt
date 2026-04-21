@@ -9,7 +9,7 @@ from __future__ import annotations
 import contextlib
 import ssl
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from aiohttp import web
 
@@ -382,9 +382,15 @@ class WebServer:
         from cryptography import x509
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.primitives.asymmetric.types import (
+            CertificateIssuerPrivateKeyTypes,
+        )
         from cryptography.x509.oid import NameOID
 
-        ca_key = serialization.load_pem_private_key(ca_key_path.read_bytes(), password=None)
+        ca_key = cast(
+            CertificateIssuerPrivateKeyTypes,
+            serialization.load_pem_private_key(ca_key_path.read_bytes(), password=None),
+        )
         ca_cert = x509.load_pem_x509_certificate(ca_cert_path.read_bytes())
 
         srv_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)

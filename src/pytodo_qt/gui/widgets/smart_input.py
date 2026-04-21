@@ -190,11 +190,11 @@ class EntityChip(QLabel):
                 "font-size: 11px; font-weight: bold; }"
             )
 
-    def mousePressEvent(self, a0: QMouseEvent | None) -> None:  # noqa: N802
-        if a0 is None:
+    def mousePressEvent(self, ev: QMouseEvent | None) -> None:  # noqa: N802
+        if ev is None:
             return
         # Right ~16px is the "×" remove zone
-        if a0.position().x() > self.width() - 18:
+        if ev.position().x() > self.width() - 18:
             self.removed.emit(self._span.start, self._span.end)
             return
         # Body click — accept uncertain match

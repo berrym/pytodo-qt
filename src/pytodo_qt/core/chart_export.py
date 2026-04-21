@@ -394,6 +394,7 @@ def render_gantt(
 
     # If we have a bottom legend, reserve space for it by shrinking the
     # chart's bottom edge. The legend gets drawn via fig.text() below.
+    legend_top_fraction = 0.0
     if include_full_legend:
         legend_top_fraction = legend_h / fig_h
         # chart_bottom sits above the legend area with a small gap
@@ -495,7 +496,7 @@ def render_gantt(
             completed_dt = datetime.fromtimestamp(item.completed_at / 1000)
             as_of = completed_dt
             completed_num = mdates.date2num(completed_dt)
-        if synthetic_window:
+        if synthetic_window or window is None:
             # Without a real due_date, the lifecycle classifier doesn't
             # have a meaningful end to compare against. Treat the row
             # as a neutral "in progress" so it picks up a recognizable
@@ -841,14 +842,17 @@ def render_daily_activity(
     ax = fig.add_subplot(111)
 
     # Convert ISO strings to dates for proper date axis
+    import numpy as np
+
     dates = [date.fromisoformat(s) for s in df["date"].astype(str).tolist()]
+    date_nums = np.array(mdates.date2num(dates))
     work = df["work_minutes"].tolist()
     sw = df["stopwatch_minutes"].tolist()
 
     width = 0.85  # day width
-    ax.bar(dates, work, width=width, color=_COLOR_PRIMARY, label="Pomodoro", edgecolor="white")
+    ax.bar(date_nums, work, width=width, color=_COLOR_PRIMARY, label="Pomodoro", edgecolor="white")
     ax.bar(
-        dates,
+        date_nums,
         sw,
         width=width,
         bottom=work,

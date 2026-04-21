@@ -30,6 +30,7 @@ def load_intents(lang: str = "en") -> dict[str, Any]:
     so it works with both source trees and installed packages.
     """
     # Read YAML file
+    assert __package__ is not None
     ref = importlib.resources.files(__package__).joinpath(f"{lang}.yaml")
     text = ref.read_text(encoding="utf-8")
 
