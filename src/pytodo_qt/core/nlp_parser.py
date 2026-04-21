@@ -1610,17 +1610,16 @@ def _extract_dates_and_times(
                         return last_d - timedelta(days=back)
                     return candidate
 
-                resolved = _resolve_nth_weekday(target_year, target_month)
+                resolved: date = _resolve_nth_weekday(target_year, target_month)
 
                 # Push to next year if the resolved date is already past.
                 # Only applies to bare month-name forms; "next/this/the
                 # month" already picked their target month explicitly.
-                if resolved is not None and spec_tok.text in month_names and resolved < today:
+                if spec_tok.text in month_names and resolved < today:
                     target_year += 1
                     resolved = _resolve_nth_weekday(target_year, target_month)
 
-                if resolved is not None:
-                    _set_date(resolved, tok.start, tokens[month_spec_end].end)
+                _set_date(resolved, tok.start, tokens[month_spec_end].end)
                 # Always advance past the matched phrase so a non-
                 # existent Nth (e.g. "fifth Monday" in a 4-Monday
                 # month) doesn't fall through to the bare-weekday
