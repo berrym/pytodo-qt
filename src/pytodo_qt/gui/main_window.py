@@ -1207,9 +1207,6 @@ class MainWindow(QMainWindow):
 
         self.tray_icon = QSystemTrayIcon(self)
 
-        # Full-color app icon for notification popups (not the monochrome tray icon)
-        self._notification_icon = self._get_icon("pytodo-qt.svg")
-
         # Cross-platform system notifications via desktop-notifier. On macOS this
         # uses UNUserNotificationCenter with an explicit authorization request,
         # which Qt's QSystemTrayIcon.showMessage fails to do — that omission is
@@ -1996,11 +1993,8 @@ class MainWindow(QMainWindow):
             if len(due_today_items) > 5:
                 lines[-1] += f" (+{len(due_today_items) - 5} more)"
 
-        self.tray_icon.showMessage(
-            self.tr("PyTodo-Qt Reminders"),
-            "\n".join(lines),
-            self._notification_icon,
-            10000,
+        asyncio.create_task(
+            self._notify(self.tr("PyTodo-Qt Reminders"), "\n".join(lines), timeout=10)
         )
 
         # Save the notified_at updates
@@ -3011,22 +3005,14 @@ class MainWindow(QMainWindow):
         # System notifications and sound for state transitions
         if state == "break":
             self._sound_player.play("work-complete")
-            if self.tray_icon is not None:
-                self.tray_icon.showMessage(
-                    self.tr("Focus Session Complete"),
-                    self.tr("Time for a break!"),
-                    self._notification_icon,
-                    5000,
-                )
+            asyncio.create_task(
+                self._notify(self.tr("Focus Session Complete"), self.tr("Time for a break!"))
+            )
         elif state == "working" and self._pomodoro.session_count > 0:
             self._sound_player.play("break-complete")
-            if self.tray_icon is not None:
-                self.tray_icon.showMessage(
-                    self.tr("Break Over"),
-                    self.tr("Ready for the next session?"),
-                    self._notification_icon,
-                    5000,
-                )
+            asyncio.create_task(
+                self._notify(self.tr("Break Over"), self.tr("Ready for the next session?"))
+            )
 
     def _on_pomodoro_break_completed(
         self, item_id: object, seconds: int, start_iso: str = ""
@@ -3200,13 +3186,12 @@ class MainWindow(QMainWindow):
             self.status_bar_widget.show_message(
                 self.tr(f"Stopwatch paused \u2014 no activity for {timeout_mins}m")
             )
-            if self.tray_icon is not None:
-                self.tray_icon.showMessage(
+            asyncio.create_task(
+                self._notify(
                     self.tr("Stopwatch Paused"),
                     self.tr(f"No activity detected for {timeout_mins} minutes"),
-                    self._notification_icon,
-                    5000,
                 )
+            )
 
     def eventFilter(self, a0, a1) -> bool:  # noqa: N802
         """Reset idle timer on any user input (keyboard/mouse)."""
@@ -3375,13 +3360,7 @@ class MainWindow(QMainWindow):
 
     def _notify_milestone(self, title: str, message: str) -> None:
         """Show a milestone notification via system tray and status bar toast."""
-        if self.tray_icon is not None:
-            self.tray_icon.showMessage(
-                title,
-                message,
-                self._notification_icon,
-                5000,
-            )
+        asyncio.create_task(self._notify(title, message))
         self.status_bar_widget.show_message(f"{title} {message}")
 
     def _get_focused_item_stats(self) -> tuple[int, int]:
