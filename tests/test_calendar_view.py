@@ -177,6 +177,89 @@ class TestNavigation:
         assert calendar_widget._current_date == original + timedelta(weeks=1)
 
 
+class TestMidnightRollover:
+    """Regression tests for calendar anchor advancing when the wall-clock
+    day crosses while the app is running (Linux instance left open across
+    a week boundary was stuck on the previous week)."""
+
+    def test_week_anchor_advances_when_week_rolls(self, calendar_widget):
+        calendar_widget._set_sub_view(calendar_widget.SUB_WEEK)
+        # Monday of prior week → new today is Monday of the following week
+        old_today = date(2026, 4, 13)  # Mon
+        new_today = date(2026, 4, 20)  # Mon (next week)
+        calendar_widget._current_date = old_today
+        calendar_widget.notify_day_changed(old_today, new_today)
+        assert calendar_widget._current_date == new_today
+
+    def test_week_anchor_unchanged_when_still_same_week(self, calendar_widget):
+        calendar_widget._set_sub_view(calendar_widget.SUB_WEEK)
+        # Monday → Tuesday of same week: range still contains today,
+        # but since old and new are both in the displayed week, the
+        # anchor updates to the new today so downstream highlight is right
+        old_today = date(2026, 4, 20)  # Mon
+        new_today = date(2026, 4, 21)  # Tue, same week
+        calendar_widget._current_date = old_today
+        calendar_widget.notify_day_changed(old_today, new_today)
+        assert calendar_widget._current_date == new_today
+
+    def test_week_anchor_preserved_when_user_navigated_away(self, calendar_widget):
+        calendar_widget._set_sub_view(calendar_widget.SUB_WEEK)
+        old_today = date(2026, 4, 20)
+        new_today = date(2026, 4, 21)
+        # User deliberately navigated two weeks forward
+        calendar_widget._current_date = date(2026, 5, 4)
+        calendar_widget.notify_day_changed(old_today, new_today)
+        assert calendar_widget._current_date == date(2026, 5, 4)
+
+    def test_month_anchor_advances_across_month(self, calendar_widget):
+        calendar_widget._set_sub_view(calendar_widget.SUB_MONTH)
+        old_today = date(2026, 4, 30)
+        new_today = date(2026, 5, 1)
+        calendar_widget._current_date = date(2026, 4, 15)
+        calendar_widget.notify_day_changed(old_today, new_today)
+        assert calendar_widget._current_date == new_today
+
+    def test_month_anchor_preserved_when_user_navigated_away(self, calendar_widget):
+        calendar_widget._set_sub_view(calendar_widget.SUB_MONTH)
+        old_today = date(2026, 4, 30)
+        new_today = date(2026, 5, 1)
+        calendar_widget._current_date = date(2026, 6, 15)  # user on June
+        calendar_widget.notify_day_changed(old_today, new_today)
+        assert calendar_widget._current_date == date(2026, 6, 15)
+
+    def test_day_anchor_advances(self, calendar_widget):
+        calendar_widget._set_sub_view(calendar_widget.SUB_DAY)
+        old_today = date(2026, 4, 20)
+        new_today = date(2026, 4, 21)
+        calendar_widget._current_date = old_today
+        calendar_widget.notify_day_changed(old_today, new_today)
+        assert calendar_widget._current_date == new_today
+
+    def test_day_anchor_preserved_when_user_navigated_away(self, calendar_widget):
+        calendar_widget._set_sub_view(calendar_widget.SUB_DAY)
+        old_today = date(2026, 4, 20)
+        new_today = date(2026, 4, 21)
+        calendar_widget._current_date = date(2026, 4, 25)  # user on future day
+        calendar_widget.notify_day_changed(old_today, new_today)
+        assert calendar_widget._current_date == date(2026, 4, 25)
+
+    def test_noop_when_day_unchanged(self, calendar_widget):
+        calendar_widget._set_sub_view(calendar_widget.SUB_WEEK)
+        same = date(2026, 4, 21)
+        calendar_widget._current_date = date(2026, 5, 1)  # arbitrary
+        calendar_widget.notify_day_changed(same, same)
+        assert calendar_widget._current_date == date(2026, 5, 1)
+
+    def test_timeline_daily_anchor_advances_with_week(self, calendar_widget):
+        calendar_widget._set_sub_view(calendar_widget.SUB_TIMELINE)
+        calendar_widget._set_timeline_sub_view(1)  # Daily (week-anchored)
+        old_today = date(2026, 4, 19)  # Sunday
+        new_today = date(2026, 4, 20)  # Monday — new week starts
+        calendar_widget._current_date = old_today
+        calendar_widget.notify_day_changed(old_today, new_today)
+        assert calendar_widget._current_date == new_today
+
+
 # ---------------------------------------------------------------------------
 # CalendarViewWidget — data flow
 # ---------------------------------------------------------------------------

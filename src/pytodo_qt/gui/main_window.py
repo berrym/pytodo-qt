@@ -193,6 +193,9 @@ class MainWindow(QMainWindow):
         self._auto_scheduler.start()
 
         # Overdue refresh timer — checks every 60s if timed items have become overdue
+        from datetime import date as _date_init
+
+        self._last_known_today = _date_init.today()
         self._overdue_timer = QTimer(self)
         self._overdue_timer.timeout.connect(self._check_timed_overdue)
         self._overdue_timer.start(60_000)
@@ -1884,13 +1887,18 @@ class MainWindow(QMainWindow):
             if self._web_server is not None:
                 self._web_server.notify_clients()
 
+        today = date.today()
+        day_changed = today != self._last_known_today
+        if day_changed:
+            self.calendar_view.notify_day_changed(self._last_known_today, today)
+            self._last_known_today = today
+
         active_list = self._database.active_list
         if active_list is None:
-            if count > 0:
+            if count > 0 or day_changed:
                 self._refresh_ui()
             return
-        today = date.today()
-        needs_refresh = count > 0
+        needs_refresh = count > 0 or day_changed
         if not needs_refresh:
             for item in active_list.active_items():
                 if item.due_date == today and item.due_time is not None and not item.complete:

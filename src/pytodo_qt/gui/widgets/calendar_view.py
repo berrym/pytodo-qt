@@ -5401,6 +5401,33 @@ class CalendarViewWidget(QWidget):
         self._update_nav_label()
         self.refresh()
 
+    def notify_day_changed(self, old_today: date, new_today: date) -> None:
+        """Advance the anchor when the wall-clock day crosses while the app
+        is running. Only shifts when the user was viewing a range that
+        contained the previous today — deliberate navigation away is
+        preserved. Called by MainWindow's periodic tick.
+        """
+        if old_today == new_today:
+            return
+        contained = False
+        if self._sub_view == self.SUB_MONTH:
+            contained = (self._current_date.year, self._current_date.month) == (
+                old_today.year,
+                old_today.month,
+            )
+        elif self._sub_view in (self.SUB_WEEK,) or (
+            self._sub_view == self.SUB_TIMELINE and self._tl_sub_view == 1
+        ):
+            week_start = self._current_date - timedelta(days=self._current_date.weekday())
+            week_end = week_start + timedelta(days=6)
+            contained = week_start <= old_today <= week_end
+        else:
+            contained = self._current_date == old_today
+        if contained:
+            self._current_date = new_today
+            self._update_nav_label()
+            self.refresh()
+
     def _update_nav_label(self) -> None:
         d = self._current_date
         if self._sub_view == self.SUB_MONTH:
