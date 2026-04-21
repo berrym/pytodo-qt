@@ -25,6 +25,12 @@ else:
 # Collect all pytodo_qt submodules
 pytodo_qt_imports = collect_submodules("pytodo_qt")
 
+# desktop-notifier dispatches to platform backends via conditional imports
+# (macos / dbus / winrt / dummy) inside its main.py — PyInstaller's static
+# analysis picks most of them up, but collect_submodules is the defensive
+# choice and keeps builds stable if upstream adds new backends.
+desktop_notifier_imports = collect_submodules("desktop_notifier")
+
 # Collect package data — runtime assets loaded relative to __file__ via
 # Path(__file__).parent lookups in gui/. The stylesheet is in Python
 # code so it doesn't need bundling, but everything else loaded off disk
@@ -65,7 +71,11 @@ hiddenimports = [
     "matplotlib.dates",
     "matplotlib.backends.backend_pdf",
     "matplotlib.backends.backend_agg",
-] + pytodo_qt_imports
+    # desktop-notifier's rubicon.objc bridge is imported lazily on macOS
+    # through rubicon's proxy machinery; name it explicitly so PyInstaller
+    # pulls it into the bundle.
+    "rubicon.objc",
+] + pytodo_qt_imports + desktop_notifier_imports
 
 # Exclude Qt modules we don't need (prevents problematic permission plugins on macOS)
 excludes = [
