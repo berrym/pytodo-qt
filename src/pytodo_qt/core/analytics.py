@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date, timedelta
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 import pandas as pd
 
@@ -75,7 +75,9 @@ class CycleTimeResult(NamedTuple):
     Statistics fields are None when no qualifying items exist.
     """
 
-    count: int  # qualifying items (excluding unknown)
+    # Field is named sample_count (not count) to avoid shadowing tuple.count().
+    # JSON API keeps the external key "count" for backwards compat.
+    sample_count: int
     unknown_count: int  # excluded from stats
     mean_minutes: float | None
     median_minutes: float | None
@@ -245,18 +247,26 @@ class AnalyticsService:
         for hour in range(0, 24, 2):
             label = f"{hour:02d}:00 - {hour + 2:02d}:00"
             mask = (work["hour_of_day"] >= hour) & (work["hour_of_day"] < hour + 2)
-            block_data = work[mask]
+            block_data = cast(pd.DataFrame, work[mask])
             count = len(block_data)
-            completed = int(block_data["completed"].sum()) if count > 0 else 0
-            total_mins = float(block_data["duration_minutes"].sum()) if count > 0 else 0.0
+            completed = int(cast(float, block_data["completed"].sum())) if count > 0 else 0
+            total_mins = (
+                float(cast(float, block_data["duration_minutes"].sum())) if count > 0 else 0.0
+            )
             pom_data = block_data[block_data["is_work"]] if count > 0 else block_data
             sw_data = (
                 block_data[block_data["session_type"] == "stopwatch"] if count > 0 else block_data
             )
-            pom_mins = float(pom_data["duration_minutes"].sum()) if len(pom_data) > 0 else 0.0
-            sw_mins = float(sw_data["duration_minutes"].sum()) if len(sw_data) > 0 else 0.0
+            pom_mins = (
+                float(cast(float, pom_data["duration_minutes"].sum())) if len(pom_data) > 0 else 0.0
+            )
+            sw_mins = (
+                float(cast(float, sw_data["duration_minutes"].sum())) if len(sw_data) > 0 else 0.0
+            )
             rate = completed / count if count > 0 else 0.0
-            avg_dur = float(block_data["duration_minutes"].mean()) if count > 0 else 0.0
+            avg_dur = (
+                float(cast(float, block_data["duration_minutes"].mean())) if count > 0 else 0.0
+            )
             blocks.append(
                 {
                     "block_start_hour": hour,
@@ -341,7 +351,7 @@ class AnalyticsService:
             {
                 "date": grouped["date"].first(),
                 "total_sessions": grouped.size(),
-                "completed_sessions": grouped["completed"].sum().astype(int),
+                "completed_sessions": cast(pd.Series, grouped["completed"].sum()).astype(int),
                 "total_minutes": grouped["duration_minutes"].sum(),
             }
         )
@@ -355,15 +365,17 @@ class AnalyticsService:
         )
 
         # Per-type minutes
-        work_mins = (
-            work_and_sw[work_and_sw["session_type"] == "work"]
+        work_mins = cast(
+            pd.Series,
+            cast(pd.DataFrame, work_and_sw[work_and_sw["session_type"] == "work"])
             .groupby("date")["duration_minutes"]
-            .sum()
+            .sum(),
         )
-        sw_mins = (
-            work_and_sw[work_and_sw["session_type"] == "stopwatch"]
+        sw_mins = cast(
+            pd.Series,
+            cast(pd.DataFrame, work_and_sw[work_and_sw["session_type"] == "stopwatch"])
             .groupby("date")["duration_minutes"]
-            .sum()
+            .sum(),
         )
         result["work_minutes"] = work_mins.reindex(result.index, fill_value=0.0)
         result["stopwatch_minutes"] = sw_mins.reindex(result.index, fill_value=0.0)
@@ -404,7 +416,7 @@ class AnalyticsService:
                     "date": d,
                     "day_name": day_names[i],
                     "session_count": len(day_data),
-                    "total_minutes": float(day_data["duration_minutes"].sum())
+                    "total_minutes": float(cast(float, day_data["duration_minutes"].sum()))
                     if len(day_data) > 0
                     else 0.0,
                 }
@@ -504,7 +516,7 @@ class AnalyticsService:
                 "work_sessions": grouped.apply(
                     lambda g: int((g["session_type"] == "work").sum()), include_groups=False
                 ),
-                "completed_sessions": grouped["completed"].sum().astype(int),
+                "completed_sessions": cast(pd.Series, grouped["completed"].sum()).astype(int),
                 "stopwatch_sessions": grouped.apply(
                     lambda g: int((g["session_type"] == "stopwatch").sum()), include_groups=False
                 ),
@@ -650,7 +662,7 @@ class AnalyticsService:
                 "item_id": grouped["item_id"].first(),
                 "session_count": grouped.size(),
                 "total_minutes": grouped["duration_minutes"].sum(),
-                "completed_sessions": grouped["completed"].sum().astype(int),
+                "completed_sessions": cast(pd.Series, grouped["completed"].sum()).astype(int),
             }
         )
 
@@ -722,7 +734,7 @@ class AnalyticsService:
         if work_sw.empty:
             return -1
 
-        completed = int(work_sw["completed"].sum())
+        completed = int(cast(float, work_sw["completed"].sum()))
         total = len(work_sw)
 
         # Goal ratio (0-40)
@@ -769,7 +781,7 @@ class AnalyticsService:
               AND due_date IS NOT NULL AND due_date <= ?
             ORDER BY due_date ASC, priority ASC
         """
-        df = pd.read_sql_query(query, self._conn, params=(end.isoformat(),))
+        df = pd.read_sql_query(query, self._conn, params=[end.isoformat()])
         if not df.empty:
             df["due_date_parsed"] = pd.to_datetime(df["due_date"])
             df["days_until_due"] = (df["due_date_parsed"] - pd.Timestamp(today)).dt.days
@@ -866,7 +878,7 @@ class AnalyticsService:
         def _classify_source(row: pd.Series) -> str:
             if not bool(row["complete"]):
                 return "incomplete"
-            if pd.notna(row["completed_at"]):
+            if bool(pd.notna(row["completed_at"])):
                 return "completed_at"
             return "updated_at"
 
@@ -877,7 +889,7 @@ class AnalyticsService:
         def _on_time(row: pd.Series) -> bool:
             if not bool(row["complete"]):
                 return False
-            event_date_str = row["event_date"]
+            event_date_str = cast(str, row["event_date"])
             if not event_date_str:
                 # No event_date should not happen given the WHERE filter,
                 # but defend anyway.
@@ -886,9 +898,12 @@ class AnalyticsService:
             # End-of-day cutoff: a task completed on the event date
             # (any time of day) is on-time. The cutoff is the next day's
             # midnight.
-            cutoff_ms = pd.Timestamp(event_d + timedelta(days=1)).timestamp() * 1000
-            ts = row["completed_at"] if pd.notna(row["completed_at"]) else row["updated_at"]
-            return float(ts) < cutoff_ms
+            cutoff_ms = (
+                cast(pd.Timestamp, pd.Timestamp(event_d + timedelta(days=1))).timestamp() * 1000
+            )
+            completed = row["completed_at"]
+            ts = completed if bool(pd.notna(completed)) else row["updated_at"]
+            return float(cast(float, ts)) < cutoff_ms
 
         df["on_time"] = df.apply(_on_time, axis=1)
 
@@ -1002,11 +1017,11 @@ class AnalyticsService:
         unknown_count = 0
 
         for _, row in df.iterrows():
-            if pd.isna(row["completed_at"]):
+            if bool(pd.isna(row["completed_at"])):
                 unknown_count += 1
                 continue
-            due_end_ms = self._due_end_ms(row["due_date"], row["due_time"])
-            completed_ms = int(row["completed_at"])
+            due_end_ms = self._due_end_ms(cast(str, row["due_date"]), cast(str, row["due_time"]))
+            completed_ms = int(cast(int, row["completed_at"]))
             deviation_minutes = (completed_ms - due_end_ms) // 60_000
             if completed_ms < due_end_ms:
                 classification = "early"
@@ -1082,18 +1097,18 @@ class AnalyticsService:
 
         if df.empty:
             return CycleTimeResult(
-                count=0,
+                sample_count=0,
                 unknown_count=0,
                 mean_minutes=None,
                 median_minutes=None,
                 p90_minutes=None,
             )
 
-        unknown_count = int(df["completed_at"].isna().sum())
+        unknown_count = int(cast(pd.Series, df["completed_at"]).isna().sum())
         with_ts = df[df["completed_at"].notna()].copy()
         if with_ts.empty:
             return CycleTimeResult(
-                count=0,
+                sample_count=0,
                 unknown_count=unknown_count,
                 mean_minutes=None,
                 median_minutes=None,
@@ -1101,15 +1116,20 @@ class AnalyticsService:
             )
 
         # Cycle time in minutes: (completed_at − created_at) / 60_000
-        cycle_minutes = (
-            with_ts["completed_at"].astype("int64") - with_ts["created_at"].astype("int64")
-        ) / 60_000
+        cycle_minutes = cast(
+            pd.Series,
+            (
+                cast(pd.Series, with_ts["completed_at"]).astype("int64")
+                - cast(pd.Series, with_ts["created_at"]).astype("int64")
+            )
+            / 60_000,
+        )
         # Negative cycle times (clock skew, manual edits) are excluded
         # rather than reported as misleading negative durations.
-        cycle_minutes = cycle_minutes[cycle_minutes >= 0]
+        cycle_minutes = cast(pd.Series, cycle_minutes[cycle_minutes >= 0])
         if cycle_minutes.empty:
             return CycleTimeResult(
-                count=0,
+                sample_count=0,
                 unknown_count=unknown_count,
                 mean_minutes=None,
                 median_minutes=None,
@@ -1117,11 +1137,11 @@ class AnalyticsService:
             )
 
         return CycleTimeResult(
-            count=int(cycle_minutes.count()),
+            sample_count=int(cycle_minutes.count()),
             unknown_count=unknown_count,
-            mean_minutes=float(cycle_minutes.mean()),
-            median_minutes=float(cycle_minutes.median()),
-            p90_minutes=float(cycle_minutes.quantile(0.9)),
+            mean_minutes=float(cast(float, cycle_minutes.mean())),
+            median_minutes=float(cast(float, cycle_minutes.median())),
+            p90_minutes=float(cast(float, cycle_minutes.quantile(0.9))),
         )
 
     def notification_effectiveness(self) -> pd.DataFrame:
@@ -1179,10 +1199,9 @@ class AnalyticsService:
         prev_date = None
 
         for _, row in sorted_df.iterrows():
-            d = row["date"]
-            if isinstance(d, pd.Timestamp):
-                d = d.date()
-            completed = int(row["completed_sessions"])
+            raw_d = row["date"]
+            d: date = raw_d.date() if isinstance(raw_d, pd.Timestamp) else cast(date, raw_d)
+            completed = int(cast(int, row["completed_sessions"]))
             if completed >= threshold:
                 if prev_date is not None and (d - prev_date).days == 1:
                     current += 1
@@ -1216,9 +1235,9 @@ class AnalyticsService:
 
         # Best focus time suggestion
         blocks = self.time_block_analysis()
-        qualified = blocks[blocks["session_count"] >= 3]
+        qualified = cast(pd.DataFrame, blocks[blocks["session_count"] >= 3])
         if not qualified.empty:
-            best = qualified.loc[qualified["completion_rate"].idxmax()]
+            best = qualified.loc[cast(pd.Series, qualified["completion_rate"]).idxmax()]
             if best["completion_rate"] >= 0.8:
                 suggestions.append(
                     f"Your focus is best during {best['block_label']} "

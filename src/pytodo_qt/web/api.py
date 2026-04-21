@@ -1731,7 +1731,7 @@ async def handle_analytics_cycle_time(request: web.Request) -> web.Response:
     result = analytics.cycle_time(**_parse_analytics_filters(request))
     return web.json_response(
         {
-            "count": result.count,
+            "count": result.sample_count,
             "unknown_count": result.unknown_count,
             "mean_minutes": result.mean_minutes,
             "median_minutes": result.median_minutes,

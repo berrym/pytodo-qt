@@ -932,7 +932,7 @@ class TestSlipRate:
 class TestCycleTime:
     def test_empty_returns_none_stats(self, db, svc):
         result = svc.cycle_time()
-        assert result.count == 0
+        assert result.sample_count == 0
         assert result.mean_minutes is None
 
     def test_basic_stats(self, db, svc):
@@ -949,7 +949,7 @@ class TestCycleTime:
                 completed_at=completed,
             )
         result = svc.cycle_time()
-        assert result.count == 3
+        assert result.sample_count == 3
         assert result.mean_minutes == pytest.approx(120.0)
         assert result.median_minutes == pytest.approx(120.0)
         # p90 of [60, 120, 180]
@@ -976,7 +976,7 @@ class TestCycleTime:
             completed_at=None,
         )
         result = svc.cycle_time()
-        assert result.count == 1
+        assert result.sample_count == 1
         assert result.unknown_count == 1
         assert result.mean_minutes == pytest.approx(60.0)
 
@@ -993,7 +993,7 @@ class TestCycleTime:
             completed_at=completed,
         )
         result = svc.cycle_time()
-        assert result.count == 0
+        assert result.sample_count == 0
         assert result.mean_minutes is None
 
     def test_list_id_and_date_filter(self, db, svc):
@@ -1019,7 +1019,7 @@ class TestCycleTime:
             completed_at=completed,
         )
         result = svc.cycle_time(list_id=list_a)
-        assert result.count == 1
+        assert result.sample_count == 1
         assert result.mean_minutes == pytest.approx(60.0)
 
 

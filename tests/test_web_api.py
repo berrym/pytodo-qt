@@ -4594,7 +4594,7 @@ class _FakeAnalytics:
         )
 
         self._cycle_time_result = CycleTimeResult(
-            count=3,
+            sample_count=3,
             unknown_count=1,
             mean_minutes=120.0,
             median_minutes=90.0,
