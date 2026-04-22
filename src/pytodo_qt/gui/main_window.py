@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from desktop_notifier import DesktopNotifier, Icon
 from PyQt6.QtCore import QDate, Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import (
     QAction,
@@ -77,7 +76,7 @@ from .widgets import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from desktop_notifier import DesktopNotifier
 
 
 logger = Logger(__name__)
@@ -1211,12 +1210,24 @@ class MainWindow(QMainWindow):
         # uses UNUserNotificationCenter with an explicit authorization request,
         # which Qt's QSystemTrayIcon.showMessage fails to do — that omission is
         # why the DMG build was rendering anonymous "PyTodo-Qt Notification"
-        # banners with empty bodies.
+        # banners with empty bodies. The import is deferred here (not at module
+        # top) so the app still launches on machines where the dep hasn't been
+        # installed yet — notifications degrade to no-ops via the helper's
+        # `self._notifier is None` branch.
         self._notifier: DesktopNotifier | None = None
         try:
+            from desktop_notifier import DesktopNotifier as _DesktopNotifier
+            from desktop_notifier import Icon as _Icon
+
             notifier_icon_path = Path(__file__).parent / "icons" / "pytodo-qt-256.png"
-            app_icon = Icon(path=notifier_icon_path) if notifier_icon_path.exists() else None
-            self._notifier = DesktopNotifier(app_name="PyTodo-Qt", app_icon=app_icon)
+            app_icon = _Icon(path=notifier_icon_path) if notifier_icon_path.exists() else None
+            self._notifier = _DesktopNotifier(app_name="PyTodo-Qt", app_icon=app_icon)
+        except ImportError as exc:
+            logger.log.warning(
+                "desktop-notifier not installed; system notifications disabled. "
+                "Run `uv sync` (or pip install desktop-notifier) to enable. (%s)",
+                exc,
+            )
         except Exception as exc:
             logger.log.warning("Failed to initialize DesktopNotifier: %s", exc)
 
