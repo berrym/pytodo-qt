@@ -33,7 +33,7 @@ from PyQt6.QtCore import (
     Qt,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QDrag, QFont, QFontMetrics, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QBrush, QColor, QDrag, QFont, QFontMetrics, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -3471,12 +3471,21 @@ class _WeekDelegate(QStyledItemDelegate):
         if zone_bot <= zone_top:
             return
 
+        # Two-channel redundancy per WCAG 1.4.1: deviation zones are
+        # reinforced by BOTH a chroma bump (stronger alpha than the prior
+        # subtle tint) AND a diagonal-hatch texture. Hatching keeps the
+        # zone structurally distinct from the base fill even on bars too
+        # narrow for the color shift to read, and also serves users with
+        # color-vision deficiency who can't resolve the two greens.
         deviation_color = QColor(self._bar_palette[seg.state].deviation)
         if seg.state == BarState.COMPLETED_EARLY:
-            deviation_color.setAlpha(115)
+            deviation_color.setAlpha(200)
+            pattern = Qt.BrushStyle.BDiagPattern
         else:  # COMPLETED_LATE
-            deviation_color.setAlpha(180)
-        painter.fillRect(bar_left, zone_top, bar_width, zone_bot - zone_top, deviation_color)
+            deviation_color.setAlpha(220)
+            pattern = Qt.BrushStyle.FDiagPattern
+        brush = QBrush(deviation_color, pattern)
+        painter.fillRect(bar_left, zone_top, bar_width, zone_bot - zone_top, brush)
 
     def _paint_now_line(
         self,
