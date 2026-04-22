@@ -91,6 +91,32 @@ def _is_system_12h() -> bool:
     return "AP" in fmt.upper() or "AM" in fmt.upper()
 
 
+def bar_state_label(state) -> str:
+    """Map a BarState to the user-visible label used by the legend.
+
+    Shared across the legend widget, calendar bar tooltips, and the task
+    detail panel so that one enum value produces one identical string in
+    every surface. This is the WCAG 1.4.1 redundancy channel — the color
+    swatch is reinforced by an identical name wherever state is shown.
+    """
+    from ...core.calendar_layout import BarState
+
+    _tr = QCoreApplication.translate
+    # Keep the string literals in sync with the legend row in
+    # _LegendWidget.refresh() — the translator context is shared.
+    labels = {
+        BarState.FUTURE: _tr("BarStateLabels", "Future"),
+        BarState.IN_WORK_WINDOW: _tr("BarStateLabels", "In progress"),
+        BarState.DUE_NOW: _tr("BarStateLabels", "Due soon"),
+        BarState.OVERDUE_ACTIVE: _tr("BarStateLabels", "Overdue"),
+        BarState.COMPLETED_EARLY: _tr("BarStateLabels", "Completed (early)"),
+        BarState.COMPLETED_ONTIME: _tr("BarStateLabels", "Completed"),
+        BarState.COMPLETED_LATE: _tr("BarStateLabels", "Completed (late)"),
+        BarState.COMPLETED_UNKNOWN: _tr("BarStateLabels", "Completed (unknown)"),
+    }
+    return labels.get(state, _tr("BarStateLabels", "Unknown"))
+
+
 class _CellBarLayout:
     """Result of laying out the bars within a single hour cell.
 
@@ -4047,13 +4073,23 @@ class _WeekTableView(QTableView):
         """Build the comprehensive rich-text tooltip for a calendar bar.
 
         Uses the shared build_rich_tooltip from core.models which shows
-        every field that affects the task's visual representation. This
-        replaced the ad-hoc partial tooltip that was missing fields like
-        estimated_minutes, work_duration, created_at, and board_column.
+        every field that affects the task's visual representation. The
+        calendar passes the current BarState's legend label so the tooltip
+        reinforces the bar's color with a readable name — the WCAG 1.4.1
+        redundancy channel for users who can't easily distinguish the
+        legend's two greens (In progress vs Completed).
         """
+        from datetime import datetime
+
+        from ...core.calendar_layout import compute_bar_state, compute_bar_window
         from ...core.models import build_rich_tooltip
 
-        return build_rich_tooltip(item)
+        window = compute_bar_window(item)
+        status_label: str | None = None
+        if window is not None:
+            state = compute_bar_state(item, window, datetime.now())
+            status_label = bar_state_label(state)
+        return build_rich_tooltip(item, status_label=status_label)
 
     def leaveEvent(self, a0) -> None:  # noqa: N802
         self._tooltip_label.hide()
@@ -4397,32 +4433,34 @@ class _CalendarLegend(QWidget):
         palette = get_palette(theme_name)
 
         legend_entries = [
-            (BarState.FUTURE, self.tr("Future")),
-            (BarState.IN_WORK_WINDOW, self.tr("In progress")),
-            (BarState.DUE_NOW, self.tr("Due soon")),
-            (BarState.OVERDUE_ACTIVE, self.tr("Overdue")),
-            (BarState.COMPLETED_ONTIME, self.tr("Completed")),
+            BarState.FUTURE,
+            BarState.IN_WORK_WINDOW,
+            BarState.DUE_NOW,
+            BarState.OVERDUE_ACTIVE,
+            BarState.COMPLETED_ONTIME,
         ]
 
         # "Legend:" prefix
         prefix = QLabel(self.tr("Legend:"))
-        prefix.setStyleSheet("QLabel { color: palette(text); font-size: 10px; font-weight: bold; }")
+        prefix.setStyleSheet("QLabel { color: palette(text); font-size: 11px; font-weight: bold; }")
         self._layout.addWidget(prefix)
 
-        for state, label_text in legend_entries:
+        # Swatches are sized for WCAG 1.4.11 legibility — the prior 14x12 was
+        # too small for the two greens (IN_WORK_WINDOW vs COMPLETED_*) to read
+        # as distinct at a glance. 20x16 lands in the Material Design status-
+        # chip range while still fitting the 28px-tall legend strip.
+        for state in legend_entries:
             colors = palette[state]
-            # Color swatch — small colored rectangle
             swatch = QLabel()
-            swatch.setFixedSize(14, 12)
+            swatch.setFixedSize(20, 16)
             swatch.setStyleSheet(
                 f"QLabel {{ background-color: {colors.base}; "
                 f"border: 1px solid {QColor(colors.base).darker(130).name()}; "
-                f"border-radius: 2px; }}"
+                f"border-radius: 3px; }}"
             )
             self._layout.addWidget(swatch)
-            # Text label
-            text_label = QLabel(label_text)
-            text_label.setStyleSheet("QLabel { color: palette(text); font-size: 10px; }")
+            text_label = QLabel(bar_state_label(state))
+            text_label.setStyleSheet("QLabel { color: palette(text); font-size: 11px; }")
             self._layout.addWidget(text_label)
             self._swatches.append(swatch)
 
@@ -4435,7 +4473,7 @@ class _CalendarLegend(QWidget):
         # deviation colors to show the two-zone concept.
         early_colors = palette[BarState.COMPLETED_EARLY]
         early_swatch = QLabel()
-        early_swatch.setFixedSize(14, 12)
+        early_swatch.setFixedSize(20, 16)
         early_swatch_color = QColor(early_colors.deviation)
         early_swatch_color.setAlpha(150)
         early_swatch.setStyleSheet(
@@ -4454,7 +4492,7 @@ class _CalendarLegend(QWidget):
 
         late_colors = palette[BarState.COMPLETED_LATE]
         late_swatch = QLabel()
-        late_swatch.setFixedSize(14, 12)
+        late_swatch.setFixedSize(20, 16)
         late_swatch.setStyleSheet(
             f"QLabel {{ background-color: {late_colors.deviation}; "
             f"border: 1px solid {QColor(late_colors.deviation).darker(130).name()}; "
@@ -4474,7 +4512,7 @@ class _CalendarLegend(QWidget):
         # the actual now line drawn in the hour grid.
         now_color = palette[BarState.OVERDUE_ACTIVE].base  # same color as the line
         now_swatch = QLabel()
-        now_swatch.setFixedSize(14, 12)
+        now_swatch.setFixedSize(20, 16)
         # Two-pixel horizontal line centered vertically in the swatch,
         # matching the look of the actual now line drawn by _paint_now_line.
         now_swatch.setStyleSheet(

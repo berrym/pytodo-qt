@@ -790,6 +790,32 @@ class TestInitialScrollToNow:
         cal._scroll_to_current_hour()
 
 
+class TestBarStateLabel:
+    """bar_state_label is the single source of truth for the human-readable
+    lifecycle names used by the legend, the calendar bar tooltip, and the
+    task detail panel. WCAG 1.4.1 redundancy — the legend's color must be
+    reinforced by identical strings wherever state is surfaced."""
+
+    def test_all_known_states_have_labels(self, qapp):
+        from pytodo_qt.core.calendar_layout import BarState
+        from pytodo_qt.gui.widgets.calendar_view import bar_state_label
+
+        expected = {
+            BarState.FUTURE: "Future",
+            BarState.IN_WORK_WINDOW: "In progress",
+            BarState.DUE_NOW: "Due soon",
+            BarState.OVERDUE_ACTIVE: "Overdue",
+            BarState.COMPLETED_EARLY: "Completed (early)",
+            BarState.COMPLETED_ONTIME: "Completed",
+            BarState.COMPLETED_LATE: "Completed (late)",
+            BarState.COMPLETED_UNKNOWN: "Completed (unknown)",
+        }
+        for state, label in expected.items():
+            assert bar_state_label(state) == label, (
+                f"bar_state_label({state}) produced {bar_state_label(state)!r}, expected {label!r}"
+            )
+
+
 class TestRecurrenceProjection:
     """Recurring tasks must appear on their FUTURE occurrence dates in
     the calendar view, not only on their current due_date. Without

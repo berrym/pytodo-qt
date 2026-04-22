@@ -232,9 +232,16 @@ class TaskDetailPanel(QDockWidget):
         self._complete_check.toggled.connect(self._on_complete_toggled)
 
         self._completed_at_value = self._make_value_label()
+        # Calendar lifecycle state (Future / In progress / Due soon / Overdue /
+        # Completed) shown as plain text. The calendar legend's color channel
+        # already carries this information; surfacing it here in words is the
+        # WCAG 1.4.1 redundancy required for users who can't easily resolve
+        # the legend's two-green palette at small swatch sizes.
+        self._lifecycle_value = self._make_value_label()
         form.addRow(self.tr("Priority:"), self._priority_combo)
         form.addRow(self.tr("Status:"), self._complete_check)
         form.addRow(self.tr("Completed:"), self._completed_at_value)
+        form.addRow(self.tr("Lifecycle:"), self._lifecycle_value)
 
     def _on_priority_changed(self, index: int) -> None:
         if self._populating or not self._edit_mode:
@@ -465,6 +472,19 @@ class TaskDetailPanel(QDockWidget):
                 )
         else:
             self._completed_at_value.setText("\u2014")
+
+        # Lifecycle state — computed from compute_bar_state against "now", so
+        # the panel agrees with whatever the calendar bar currently shows.
+        # Items with no due_date have no window and therefore no lifecycle.
+        from ...core.calendar_layout import compute_bar_state, compute_bar_window
+        from .calendar_view import bar_state_label
+
+        window = compute_bar_window(item)
+        if window is not None:
+            state = compute_bar_state(item, window, datetime.now())
+            self._lifecycle_value.setText(bar_state_label(state))
+        else:
+            self._lifecycle_value.setText("\u2014")
 
         # Schedule
         if item.due_date:

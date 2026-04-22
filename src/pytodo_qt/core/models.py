@@ -1258,7 +1258,11 @@ def format_recurrence_short(item: TodoItem) -> str:
     return f"Every {item.recurrence_interval} {units.get(item.recurrence_type, '')}"
 
 
-def build_rich_tooltip(item: TodoItem, time_format: str = "system") -> str:
+def build_rich_tooltip(
+    item: TodoItem,
+    time_format: str = "system",
+    status_label: str | None = None,
+) -> str:
     """Build a comprehensive HTML tooltip showing all task metadata.
 
     Designed to give the user full visibility into a task's configuration
@@ -1266,6 +1270,14 @@ def build_rich_tooltip(item: TodoItem, time_format: str = "system") -> str:
     Includes every field that affects the task's visual representation:
     priority, status, due date/time, estimates, recurrence, tags, timing,
     creation date, and board column.
+
+    ``status_label`` is the calendar-legend lifecycle name (Future / In
+    progress / Due soon / Overdue / Completed) as a pre-rendered string.
+    Passed in by the calendar bar tooltip builder so low-vision users get
+    the legend's color-coded state in words — WCAG 1.4.1 requires the
+    color distinction to be reinforced by a non-color channel somewhere,
+    and the tooltip is the natural home. Callers that don't compute a
+    BarState (list view, kanban) pass None and the line is omitted.
 
     Fields that are unset or at default values are omitted to keep the
     tooltip clean. The result is HTML suitable for Qt's rich-text tooltip
@@ -1277,6 +1289,11 @@ def build_rich_tooltip(item: TodoItem, time_format: str = "system") -> str:
 
     # Title
     lines.append(f"<b>{_html_escape(item.reminder)}</b>")
+
+    # Calendar lifecycle state, rendered just under the title so it's the
+    # first thing the eye hits.
+    if status_label is not None:
+        lines.append(f"Status: <b>{_html_escape(status_label)}</b>")
 
     # Priority + status line
     prio_names = {1: "High", 2: "Normal", 3: "Low"}
