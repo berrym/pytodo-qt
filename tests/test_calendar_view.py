@@ -889,6 +889,110 @@ class TestRecurrenceProjection:
         }
         assert scheduled_dates == {today}
 
+    def test_completed_today_does_not_leak_to_future_projections(self, qtbot):
+        """Completing today's occurrence of a daily-recurring task must NOT
+        render future projections as COMPLETED.
+
+        When the user completes today's standup, CompleteRecurringCommand
+        flips `complete=True` / `completed_at=now` on the template and
+        leaves it that way until auto-advance runs on the next due date.
+        During that window, a _ProjectedItem proxying a future date would
+        forward `complete` and `completed_at` to the template and
+        compute_bar_state would classify the future day as COMPLETED_EARLY
+        — rendering every future day green on the calendar.
+        """
+        from datetime import datetime, time
+
+        from pytodo_qt.core.calendar_layout import (
+            BarState,
+            compute_bar_state,
+            compute_bar_window,
+        )
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+
+        today = date.today()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Daily standup")
+        item.due_date = today
+        item.due_time = time(9, 0)
+        item.estimated_minutes = 30
+        item.recurrence_type = "daily"
+        item.recurrence_interval = 1
+        item.complete = True
+        item.completed_at = int(datetime.combine(today, time(9, 15)).timestamp() * 1000)
+        lst.add_item(item)
+
+        cal.set_list(lst)
+
+        tomorrow = today + timedelta(days=1)
+        projected = next(
+            (i for i in cal._week_model._items_by_date.get(tomorrow, []) if i.id == item.id),
+            None,
+        )
+        assert projected is not None, "Daily recurring task should project onto tomorrow's bucket"
+
+        window = compute_bar_window(projected)
+        assert window is not None
+        as_of = datetime.combine(today, time(12, 0))
+        state = compute_bar_state(projected, window, as_of)
+        assert state == BarState.FUTURE, (
+            f"Future projection of a completed recurring template must render "
+            f"as FUTURE, got {state}"
+        )
+
+    def test_overdue_today_does_not_leak_to_future_projections(self, qtbot):
+        """A recurring task whose current occurrence is OVERDUE must still
+        render future projections as FUTURE — the overdue state of today's
+        instance has no bearing on next week's instance.
+        """
+        from datetime import datetime, time
+
+        from pytodo_qt.core.calendar_layout import (
+            BarState,
+            compute_bar_state,
+            compute_bar_window,
+        )
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+
+        today = date.today()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Daily standup")
+        # Current occurrence is five days old and never completed — overdue.
+        item.due_date = today - timedelta(days=5)
+        item.due_time = time(9, 0)
+        item.estimated_minutes = 30
+        item.recurrence_type = "daily"
+        item.recurrence_interval = 1
+        item.complete = False
+        lst.add_item(item)
+
+        cal.set_list(lst)
+
+        future_date = today + timedelta(days=3)
+        projected = next(
+            (i for i in cal._week_model._items_by_date.get(future_date, []) if i.id == item.id),
+            None,
+        )
+        assert projected is not None, (
+            "Daily recurring task should project onto a date three days out"
+        )
+
+        window = compute_bar_window(projected)
+        assert window is not None
+        as_of = datetime.combine(today, time(12, 0))
+        state = compute_bar_state(projected, window, as_of)
+        assert state == BarState.FUTURE, (
+            f"Future projection of an overdue recurring template must render as FUTURE, got {state}"
+        )
+
 
 class TestAllDayVisibilityGuarantee:
     """Every task with due_date must be visible somewhere — if its window

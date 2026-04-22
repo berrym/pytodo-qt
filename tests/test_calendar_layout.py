@@ -880,6 +880,63 @@ class TestComputeBarSegmentsQ6Marker:
         assert segments == []
 
 
+class TestComputeBarSegmentsFutureViewingDay:
+    """Future viewing days use current_time as the reference moment, not
+    end-of-viewing-day. Asking "will this be overdue by midnight of a future
+    day?" is semantically wrong for a planning view — the user wants to see
+    "as of right now, is the task's window open?" Before the fix this path
+    painted every future-dated bar as OVERDUE_ACTIVE from the moment the
+    week was rendered, which was visually indistinguishable from a real
+    past-due task."""
+
+    def test_future_day_non_recurring_renders_future(self):
+        """A normal non-recurring task dated in the future renders FUTURE
+        when viewed from an earlier day, not OVERDUE_ACTIVE."""
+        item = _make_item(
+            due_date=date(2026, 4, 13),
+            due_time=time(13, 0),
+            estimated_minutes=30,
+            complete=False,
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        # Today is Apr 10 (three days before the due day)
+        segs = compute_bar_segments(item, window, date(2026, 4, 13), datetime(2026, 4, 10, 9, 49))
+        assert len(segs) == 1
+        assert segs[0].is_marker is False
+        assert segs[0].state == BarState.FUTURE
+
+    def test_future_day_all_day_renders_future(self):
+        """An ALL_DAY task dated in the future renders FUTURE too — the
+        previous end-of-viewing-day semantics would have classified it as
+        OVERDUE_ACTIVE on every day preceding its due date."""
+        item = _make_item(due_date=date(2026, 4, 13), complete=False)
+        window = compute_bar_window(item)
+        assert window is not None
+        segs = compute_bar_segments(item, window, date(2026, 4, 13), datetime(2026, 4, 10, 9, 49))
+        assert len(segs) == 1
+        assert segs[0].is_all_day is True
+        assert segs[0].state == BarState.FUTURE
+
+    def test_past_day_still_uses_end_of_day(self):
+        """Past viewing days retain the historical end-of-day semantics —
+        the marker on Apr 12 must reflect "overdue by end of Apr 12", not
+        "overdue as of current_time"."""
+        item = _make_item(
+            due_date=date(2026, 4, 10),
+            due_time=time(15, 0),
+            estimated_minutes=120,
+            complete=False,
+        )
+        window = compute_bar_window(item)
+        assert window is not None
+        # Today is Apr 15, viewing Apr 12 (past day)
+        segs = compute_bar_segments(item, window, date(2026, 4, 12), datetime(2026, 4, 15, 12, 0))
+        assert len(segs) == 1
+        assert segs[0].is_marker is True
+        assert segs[0].state == BarState.OVERDUE_ACTIVE
+
+
 class TestComputeBarSegmentsAsOfCapping:
     """The as_of value is capped at completed_at for completed items so
     historical days past completion show the final state, not 'still active.'"""

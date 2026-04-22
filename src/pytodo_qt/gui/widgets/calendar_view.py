@@ -343,10 +343,22 @@ class _ProjectedItem:
     on a specific future date.
 
     Forwards every attribute access to the underlying item EXCEPT
-    `due_date`, which returns the projected date instead. This lets
-    compute_bar_window compute a fresh bar window for each occurrence
-    on its actual scheduled date — daily standups appear as proper
-    bars on every day, not as Q6 overdue markers from today's instance.
+    `due_date`, `complete`, and `completed_at`, which are overridden to
+    describe the projected occurrence rather than the template.
+
+    `due_date` returns the projected date so compute_bar_window computes a
+    fresh bar window for each occurrence on its actual scheduled date —
+    daily standups appear as proper bars on every day, not as Q6 overdue
+    markers from today's instance.
+
+    `complete`/`completed_at` always return False/None because a projection
+    represents a strictly future occurrence that has not happened yet.
+    The underlying template's completion state refers to the most recently
+    completed occurrence (before auto-advance runs on the next due date)
+    and would otherwise propagate into every future day on the calendar —
+    rendering them as COMPLETED_EARLY until tomorrow. Projection code
+    only ever projects dates AFTER item.due_date, so a _ProjectedItem is
+    never used for a past occurrence where the override would be wrong.
 
     Identity (`id`, `parent_id`, etc.) and all other state come from the
     real underlying item, so click handlers, edits, and completion
@@ -365,10 +377,18 @@ class _ProjectedItem:
     def due_date(self) -> date:
         return self._projected_date
 
+    @property
+    def complete(self) -> bool:
+        return False
+
+    @property
+    def completed_at(self) -> int | None:
+        return None
+
     def __getattr__(self, name: str):
         # Called only when normal attribute lookup fails — forward to
-        # the wrapped item. Note: 'due_date' is overridden by the
-        # property above so it never reaches this method.
+        # the wrapped item. Note: `due_date`, `complete`, and `completed_at`
+        # are overridden by properties above so they never reach this method.
         return getattr(self._item, name)
 
     def __repr__(self) -> str:

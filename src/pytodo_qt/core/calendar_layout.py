@@ -325,12 +325,20 @@ def compute_bar_state(item: TodoItem, window: BarWindow, as_of: datetime) -> Bar
 def _as_of_for_viewing_day(viewing_day: date, current_time: datetime) -> datetime:
     """Compute the reference moment for state evaluation on a viewing day.
 
-    For today, the reference is `current_time` (so live updates advance the
-    state). For any other day (past or future), the reference is the end of
-    that day, so the visual answers "what was/will be true at the latest
-    moment of this day."
+    - Today: use `current_time` so live updates advance the state.
+    - Past days: use end-of-that-day; the visual answers "what was true at
+      the latest moment of this day" (a historical question).
+    - Future days: use `current_time`. End-of-future-day would ask the
+      question "will it be overdue by midnight?" which for any non-completed
+      task with a due_time answers yes — producing spurious OVERDUE_ACTIVE
+      bars on every future day of the week view. The user's mental model of
+      a future day is "has it happened yet, as of right now?" — not a
+      prediction of end-of-day state. Clamping to current_time yields FUTURE
+      for tasks whose window hasn't opened at the current moment.
     """
     if viewing_day == current_time.date():
+        return current_time
+    if viewing_day > current_time.date():
         return current_time
     return datetime.combine(viewing_day, time(23, 59, 59))
 
