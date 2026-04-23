@@ -201,25 +201,9 @@ These are acceptable to iterate on without re-specifying the locked decisions ab
 
 ---
 
-## Workflow Discipline for This Refactor
-
-This refactor is foundational and high-stakes. The following discipline is non-negotiable:
-
-1. **No code is written until this doc is committed and CI is green.**
-2. **No deviation from Q1/Q2** without re-specifying. Q3–Q7 deviations require explicit user sign-off.
-3. **Every implementation step is small, tested, committed, pushed, and CI-verified before proceeding.** Per `feedback-full-commit-workflow.md`, CI red is the #1 priority.
-4. **No "I'll add tests later."** Tests for the new model are written alongside the implementation.
-5. **No deleting/skipping tests to make red go green.** Failed tests are diagnosed and fixed.
-6. **No "while I'm here" cleanup.** Anything outside the seven locked questions is a separate conversation.
-7. **No declaring partial implementation done.** A bar that renders but doesn't handle Q6 marker mode is not Q6 done.
-8. **Any ambiguity at implementation time triggers a question to the user**, not a creative interpretation.
-
----
-
 ## Reference
 
-- Specification locked: 2026-04-10 (current session)
-- Memory file: `project-calendar-gantt-redesign.md`
+- Specification locked: 2026-04-10
 - Related: `docs/plans/calendar-view-design.md` (original calendar view plan, now superseded for day/week sub-views)
 - Related: `core/models.py:format_duration()` (natural duration display utility)
 - Related: `core/models.py:TodoItem` (the source-of-truth for `due_time`, `due_time_end`, `estimated_minutes`, `due_date`, `created_at`, `done`, recurrence fields)

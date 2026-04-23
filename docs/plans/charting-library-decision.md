@@ -61,7 +61,7 @@ The timeline view in the calendar sub-view needed professional chart rendering f
 
 **Cons:**
 - ~30 MB package (plus numpy ~20 MB dependency)
-- Bundle size concern is dismissed — user explicitly stated professional quality is priority
+- Bundle size concern is accepted — professional visual quality is a load-bearing project priority
 
 ## Alternatives Evaluated
 
