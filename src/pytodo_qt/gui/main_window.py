@@ -1871,13 +1871,11 @@ class MainWindow(QMainWindow):
         goal = self._config.pomodoro.daily_goal
         self._best_streak = self._analytics.streak(goal if goal > 0 else 1)
 
-        # Set active list from config (overrides stored active_list_id)
-        active_list_name = self._config.database.active_list
-        if active_list_name:
-            self._database.set_active_list_by_name(active_list_name)
-        elif self._database.lists and self._database.active_list_id is None:
-            # Set first list as active if none set
-            self._database.active_list_id = next(iter(self._database.lists.keys()))
+        # Resolve the active list. Called again from _refresh_ui so that
+        # lists arriving later (e.g. first-run sync populating an empty
+        # local database) still get an active selection even if the name
+        # stored in config could not be matched at load time.
+        self._resolve_active_list_if_unset()
 
         # Auto-advance overdue recurring items, then reconcile board columns
         self._advance_overdue_recurring()
@@ -2037,10 +2035,35 @@ class MainWindow(QMainWindow):
             return w  # type: ignore[return-value]
         return self.todo_table
 
+    def _resolve_active_list_if_unset(self) -> None:
+        """If no active list is set but non-deleted lists exist, resolve one.
+
+        Preference order: the list named in config; failing that, the
+        first non-deleted list in insertion order. Called from the
+        initial database load and again from _refresh_ui so that lists
+        arriving later via sync still get an active selection —
+        without this, a fresh install whose saved preference references
+        a list that only exists on a peer would render empty views
+        until the user manually clicked a list.
+        """
+        if self._database.active_list_id is not None:
+            return
+        active_list_name = self._config.database.active_list
+        if active_list_name:
+            self._database.set_active_list_by_name(active_list_name)
+        if self._database.active_list_id is None:
+            first_active = next(self._database.active_lists(), None)
+            if first_active is not None:
+                self._database.active_list_id = first_active.id
+
     def _refresh_ui(self) -> None:
         """Refresh all UI components."""
         self._refreshing = True
         try:
+            # Cover the case where sync populated the database after the
+            # initial load failed to pick an active list.
+            self._resolve_active_list_if_unset()
+
             # If active list was deleted (e.g. via sync), switch to another
             active = self._database.active_list
             if active and active.deleted:

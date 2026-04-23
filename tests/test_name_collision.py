@@ -86,12 +86,20 @@ class TestMergeNameCollision:
 
     def _make_merge_window(self, db=None):
         """Create a minimal mock that exercises the real merge logic."""
+        from pytodo_qt.gui.main_window import MainWindow
+
         window = MagicMock()
         window._database = db or Database()
         window._save_database = MagicMock()
         window._refresh_ui = MagicMock()
         window._storage = MagicMock()
         window.status_bar_widget = MagicMock()
+        # Route _resolve_active_list_if_unset through the real class method
+        # so tests that drive _refresh_ui exercise the actual resolver
+        # rather than MagicMock's auto-generated stub.
+        window._resolve_active_list_if_unset = (
+            lambda: MainWindow._resolve_active_list_if_unset(window)
+        )
         return window
 
     def test_new_list_no_collision(self):
@@ -223,8 +231,16 @@ class TestMergeListMetadataLWW:
 
     def _make_merge_window(self, db=None):
         """Create a minimal mock that exercises the real merge logic."""
+        from pytodo_qt.gui.main_window import MainWindow
+
         window = MagicMock()
         window._database = db or Database()
+        # Route _resolve_active_list_if_unset through the real class method
+        # so tests that drive _refresh_ui exercise the actual resolver
+        # rather than MagicMock's auto-generated stub.
+        window._resolve_active_list_if_unset = (
+            lambda: MainWindow._resolve_active_list_if_unset(window)
+        )
         return window
 
     def test_list_deletion_propagates(self):
@@ -513,3 +529,79 @@ class TestMergeListMetadataLWW:
 
         assert only_list.deleted is True
         assert db.active_list_id is None
+
+    def test_active_list_resolved_after_sync_populates_empty_database(self):
+        """Fresh-install scenario: the local database is empty at load
+        time, so the active-list name stored in config does not match any
+        list and active_list_id stays None. Sync then pulls the user's
+        lists from a peer. _refresh_ui must re-resolve the config name
+        against the now-populated database — otherwise the view stays
+        empty until the user manually clicks a list, which is the bug
+        this test pins.
+        """
+        from pytodo_qt.gui.main_window import MainWindow
+
+        db = Database()
+        assert db.active_list_id is None  # empty at startup
+
+        remote_list = create_todo_list("My Tasks")
+        remote_list.add_item(create_todo_item("Buy milk"))
+        remote_db = Database()
+        remote_db.add_list(remote_list)
+        remote_data = json.dumps(remote_db.to_dict()).encode("utf-8")
+
+        window = self._make_merge_window(db)
+        window._config.database.active_list = "My Tasks"
+
+        MainWindow._merge_sync_data_internal(window, remote_data)
+        assert db.active_list_id is None  # merge alone does not select
+
+        MainWindow._refresh_ui(window)
+
+        assert db.active_list_id == remote_list.id, (
+            "After sync merges the preferred list into an empty database, "
+            "_refresh_ui must set active_list_id; otherwise the view "
+            "renders empty and the user has to click around to see data."
+        )
+
+    def test_active_list_falls_back_to_first_when_config_name_unmatched(self):
+        """When config's saved name does not exist in the populated
+        database (peer renamed, user changed it elsewhere, etc.), the
+        resolver falls back to the first list in insertion order.
+        """
+        from pytodo_qt.gui.main_window import MainWindow
+
+        db = Database()
+        remote_a = create_todo_list("Alpha")
+        remote_b = create_todo_list("Beta")
+        remote_db = Database()
+        remote_db.add_list(remote_a)
+        remote_db.add_list(remote_b)
+        remote_data = json.dumps(remote_db.to_dict()).encode("utf-8")
+
+        window = self._make_merge_window(db)
+        window._config.database.active_list = "Gamma"  # no such list
+
+        MainWindow._merge_sync_data_internal(window, remote_data)
+        MainWindow._refresh_ui(window)
+
+        assert db.active_list_id == remote_a.id
+
+    def test_resolver_no_op_when_active_list_already_set(self):
+        """An already-selected active list is never overwritten by the
+        resolver, even if the config name points to a different list."""
+        from pytodo_qt.gui.main_window import MainWindow
+
+        list_a = create_todo_list("Alpha")
+        list_b = create_todo_list("Beta")
+        db = Database()
+        db.add_list(list_a)
+        db.add_list(list_b)
+        db.set_active_list(list_b.id)
+
+        window = self._make_merge_window(db)
+        window._config.database.active_list = "Alpha"
+
+        MainWindow._refresh_ui(window)
+
+        assert db.active_list_id == list_b.id
