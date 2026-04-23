@@ -120,12 +120,17 @@ def bar_state_label(state) -> str:
 class _CellBarLayout:
     """Result of laying out the bars within a single hour cell.
 
-    Separates "continuing" slices (bars that span into this cell from
-    a previous one) from "starting" slices (bars that begin in this
-    cell). Continuing slices get a thin ribbon on the left edge so
-    they don't compete with in-cell tasks for horizontal space; the
-    in-cell tasks get the rest of the bar width divided into slots
-    with proper labels.
+    Bars that begin in this cell ("starting") and bars that span into
+    this cell from a previous one ("continuing") are each equally real
+    in the current moment — a 30-minute focus block and a 2-hour task
+    both deserve the same horizontal claim on any cell they occupy. The
+    layout splits the cell width evenly across every bar present,
+    regardless of where each one began.
+
+    The continuing/starting distinction is preserved on this object
+    because downstream code (painting, hit-testing) needs to know which
+    edges of a bar are clipped by a cell boundary, but the two lists
+    are sized from the same pool and follow the same slot-width rules.
 
     Each slot tuple is (item, window, seg, slot_left, slot_right_edge).
 
@@ -164,19 +169,21 @@ def _compute_cell_bar_layout(
     """Compute the bar layout for a single hour cell.
 
     Walks the column items, builds the intersecting list with id-dedup,
-    splits into continuing-slices vs starting-slices, and assigns slot
-    positions. The painter and the hit-test BOTH call this function so
-    they always agree on which item is at which x position.
+    and assigns equal-width slots to every bar present in the cell
+    regardless of whether it starts here or was already running. The
+    painter and the hit-test BOTH call this function so they always
+    agree on which item is at which x position.
 
-    Continuing slices each get a 5-pixel ribbon on the left edge.
-    Starting slices get the rest of the bar width divided into slots
-    capped at MAX_VISIBLE_SLOTS=3 with the rest collapsed into an
-    overflow count.
+    The total bars in the cell are capped at MAX_VISIBLE_SLOTS=3; any
+    excess is collapsed into an overflow count. When the cap is hit,
+    bars that begin in this cell are preferred over continuing bars,
+    on the theory that a user who just glances at a dense cell is more
+    likely to want to see what's newly scheduled there. Continuing
+    bars that overflow remain reachable through the "+N" badge.
     """
     from ...core.calendar_layout import compute_bar_segments, compute_bar_window
 
     MAX_VISIBLE_SLOTS = 3
-    RIBBON_WIDTH = 5
 
     intersecting: list[tuple] = []
     seen_ids: set = set()
@@ -209,47 +216,44 @@ def _compute_cell_bar_layout(
     continuing: list[tuple] = []
     starting: list[tuple] = []
 
-    if not starting_raw:
-        # No competing in-cell tasks — the continuing slice(s) expand
-        # to fill the cell width as full bars (not thin ribbons). This
-        # is the case where a multi-hour bar passes through a cell with
-        # nothing else to compete with: it should look like a normal
-        # full-width bar, not a 5-pixel ribbon.
-        n_cont = len(continuing_raw)
-        if n_cont > 0:
-            slot_w = max(1, bar_width // n_cont)
-            slot_gap = 2 if n_cont > 1 else 0
-            for i, (item, window, seg) in enumerate(continuing_raw):
-                slot_left = bar_left + i * slot_w
-                slot_right = slot_left + slot_w - slot_gap
-                continuing.append((item, window, seg, slot_left, slot_right))
+    # Cap policy under MAX_VISIBLE_SLOTS: starting bars get preference,
+    # continuing bars fill the remainder. This keeps newly-scheduled work
+    # visible in dense cells; overflowed continuing bars are still reachable
+    # via the "+N" badge.
+    max_start = min(len(starting_raw), MAX_VISIBLE_SLOTS)
+    cap_remaining = MAX_VISIBLE_SLOTS - max_start
+    max_cont = min(len(continuing_raw), cap_remaining)
+
+    visible_count = max_start + max_cont
+    if visible_count == 0:
         return _CellBarLayout(continuing, starting, [])
 
-    # In-cell starting tasks exist — give them priority for horizontal
-    # space. Continuing slices become thin ribbons on the left edge so
-    # they don't crowd the in-cell tasks but remain visible/clickable
-    # as a continuation indicator.
-    ribbon_zone_width = 0
-    for i, (item, window, seg) in enumerate(continuing_raw):
-        rib_left = bar_left + i * RIBBON_WIDTH
-        rib_right = rib_left + RIBBON_WIDTH - 1
-        continuing.append((item, window, seg, rib_left, rib_right))
-        ribbon_zone_width = (i + 1) * RIBBON_WIDTH
+    slot_w = max(1, bar_width // visible_count)
+    slot_gap = 2 if visible_count > 1 else 0
 
-    starting_visible_count = min(len(starting_raw), MAX_VISIBLE_SLOTS)
-    overflow_items = [t[0] for t in starting_raw[MAX_VISIBLE_SLOTS:]]
+    # Slot ordering: continuing bars on the left (they arrived in an earlier
+    # cell, so they sit "upstream" of bars starting here), starting bars to
+    # their right in source order. This produces a stable left-to-right
+    # arrival sequence that matches the time dimension running down the
+    # column.
+    slot_idx = 0
+    for i in range(max_cont):
+        item, window, seg = continuing_raw[i]
+        slot_left = bar_left + slot_idx * slot_w
+        slot_right = slot_left + slot_w - slot_gap
+        continuing.append((item, window, seg, slot_left, slot_right))
+        slot_idx += 1
 
-    gap_after_ribbons = 2 if continuing else 0
-    slot_zone_left = bar_left + ribbon_zone_width + gap_after_ribbons
-    slot_zone_width = bar_width - ribbon_zone_width - gap_after_ribbons
-    slot_w = max(1, slot_zone_width // starting_visible_count)
-    slot_gap = 2 if starting_visible_count > 1 else 0
-    for slot_idx in range(starting_visible_count):
-        item, window, seg = starting_raw[slot_idx]
-        slot_left = slot_zone_left + slot_idx * slot_w
+    for i in range(max_start):
+        item, window, seg = starting_raw[i]
+        slot_left = bar_left + slot_idx * slot_w
         slot_right = slot_left + slot_w - slot_gap
         starting.append((item, window, seg, slot_left, slot_right))
+        slot_idx += 1
 
+    overflow_items = [t[0] for t in continuing_raw[max_cont:]] + [
+        t[0] for t in starting_raw[max_start:]
+    ]
     return _CellBarLayout(continuing, starting, overflow_items)
 
 

@@ -1475,10 +1475,10 @@ class TestWeekViewBarHitTest:
         Before the fix, the continuing bar's full segment time range
         covered the cell, so hit-test returned the continuing bar for
         any click in the cell — including clicks visually on the
-        in-cell tasks. The new layout puts continuing bars in narrow
-        ribbons on the left edge, leaving the rest of the cell width
-        for in-cell tasks, and the slot-aware hit-test returns the
-        right item per click region.
+        in-cell tasks. The current layout gives every bar in a cell an
+        equal-width slot, so the continuing bar occupies the left half
+        and the in-cell bar occupies the right half; the slot-aware
+        hit-test returns the right item per click region.
         """
         from datetime import time
 
@@ -1530,9 +1530,9 @@ class TestWeekViewBarHitTest:
             f"covered the in-cell task's region."
         )
 
-        # Click on the LEFT edge of the cell (where the continuing
-        # ribbon should be) — should hit the spanning bar.
-        click_left = QPoint(rect.left() + 7, click_y)  # 7px in (past 6px gutter, into ribbon)
+        # Click on the LEFT half of the cell (continuing bar's slot) —
+        # should hit the spanning bar.
+        click_left = QPoint(rect.left() + 7, click_y)
         hit_left = view._hit_test(click_left)
         assert hit_left is not None
         assert hit_left[1].id == spanning.id, (
@@ -3724,10 +3724,10 @@ class TestContinuingCellLabels:
     """Labels now render in ANY slot with sufficient width — including
     continuing cells — so that bars whose start-cell slice is too thin
     (e.g., 5 min from 19:55-20:00 that the painter skips) still get
-    a readable label in the body cell. Thin 5 px ribbons (continuing
-    slices squeezed by competing in-cell tasks) naturally fall below
-    _MIN_LABEL_WIDTH so they still never show labels — the width
-    check handles it.
+    a readable label in the body cell. When a cell holds several
+    competing bars the slot width shrinks; narrow slots fall below
+    _MIN_LABEL_WIDTH and the label is suppressed — the width check
+    handles that case automatically.
     """
 
     def test_continuing_cell_renders_label_when_wide_enough(self, qtbot):
