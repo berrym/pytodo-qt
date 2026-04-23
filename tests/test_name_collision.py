@@ -97,8 +97,8 @@ class TestMergeNameCollision:
         # Route _resolve_active_list_if_unset through the real class method
         # so tests that drive _refresh_ui exercise the actual resolver
         # rather than MagicMock's auto-generated stub.
-        window._resolve_active_list_if_unset = (
-            lambda: MainWindow._resolve_active_list_if_unset(window)
+        window._resolve_active_list_if_unset = lambda: MainWindow._resolve_active_list_if_unset(
+            window
         )
         return window
 
@@ -238,8 +238,8 @@ class TestMergeListMetadataLWW:
         # Route _resolve_active_list_if_unset through the real class method
         # so tests that drive _refresh_ui exercise the actual resolver
         # rather than MagicMock's auto-generated stub.
-        window._resolve_active_list_if_unset = (
-            lambda: MainWindow._resolve_active_list_if_unset(window)
+        window._resolve_active_list_if_unset = lambda: MainWindow._resolve_active_list_if_unset(
+            window
         )
         return window
 
