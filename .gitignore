@@ -1,64 +1,180 @@
+# ----------------------------------------------------------------------
+# Python bytecode and extensions
+# ----------------------------------------------------------------------
 *.py[cod]
-
-# C extensions
 *.so
+__pycache__/
 
-# Packages
+# ----------------------------------------------------------------------
+# Build and distribution artifacts
+# ----------------------------------------------------------------------
 *.egg
-*.egg-info
-dist
-build
-eggs
-parts
-bin
-var
-sdist
-develop-eggs
+*.egg-info/
+.eggs/
+build/
+dist/
+eggs/
+parts/
+bin/
+var/
+sdist/
+develop-eggs/
 .installed.cfg
-lib
-lib64
-__pycache__
-
-# Installer logs
+lib/
+lib64/
 pip-log.txt
+pip-wheel-metadata/
+share/python-wheels/
+MANIFEST
 
-# Unit test / coverage reports
+# ----------------------------------------------------------------------
+# Test, coverage, and type-check caches
+# ----------------------------------------------------------------------
 .coverage
-.tox
+.coverage.*
+.cache/
+.tox/
+.nox/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.pyre/
+.hypothesis/
+.basedpyright/
+.dmypy.json
+htmlcov/
+coverage.xml
+junit.xml
 nosetests.xml
+*.cover
+*.py,cover
 
+# ----------------------------------------------------------------------
 # Translations
+# ----------------------------------------------------------------------
 *.mo
 
-# vim
-*.swp
+# ----------------------------------------------------------------------
+# Virtual environments
+# ----------------------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+pyvenv.cfg
 
-# Mr Developer
-.mr.developer.cfg
+# ----------------------------------------------------------------------
+# Environment and secrets
+# ----------------------------------------------------------------------
+.env
+.env.*
+.envrc
+
+# ----------------------------------------------------------------------
+# Local runtime data: logs, databases, sessions
+# ----------------------------------------------------------------------
+*.log
+*.log.*
+logs/
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-shm
+*.db-wal
+
+# ----------------------------------------------------------------------
+# Editor, IDE, and local tool state
+# ----------------------------------------------------------------------
+.idea/
+.vscode/
+.vs/
+.fleet/
+.zed/
+.cursor/
+.codium/
+.claude/
+.aider*
+.continue/
+.copilot/
+.sublime-*
+*.sublime-project
+*.sublime-workspace
+.spyproject/
+.ropeproject/
+.history/
+*.code-workspace
 .project
 .pydevproject
+.mr.developer.cfg
 
-# stdeb
-deb_dist
-btrfs_backup-*.tar.gz
+# ----------------------------------------------------------------------
+# Editor swap and backup files (vim, emacs, nano, etc.)
+# ----------------------------------------------------------------------
+*.swp
+*.swo
+*.swn
+*~
+.*.sw[a-p]
+\#*\#
+.\#*
 
-# ide
-.idea
-
-# uv
-uv.lock
-
-# macOS icon build artifact
-pytodo-qt.iconset/
-
-# Generated at build time by packaging/macos/make_dmg_background.py
-packaging/macos/dmg_background.png
-
-# macOS metadata
+# ----------------------------------------------------------------------
+# Operating system metadata
+# ----------------------------------------------------------------------
 .DS_Store
 ._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.AppleDouble
+.LSOverride
+Icon?
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
 
+# ----------------------------------------------------------------------
+# Backup and temporary files
+# ----------------------------------------------------------------------
+*.bak
+*.backup
+*.tmp
+*.temp
+*.orig
+*.rej
+*.old
+
+# ----------------------------------------------------------------------
+# Qt build artifacts
+# ----------------------------------------------------------------------
+*.qmlc
+*.jsc
+
+# ----------------------------------------------------------------------
+# uv lockfile
+# ----------------------------------------------------------------------
+uv.lock
+
+# ----------------------------------------------------------------------
+# Project-specific build artifacts
+# ----------------------------------------------------------------------
+pytodo-qt.iconset/
+packaging/macos/dmg_background.png
+
+# ----------------------------------------------------------------------
+# Debian packaging
+# ----------------------------------------------------------------------
+deb_dist/
+btrfs_backup-*.tar.gz
+
+# ----------------------------------------------------------------------
 # Media files (safeguard against accidental placement)
+# ----------------------------------------------------------------------
 *.mkv
 *.avi
 *.mp4
