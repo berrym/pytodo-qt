@@ -715,11 +715,13 @@ class TestMonthViewNoProjection:
         assert today + timedelta(days=1) in week_buckets
 
 
-class TestUnscheduledIncludesSubtasks:
-    """Subtasks without due_date should appear in the unscheduled panel
-    so they're findable from the calendar view."""
+class TestUnscheduledExcludesSubtasks:
+    """Subtasks never appear in the unscheduled sidebar regardless of
+    whether they carry a due_date. They are reachable and editable
+    through their parent task's detail panel, which is the only place
+    subtasks surface in the calendar-view UI."""
 
-    def test_subtask_without_due_date_in_unscheduled(self, qtbot):
+    def test_subtask_without_due_date_absent_from_unscheduled(self, qtbot):
         from pytodo_qt.core.models import create_todo_item, create_todo_list
         from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
 
@@ -737,8 +739,33 @@ class TestUnscheduledIncludesSubtasks:
 
         cal.set_list(lst)
 
+        # Parent has a due_date so it's scheduled, not in the
+        # unscheduled panel. The subtask (no due_date) would previously
+        # have shown up here, but now stays contained under the parent.
         text = cal._unscheduled._count_label.text()
-        assert "1 task" in text, f"Expected '1 task' in unscheduled count, got: {text}"
+        assert "0 task" in text, f"Expected '0 tasks' in unscheduled count, got: {text}"
+
+    def test_unscheduled_top_level_with_subtask_counts_only_parent(self, qtbot):
+        """A top-level task with no due_date and a subtask with no
+        due_date shows 1 task in the sidebar (the parent), not 2."""
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+
+        lst = create_todo_list("Test")
+        parent = create_todo_item("Unscheduled parent")
+        parent.due_date = None
+        lst.add_item(parent)
+        sub = create_todo_item("Unscheduled subtask")
+        sub.parent_id = parent.id
+        sub.due_date = None
+        lst.add_item(sub)
+
+        cal.set_list(lst)
+        text = cal._unscheduled._count_label.text()
+        assert "1 task" in text
 
     def test_top_level_unscheduled_still_in_unscheduled(self, qtbot):
         from pytodo_qt.core.models import create_todo_item, create_todo_list
@@ -951,12 +978,11 @@ class TestCalendarVisibilityGuarantee:
         cal.set_list(lst)
         assert today in self._scheduled_dates_for(cal, item.id)
 
-    def test_subtask_with_due_date_visible(self, qtbot):
-        """Regression: scheduled subtasks were dropped before reaching
-        any calendar bucket because the buckets only consumed top-level
-        items. Setting a subtask's due_date is an explicit scheduling
-        action and the subtask must appear on the calendar alongside
-        its parent."""
+    def test_subtask_with_due_date_not_in_week_buckets(self, qtbot):
+        """Subtasks do not render as first-class entries in week/day/
+        month calendar cells. The subtask is editable and visible via
+        its parent's detail panel; the calendar shows top-level
+        tasks only."""
         from datetime import time
 
         from pytodo_qt.core.models import create_todo_item, create_todo_list
@@ -976,17 +1002,12 @@ class TestCalendarVisibilityGuarantee:
 
         cal = self._make_widget(qtbot)
         cal.set_list(lst)
-        sub_dates = self._scheduled_dates_for(cal, sub.id)
-        bucket_summary = {
-            d: [i.reminder for i in items] for d, items in cal._week_model._items_by_date.items()
-        }
-        assert today in sub_dates, (
-            f"Subtask with due_date={today} not present in week model. Buckets: {bucket_summary}"
-        )
+        assert today in self._scheduled_dates_for(cal, parent.id)
+        assert today not in self._scheduled_dates_for(cal, sub.id)
 
-    def test_subtask_with_due_date_and_short_estimate_visible(self, qtbot):
-        """A subtask with both the parent_id-filter risk AND a sub-floor
-        duration — must still resolve to a cell."""
+    def test_subtask_with_due_date_not_in_month_buckets(self, qtbot):
+        """Same containment rule for the month view — subtasks never
+        show up as independent chips."""
         from datetime import time
 
         from pytodo_qt.core.models import create_todo_item, create_todo_list
@@ -997,16 +1018,19 @@ class TestCalendarVisibilityGuarantee:
         parent.due_date = today
         lst.add_item(parent)
 
-        sub = create_todo_item("1-min subtask")
+        sub = create_todo_item("Subtask")
         sub.due_date = today
         sub.due_time = time(10, 30)
-        sub.estimated_minutes = 1
         sub.parent_id = parent.id
         lst.add_item(sub)
 
         cal = self._make_widget(qtbot)
         cal.set_list(lst)
-        assert today in self._scheduled_dates_for(cal, sub.id)
+        month_ids_on_today = {
+            getattr(i, "id", None) for i in cal._cal_model._items_by_date.get(today, [])
+        }
+        assert parent.id in month_ids_on_today
+        assert sub.id not in month_ids_on_today
 
 
 class TestMinHeightFloor:

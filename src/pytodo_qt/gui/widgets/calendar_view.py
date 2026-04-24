@@ -5287,31 +5287,26 @@ class CalendarViewWidget(QWidget):
             self._unscheduled.set_items([])
             return
 
-        # All non-deleted items, including subtasks, participate in the
-        # calendar uniformly. Any item with a due_date is scheduled work
-        # and belongs on the calendar regardless of parent_id; items
-        # without a due_date go to the unscheduled panel so they remain
-        # findable. A scheduled subtask appearing alongside its parent
-        # in week/day/month is the correct behaviour: setting a
-        # subtask's due_date is an explicit commitment to do that piece
-        # on that date, and hiding it from the calendar defeats the
-        # scheduling UI.
+        # Calendar views (month, week, day) and the unscheduled sidebar
+        # render top-level items only. Subtasks are reachable — and
+        # fully editable — through their parent task's detail panel,
+        # where the CRUD affordances already live. Rendering subtasks
+        # as first-class entries in calendar cells or in the
+        # unscheduled sidebar creates confusion about whose deadline
+        # is whose (a subtask bar floating in an earlier time bucket
+        # than its parent reads as an unrelated top-level task) and
+        # isn't necessary for their discoverability.
         all_items = list(self._todo_list.active_items())
         all_items = self._apply_filter(all_items)
+        top_level = [i for i in all_items if i.parent_id is None]
 
         scheduled_real: dict[date, list] = {}
         unscheduled: list = []
-        for item in all_items:
+        for item in top_level:
             if item.due_date:
                 scheduled_real.setdefault(item.due_date, []).append(item)
             else:
                 unscheduled.append(item)
-
-        # Top-level slice is computed once for downstream uses that
-        # intentionally exclude subtasks: Q6 overdue marker collection
-        # (markers represent the parent task's slip, not per-subtask
-        # slips) and the timeline tasks widget (top-level summary).
-        top_level = [i for i in all_items if i.parent_id is None]
 
         # Build a SEPARATE scheduled dict for week/day views with
         # recurrence projections layered in. The month view explicitly
