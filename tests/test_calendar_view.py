@@ -790,6 +790,56 @@ class TestInitialScrollToNow:
         cal._scroll_to_current_hour()
 
 
+class TestDilateHitZone:
+    """The hit-zone dilation helper brings the click target of short
+    bars up to the WCAG 2.5.5 Target Size minimum without changing
+    what is painted. Tests cover the exact geometry so a regression
+    in the helper is caught at the unit level before it reaches the
+    widget-level hit-test path."""
+
+    def test_segment_already_at_minimum_is_unchanged(self):
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _MIN_HIT_HEIGHT,
+            _dilate_hit_zone,
+        )
+
+        top, bot = _dilate_hit_zone(100, 100 + _MIN_HIT_HEIGHT, cell_top=0, cell_bottom=300)
+        assert bot - top == _MIN_HIT_HEIGHT
+        assert (top, bot) == (100, 100 + _MIN_HIT_HEIGHT)
+
+    def test_segment_larger_than_minimum_is_unchanged(self):
+        from pytodo_qt.gui.widgets.calendar_view import _dilate_hit_zone
+
+        top, bot = _dilate_hit_zone(50, 150, cell_top=0, cell_bottom=300)
+        assert (top, bot) == (50, 150)
+
+    def test_short_segment_expanded_symmetrically(self):
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _MIN_HIT_HEIGHT,
+            _dilate_hit_zone,
+        )
+
+        # 10-pixel bar at cell y 100-110 → expanded zone centered at 105
+        top, bot = _dilate_hit_zone(100, 110, cell_top=0, cell_bottom=300)
+        assert bot - top == _MIN_HIT_HEIGHT
+        # Original bar's center (105) must stay within the expanded zone.
+        assert top <= 105 <= bot
+
+    def test_short_segment_clamped_to_cell_top(self):
+        from pytodo_qt.gui.widgets.calendar_view import _dilate_hit_zone
+
+        # Bar near top edge: clamp prevents expansion above cell_top.
+        top, _bot = _dilate_hit_zone(2, 8, cell_top=0, cell_bottom=300)
+        assert top == 0
+
+    def test_short_segment_clamped_to_cell_bottom(self):
+        from pytodo_qt.gui.widgets.calendar_view import _dilate_hit_zone
+
+        # Bar near bottom edge: clamp prevents expansion below cell_bottom.
+        _top, bot = _dilate_hit_zone(295, 300, cell_top=0, cell_bottom=300)
+        assert bot == 300
+
+
 class TestCalendarVisibilityGuarantee:
     """Every item with a ``due_date`` falling inside the visible week
     range MUST resolve to at least one cell in the week model — either
@@ -1034,6 +1084,100 @@ class TestMinHeightFloor:
         assert len(segs) == 1
         seg = segs[0]
         assert seg.end_minute - seg.start_minute >= _MIN_VISIBLE_MINUTES
+
+
+class TestBidirectionalDragDrop:
+    """The unscheduled panel is a drop target for item-ids dragged
+    FROM the calendar grid. Dropping a scheduled task onto the panel
+    clears both due_date and due_time (via a single EditDueDateCommand
+    whose redo sets due_time to None when the new due_date is None)
+    so the task returns fully to the unscheduled bucket in one
+    undoable step.
+    """
+
+    def test_drop_on_unscheduled_clears_due_date_and_due_time(self, qtbot):
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+
+        lst = create_todo_list("List")
+        item = create_todo_item("Scheduled task")
+        item.due_date = date(2026, 4, 24)
+        item.due_time = time(14, 30)
+        lst.add_item(item)
+        cal.set_list(lst)
+        assert item.due_date is not None
+        assert item.due_time is not None
+
+        # Capture the re-emit the CalendarViewWidget performs when it
+        # receives the panel's drop signal.
+        received_payload: list = []
+        cal.item_due_date_changed.connect(lambda iid, d: received_payload.append((iid, d)))
+
+        cal._unscheduled.task_dropped_to_unscheduled.emit(item.id)
+
+        assert received_payload == [(item.id, None)]
+
+    def test_unscheduled_panel_emits_on_drop(self, qtbot):
+        """A drop event carrying a valid item-id mime fires the
+        task_dropped_to_unscheduled signal with the UUID."""
+        from uuid import uuid4
+
+        from PyQt6.QtCore import QMimeData, QPoint, Qt
+        from PyQt6.QtGui import QDropEvent
+
+        from pytodo_qt.gui.widgets.calendar_view import _UnscheduledPanel
+
+        panel = _UnscheduledPanel()
+        qtbot.addWidget(panel)
+        item_id = uuid4()
+
+        mime = QMimeData()
+        mime.setData("application/x-pytodo-item-id", str(item_id).encode())
+        event = QDropEvent(
+            QPoint(10, 10).toPointF(),
+            Qt.DropAction.MoveAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            QDropEvent.Type.Drop,
+        )
+
+        received: list = []
+        panel.task_dropped_to_unscheduled.connect(received.append)
+        panel.dropEvent(event)
+        assert received == [item_id]
+
+    def test_drop_with_wrong_mime_is_ignored(self, qtbot):
+        """A drop carrying a mime other than application/x-pytodo-item-id
+        must not fire the signal."""
+        from PyQt6.QtCore import QMimeData, QPoint, Qt
+        from PyQt6.QtGui import QDropEvent
+
+        from pytodo_qt.gui.widgets.calendar_view import _UnscheduledPanel
+
+        panel = _UnscheduledPanel()
+        qtbot.addWidget(panel)
+
+        mime = QMimeData()
+        mime.setText("hello")
+        event = QDropEvent(
+            QPoint(10, 10).toPointF(),
+            Qt.DropAction.MoveAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            QDropEvent.Type.Drop,
+        )
+
+        received: list = []
+        panel.task_dropped_to_unscheduled.connect(received.append)
+        panel.dropEvent(event)
+        assert received == []
 
 
 class TestClampDropDueTimeForward:

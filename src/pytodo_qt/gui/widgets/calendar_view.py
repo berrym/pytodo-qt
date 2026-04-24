@@ -272,6 +272,39 @@ _MIN_LABEL_WIDTH = 40
 # threshold either skip the label entirely or delegate labeling to
 # the next cell that clears the threshold.
 _MIN_LABEL_HEIGHT = 14
+# Minimum vertical size of a hit-test zone, per WCAG 2.5.5 Target Size
+# (Minimum). Applied independently of the visual bar height: a short
+# bar rendered at the layout-layer minimum (~10 px) still gets a
+# 24-pixel-tall click zone centered on its visual middle and clamped
+# to the containing cell, so sub-threshold bars remain reliably
+# clickable without inflating their visual appearance.
+_MIN_HIT_HEIGHT = 24
+
+
+def _dilate_hit_zone(
+    seg_top_y: int,
+    seg_bot_y: int,
+    *,
+    cell_top: int,
+    cell_bottom: int,
+    min_height: int = _MIN_HIT_HEIGHT,
+) -> tuple[int, int]:
+    """Return a (top_y, bottom_y) pair expanded to at least
+    ``min_height`` pixels tall, centered on the segment's visual
+    middle, clamped to ``[cell_top, cell_bottom]``.
+
+    The visual extent is unchanged; only the hit zone grows. Called
+    from the week/day view's hit-test to bring the click target of
+    minimum-floored bars up to the accessibility standard.
+    """
+    seg_height = seg_bot_y - seg_top_y
+    if seg_height >= min_height:
+        return seg_top_y, seg_bot_y
+    center_y = (seg_top_y + seg_bot_y) // 2
+    half = min_height // 2
+    top_y = max(cell_top, center_y - half)
+    bot_y = min(cell_bottom, center_y + (min_height - half))
+    return top_y, bot_y
 
 
 def _slice_is_first_labelable(
@@ -3983,6 +4016,12 @@ class _WeekTableView(QTableView):
 
         # Test starting (in-cell) slots first — they're the wider, more
         # specific slots and the user is most likely clicking those.
+        # Hit zones are dilated to a minimum of _MIN_HIT_HEIGHT pixels
+        # (WCAG 2.5.5 Target Size) centered on the bar's visual middle
+        # and clamped to the cell rect. The minimum-height layout floor
+        # keeps the visible bar as a short strip; this dilation makes
+        # that strip clickable at the accessibility standard without
+        # altering its appearance.
         for item, _window, seg, slot_left, slot_right in layout.starting:
             if not (slot_left <= click_x <= slot_right):
                 continue
@@ -3994,7 +4033,10 @@ class _WeekTableView(QTableView):
             seg_bot_y = rect.top() + int(
                 (visible_end - cell_minute_start) / cell_minute_width * rect.height()
             )
-            if seg_top_y <= click_y <= seg_bot_y:
+            hit_top_y, hit_bot_y = _dilate_hit_zone(
+                seg_top_y, seg_bot_y, cell_top=rect.top(), cell_bottom=rect.bottom()
+            )
+            if hit_top_y <= click_y <= hit_bot_y:
                 return ("task", item, index)
 
         # Then test continuing ribbons (narrow strips on the left edge).
@@ -4290,15 +4332,30 @@ class _DraggableTaskButton(QPushButton):
 
 
 class _UnscheduledPanel(QFrame):
-    """Sidebar showing tasks without due dates."""
+    """Sidebar showing tasks without due dates.
+
+    Accepts item-id drops from the calendar grid so a scheduled task
+    can be demoted back to unscheduled — the reverse of the drop
+    that schedules an unscheduled task by placing it in a cell. The
+    drop is translated by the parent CalendarViewWidget into an
+    EditDueDateCommand with a null due_date, which also clears
+    due_time, so undo/redo round-trips the change cleanly.
+    """
 
     task_clicked = pyqtSignal(object)  # item_id
     task_double_clicked = pyqtSignal(object)  # item_id
+    task_dropped_to_unscheduled = pyqtSignal(object)  # item_id (UUID)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setFixedWidth(200)
-        self.setStyleSheet("QFrame { border-left: 1px solid palette(mid); }")
+        self._default_style = "QFrame { border-left: 1px solid palette(mid); }"
+        self._drag_over_style = (
+            "QFrame { border-left: 1px solid palette(mid);"
+            " background-color: palette(alternate-base); }"
+        )
+        self.setStyleSheet(self._default_style)
+        self.setAcceptDrops(True)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -4322,6 +4379,45 @@ class _UnscheduledPanel(QFrame):
         self._content_layout.addStretch()
         self._scroll.setWidget(self._content)
         layout.addWidget(self._scroll, 1)
+
+    # ------------------------------------------------------------------
+    # Drag-and-drop: accept item-id drops to unschedule a scheduled task
+    # ------------------------------------------------------------------
+
+    def dragEnterEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None:
+            return
+        mime = a0.mimeData()
+        if mime is not None and mime.hasFormat("application/x-pytodo-item-id"):
+            a0.acceptProposedAction()
+            self.setStyleSheet(self._drag_over_style)
+
+    def dragMoveEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None:
+            return
+        mime = a0.mimeData()
+        if mime is not None and mime.hasFormat("application/x-pytodo-item-id"):
+            a0.acceptProposedAction()
+
+    def dragLeaveEvent(self, a0) -> None:  # noqa: N802
+        self.setStyleSheet(self._default_style)
+        if a0 is not None:
+            a0.accept()
+
+    def dropEvent(self, a0) -> None:  # noqa: N802
+        self.setStyleSheet(self._default_style)
+        if a0 is None:
+            return
+        mime = a0.mimeData()
+        if mime is None or not mime.hasFormat("application/x-pytodo-item-id"):
+            return
+        item_id_str = bytes(mime.data("application/x-pytodo-item-id")).decode()  # type: ignore[arg-type]
+        try:
+            item_id = UUID(item_id_str)
+        except ValueError:
+            return
+        self.task_dropped_to_unscheduled.emit(item_id)
+        a0.acceptProposedAction()
 
     def set_items(self, items: list, todo_list=None) -> None:
         from ...gui.styles.themes import get_colors
@@ -5086,6 +5182,7 @@ class CalendarViewWidget(QWidget):
 
         # Unscheduled panel
         self._unscheduled = _UnscheduledPanel()
+        self._unscheduled.task_dropped_to_unscheduled.connect(self._on_task_dropped_to_unscheduled)
         content.addWidget(self._unscheduled)
 
         layout.addLayout(content, 1)
@@ -5972,6 +6069,13 @@ class CalendarViewWidget(QWidget):
     def _on_task_dropped(self, item_id: UUID, target_date: date) -> None:
         """Handle a task being dropped onto a month calendar date."""
         self.item_due_date_changed.emit(item_id, target_date)
+
+    def _on_task_dropped_to_unscheduled(self, item_id: UUID) -> None:
+        """Handle a task dropped from the calendar back onto the
+        unscheduled panel. Clears due_date; EditDueDateCommand also
+        clears due_time when the new due_date is None, so the item
+        returns to a fully unscheduled state in one undoable step."""
+        self.item_due_date_changed.emit(item_id, None)
 
     def _on_week_task_dropped(self, item_id: UUID, target_date: date, target_time) -> None:
         """Handle a task dropped on week/day view — set date and optionally time.
