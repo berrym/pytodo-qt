@@ -195,6 +195,54 @@ def _effective_work_minutes(item: TodoItem, default_work_minutes: int = 25) -> i
     return max(direct, pom_total)
 
 
+_MIN_VISIBLE_MINUTES = 10
+"""Minimum visual duration, in minute-of-day units, that any hour-grid
+BarSegment must occupy. Segments whose raw duration is smaller are
+expanded to this floor while anchored at their semantic endpoint
+(origin for head-in-day segments, end for continuing segments).
+
+Rationale: at typical week-view zoom levels, 1 minute of duration is
+rendered as ~1 pixel of cell height. Short tasks — a 1-minute pomodoro,
+a cross-midnight tail — therefore fall below the human perception
+threshold and become invisible and unclickable, even though the layout
+computed them correctly. Every production calendar app (Google, Apple,
+Outlook, Fantastical) applies a similar floor for this reason. The
+floor is expressed in minutes, not pixels, so it behaves consistently
+across zoom levels and HiDPI displays.
+
+10 minutes is tuned for the default ~60 px/hour week-view cell — about
+10 px of visible bar at that zoom, above the perception threshold and
+large enough that a 24-px hit-test enlargement still feels natural.
+"""
+
+
+def _apply_min_height_floor(
+    start_minute: int,
+    end_minute: int,
+    *,
+    clipped_top: bool,
+    day_end_minute: int = 1440,
+) -> tuple[int, int]:
+    """Return start/end minutes expanded to ``_MIN_VISIBLE_MINUTES``.
+
+    Anchors expansion at the semantic endpoint:
+    - A segment whose origin lies within this day (``clipped_top`` is
+      False) expands downward from ``start_minute`` so the bar still
+      begins at the correct moment.
+    - A segment continuing from a previous day (``clipped_top`` is
+      True) expands upward from ``end_minute`` so the bar still ends
+      at the correct moment.
+
+    The expanded range is clamped to ``[0, day_end_minute]`` so the
+    floor never invents minutes outside the viewing day.
+    """
+    if end_minute - start_minute >= _MIN_VISIBLE_MINUTES:
+        return start_minute, end_minute
+    if clipped_top:
+        return max(0, end_minute - _MIN_VISIBLE_MINUTES), end_minute
+    return start_minute, min(day_end_minute, start_minute + _MIN_VISIBLE_MINUTES)
+
+
 def clamp_drop_due_time_forward(
     item: TodoItem,
     due_date: date,
@@ -546,6 +594,15 @@ def _hour_grid_segment(
     # clipped_bottom when end is on a later day, OR when end is exactly at
     # midnight of the day after viewing_day (handled by the adjustment above).
     clipped_bottom = window.end.date() > viewing_day and window.end != next_day_start
+
+    # Visibility floor: short-duration bars are expanded to a minimum
+    # number of minutes so they remain perceivable and clickable. The
+    # state and clipping flags are computed from the ORIGINAL window;
+    # only the visual extent is widened. Without this, a 1-minute task
+    # renders as a 1-pixel sliver and is effectively invisible.
+    start_minute, end_minute = _apply_min_height_floor(
+        start_minute, end_minute, clipped_top=clipped_top
+    )
 
     as_of = _as_of_for_viewing_day(viewing_day, current_time)
     if item.complete and item.completed_at is not None:

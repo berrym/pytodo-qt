@@ -790,6 +790,252 @@ class TestInitialScrollToNow:
         cal._scroll_to_current_hour()
 
 
+class TestCalendarVisibilityGuarantee:
+    """Every item with a ``due_date`` falling inside the visible week
+    range MUST resolve to at least one cell in the week model — either
+    an hour-grid bar or an All Day row chip — across every supported
+    metadata shape. This test enumerates the shapes the calendar
+    promises to render and asserts none silently disappear.
+
+    Counterpart for the production rule "no scheduled item is ever
+    invisible." If a future edit breaks one of the cases, the test
+    flags the regression at exactly the affected shape.
+    """
+
+    @staticmethod
+    def _scheduled_dates_for(cal, item_id) -> set:
+        """Return the set of dates whose week-model bucket contains
+        the given item id (matched against both real items and
+        _ProjectedItem proxies)."""
+        scheduled = set()
+        for d, items in cal._week_model._items_by_date.items():
+            if any(getattr(i, "id", None) == item_id for i in items):
+                scheduled.add(d)
+        return scheduled
+
+    def _make_widget(self, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+        return cal
+
+    def test_top_level_due_date_only_visible(self, qtbot):
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+
+        today = date.today()
+        lst = create_todo_list("List")
+        item = create_todo_item("All-day task")
+        item.due_date = today
+        lst.add_item(item)
+
+        cal = self._make_widget(qtbot)
+        cal.set_list(lst)
+        assert today in self._scheduled_dates_for(cal, item.id)
+
+    def test_top_level_due_date_and_due_time_visible(self, qtbot):
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+
+        today = date.today()
+        lst = create_todo_list("List")
+        item = create_todo_item("Timed task")
+        item.due_date = today
+        item.due_time = time(14, 30)
+        lst.add_item(item)
+
+        cal = self._make_widget(qtbot)
+        cal.set_list(lst)
+        assert today in self._scheduled_dates_for(cal, item.id)
+
+    def test_top_level_workback_with_estimate_visible(self, qtbot):
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+
+        today = date.today()
+        lst = create_todo_list("List")
+        item = create_todo_item("Workback task")
+        item.due_date = today
+        item.due_time = time(15, 0)
+        item.estimated_minutes = 45
+        lst.add_item(item)
+
+        cal = self._make_widget(qtbot)
+        cal.set_list(lst)
+        assert today in self._scheduled_dates_for(cal, item.id)
+
+    def test_top_level_pomodoro_estimate_visible(self, qtbot):
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+
+        today = date.today()
+        lst = create_todo_list("List")
+        item = create_todo_item("Pomodoro task")
+        item.due_date = today
+        item.due_time = time(15, 0)
+        item.estimated_pomodoros = 2
+        item.work_duration = 25
+        lst.add_item(item)
+
+        cal = self._make_widget(qtbot)
+        cal.set_list(lst)
+        assert today in self._scheduled_dates_for(cal, item.id)
+
+    def test_top_level_event_window_visible(self, qtbot):
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+
+        today = date.today()
+        lst = create_todo_list("List")
+        item = create_todo_item("Event task")
+        item.due_date = today
+        item.due_time = time(13, 0)
+        item.due_time_end = time(14, 30)
+        lst.add_item(item)
+
+        cal = self._make_widget(qtbot)
+        cal.set_list(lst)
+        assert today in self._scheduled_dates_for(cal, item.id)
+
+    def test_subtask_with_due_date_visible(self, qtbot):
+        """Regression: scheduled subtasks were dropped before reaching
+        any calendar bucket because the buckets only consumed top-level
+        items. Setting a subtask's due_date is an explicit scheduling
+        action and the subtask must appear on the calendar alongside
+        its parent."""
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+
+        today = date.today()
+        lst = create_todo_list("List")
+        parent = create_todo_item("Parent")
+        parent.due_date = today
+        lst.add_item(parent)
+
+        sub = create_todo_item("Subtask")
+        sub.due_date = today
+        sub.due_time = time(10, 30)
+        sub.estimated_minutes = 30
+        sub.parent_id = parent.id
+        lst.add_item(sub)
+
+        cal = self._make_widget(qtbot)
+        cal.set_list(lst)
+        sub_dates = self._scheduled_dates_for(cal, sub.id)
+        bucket_summary = {
+            d: [i.reminder for i in items] for d, items in cal._week_model._items_by_date.items()
+        }
+        assert today in sub_dates, (
+            f"Subtask with due_date={today} not present in week model. Buckets: {bucket_summary}"
+        )
+
+    def test_subtask_with_due_date_and_short_estimate_visible(self, qtbot):
+        """A subtask with both the parent_id-filter risk AND a sub-floor
+        duration — must still resolve to a cell."""
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+
+        today = date.today()
+        lst = create_todo_list("List")
+        parent = create_todo_item("Parent")
+        parent.due_date = today
+        lst.add_item(parent)
+
+        sub = create_todo_item("1-min subtask")
+        sub.due_date = today
+        sub.due_time = time(10, 30)
+        sub.estimated_minutes = 1
+        sub.parent_id = parent.id
+        lst.add_item(sub)
+
+        cal = self._make_widget(qtbot)
+        cal.set_list(lst)
+        assert today in self._scheduled_dates_for(cal, sub.id)
+
+
+class TestMinHeightFloor:
+    """The hour-grid bar height floor guarantees that even sub-pixel-
+    duration tasks render with enough vertical space to be perceived
+    and clicked. Tests assert exact floored ranges against the pure
+    layout function."""
+
+    def test_short_starting_segment_expanded_downward(self):
+        from pytodo_qt.core.calendar_layout import (
+            _MIN_VISIBLE_MINUTES,
+            _apply_min_height_floor,
+        )
+
+        start, end = _apply_min_height_floor(60, 61, clipped_top=False)
+        assert end - start == _MIN_VISIBLE_MINUTES
+        assert start == 60  # anchor preserved at the head
+
+    def test_short_continuing_segment_expanded_upward(self):
+        from pytodo_qt.core.calendar_layout import (
+            _MIN_VISIBLE_MINUTES,
+            _apply_min_height_floor,
+        )
+
+        start, end = _apply_min_height_floor(60, 61, clipped_top=True)
+        assert end - start == _MIN_VISIBLE_MINUTES
+        assert end == 61  # anchor preserved at the tail
+
+    def test_segment_at_or_above_floor_is_unchanged(self):
+        from pytodo_qt.core.calendar_layout import _apply_min_height_floor
+
+        start, end = _apply_min_height_floor(60, 70, clipped_top=False)
+        assert (start, end) == (60, 70)
+        start2, end2 = _apply_min_height_floor(60, 90, clipped_top=False)
+        assert (start2, end2) == (60, 90)
+
+    def test_floor_clamped_within_day_bounds(self):
+        from pytodo_qt.core.calendar_layout import (
+            _MIN_VISIBLE_MINUTES,
+            _apply_min_height_floor,
+        )
+
+        # Sub-floor at end-of-day: cannot expand past 1440.
+        start, end = _apply_min_height_floor(1438, 1439, clipped_top=False)
+        assert end == 1440
+        assert start == 1438
+        assert end - start < _MIN_VISIBLE_MINUTES  # clamp wins over floor
+        # Sub-floor at start-of-day with clipped_top: cannot expand past 0.
+        start2, end2 = _apply_min_height_floor(0, 1, clipped_top=True)
+        assert start2 == 0
+        assert end2 == 1
+        assert end2 - start2 < _MIN_VISIBLE_MINUTES
+
+    def test_one_minute_task_renders_visibly_via_compute_bar_segments(self):
+        """End-to-end through compute_bar_segments: a 1-minute pomodoro
+        produces a segment of at least _MIN_VISIBLE_MINUTES."""
+        from datetime import datetime, time
+
+        from pytodo_qt.core.calendar_layout import (
+            _MIN_VISIBLE_MINUTES,
+            compute_bar_segments,
+            compute_bar_window,
+        )
+        from pytodo_qt.core.models import create_todo_item
+
+        today = date(2026, 4, 24)
+        item = create_todo_item("1-min task")
+        item.due_date = today
+        item.due_time = time(14, 0)
+        item.estimated_minutes = 1
+        window = compute_bar_window(item)
+        assert window is not None
+
+        segs = compute_bar_segments(item, window, today, datetime(2026, 4, 24, 12, 0))
+        assert len(segs) == 1
+        seg = segs[0]
+        assert seg.end_minute - seg.start_minute >= _MIN_VISIBLE_MINUTES
+
+
 class TestClampDropDueTimeForward:
     """The drop-time forward-clamp guarantees that a task dropped into
     the calendar cannot have its computed bar-window origin land before
