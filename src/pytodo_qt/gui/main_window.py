@@ -889,7 +889,7 @@ class MainWindow(QMainWindow):
             self._detail_panel.show()
             if hasattr(self, "_detail_panel_action"):
                 self._detail_panel_action.setChecked(True)
-        self._detail_panel.set_item(item)
+        self._detail_panel.set_item(item, active_list)
         self._detail_panel.set_edit_mode(True)
 
     def _connect_detail_panel_signals(self) -> None:
@@ -903,6 +903,57 @@ class MainWindow(QMainWindow):
         self._detail_panel.toggle_requested.connect(self._on_toggle_todo)
         self._detail_panel.edit_tags_requested.connect(self._on_edit_tags_for_item)
         self._detail_panel.edit_requested.connect(self._on_detail_panel_edit)
+        # Subtasks: route through existing undo-command paths so
+        # panel-driven subtask edits round-trip the undo stack
+        # identically to the ones made from list/kanban/calendar.
+        self._detail_panel.subtask_add_requested.connect(self._on_add_subtask)
+        self._detail_panel.subtask_delete_requested.connect(self._on_detail_panel_subtask_delete)
+        self._detail_panel.subtask_complete_toggled.connect(self._on_detail_panel_subtask_toggle)
+        self._detail_panel.subtask_selected.connect(self._on_detail_panel_subtask_selected)
+        self._detail_panel.parent_navigation_requested.connect(
+            self._on_detail_panel_subtask_selected
+        )
+
+    def _on_detail_panel_subtask_delete(self, subtask_id: UUID) -> None:
+        """Delete a single subtask via DeleteItemsCommand so the
+        standard undo path applies."""
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        from .commands import DeleteItemsCommand
+
+        cmd = DeleteItemsCommand(self, active_list.id, [subtask_id])
+        self._undo_stack.push(cmd)
+
+    def _on_detail_panel_subtask_toggle(self, subtask_id: UUID, checked: bool) -> None:
+        """Toggle a subtask's complete state via ToggleCompleteCommand.
+        Subtasks cannot themselves be recurring (single-layer nesting),
+        so the recurring-advance branch is not needed here."""
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        item = active_list.get_item(subtask_id)
+        if item is None:
+            return
+        if item.complete == checked:
+            return
+        from .commands import ToggleCompleteCommand
+
+        cmd = ToggleCompleteCommand(self, active_list.id, [(subtask_id, item.complete)])
+        self._undo_stack.push(cmd)
+
+    def _on_detail_panel_subtask_selected(self, item_id: UUID) -> None:
+        """Re-focus the detail panel on the clicked subtask (or parent
+        via breadcrumb). Cross-view selection sync is a separate
+        planned change — each view needs its own public
+        select_item_by_id method before this can route there too."""
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        item = active_list.get_item(item_id)
+        if item is None:
+            return
+        self._detail_panel.set_item(item, active_list)
 
     def _on_detail_panel_edit(self, item_id: object, field_name: str, value: object) -> None:
         """Handle generic field edits from the detail panel (estimated_minutes, etc.)."""
@@ -964,7 +1015,7 @@ class MainWindow(QMainWindow):
             self._detail_panel.set_item(None)
             return
         item = active_list.items.get(item_ids[0])
-        self._detail_panel.set_item(item)
+        self._detail_panel.set_item(item, active_list)
 
     def _toggle_view_mode(self) -> None:
         """Cycle through list → board → calendar (Ctrl+Shift+B)."""

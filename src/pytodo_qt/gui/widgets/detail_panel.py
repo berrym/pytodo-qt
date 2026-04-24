@@ -41,7 +41,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ...core.models import TodoItem, format_duration
+from ...core.models import TodoItem, TodoList, format_duration
 
 _W = TypeVar("_W", bound=QWidget)
 
@@ -58,6 +58,15 @@ class TaskDetailPanel(QDockWidget):
     item_due_time_changed = pyqtSignal(object, object)
     toggle_requested = pyqtSignal()
     edit_tags_requested = pyqtSignal(object)
+    # Subtask CRUD: emitted so MainWindow can route each action through
+    # the same undo-command paths the rest of the app already uses.
+    # The panel is the view layer; it never mutates the model directly.
+    subtask_add_requested = pyqtSignal(object)  # parent_id
+    subtask_delete_requested = pyqtSignal(object)  # subtask_id
+    subtask_complete_toggled = pyqtSignal(object, bool)  # subtask_id, checked
+    subtask_selected = pyqtSignal(object)  # item_id — drill-down navigation
+    # Breadcrumb navigation back to a subtask's parent task.
+    parent_navigation_requested = pyqtSignal(object)  # parent_id
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -71,6 +80,7 @@ class TaskDetailPanel(QDockWidget):
         )
 
         self._item: TodoItem | None = None
+        self._todo_list: TodoList | None = None
         self._populating = False
         self._edit_mode = False
         # Track all editable widgets for batch enable/disable
@@ -115,6 +125,7 @@ class TaskDetailPanel(QDockWidget):
         self._build_recurrence_section()
         self._build_tags_section()
         self._build_timing_section()
+        self._build_subtasks_section()
         self._build_meta_section()
 
     # ------------------------------------------------------------------
@@ -182,6 +193,23 @@ class TaskDetailPanel(QDockWidget):
         return widget
 
     def _build_header_section(self) -> None:
+        # Parent breadcrumb — only visible when the current item has a
+        # parent_id. Clicking navigates the detail panel up to the
+        # parent, matching the drill-down semantics in the Subtasks
+        # section below.
+        self._parent_breadcrumb = QPushButton()
+        self._parent_breadcrumb.setFlat(True)
+        self._parent_breadcrumb.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._parent_breadcrumb.setStyleSheet(
+            "QPushButton { text-align: left; color: palette(highlight);"
+            " background: transparent; border: none; padding: 0 0 4px 0;"
+            " font-size: 11px; }"
+            "QPushButton:hover { text-decoration: underline; }"
+        )
+        self._parent_breadcrumb.clicked.connect(self._on_parent_breadcrumb_clicked)
+        self._parent_breadcrumb.hide()
+        self._detail_layout.addWidget(self._parent_breadcrumb)
+
         # Top row: reminder + pencil toggle
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 0, 0, 0)
@@ -212,6 +240,10 @@ class TaskDetailPanel(QDockWidget):
         header_row.addWidget(self._edit_toggle_btn, 0)
 
         self._detail_layout.addLayout(header_row)
+
+    def _on_parent_breadcrumb_clicked(self) -> None:
+        if self._item is not None and self._item.parent_id is not None:
+            self.parent_navigation_requested.emit(self._item.parent_id)
 
     def _on_reminder_changed(self) -> None:
         if self._populating or not self._edit_mode:
@@ -370,6 +402,152 @@ class TaskDetailPanel(QDockWidget):
         form.addRow(self.tr("Time spent:"), self._time_spent_value)
         form.addRow(self.tr("Sessions:"), self._session_count_value)
 
+    def _build_subtasks_section(self) -> None:
+        """Subtasks list + add/delete/toggle/select controls.
+
+        Nesting is intentionally single-layer: a subtask cannot have
+        its own subtasks. When the current item is itself a subtask,
+        the "+ Add Subtask" button is hidden. The controls route
+        through MainWindow's existing undo-command paths via the
+        signals declared on this class; no direct model mutation
+        happens here.
+        """
+        section = QWidget()
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        header = QLabel(self.tr("Subtasks"))
+        header_font = QFont()
+        header_font.setBold(True)
+        header_font.setPixelSize(11)
+        header.setFont(header_font)
+        header.setStyleSheet("color: palette(highlight); margin-bottom: 2px;")
+        layout.addWidget(header)
+
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        line.setStyleSheet("color: palette(mid);")
+        layout.addWidget(line)
+
+        self._subtasks_container = QWidget()
+        self._subtasks_layout = QVBoxLayout(self._subtasks_container)
+        self._subtasks_layout.setContentsMargins(0, 4, 0, 0)
+        self._subtasks_layout.setSpacing(2)
+        layout.addWidget(self._subtasks_container)
+
+        self._subtasks_empty_label = QLabel(self.tr("No subtasks. Click + Add Subtask to add one."))
+        self._subtasks_empty_label.setStyleSheet(
+            "color: palette(placeholderText); font-style: italic; font-size: 10px;"
+        )
+        self._subtasks_empty_label.setWordWrap(True)
+        self._subtasks_layout.addWidget(self._subtasks_empty_label)
+
+        # + Add Subtask is always visible for top-level items — not gated
+        # behind edit mode — so the instructional empty-state text ("click
+        # + Add Subtask to add one") resolves to a control the user can
+        # actually see. Opens a confirmation dialog, so it's not a
+        # destructive control and does not need a safety gate. The button
+        # is hidden when the current item is itself a subtask (single-
+        # layer nesting rule).
+        self._add_subtask_btn = QPushButton(self.tr("+ Add Subtask"))
+        self._add_subtask_btn.setStyleSheet(
+            "QPushButton { text-align: left; padding: 4px 6px;"
+            " color: palette(highlight); border: 1px dashed palette(mid);"
+            " border-radius: 3px; background: transparent; }"
+            "QPushButton:hover { background: palette(alternate-base); }"
+        )
+        self._add_subtask_btn.clicked.connect(self._on_add_subtask_clicked)
+        layout.addWidget(self._add_subtask_btn)
+
+        self._detail_layout.addWidget(section)
+
+    def _on_add_subtask_clicked(self) -> None:
+        if self._item is not None and self._item.parent_id is None:
+            self.subtask_add_requested.emit(self._item.id)
+
+    def _populate_subtasks(self, item: TodoItem) -> None:
+        """Render a row per child of ``item``. Clears previous rows
+        first so repeated calls do not accumulate widgets. The
+        ``+ Add Subtask`` button is visible whenever the current item
+        is top-level — not gated on edit mode, since it opens a
+        confirmation dialog rather than mutating state directly."""
+        # Clear any previously rendered subtask rows.
+        while self._subtasks_layout.count() > 0:
+            layout_item = self._subtasks_layout.takeAt(0)
+            if layout_item is None:
+                continue
+            w = layout_item.widget()
+            if w is not None and w is not self._subtasks_empty_label:
+                w.setParent(None)
+                w.deleteLater()
+
+        # Re-insert the empty-state label; it will be hidden below
+        # when there are children to show.
+        self._subtasks_layout.addWidget(self._subtasks_empty_label)
+
+        is_top_level = item.parent_id is None
+        children: list[TodoItem] = []
+        if is_top_level and self._todo_list is not None:
+            children = [i for i in self._todo_list.active_items() if i.parent_id == item.id]
+
+        if children:
+            self._subtasks_empty_label.hide()
+            for child in children:
+                self._subtasks_layout.addWidget(self._build_subtask_row(child))
+        else:
+            self._subtasks_empty_label.show()
+
+        # Add-button visibility depends purely on item shape. Single-
+        # layer nesting means only top-level items can gain children.
+        self._add_subtask_btn.setVisible(is_top_level)
+
+    def _build_subtask_row(self, child: TodoItem) -> QWidget:
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(2, 2, 2, 2)
+        row_layout.setSpacing(6)
+
+        check = QCheckBox()
+        check.setChecked(child.complete)
+        check.toggled.connect(
+            lambda checked, cid=child.id: self.subtask_complete_toggled.emit(cid, checked)
+        )
+        row_layout.addWidget(check)
+
+        title_btn = QPushButton(child.reminder or self.tr("(untitled)"))
+        title_btn.setFlat(True)
+        title_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        strike = "text-decoration: line-through;" if child.complete else ""
+        title_btn.setStyleSheet(
+            "QPushButton { text-align: left; padding: 1px 4px;"
+            f" background: transparent; border: none; {strike} }}"
+            "QPushButton:hover { text-decoration: underline; }"
+        )
+        title_btn.clicked.connect(
+            lambda _checked=False, cid=child.id: self.subtask_selected.emit(cid)
+        )
+        row_layout.addWidget(title_btn, 1)
+
+        delete_btn = QPushButton("\u2715")
+        delete_btn.setFixedSize(20, 20)
+        delete_btn.setToolTip(self.tr("Delete subtask"))
+        delete_btn.setStyleSheet(
+            "QPushButton { border: none; color: palette(mid); background: transparent; }"
+            "QPushButton:hover { color: palette(window-text); }"
+        )
+        delete_btn.clicked.connect(
+            lambda _checked=False, cid=child.id: self.subtask_delete_requested.emit(cid)
+        )
+        delete_btn.setVisible(self._edit_mode)
+        # Stash on the row so _set_edit_mode can flip visibility when
+        # the user toggles edit mode without a full re-populate.
+        row._delete_btn = delete_btn  # type: ignore[attr-defined]
+        row_layout.addWidget(delete_btn)
+
+        return row
+
     def _build_meta_section(self) -> None:
         form = self._add_section(self.tr("Metadata"))
         self._created_value = self._make_value_label()
@@ -406,12 +584,33 @@ class TaskDetailPanel(QDockWidget):
         style = self._EDIT_MODE_STYLE if enabled else self._VIEW_MODE_STYLE
         self._detail_widget.setStyleSheet(style)
 
+        # Subtasks: per-row delete glyphs are the destructive controls,
+        # so they flip visibility with edit mode. The + Add Subtask
+        # button is non-destructive (opens a confirmation dialog) and
+        # stays visible whenever the current item is top-level — its
+        # visibility is managed by _populate_subtasks based on item
+        # shape, not edit mode.
+        if hasattr(self, "_subtasks_layout"):
+            for i in range(self._subtasks_layout.count()):
+                layout_item = self._subtasks_layout.itemAt(i)
+                if layout_item is None:
+                    continue
+                w = layout_item.widget()
+                delete_btn = getattr(w, "_delete_btn", None) if w is not None else None
+                if delete_btn is not None:
+                    delete_btn.setVisible(enabled)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def set_item(self, item: TodoItem | None) -> None:
+    def set_item(self, item: TodoItem | None, todo_list: TodoList | None = None) -> None:
+        """Bind the panel to a task. When ``todo_list`` is provided,
+        the Subtasks section can enumerate child items and the parent
+        breadcrumb can resolve the parent's title; when it is None,
+        those surfaces show empty state."""
         self._item = item
+        self._todo_list = todo_list
         if item is None:
             self._detail_widget.hide()
             self._placeholder.show()
@@ -457,6 +656,32 @@ class TaskDetailPanel(QDockWidget):
     def _populate_inner(self, item: TodoItem) -> None:
         # Header
         self._reminder_edit.setText(item.reminder or "")
+
+        # Parent breadcrumb — visible only when viewing a subtask. The
+        # label resolves the parent's reminder when the todo_list is
+        # available; otherwise it falls back to a generic back label
+        # so the breadcrumb is still functional without the list.
+        if item.parent_id is not None:
+            parent_reminder = None
+            if self._todo_list is not None:
+                parent = self._todo_list.get_item(item.parent_id)
+                if parent is not None:
+                    parent_reminder = parent.reminder
+            label_text = (
+                f"\u2190  {parent_reminder}"
+                if parent_reminder
+                else self.tr("\u2190  Back to parent task")
+            )
+            self._parent_breadcrumb.setText(label_text)
+            self._parent_breadcrumb.show()
+        else:
+            self._parent_breadcrumb.hide()
+
+        # Subtasks — populated from the todo_list's direct children of
+        # this item. Each row wires into a MainWindow-handled signal
+        # so edits go through the same undo/redo infrastructure as the
+        # rest of the app.
+        self._populate_subtasks(item)
 
         # Status
         self._priority_combo.setCurrentIndex(item.priority - 1)
