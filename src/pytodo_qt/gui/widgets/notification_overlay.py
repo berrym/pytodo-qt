@@ -18,6 +18,7 @@ enqueues or displays a banner; the manager handles the rest.
 
 from __future__ import annotations
 
+import logging
 from collections import deque
 
 from PyQt6.QtCore import (
@@ -40,6 +41,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+_log = logging.getLogger(__name__)
 
 _MIN_WIDTH = 360
 _MAX_WIDTH = 420
@@ -298,8 +301,19 @@ class NotificationManager:
         queue it for display once a slot frees up. Returns the
         overlay instance if shown immediately, None if queued."""
         if len(self._visible) >= self._max_visible:
+            _log.info(
+                "NotificationManager.show: queued (visible=%d max=%d) title=%r",
+                len(self._visible),
+                self._max_visible,
+                title,
+            )
             self._queue.append((title, body, timeout_ms))
             return None
+        _log.info(
+            "NotificationManager.show: spawning title=%r (visible_before=%d)",
+            title,
+            len(self._visible),
+        )
         return self._spawn(title, body, timeout_ms)
 
     def dismiss_all(self) -> None:
@@ -316,6 +330,7 @@ class NotificationManager:
     def _spawn(self, title: str, body: str, timeout_ms: int) -> NotificationOverlay | None:
         app = QApplication.instance()
         if app is None:
+            _log.warning("NotificationManager._spawn: no QApplication instance; skip")
             return None
 
         banner = NotificationOverlay(title, body, timeout_ms=timeout_ms)
@@ -323,6 +338,13 @@ class NotificationManager:
         banner.adjustSize()
 
         target = self._slot_position(len(self._visible), banner.size())
+        _log.info(
+            "NotificationManager._spawn: target=(%d,%d) size=(%dx%d)",
+            target.x(),
+            target.y(),
+            banner.size().width(),
+            banner.size().height(),
+        )
         self._visible.append(banner)
         banner.slide_in(target)
         return banner
