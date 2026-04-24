@@ -158,6 +158,7 @@ class MainWindow(QMainWindow):
         self._setup_central_widget()
         self._setup_status_bar()
         self._setup_tray_icon()
+        self._setup_notification_overlay()
 
         # Apply theme and watch for system theme changes
         apply_current_theme()
@@ -1259,6 +1260,19 @@ class MainWindow(QMainWindow):
 
         if not self.tray_icon.isVisible():
             logger.log.warning("System tray icon failed to show")
+
+    def _setup_notification_overlay(self) -> None:
+        """Instantiate the in-app notification overlay manager.
+
+        Independent of the system tray and of `desktop-notifier`. The
+        overlay renders banners in the top-right of the primary screen
+        using frameless top-level tool windows, so it works on every
+        platform identically and remains visible when the main window
+        is hidden or minimized to the tray.
+        """
+        from .widgets.notification_overlay import NotificationManager
+
+        self._notification_manager = NotificationManager()
 
     def _start_discovery(self) -> None:
         """Start the mDNS discovery service for peer discovery."""
@@ -3364,12 +3378,18 @@ class MainWindow(QMainWindow):
                 )
 
     async def _notify(self, title: str, body: str, *, timeout: int = 5) -> None:
-        """Send a system notification via desktop-notifier.
+        """Deliver a notification through the in-app overlay and, when
+        available, the OS notification center.
 
         Fire-and-forget from sync Qt slots via ``asyncio.create_task(...)``.
-        Silently degrades on platforms/backends that cannot deliver
-        (notably ``uv run`` outside a ``.app`` bundle on macOS).
+        The overlay is the reliable cross-platform channel; the OS path
+        via `desktop-notifier` is secondary and silently degrades on
+        platforms/backends that cannot deliver (notably ``uv run``
+        outside a ``.app`` bundle on macOS, and macOS Sequoia ad-hoc
+        bundles where the system shows a generic placeholder).
         """
+        self._notification_manager.show(title, body, timeout_ms=timeout * 1000)
+
         if self._notifier is None:
             return
         try:
