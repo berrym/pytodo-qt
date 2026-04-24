@@ -1967,11 +1967,6 @@ class MainWindow(QMainWindow):
         from ..core.models import is_due_today, is_overdue
 
         notif_config = self._config.notifications
-        logger.log.info(
-            "check_due_notifications: enabled=%s tray=%s",
-            notif_config.enabled,
-            self.tray_icon is not None,
-        )
         if not notif_config.enabled or self.tray_icon is None:
             return
 
@@ -1999,11 +1994,6 @@ class MainWindow(QMainWindow):
                     item.notified_at = int(_datetime.now().timestamp() * 1000)
                     item.mark_updated()
 
-        logger.log.info(
-            "check_due_notifications: overdue=%d due_today=%d",
-            len(overdue_items),
-            len(due_today_items),
-        )
         if not overdue_items and not due_today_items:
             return
 
@@ -3430,7 +3420,6 @@ class MainWindow(QMainWindow):
         outside a ``.app`` bundle on macOS, and macOS Sequoia ad-hoc
         bundles where the system shows a generic placeholder).
         """
-        logger.log.info("_notify: title=%r timeout=%ds", title, timeout)
         self._notification_manager.show(title, body, timeout_ms=timeout * 1000)
 
         if self._notifier is None:

@@ -301,19 +301,8 @@ class NotificationManager:
         queue it for display once a slot frees up. Returns the
         overlay instance if shown immediately, None if queued."""
         if len(self._visible) >= self._max_visible:
-            _log.info(
-                "NotificationManager.show: queued (visible=%d max=%d) title=%r",
-                len(self._visible),
-                self._max_visible,
-                title,
-            )
             self._queue.append((title, body, timeout_ms))
             return None
-        _log.info(
-            "NotificationManager.show: spawning title=%r (visible_before=%d)",
-            title,
-            len(self._visible),
-        )
         return self._spawn(title, body, timeout_ms)
 
     def dismiss_all(self) -> None:
@@ -338,13 +327,6 @@ class NotificationManager:
         banner.adjustSize()
 
         target = self._slot_position(len(self._visible), banner.size())
-        _log.info(
-            "NotificationManager._spawn: target=(%d,%d) size=(%dx%d)",
-            target.x(),
-            target.y(),
-            banner.size().width(),
-            banner.size().height(),
-        )
         self._visible.append(banner)
         banner.slide_in(target)
         return banner
