@@ -790,6 +790,170 @@ class TestInitialScrollToNow:
         cal._scroll_to_current_hour()
 
 
+class TestClampDropDueTimeForward:
+    """The drop-time forward-clamp guarantees that a task dropped into
+    the calendar cannot have its computed bar-window origin land before
+    the injected ``now``. Before the clamp, dropping an unscheduled
+    task into the current or a past hour cell stamped
+    ``due_time = cell_start``, which for any estimate-bearing task
+    placed the window origin well before the current moment and
+    immediately marked the task overdue.
+
+    Tests use an injected ``now`` value so assertions are exact and
+    do not depend on wall-clock timing or tolerance windows.
+    """
+
+    def test_none_due_time_is_pass_through(self):
+        from datetime import datetime
+
+        from pytodo_qt.core.calendar_layout import clamp_drop_due_time_forward
+        from pytodo_qt.core.models import create_todo_item
+
+        now = datetime(2026, 4, 24, 15, 30)
+        item = create_todo_item("Task")
+        result = clamp_drop_due_time_forward(
+            item, date(2026, 4, 24), None, now=now, default_work_minutes=25
+        )
+        assert result is None
+
+    def test_future_date_is_not_clamped(self):
+        """Drops onto a date other than now.date() are unaffected —
+        the "no time travel" rule only applies to today."""
+        from datetime import datetime, time
+
+        from pytodo_qt.core.calendar_layout import clamp_drop_due_time_forward
+        from pytodo_qt.core.models import create_todo_item
+
+        now = datetime(2026, 4, 24, 15, 30)
+        tomorrow = date(2026, 4, 25)
+        item = create_todo_item("Task")
+        item.estimated_minutes = 25
+
+        # A past-hour-relative-to-today time on a future date stays.
+        result = clamp_drop_due_time_forward(
+            item, tomorrow, time(2, 0), now=now, default_work_minutes=25
+        )
+        assert result == time(2, 0)
+
+    def test_future_hour_on_today_with_estimate_not_clamped(self):
+        from datetime import datetime, time
+
+        from pytodo_qt.core.calendar_layout import clamp_drop_due_time_forward
+        from pytodo_qt.core.models import create_todo_item
+
+        now = datetime(2026, 4, 24, 15, 30)
+        item = create_todo_item("Task")
+        item.estimated_minutes = 25
+
+        # Target 17:00 today, 25-min estimate → origin 16:35. Now is
+        # 15:30. 16:35 >= 15:30, so no clamp.
+        result = clamp_drop_due_time_forward(
+            item, date(2026, 4, 24), time(17, 0), now=now, default_work_minutes=25
+        )
+        assert result == time(17, 0)
+
+    def test_past_hour_with_estimate_clamps_origin_to_now(self):
+        from datetime import datetime, time
+
+        from pytodo_qt.core.calendar_layout import clamp_drop_due_time_forward
+        from pytodo_qt.core.models import create_todo_item
+
+        now = datetime(2026, 4, 24, 15, 30)
+        item = create_todo_item("Task")
+        item.estimated_minutes = 25
+
+        # Target 14:00 today, 25-min estimate → origin 13:35. 13:35
+        # is before now (15:30), so clamp: new_due = now + 25 = 15:55.
+        result = clamp_drop_due_time_forward(
+            item, date(2026, 4, 24), time(14, 0), now=now, default_work_minutes=25
+        )
+        assert result == time(15, 55)
+
+    def test_current_hour_with_estimate_clamps_when_origin_would_be_past(self):
+        """Drop into the hour cell containing ``now`` sets due_time to
+        end of that hour (16:00), which for a 25-min estimate implies
+        origin 15:35. If now is 15:30, origin 15:35 is still in the
+        future, so no clamp. If now is 15:45, origin 15:20 would be
+        in the past — clamp to 15:45 + 25 = 16:10."""
+        from datetime import datetime, time
+
+        from pytodo_qt.core.calendar_layout import clamp_drop_due_time_forward
+        from pytodo_qt.core.models import create_todo_item
+
+        item = create_todo_item("Task")
+        item.estimated_minutes = 25
+
+        # No-clamp subcase
+        now_early = datetime(2026, 4, 24, 15, 30)
+        result_early = clamp_drop_due_time_forward(
+            item, date(2026, 4, 24), time(16, 0), now=now_early, default_work_minutes=25
+        )
+        assert result_early == time(16, 0)
+
+        # Clamp subcase
+        now_late = datetime(2026, 4, 24, 15, 45)
+        result_late = clamp_drop_due_time_forward(
+            item, date(2026, 4, 24), time(16, 0), now=now_late, default_work_minutes=25
+        )
+        assert result_late == time(16, 10)
+
+    def test_past_hour_no_estimate_clamps_to_now_plus_one_minute(self):
+        from datetime import datetime, time
+
+        from pytodo_qt.core.calendar_layout import clamp_drop_due_time_forward
+        from pytodo_qt.core.models import create_todo_item
+
+        now = datetime(2026, 4, 24, 15, 30)
+        item = create_todo_item("Task")
+        # estimated_minutes = 0, estimated_pomodoros = 0 by default.
+
+        # Target 14:00 (one-hour past) with no estimate → clamp to 15:31.
+        result = clamp_drop_due_time_forward(
+            item, date(2026, 4, 24), time(14, 0), now=now, default_work_minutes=25
+        )
+        assert result == time(15, 31)
+
+    def test_per_task_work_duration_overrides_pomodoro_default(self):
+        """A task with per-task ``work_duration`` uses that value for
+        estimate computation even when the global default differs."""
+        from datetime import datetime, time
+
+        from pytodo_qt.core.calendar_layout import clamp_drop_due_time_forward
+        from pytodo_qt.core.models import create_todo_item
+
+        now = datetime(2026, 4, 24, 15, 30)
+        item = create_todo_item("Task")
+        item.estimated_minutes = 0
+        item.estimated_pomodoros = 2
+        item.work_duration = 10  # 2 × 10 = 20-minute estimate
+
+        # Past-hour drop → new_due = now + 20 = 15:50 (NOT 15:30 + 25).
+        result = clamp_drop_due_time_forward(
+            item, date(2026, 4, 24), time(14, 0), now=now, default_work_minutes=25
+        )
+        assert result == time(15, 50)
+
+    def test_pomodoro_default_used_when_per_task_work_duration_zero(self):
+        """When the task has ``work_duration=0``, the global pomodoro
+        default supplies the per-session length for estimate math."""
+        from datetime import datetime, time
+
+        from pytodo_qt.core.calendar_layout import clamp_drop_due_time_forward
+        from pytodo_qt.core.models import create_todo_item
+
+        now = datetime(2026, 4, 24, 10, 0)
+        item = create_todo_item("Task")
+        item.estimated_minutes = 0
+        item.estimated_pomodoros = 3
+        item.work_duration = 0  # use global default
+
+        # Past drop: new_due = 10:00 + (3 × 50) = 12:30.
+        result = clamp_drop_due_time_forward(
+            item, date(2026, 4, 24), time(9, 0), now=now, default_work_minutes=50
+        )
+        assert result == time(12, 30)
+
+
 class TestBarStateLabel:
     """bar_state_label is the single source of truth for the human-readable
     lifecycle names used by the legend, the calendar bar tooltip, and the

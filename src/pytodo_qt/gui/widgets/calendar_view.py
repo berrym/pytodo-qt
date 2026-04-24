@@ -4186,10 +4186,18 @@ class _WeekTableView(QTableView):
             item_id = UUID(item_id_str)
         except ValueError:
             return
-        # hour = -1 means all-day (no time), otherwise set due_time
+        # hour = -1 means all-day (no time); otherwise the target due_time
+        # is the END of the hour block, matching the convention that
+        # due_time is a deadline. The MainWindow drop handler applies a
+        # forward-clamp so the computed window origin is never before now.
         from datetime import time as _time
 
-        target_time = _time(target_hour, 0) if target_hour >= 0 else None
+        if target_hour < 0:
+            target_time = None
+        elif target_hour >= 23:
+            target_time = _time(23, 59)
+        else:
+            target_time = _time(target_hour + 1, 0)
         self.task_dropped.emit(item_id, target_date, target_time)
         event.acceptProposedAction()
 

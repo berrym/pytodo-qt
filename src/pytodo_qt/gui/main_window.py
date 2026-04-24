@@ -2523,7 +2523,18 @@ class MainWindow(QMainWindow):
                 self._undo_stack.push(cmd)
 
     def _on_date_and_time_dropped(self, item_id: UUID, due_date, due_time) -> None:
-        """Handle task dropped with both date and time — single undo macro."""
+        """Handle task dropped with both date and time — single undo macro.
+
+        The raw due_time from the calendar widget is the end of the
+        dropped-into hour cell. A task carrying a pomodoro or stopwatch
+        estimate would otherwise have its window origin computed at
+        `due_time - estimate`, which can land before "now" on drops into
+        the current or a past hour cell. The clamp below pushes due_time
+        forward so the computed origin is never earlier than now, which
+        matches the "no time travel" rule: a freshly scheduled task
+        cannot appear as already-in-progress or already-overdue purely
+        from a drop action.
+        """
         if self._refreshing:
             return
         active_list = self._database.active_list
@@ -2532,6 +2543,9 @@ class MainWindow(QMainWindow):
         item = active_list.get_item(item_id)
         if not item:
             return
+
+        due_time = self._clamp_drop_due_time_forward(item, due_date, due_time)
+
         from .commands import EditDueDateCommand, EditDueTimeCommand
 
         self._undo_stack.beginMacro("Set due date and time")
@@ -2542,6 +2556,24 @@ class MainWindow(QMainWindow):
         cmd_time = EditDueTimeCommand(self, active_list.id, item_id, item.due_time, due_time)
         self._undo_stack.push(cmd_time)
         self._undo_stack.endMacro()
+
+    def _clamp_drop_due_time_forward(self, item, due_date, due_time):
+        """Thin wrapper delegating to the pure clamp_drop_due_time_forward
+        in calendar_layout. The wall-clock read lives here so the layout
+        layer can stay pure and the clamp logic can be tested with an
+        injected ``now`` value for deterministic, tolerance-free
+        assertions."""
+        from datetime import datetime as _datetime
+
+        from ..core.calendar_layout import clamp_drop_due_time_forward
+
+        return clamp_drop_due_time_forward(
+            item,
+            due_date,
+            due_time,
+            now=_datetime.now(),
+            default_work_minutes=self._config.pomodoro.work_duration,
+        )
 
     def _on_edit_recurrence(self) -> None:
         """Handle edit recurrence action."""
@@ -3413,13 +3445,23 @@ class MainWindow(QMainWindow):
 
         Idempotent on macOS — the system caches grant/deny and won't re-prompt.
         On Linux and Windows this is a no-op or always-granted.
+
+        A False return covers several distinct situations: the user declined
+        the prompt, the user revoked permission in System Settings, OR (most
+        commonly on macOS from source runs) the bundle identity at the call
+        site is the unsigned Python framework rather than the app bundle,
+        and the OS refuses to prompt at all. The log line phrasing avoids
+        implying user action since the user may have done nothing.
         """
         if self._notifier is None:
             return
         try:
             granted = await self._notifier.request_authorisation()
             if not granted:
-                logger.log.info("User declined notification permission")
+                logger.log.info(
+                    "OS notification permission not granted (declined, revoked, "
+                    "or unavailable for the current bundle identity)"
+                )
         except Exception as exc:
             logger.log.debug("Notification authorization request failed: %s", exc)
 

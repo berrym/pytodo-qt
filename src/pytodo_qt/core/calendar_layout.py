@@ -195,6 +195,53 @@ def _effective_work_minutes(item: TodoItem, default_work_minutes: int = 25) -> i
     return max(direct, pom_total)
 
 
+def clamp_drop_due_time_forward(
+    item: TodoItem,
+    due_date: date,
+    due_time: time | None,
+    *,
+    now: datetime,
+    default_work_minutes: int,
+) -> time | None:
+    """Return a ``due_time`` whose implied bar-window origin is not
+    earlier than ``now`` on ``now.date()``.
+
+    Pure function: ``now`` is injected, not read from the wall clock.
+    This lets tests pin exact inputs and assert exact outputs without
+    any tolerance windows or time-of-day skips.
+
+    Behaviour:
+    - ``due_time`` is ``None``           → pass-through (all-day drop).
+    - ``due_date != now.date()``         → pass-through (drop onto
+      another date; no "no time travel" constraint applies because
+      today's clock does not govern other dates).
+    - Task carries an estimated duration → window origin is
+      ``due_time - estimate``. If that origin falls before ``now``,
+      shift ``due_time`` to ``now + estimate`` so origin aligns with
+      ``now`` and the bar begins precisely at the current moment.
+    - Task has no estimate               → require ``due_time >= now
+      + 1 minute`` so the bar has a non-degenerate forward window.
+    """
+    if due_time is None:
+        return due_time
+    if due_date != now.date():
+        return due_time
+
+    estimate = _effective_work_minutes(item, default_work_minutes)
+    candidate_due = datetime.combine(due_date, due_time)
+
+    if estimate > 0:
+        if candidate_due - timedelta(minutes=estimate) >= now:
+            return due_time
+        new_due = now + timedelta(minutes=estimate)
+    else:
+        if candidate_due >= now + timedelta(minutes=1):
+            return due_time
+        new_due = now + timedelta(minutes=1)
+
+    return time(new_due.hour, new_due.minute)
+
+
 def compute_bar_window(item: TodoItem, default_work_minutes: int | None = None) -> BarWindow | None:
     """Compute the bar window for an item per Q1's four rules.
 
