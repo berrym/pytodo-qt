@@ -1152,6 +1152,43 @@ class TestBidirectionalDragDrop:
         panel.dropEvent(event)
         assert received == [item_id]
 
+    def test_popover_rows_are_draggable_task_buttons(self, qtbot):
+        """The overflow "+N more" popover must build its task rows as
+        _DraggableTaskButton so drag-to-reschedule and drag-to-
+        unscheduled work from the popover too. Without this, a task
+        pushed into overflow would be unreachable by drag UX until it
+        was moved out of overflow by some other means."""
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+        from pytodo_qt.gui.widgets.calendar_view import (
+            CalendarViewWidget,
+            _DraggableTaskButton,
+        )
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+        today = date.today()
+        lst = create_todo_list("List")
+        items = []
+        for i in range(3):
+            item = create_todo_item(f"Task {i}")
+            item.due_date = today
+            item.due_time = time(10, 0)
+            item.estimated_minutes = 15
+            lst.add_item(item)
+            items.append(item)
+        cal.set_list(lst)
+        cal._show_day_popover(today, items)
+        assert cal._popover is not None
+
+        draggable_rows = cal._popover.findChildren(_DraggableTaskButton)
+        assert len(draggable_rows) == len(items)
+        found_ids = {row._item_id for row in draggable_rows}
+        assert found_ids == {it.id for it in items}
+
+        cal._close_popover()
+
     def test_drop_with_wrong_mime_is_ignored(self, qtbot):
         """A drop carrying a mime other than application/x-pytodo-item-id
         must not fire the signal."""

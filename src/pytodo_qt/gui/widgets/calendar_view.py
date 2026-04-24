@@ -5923,8 +5923,15 @@ class CalendarViewWidget(QWidget):
             text_color = c["completed_text"] if item.complete else c["text"]
             strike = "text-decoration: line-through;" if item.complete else ""
 
-            row = QPushButton()
-            row._item_id = item.id  # type: ignore[attr-defined]
+            # _DraggableTaskButton subclasses QPushButton to emit drag
+            # events with the application/x-pytodo-item-id mime when the
+            # press-and-move distance exceeds the drag threshold. Short
+            # clicks still fire the QPushButton `clicked` signal below,
+            # preserving the edit-on-click path. Overflowed tasks in
+            # this popover can now be dragged to other cells or back to
+            # the unscheduled panel without needing to close and
+            # re-open the popover first.
+            row = _DraggableTaskButton(item.id)
             row.setStyleSheet(
                 f"QPushButton {{ border-left: 3px solid {p_color}; border-radius: 4px;"
                 f" padding: 6px 8px; background: {bg}; text-align: left; }}"
