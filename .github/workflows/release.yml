@@ -131,6 +131,19 @@ jobs:
         shell: pwsh
         run: ./dist/pytodo-qt/pytodo-qt.exe --version
 
+      - name: Self-test — runtime data loaders (Linux)
+        if: runner.os == 'Linux'
+        run: dist/pytodo-qt/pytodo-qt --self-test
+
+      - name: Self-test — runtime data loaders (macOS)
+        if: runner.os == 'macOS'
+        run: dist/pytodo-qt.app/Contents/MacOS/pytodo-qt --self-test
+
+      - name: Self-test — runtime data loaders (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./dist/pytodo-qt/pytodo-qt.exe --self-test
+
       - name: Ad-hoc sign application (macOS)
         if: runner.os == 'macOS'
         run: |

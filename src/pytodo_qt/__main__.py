@@ -345,8 +345,32 @@ def main():
         version=f"%(prog)s v{settings.__version__}",
     )
 
+    arg_parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+
     # Parse arguments
     args = arg_parser.parse_args()
+
+    # Self-test mode exercises the runtime data-file loaders that have
+    # historically failed silently in frozen builds (NLP intent
+    # dictionaries, web/static assets) and exits with a status code.
+    # Used by the release workflow to fail builds where the bundle
+    # produced by PyInstaller is missing data its loaders need.
+    if args.self_test:
+        from .core.intents import get_intents
+        from .web.server import _verify_static_assets
+
+        try:
+            get_intents()
+            _verify_static_assets()
+        except RuntimeError as exc:
+            print(f"self-test FAIL: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print("self-test OK")
+        sys.exit(0)
 
     # Apply command-line overrides to config
     if args.server is not None:
