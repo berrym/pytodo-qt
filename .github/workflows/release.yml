@@ -115,6 +115,9 @@ jobs:
           find dist/pytodo-qt.app -name "libqdarwinpermissionplugin_calendar.dylib" -delete
           echo "Deleted Qt permission plugins that crash on macOS"
 
+      - name: Verify bundled data files
+        run: python packaging/pyinstaller/verify_bundle_assets.py
+
       - name: Ad-hoc sign application (macOS)
         if: runner.os == 'macOS'
         run: |
