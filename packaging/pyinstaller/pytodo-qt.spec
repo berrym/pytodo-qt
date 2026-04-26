@@ -49,6 +49,18 @@ datas = [
     (os.path.join(ROOT, "src", "pytodo_qt", "gui", "fonts", "OFL.txt"), "pytodo_qt/gui/fonts"),
     # Pomodoro break/work notification sounds
     (os.path.join(ROOT, "src", "pytodo_qt", "gui", "sounds", "*.wav"), "pytodo_qt/gui/sounds"),
+    # NLP intent dictionaries (YAML per language) loaded by
+    # core/nlp_parser at runtime via
+    # importlib.resources.files(__package__). When these files are
+    # absent from the bundle, parse() raises on first call and the
+    # smart input silently degrades to empty results.
+    *collect_data_files("pytodo_qt.core.intents"),
+    # Web UI static assets (HTML, JS, CSS, service worker, manifest,
+    # PWA icons) served by web/server via aiohttp's add_static handler
+    # reading from Path(__file__).parent / "static". When these files
+    # are absent, the SPA shell loads but its bundle 404s and the app
+    # never mounts.
+    *collect_data_files("pytodo_qt.web", subdir="static"),
     (os.path.join(SPECPATH, "qt.conf"), "."),  # Qt plugin path configuration
 ]
 
