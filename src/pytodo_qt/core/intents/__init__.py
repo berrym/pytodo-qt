@@ -29,10 +29,19 @@ def load_intents(lang: str = "en") -> dict[str, Any]:
     Uses importlib.resources to locate the YAML relative to this package,
     so it works with both source trees and installed packages.
     """
-    # Read YAML file
     assert __package__ is not None
     ref = importlib.resources.files(__package__).joinpath(f"{lang}.yaml")
-    text = ref.read_text(encoding="utf-8")
+    try:
+        text = ref.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        msg = (
+            f"NLP intent dictionary not found: {lang}.yaml is missing from "
+            f"the {__package__} package. The parser cannot function without it. "
+            f"In a frozen build, this means the build spec did not bundle "
+            f"src/pytodo_qt/core/intents/*.yaml — verify collect_data_files "
+            f"covers this package in the PyInstaller spec datas list."
+        )
+        raise RuntimeError(msg) from exc
 
     y = YAML()
     y.version = (1, 2)

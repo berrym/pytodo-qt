@@ -38,7 +38,7 @@ class TestLoading:
         assert d  # non-empty
 
     def test_missing_language_raises(self) -> None:
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(RuntimeError, match=r"intent dictionary not found"):
             load_intents("xx_nonexistent")
 
     def test_all_required_keys(self) -> None:
