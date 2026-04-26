@@ -388,6 +388,19 @@ def main():
     _app_icon.addFile(str(_icon_dir / "pytodo-qt-1024.png"))
     app.setWindowIcon(_app_icon)
 
+    # Eagerly load the NLP intent dictionary. A missing dictionary would
+    # otherwise surface only on first parse, hidden inside a Qt slot
+    # exception that the smart input silently swallows.
+    from .core.intents import get_intents
+
+    try:
+        get_intents()
+    except RuntimeError as exc:
+        from PyQt6.QtWidgets import QMessageBox
+
+        QMessageBox.critical(None, _APP_DISPLAY_NAME, str(exc))
+        sys.exit(1)
+
     # Single-instance guard
     from .core.instance_lock import InstanceLock
 
