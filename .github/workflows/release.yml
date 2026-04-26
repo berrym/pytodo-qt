@@ -118,6 +118,19 @@ jobs:
       - name: Verify bundled data files
         run: python packaging/pyinstaller/verify_bundle_assets.py
 
+      - name: Smoke test — frozen binary launches (Linux)
+        if: runner.os == 'Linux'
+        run: dist/pytodo-qt/pytodo-qt --version
+
+      - name: Smoke test — frozen binary launches (macOS)
+        if: runner.os == 'macOS'
+        run: dist/pytodo-qt.app/Contents/MacOS/pytodo-qt --version
+
+      - name: Smoke test — frozen binary launches (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./dist/pytodo-qt/pytodo-qt.exe --version
+
       - name: Ad-hoc sign application (macOS)
         if: runner.os == 'macOS'
         run: |
