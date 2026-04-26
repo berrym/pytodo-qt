@@ -26,6 +26,39 @@ logger = Logger(__name__)
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
+# Files the SPA cannot function without; validated at app creation so a
+# missing-asset failure surfaces as a clear startup error rather than as
+# a stub HTML response or 404 mid-session.
+_REQUIRED_STATIC_FILES = ("index.html", "sw.js")
+
+
+def _verify_static_assets() -> None:
+    """Raise RuntimeError when the bundled web/static directory or required files are absent.
+
+    In a frozen build this typically means the build spec did not bundle
+    src/pytodo_qt/web/static/* — the most likely cause of an SPA that
+    fails to mount in an installed application.
+    """
+    missing: list[Path] = []
+    if not _STATIC_DIR.is_dir():
+        missing.append(_STATIC_DIR)
+    else:
+        missing.extend(
+            _STATIC_DIR / name
+            for name in _REQUIRED_STATIC_FILES
+            if not (_STATIC_DIR / name).exists()
+        )
+    if not missing:
+        return
+    paths = ", ".join(str(p) for p in missing)
+    msg = (
+        f"Web UI static assets missing: {paths}. The web server cannot "
+        "serve the SPA without these. In a frozen build, verify "
+        "collect_data_files covers pytodo_qt.web/static in the "
+        "PyInstaller spec datas list."
+    )
+    raise RuntimeError(msg)
+
 
 class WebServer:
     """Embedded web server providing a REST API and mobile-friendly SPA."""
@@ -437,6 +470,7 @@ class WebServer:
 
     def create_app(self) -> web.Application:
         """Create and configure the aiohttp application."""
+        _verify_static_assets()
         from .api import (
             auth_middleware,
             config_manager_key,
@@ -494,8 +528,7 @@ class WebServer:
         # Static file serving
         app.router.add_get("/", self._serve_index)
         app.router.add_get("/sw.js", self._serve_sw)
-        if _STATIC_DIR.is_dir():
-            app.router.add_static("/static", _STATIC_DIR)
+        app.router.add_static("/static", _STATIC_DIR)
 
         self._app = app
         return app
@@ -572,17 +605,11 @@ class WebServer:
 
     async def _serve_index(self, request: web.Request) -> web.StreamResponse:
         """Serve index.html for the root URL."""
-        index_path = _STATIC_DIR / "index.html"
-        if index_path.exists():
-            return web.FileResponse(index_path)
-        return web.Response(text="PyTodo-Qt Web UI", content_type="text/html")
+        return web.FileResponse(_STATIC_DIR / "index.html")
 
     async def _serve_sw(self, request: web.Request) -> web.StreamResponse:
         """Serve service worker from root scope."""
-        sw_path = _STATIC_DIR / "sw.js"
-        if sw_path.exists():
-            return web.FileResponse(
-                sw_path,
-                headers={"Service-Worker-Allowed": "/"},
-            )
-        return web.Response(status=404)
+        return web.FileResponse(
+            _STATIC_DIR / "sw.js",
+            headers={"Service-Worker-Allowed": "/"},
+        )
