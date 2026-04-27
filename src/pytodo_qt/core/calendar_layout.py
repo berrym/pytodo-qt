@@ -195,7 +195,7 @@ def _effective_work_minutes(item: TodoItem, default_work_minutes: int = 25) -> i
     return max(direct, pom_total)
 
 
-_MIN_VISIBLE_MINUTES = 10
+_MIN_VISIBLE_MINUTES = 30
 """Minimum visual duration, in minute-of-day units, that any hour-grid
 BarSegment must occupy. Segments whose raw duration is smaller are
 expanded to this floor while anchored at their semantic endpoint
@@ -210,9 +210,12 @@ Outlook, Fantastical) applies a similar floor for this reason. The
 floor is expressed in minutes, not pixels, so it behaves consistently
 across zoom levels and HiDPI displays.
 
-10 minutes is tuned for the default ~60 px/hour week-view cell — about
-10 px of visible bar at that zoom, above the perception threshold and
-large enough that a 24-px hit-test enlargement still feels natural.
+30 minutes matches the half-hour visual rhythm Google Calendar and
+Apple Calendar use as their effective render floor. At the default
+~60 px/hour week-view cell that's ~30 px of bar — comfortably above
+the perception threshold, holds a one-line label, and lines up with
+the half-hour gridline so floored bars still feel grid-native rather
+than arbitrary.
 """
 
 

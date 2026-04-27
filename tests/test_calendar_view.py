@@ -1060,12 +1060,17 @@ class TestMinHeightFloor:
         assert end == 61  # anchor preserved at the tail
 
     def test_segment_at_or_above_floor_is_unchanged(self):
-        from pytodo_qt.core.calendar_layout import _apply_min_height_floor
+        from pytodo_qt.core.calendar_layout import (
+            _MIN_VISIBLE_MINUTES,
+            _apply_min_height_floor,
+        )
 
-        start, end = _apply_min_height_floor(60, 70, clipped_top=False)
-        assert (start, end) == (60, 70)
-        start2, end2 = _apply_min_height_floor(60, 90, clipped_top=False)
-        assert (start2, end2) == (60, 90)
+        # Exactly at the floor: no expansion.
+        start, end = _apply_min_height_floor(60, 60 + _MIN_VISIBLE_MINUTES, clipped_top=False)
+        assert (start, end) == (60, 60 + _MIN_VISIBLE_MINUTES)
+        # Comfortably above the floor: no expansion.
+        start2, end2 = _apply_min_height_floor(60, 60 + _MIN_VISIBLE_MINUTES * 2, clipped_top=False)
+        assert (start2, end2) == (60, 60 + _MIN_VISIBLE_MINUTES * 2)
 
     def test_floor_clamped_within_day_bounds(self):
         from pytodo_qt.core.calendar_layout import (
