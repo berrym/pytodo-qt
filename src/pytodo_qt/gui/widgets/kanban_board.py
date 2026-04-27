@@ -289,6 +289,34 @@ class KanbanCardWidget(QFrame):
 
         card_layout.addLayout(row1)
 
+        # Meeting link Join button — visible only when the reminder
+        # contains a recognized video-conference URL. Sits below the
+        # title row so the action is reachable directly from the card
+        # without opening the detail panel.
+        from ...core.meeting_link import detect_meeting_link
+
+        meeting = detect_meeting_link(item.reminder)
+        if meeting is not None:
+            join_btn = QPushButton(self.tr("Join {provider}").format(provider=meeting.provider))
+            join_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            join_btn.setStyleSheet(
+                "QPushButton { padding: 3px 8px; border: 1px solid"
+                f" {colors['highlight']}; border-radius: 3px;"
+                f" color: {colors['highlight_text']};"
+                f" background: {colors['highlight']};"
+                " font-size: 11px; font-weight: bold; text-align: center; }"
+            )
+            join_url = meeting.url
+
+            def _open_join() -> None:
+                from PyQt6.QtCore import QUrl
+                from PyQt6.QtGui import QDesktopServices
+
+                QDesktopServices.openUrl(QUrl(join_url))
+
+            join_btn.clicked.connect(_open_join)
+            card_layout.addWidget(join_btn)
+
         # Row 2: Due date + Recurrence + Pomo count (conditional)
         has_due = item.due_date is not None
         has_recurrence = item.is_recurring

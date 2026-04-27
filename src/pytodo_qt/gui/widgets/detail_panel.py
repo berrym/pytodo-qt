@@ -242,9 +242,54 @@ class TaskDetailPanel(QDockWidget):
 
         self._detail_layout.addLayout(header_row)
 
+        # Join meeting — visible only when the reminder contains a
+        # recognized video-conference URL. Sits directly under the
+        # title row so it reads as a primary action.
+        self._join_meeting_btn = QPushButton()
+        self._join_meeting_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._join_meeting_btn.setStyleSheet(
+            "QPushButton { text-align: left; padding: 6px 10px;"
+            " border: 1px solid palette(highlight); border-radius: 4px;"
+            " color: palette(highlightedText);"
+            " background: palette(highlight); font-weight: bold; }"
+            "QPushButton:hover { padding: 6px 10px; }"
+        )
+        self._join_meeting_btn.clicked.connect(self._on_join_meeting_clicked)
+        self._join_meeting_btn.hide()
+        self._detail_layout.addWidget(self._join_meeting_btn)
+        self._meeting_link_url: str | None = None
+
     def _on_parent_breadcrumb_clicked(self) -> None:
         if self._item is not None and self._item.parent_id is not None:
             self.parent_navigation_requested.emit(self._item.parent_id)
+
+    def _on_join_meeting_clicked(self) -> None:
+        """Open the detected meeting URL in the system's default browser."""
+        if not self._meeting_link_url:
+            return
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+
+        QDesktopServices.openUrl(QUrl(self._meeting_link_url))
+
+    def _refresh_meeting_link_button(self, item: TodoItem | None) -> None:
+        """Show or hide the Join button based on the reminder content."""
+        from ...core.meeting_link import detect_meeting_link
+
+        if item is None:
+            self._meeting_link_url = None
+            self._join_meeting_btn.hide()
+            return
+        link = detect_meeting_link(item.reminder)
+        if link is None:
+            self._meeting_link_url = None
+            self._join_meeting_btn.hide()
+            return
+        self._meeting_link_url = link.url
+        self._join_meeting_btn.setText(
+            self.tr("Join {provider} meeting").format(provider=link.provider)
+        )
+        self._join_meeting_btn.show()
 
     def _on_reminder_changed(self) -> None:
         if self._populating or not self._edit_mode:
@@ -627,6 +672,7 @@ class TaskDetailPanel(QDockWidget):
         those surfaces show empty state."""
         self._item = item
         self._todo_list = todo_list
+        self._refresh_meeting_link_button(item)
         if item is None:
             self._detail_widget.hide()
             self._placeholder.show()

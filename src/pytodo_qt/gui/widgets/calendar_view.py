@@ -5824,6 +5824,28 @@ class CalendarViewWidget(QWidget):
             edit_action.triggered.connect(_edit_reminder)
             menu.addAction(edit_action)
 
+            # Join meeting — only when the reminder contains a recognized
+            # video-conference URL. Sits at the top of the menu for fast
+            # reach during a meeting block.
+            from ...core.meeting_link import detect_meeting_link
+
+            meeting = detect_meeting_link(item.reminder)
+            if meeting is not None:
+                join_action = QAction(
+                    self.tr("Join {provider} meeting").format(provider=meeting.provider),
+                    self,
+                )
+
+                def _open_join(_checked=False, url=meeting.url):
+                    from PyQt6.QtCore import QUrl
+                    from PyQt6.QtGui import QDesktopServices
+
+                    QDesktopServices.openUrl(QUrl(url))
+
+                join_action.triggered.connect(_open_join)
+                menu.addAction(join_action)
+                menu.addSeparator()
+
         edit_tags = QAction(self.tr("Edit Tags..."), self)
         edit_tags.triggered.connect(lambda: self.edit_tags_requested.emit(item_id))
         menu.addAction(edit_tags)

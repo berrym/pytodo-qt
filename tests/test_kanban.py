@@ -2519,3 +2519,39 @@ class TestBestIncompleteColumn:
         cmd.redo()
         assert item.complete
         assert item.board_column == "Done"
+
+
+class TestKanbanCardMeetingLink:
+    """The card surfaces a Join button when the reminder contains a
+    recognized meeting URL, and renders no Join control otherwise."""
+
+    def test_join_button_present_when_meeting_link(self, qtbot) -> None:
+        from PyQt6.QtWidgets import QPushButton
+
+        item = create_todo_item("Standup https://us02web.zoom.us/j/12345")
+        card = KanbanCardWidget(item, _make_colors(), "system")
+        qtbot.addWidget(card)
+        buttons = card.findChildren(QPushButton)
+        join_buttons = [b for b in buttons if "Join" in b.text() and "Zoom" in b.text()]
+        assert len(join_buttons) == 1
+
+    def test_no_join_button_without_meeting_link(self, qtbot) -> None:
+        from PyQt6.QtWidgets import QPushButton
+
+        item = create_todo_item("Buy groceries")
+        card = KanbanCardWidget(item, _make_colors(), "system")
+        qtbot.addWidget(card)
+        buttons = card.findChildren(QPushButton)
+        join_buttons = [b for b in buttons if "Join" in b.text()]
+        assert join_buttons == []
+
+    def test_join_button_text_includes_provider(self, qtbot) -> None:
+        from PyQt6.QtWidgets import QPushButton
+
+        item = create_todo_item("Catchup https://meet.jit.si/MyRoom")
+        card = KanbanCardWidget(item, _make_colors(), "system")
+        qtbot.addWidget(card)
+        buttons = card.findChildren(QPushButton)
+        join_buttons = [b for b in buttons if "Join" in b.text()]
+        assert len(join_buttons) == 1
+        assert "Jitsi" in join_buttons[0].text()

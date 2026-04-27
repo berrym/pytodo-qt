@@ -378,3 +378,55 @@ class TestDueTimeEnd:
         panel.item_due_time_end_changed.connect(lambda iid, t: received.append((iid, t)))
         panel._due_time_end_edit.setTime(QTime(9, 45))
         assert received == []
+
+
+class TestMeetingLinkJoin:
+    """The Join button is visible only when the reminder contains a
+    recognized meeting URL; clicking it opens the URL externally."""
+
+    def test_button_hidden_when_no_link(self, qtbot):
+        panel = TaskDetailPanel()
+        qtbot.addWidget(panel)
+        lst = create_todo_list("L")
+        item = create_todo_item("Buy groceries")
+        lst.add_item(item)
+        panel.set_item(item, lst)
+        assert not panel._join_meeting_btn.isVisible()
+        assert panel._meeting_link_url is None
+
+    def test_button_visible_with_zoom_link(self, qtbot):
+        panel = TaskDetailPanel()
+        panel.show()
+        qtbot.addWidget(panel)
+        lst = create_todo_list("L")
+        item = create_todo_item("Standup https://us02web.zoom.us/j/123")
+        lst.add_item(item)
+        panel.set_item(item, lst)
+        assert panel._join_meeting_btn.isVisible()
+        assert panel._meeting_link_url == "https://us02web.zoom.us/j/123"
+        assert "Zoom" in panel._join_meeting_btn.text()
+
+    def test_button_updates_on_item_change(self, qtbot):
+        panel = TaskDetailPanel()
+        panel.show()
+        qtbot.addWidget(panel)
+        lst = create_todo_list("L")
+        with_link = create_todo_item("Standup https://meet.jit.si/AB")
+        no_link = create_todo_item("Buy milk")
+        lst.add_item(with_link)
+        lst.add_item(no_link)
+
+        panel.set_item(with_link, lst)
+        assert panel._join_meeting_btn.isVisible()
+        assert "Jitsi" in panel._join_meeting_btn.text()
+
+        panel.set_item(no_link, lst)
+        assert not panel._join_meeting_btn.isVisible()
+        assert panel._meeting_link_url is None
+
+    def test_button_hidden_for_none_item(self, qtbot):
+        panel = TaskDetailPanel()
+        qtbot.addWidget(panel)
+        panel.set_item(None)
+        assert not panel._join_meeting_btn.isVisible()
+        assert panel._meeting_link_url is None
