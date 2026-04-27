@@ -100,6 +100,7 @@ def load_intents(lang: str = "en") -> dict[str, Any]:
     result["constraint_keywords"] = list(raw.get("constraint_keywords", []))
     result["availability_words"] = list(raw.get("availability_words", []))
     result["time_block_words"] = dict(raw.get("time_block_words", {}))
+    result["filler_phrases"] = list(raw.get("filler_phrases", []))
 
     # --- Scalars ---
     result["fuzzy_threshold"] = int(raw["fuzzy_threshold"])

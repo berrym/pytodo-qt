@@ -45,6 +45,7 @@ class EntityKind(Enum):
     TIME_BLOCK = "time_block"
     EVENT_DATE = "event_date"
     CONDITION = "condition"
+    FILLER = "filler"
 
 
 @dataclass
@@ -2427,6 +2428,61 @@ def _extract_conditions(tokens: list[_Token], tracker: _SpanTracker) -> list[dic
 
 
 # ---------------------------------------------------------------------------
+# Filler / connective extraction
+# ---------------------------------------------------------------------------
+
+
+def _extract_fillers(text: str, tracker: _SpanTracker) -> None:
+    """Reserve spans for filler / connective phrases left in unclaimed text.
+
+    Runs after every other extraction pass so the entity boundaries that
+    constrain the unclaimed regions are settled. Each phrase from the
+    intent dictionary's `filler_phrases` list is matched as a whole-word
+    substring; matches that don't overlap any already-reserved span are
+    reserved as EntityKind.FILLER. _build_reminder then naturally
+    excludes them from the reminder text alongside other entity spans.
+
+    Conservative by design: only multi-word phrases ship in the
+    dictionary (single particles like "the" / "a" carry too high a
+    false-positive risk on legitimate reminder content). Longest
+    phrases match first so "it's a" does not get partially claimed by
+    "it's" or "it is" when both are present.
+    """
+    intents = _get_intents()
+    phrases: list[str] = intents.get("filler_phrases", [])
+    if not phrases:
+        return
+
+    text_lower = text.lower()
+    sorted_phrases = sorted(phrases, key=len, reverse=True)
+
+    for phrase in sorted_phrases:
+        phrase_lower = phrase.lower()
+        plen = len(phrase_lower)
+        if plen == 0:
+            continue
+        search_start = 0
+        while True:
+            idx = text_lower.find(phrase_lower, search_start)
+            if idx == -1:
+                break
+            end = idx + plen
+            # Whole-word check: a letter/digit immediately before or
+            # after the match means we're inside a larger word.
+            if idx > 0 and text_lower[idx - 1].isalnum():
+                search_start = idx + 1
+                continue
+            if end < len(text_lower) and text_lower[end].isalnum():
+                search_start = idx + 1
+                continue
+            if tracker.is_free(idx, end):
+                tracker.reserve(EntitySpan(idx, end, EntityKind.FILLER, phrase))
+                search_start = end
+            else:
+                search_start = idx + 1
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -2493,6 +2549,10 @@ def parse(text: str, today: date | None = None) -> ParseResult:
     # 8. Conditions (after all other extraction so span boundaries are settled)
     conditions = _extract_conditions(tokens, tracker)
 
+    # 9. Filler / connective phrases left in unclaimed text. Runs last so
+    # entity-claimed regions act as natural delimiters.
+    _extract_fillers(text, tracker)
+
     # Build reminder from unclaimed text
     reminder = _build_reminder(text, tracker.spans)
 
@@ -2502,7 +2562,7 @@ def parse(text: str, today: date | None = None) -> ParseResult:
     elif times_anno:
         reminder = times_anno
 
-    # 9. Subtask extraction from reminder text
+    # 10. Subtask extraction from reminder text
     reminder, subtask_reminders = _extract_subtasks(reminder)
 
     return ParseResult(

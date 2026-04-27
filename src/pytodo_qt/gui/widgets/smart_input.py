@@ -48,6 +48,7 @@ _ENTITY_COLORS: dict[Theme, dict[EntityKind, str]] = {
         EntityKind.TIME_BLOCK: "#4A90D9",
         EntityKind.EVENT_DATE: "#7C3AED",
         EntityKind.CONDITION: "#DC2626",
+        EntityKind.FILLER: "#94A3B8",
     },
     Theme.DARK: {
         EntityKind.DATE: "#6AB0F3",
@@ -61,6 +62,7 @@ _ENTITY_COLORS: dict[Theme, dict[EntityKind, str]] = {
         EntityKind.TIME_BLOCK: "#6AB0F3",
         EntityKind.EVENT_DATE: "#A78BFA",
         EntityKind.CONDITION: "#F87171",
+        EntityKind.FILLER: "#94A3B8",
     },
 }
 

@@ -458,6 +458,56 @@ time_block_words:
   supper: evening
 
 # ---------------------------------------------------------------------------
+# Filler / connective phrases — multi-word fragments of natural speech
+# that carry no task content and should not appear in the reminder.
+# Recognized as EntityKind.FILLER spans during parsing, then excluded
+# from reminder construction alongside other entity spans.
+#
+# Conservative list: multi-word phrases only. Single particles like
+# "the", "a", "an" are context-sensitive (they can be legitimate parts
+# of a reminder, e.g. "feed the dog") and are NOT included here. A
+# future evolution may add context-aware single-word handling; the
+# current pass keeps false-positive risk near zero.
+# ---------------------------------------------------------------------------
+
+filler_phrases:
+  # Connective copulas
+  - "it's a"
+  - "it is a"
+  - "this is a"
+  - "this is"
+  - "that is a"
+  - "that is"
+  - "that's a"
+  - "that's"
+  # First-person modals
+  - "i need to"
+  - "i want to"
+  - "i have to"
+  - "i need a"
+  - "i want a"
+  - "i should"
+  - "i must"
+  - "i'd like to"
+  - "i would like to"
+  # Group modals
+  - "we have to"
+  - "we need to"
+  - "we should"
+  - "we've got to"
+  - "we got to"
+  - "let's"
+  # Reminder framing
+  - "remind me to"
+  - "remind me about"
+  - "remind me"
+  - "don't forget to"
+  - "don't forget"
+  - "make sure to"
+  - "make sure i"
+  - "be sure to"
+
+# ---------------------------------------------------------------------------
 # Global fuzzy matching threshold (can be overridden per entity above)
 # ---------------------------------------------------------------------------
 

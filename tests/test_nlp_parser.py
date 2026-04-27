@@ -1916,3 +1916,103 @@ class TestReplaceOrAppendCategory:
 
         new_text = replace_or_append_category("fix bug ", [], EntityKind.PRIORITY, "high priority")
         assert new_text == "fix bug high priority"
+
+
+# ---------------------------------------------------------------------------
+# TestFillerExtraction — connective / filler phrases removed from reminder
+# ---------------------------------------------------------------------------
+
+
+class TestFillerExtraction:
+    """Filler phrases must be excluded from the reminder, with no false
+    positives on legitimate reminder content (notably single particles
+    like 'the', 'a', 'an' which are deliberately not in the dictionary).
+    """
+
+    def test_its_a_priority_pattern(self) -> None:
+        # The case that motivated the redesign.
+        result = parse("buy groceries @errands it's a high priority", today=TODAY)
+        assert "it's a" not in result.reminder.lower()
+        assert "buy groceries" in result.reminder.lower()
+        assert result.priority == 1
+        assert "@errands" in result.tags
+        # Filler span emitted so the smart-input chip can render.
+        filler_spans = [s for s in result.spans if s.kind == EntityKind.FILLER]
+        assert any(s.display.lower() == "it's a" for s in filler_spans)
+
+    def test_remind_me_to_prefix(self) -> None:
+        result = parse("remind me to call mom tomorrow", today=TODAY)
+        assert result.reminder == "call mom"
+        assert any(
+            s.kind == EntityKind.FILLER and s.display.lower() == "remind me to"
+            for s in result.spans
+        )
+
+    def test_first_person_modal(self) -> None:
+        result = parse("i need to pick up dry cleaning friday", today=TODAY)
+        assert result.reminder == "pick up dry cleaning"
+        assert any(
+            s.kind == EntityKind.FILLER and s.display.lower() == "i need to" for s in result.spans
+        )
+
+    def test_dont_forget_to(self) -> None:
+        result = parse("don't forget to feed the dog daily", today=TODAY)
+        assert result.reminder == "feed the dog"
+        assert result.recurrence_type == "daily"
+        assert any(
+            s.kind == EntityKind.FILLER and s.display.lower() == "don't forget to"
+            for s in result.spans
+        )
+
+    def test_lets_prefix(self) -> None:
+        result = parse("let's schedule a review next monday", today=TODAY)
+        assert "let's" not in result.reminder.lower()
+        # Verify the rest of the reminder survived.
+        assert "schedule" in result.reminder
+        assert "review" in result.reminder
+
+    def test_we_need_to(self) -> None:
+        result = parse("we need to plan vacation next month", today=TODAY)
+        assert result.reminder == "plan vacation"
+
+    def test_no_false_positive_on_the(self) -> None:
+        # 'the' is intentionally NOT a filler — it's part of the reminder.
+        result = parse("feed the dog", today=TODAY)
+        assert result.reminder == "feed the dog"
+        assert not any(s.kind == EntityKind.FILLER for s in result.spans)
+
+    def test_no_false_positive_on_a(self) -> None:
+        # 'a' alone is not a filler — single-particle handling is deferred.
+        result = parse("buy a book", today=TODAY)
+        assert "buy" in result.reminder
+        assert "book" in result.reminder
+        assert not any(s.kind == EntityKind.FILLER for s in result.spans)
+
+    def test_no_filler_means_no_filler_span(self) -> None:
+        result = parse("buy groceries tomorrow at 3pm", today=TODAY)
+        assert not any(s.kind == EntityKind.FILLER for s in result.spans)
+
+    def test_filler_inside_word_does_not_match(self) -> None:
+        # A phrase like "i should" should not match inside 'fishing' or similar
+        # word boundaries. Whole-word matching only.
+        result = parse("go fishing tomorrow", today=TODAY)
+        assert "fishing" in result.reminder
+        assert not any(s.kind == EntityKind.FILLER for s in result.spans)
+
+    def test_make_sure_to(self) -> None:
+        result = parse("make sure to lock the door tonight", today=TODAY)
+        assert "make sure to" not in result.reminder.lower()
+        assert "lock the door" in result.reminder
+
+    def test_filler_does_not_affect_other_extraction(self) -> None:
+        # Adding filler in the middle of an entity-rich sentence must not
+        # disturb date / time / priority / tag extraction.
+        result = parse(
+            "i need to finish the report by 5pm tomorrow @work p1",
+            today=TODAY,
+        )
+        assert result.priority == 1
+        assert result.due_time == time(17, 0)
+        assert result.due_date is not None
+        assert "@work" in result.tags
+        assert "i need to" not in result.reminder.lower()
