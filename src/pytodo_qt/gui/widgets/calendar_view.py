@@ -5087,7 +5087,11 @@ class _AgendaView(QWidget):
     def _add_day_header(self, d: date, colors: dict[str, str]) -> None:
         # Highlight today so it is visually anchored in a long range.
         is_today = d == date.today()
-        text = d.strftime("%A, %B %-d, %Y")
+        # Portable date formatting — %-d is POSIX only and rejected on
+        # Windows ("Invalid format string"). Compose the day-of-month
+        # without leading zero from d.day directly so the same source
+        # renders identically across platforms.
+        text = f"{d.strftime('%A, %B')} {d.day}, {d.year}"
         if is_today:
             text = self.tr("{date} — Today").format(date=text)
         label = QLabel(text)
