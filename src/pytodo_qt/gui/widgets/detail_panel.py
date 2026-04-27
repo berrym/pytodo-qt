@@ -56,6 +56,7 @@ class TaskDetailPanel(QDockWidget):
     item_priority_changed = pyqtSignal(object, int)
     item_due_date_changed = pyqtSignal(object, object)
     item_due_time_changed = pyqtSignal(object, object)
+    item_due_time_end_changed = pyqtSignal(object, object)
     toggle_requested = pyqtSignal()
     edit_tags_requested = pyqtSignal(object)
     # Subtask CRUD: emitted so MainWindow can route each action through
@@ -301,10 +302,15 @@ class TaskDetailPanel(QDockWidget):
         self._due_time_edit.setDisplayFormat("hh:mm AP")
         self._due_time_edit.timeChanged.connect(self._on_due_time_changed)
 
+        self._due_time_end_edit = self._track_editable(QTimeEdit())
+        self._due_time_end_edit.setDisplayFormat("hh:mm AP")
+        self._due_time_end_edit.timeChanged.connect(self._on_due_time_end_changed)
+
         self._time_block_value = self._make_value_label()
         self._event_date_value = self._make_value_label()
         form.addRow(self.tr("Due date:"), self._due_date_edit)
         form.addRow(self.tr("Due time:"), self._due_time_edit)
+        form.addRow(self.tr("End time:"), self._due_time_end_edit)
         form.addRow(self.tr("Time block:"), self._time_block_value)
         form.addRow(self.tr("Event date:"), self._event_date_value)
 
@@ -326,6 +332,16 @@ class TaskDetailPanel(QDockWidget):
             from datetime import time as time_type
 
             self.item_due_time_changed.emit(self._item.id, time_type(qtime.hour(), qtime.minute()))
+
+    def _on_due_time_end_changed(self, qtime: QTime) -> None:
+        if self._populating or not self._edit_mode:
+            return
+        if self._item is not None:
+            from datetime import time as time_type
+
+            self.item_due_time_end_changed.emit(
+                self._item.id, time_type(qtime.hour(), qtime.minute())
+            )
 
     def _build_estimate_section(self) -> None:
         form = self._add_section(self.tr("Estimates"))
@@ -723,6 +739,11 @@ class TaskDetailPanel(QDockWidget):
             self._due_time_edit.setTime(QTime(item.due_time.hour, item.due_time.minute))
         else:
             self._due_time_edit.setTime(QTime(0, 0))
+
+        if item.due_time_end:
+            self._due_time_end_edit.setTime(QTime(item.due_time_end.hour, item.due_time_end.minute))
+        else:
+            self._due_time_end_edit.setTime(QTime(0, 0))
 
         if item.due_time_block:
             self._time_block_value.setText(item.due_time_block.replace("_", " ").title())

@@ -958,3 +958,79 @@ class TestAddTodoDialogSubtasks:
         dialog.reminder_edit.setText("Buy milk")
         dialog._on_accept()
         assert dialog.get_subtask_reminders() == []
+
+
+class TestAddTodoDialogDueTimeEnd:
+    """Interactive due_time_end UI in the Advanced disclosure."""
+
+    def test_smart_input_time_range_populates_advanced_field(self, app):
+        # NLP "from X to Y" / "between X and Y" populates due_time_end;
+        # opening Advanced should mirror that into the new field.
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("meeting from 2 to 4 pm")
+        dialog._smart_input.get_parse_result()
+        assert dialog.due_time_end_checkbox.isChecked()
+        assert dialog.due_time_end_edit.get_time() == time(16, 0)
+
+    def test_smart_input_no_range_clears_field(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("meeting from 2 to 4 pm")
+        dialog._smart_input.get_parse_result()
+        assert dialog.due_time_end_checkbox.isChecked()
+        dialog._smart_input.set_text("buy milk tomorrow")
+        dialog._smart_input.get_parse_result()
+        assert not dialog.due_time_end_checkbox.isChecked()
+
+    def test_advanced_field_round_trip(self, app):
+        dialog = AddTodoDialog()
+        dialog._on_toggle_advanced()
+        dialog.reminder_edit.setText("Standup")
+        dialog.due_date_checkbox.setChecked(True)
+        dialog.due_time_checkbox.setChecked(True)
+        dialog.due_time_edit.set_time(time(9, 0))
+        dialog.due_time_end_checkbox.setChecked(True)
+        dialog.due_time_end_edit.set_time(time(9, 30))
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_time == time(9, 0)
+        assert item.due_time_end == time(9, 30)
+
+    def test_advanced_end_disabled_without_due_time(self, app):
+        # The end-time checkbox is gated on due_time being set: a
+        # window without a start has no meaning.
+        dialog = AddTodoDialog()
+        dialog._on_toggle_advanced()
+        # No due_time set → end checkbox should be disabled.
+        assert not dialog.due_time_end_checkbox.isEnabled()
+
+    def test_advanced_end_enables_when_due_time_set(self, app):
+        dialog = AddTodoDialog()
+        dialog._on_toggle_advanced()
+        dialog.due_date_checkbox.setChecked(True)
+        dialog.due_time_checkbox.setChecked(True)
+        assert dialog.due_time_end_checkbox.isEnabled()
+
+    def test_advanced_end_resets_when_due_time_cleared(self, app):
+        dialog = AddTodoDialog()
+        dialog._on_toggle_advanced()
+        dialog.due_date_checkbox.setChecked(True)
+        dialog.due_time_checkbox.setChecked(True)
+        dialog.due_time_end_checkbox.setChecked(True)
+        # Now clear the due time — the end checkbox should clear too.
+        dialog.due_time_checkbox.setChecked(False)
+        assert not dialog.due_time_end_checkbox.isChecked()
+
+    def test_advanced_end_omitted_when_unchecked(self, app):
+        dialog = AddTodoDialog()
+        dialog._on_toggle_advanced()
+        dialog.reminder_edit.setText("Standup")
+        dialog.due_date_checkbox.setChecked(True)
+        dialog.due_time_checkbox.setChecked(True)
+        dialog.due_time_edit.set_time(time(9, 0))
+        # Leave end-time checkbox unchecked.
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_time == time(9, 0)
+        assert item.due_time_end is None

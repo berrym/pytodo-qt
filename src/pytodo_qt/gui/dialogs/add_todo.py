@@ -170,6 +170,22 @@ class AddTodoDialog(QDialog):
         due_time_layout.addWidget(self.due_time_edit, 1)
         sched_form.addRow(self.tr("Due Time:"), due_time_layout)
 
+        # Due Time End — pairs with Due Time to form a window. Only
+        # interactive when Due Time is set, since a window without a
+        # start has no meaning. The parser already extracts this field
+        # from "from X to Y" / "between X and Y" phrases; this UI gives
+        # users an explicit non-NLP path.
+        due_time_end_layout = QHBoxLayout()
+        self.due_time_end_checkbox = QCheckBox(self.tr("Set end time"))
+        self.due_time_end_checkbox.setEnabled(False)
+        self.due_time_end_checkbox.stateChanged.connect(self._on_due_time_end_toggled)
+        self.due_time_end_edit = TimeComboBox()
+        self.due_time_end_edit.setEnabled(False)
+        self.due_time_end_edit.default_to_next_hour()
+        due_time_end_layout.addWidget(self.due_time_end_checkbox)
+        due_time_end_layout.addWidget(self.due_time_end_edit, 1)
+        sched_form.addRow(self.tr("End Time:"), due_time_end_layout)
+
         self.time_block_combo = QComboBox()
         self.time_block_combo.addItem(self.tr("None"), "")
         for block_id, label in [
@@ -459,6 +475,13 @@ class AddTodoDialog(QDialog):
             else:
                 self.due_time_checkbox.setChecked(False)
 
+            # Due time end — only meaningful alongside Due Time.
+            if result.due_time_end is not None and result.due_time is not None:
+                self.due_time_end_checkbox.setChecked(True)
+                self.due_time_end_edit.set_time(result.due_time_end)
+            else:
+                self.due_time_end_checkbox.setChecked(False)
+
             # Tags
             if result.tags:
                 self.tags_edit.setText(", ".join(result.tags))
@@ -540,11 +563,21 @@ class AddTodoDialog(QDialog):
         # Recurrence is always available — auto-sets today if no date
         if not enabled:
             self.due_time_checkbox.setChecked(False)
+            self.due_time_end_checkbox.setChecked(False)
             self.recurrence_checkbox.setChecked(False)
 
     def _on_due_time_toggled(self, state: int) -> None:
         """Handle due time checkbox toggle."""
-        self.due_time_edit.setEnabled(state == Qt.CheckState.Checked.value)
+        enabled = state == Qt.CheckState.Checked.value
+        self.due_time_edit.setEnabled(enabled)
+        # End time pairs with due time — without a start, end has no meaning.
+        self.due_time_end_checkbox.setEnabled(enabled)
+        if not enabled:
+            self.due_time_end_checkbox.setChecked(False)
+
+    def _on_due_time_end_toggled(self, state: int) -> None:
+        """Handle due time end checkbox toggle."""
+        self.due_time_end_edit.setEnabled(state == Qt.CheckState.Checked.value)
 
     def _on_event_date_toggled(self, state: int) -> None:
         """Handle event date checkbox toggle."""
@@ -788,11 +821,14 @@ class AddTodoDialog(QDialog):
 
             due_date = None
             due_time = None
+            due_time_end = None
             if self.due_date_checkbox.isChecked():
                 qdate = self.due_date_edit.date()
                 due_date = date(qdate.year(), qdate.month(), qdate.day())
                 if self.due_time_checkbox.isChecked():
                     due_time = self.due_time_edit.get_time()
+                    if self.due_time_end_checkbox.isChecked():
+                        due_time_end = self.due_time_end_edit.get_time()
 
             recurrence_type = None
             recurrence_interval = 1
@@ -847,6 +883,7 @@ class AddTodoDialog(QDialog):
                 priority=priority,
                 due_date=due_date,
                 due_time=due_time,
+                due_time_end=due_time_end,
                 due_time_block=time_block,
                 event_date=event_date,
                 tags=tags,

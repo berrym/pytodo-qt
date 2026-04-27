@@ -308,3 +308,73 @@ class TestIndependentCompletion:
         cb.setChecked(True)
 
         assert received == [subs[1].id]
+
+
+class TestDueTimeEnd:
+    """The detail panel exposes due_time_end as an editable QTimeEdit
+    that round-trips through the item_due_time_end_changed signal."""
+
+    def test_loads_due_time_end_from_item(self, qtbot):
+        from datetime import time as time_type
+
+        from PyQt6.QtCore import QTime
+
+        panel = TaskDetailPanel()
+        qtbot.addWidget(panel)
+        lst = create_todo_list("L")
+        item = create_todo_item("Standup")
+        item.due_time_end = time_type(9, 30)
+        lst.add_item(item)
+        panel.set_item(item, lst)
+        assert panel._due_time_end_edit.time() == QTime(9, 30)
+
+    def test_loads_zero_when_no_due_time_end(self, qtbot):
+        from PyQt6.QtCore import QTime
+
+        panel = TaskDetailPanel()
+        qtbot.addWidget(panel)
+        lst = create_todo_list("L")
+        item = create_todo_item("Standup")
+        lst.add_item(item)
+        panel.set_item(item, lst)
+        assert panel._due_time_end_edit.time() == QTime(0, 0)
+
+    def test_edit_emits_signal(self, qtbot):
+        from datetime import time as time_type
+
+        from PyQt6.QtCore import QTime
+
+        panel = TaskDetailPanel()
+        qtbot.addWidget(panel)
+        lst = create_todo_list("L")
+        item = create_todo_item("Standup")
+        item.due_time_end = time_type(9, 0)
+        lst.add_item(item)
+        panel.set_item(item, lst)
+        panel.set_edit_mode(True)
+
+        received: list[tuple] = []
+        panel.item_due_time_end_changed.connect(lambda iid, t: received.append((iid, t)))
+        panel._due_time_end_edit.setTime(QTime(9, 45))
+        assert len(received) == 1
+        assert received[0][0] == item.id
+        assert received[0][1] == time_type(9, 45)
+
+    def test_view_mode_does_not_emit(self, qtbot):
+        from datetime import time as time_type
+
+        from PyQt6.QtCore import QTime
+
+        panel = TaskDetailPanel()
+        qtbot.addWidget(panel)
+        lst = create_todo_list("L")
+        item = create_todo_item("Standup")
+        item.due_time_end = time_type(9, 0)
+        lst.add_item(item)
+        panel.set_item(item, lst)
+        # No set_edit_mode(True) — stays in view mode.
+
+        received: list = []
+        panel.item_due_time_end_changed.connect(lambda iid, t: received.append((iid, t)))
+        panel._due_time_end_edit.setTime(QTime(9, 45))
+        assert received == []

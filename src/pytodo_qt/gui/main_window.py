@@ -900,6 +900,7 @@ class MainWindow(QMainWindow):
         self._detail_panel.item_priority_changed.connect(self._on_item_priority_changed)
         self._detail_panel.item_due_date_changed.connect(self._on_item_due_date_changed)
         self._detail_panel.item_due_time_changed.connect(self._on_item_due_time_changed)
+        self._detail_panel.item_due_time_end_changed.connect(self._on_item_due_time_end_changed)
         self._detail_panel.toggle_requested.connect(self._on_toggle_todo)
         self._detail_panel.edit_tags_requested.connect(self._on_edit_tags_for_item)
         self._detail_panel.edit_requested.connect(self._on_detail_panel_edit)
@@ -2561,6 +2562,21 @@ class MainWindow(QMainWindow):
                 from .commands import EditDueTimeCommand
 
                 cmd = EditDueTimeCommand(self, active_list.id, item_id, item.due_time, due_time)
+                self._undo_stack.push(cmd)
+
+    def _on_item_due_time_end_changed(self, item_id: UUID, due_time_end) -> None:
+        """Handle item due time end change."""
+        if self._refreshing:
+            return
+        active_list = self._database.active_list
+        if active_list:
+            item = active_list.get_item(item_id)
+            if item:
+                from .commands import EditDueTimeEndCommand
+
+                cmd = EditDueTimeEndCommand(
+                    self, active_list.id, item_id, item.due_time_end, due_time_end
+                )
                 self._undo_stack.push(cmd)
 
     def _on_date_and_time_dropped(self, item_id: UUID, due_date, due_time) -> None:

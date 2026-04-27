@@ -360,6 +360,47 @@ class EditDueTimeCommand(QUndoCommand):
         self._window._refresh_ui()
 
 
+class EditDueTimeEndCommand(QUndoCommand):
+    """Change an item's due time end (end of an event window)."""
+
+    def __init__(
+        self,
+        window: MainWindow,
+        list_id: UUID,
+        item_id: UUID,
+        old_due_time_end: time | None,
+        new_due_time_end: time | None,
+    ) -> None:
+        super().__init__("Change end time")
+        self._window = window
+        self._list_id = list_id
+        self._item_id = item_id
+        self._old_due_time_end = old_due_time_end
+        self._new_due_time_end = new_due_time_end
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if item:
+            item.due_time_end = self._new_due_time_end
+            item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if item:
+            item.due_time_end = self._old_due_time_end
+            item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+
 class EditTagsCommand(QUndoCommand):
     """Change an item's tags."""
 
