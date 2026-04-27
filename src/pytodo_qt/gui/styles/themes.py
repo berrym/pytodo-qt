@@ -66,6 +66,7 @@ LIGHT_COLORS = {
     "due_overdue": "#b12f25",
     "due_today": "#ae6e13",
     "due_soon": "#2a7e4d",
+    "event_date": "#7C3AED",  # Matches smart_input chip color for visual parity
     # Chart/timeline colors (Okabe-Ito + industry standards for light backgrounds)
     "chart_span": "#5470c6",  # ECharts blue — time span bar
     "chart_span_alpha": "100",  # Opacity 0-255
@@ -102,6 +103,7 @@ DARK_COLORS = {
     "due_overdue": "#e77c74",
     "due_today": "#ddad5f",
     "due_soon": "#6bc791",
+    "event_date": "#A78BFA",  # Matches smart_input chip color for visual parity
     # Chart/timeline colors (ECharts dark + desaturated for dark backgrounds)
     "chart_span": "#4992ff",  # ECharts dark blue — time span bar
     "chart_span_alpha": "90",  # Subtle, recedes

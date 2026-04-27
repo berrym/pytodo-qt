@@ -1318,7 +1318,7 @@ class _TimelineTasksWidget(QWidget):
         self._overflow_brush = QBrush(of_c)
 
         # Event date
-        ev_c = QColor("#9333EA")
+        ev_c = QColor(c.get("event_date", "#7C3AED"))
         ev_c.setAlpha(120)
         self._event_brush = QBrush(ev_c)
 
@@ -1739,7 +1739,7 @@ class _TimelineTasksWidget(QWidget):
             (c.get("chart_estimate", "#3D4147"), _tr("CalendarViewWidget", "Estimated")),
             (c.get("chart_pomodoro", "#D55E00"), _tr("CalendarViewWidget", "Pomodoro")),
             (c.get("chart_stopwatch", "#0072B2"), _tr("CalendarViewWidget", "Stopwatch")),
-            ("#9333EA", _tr("CalendarViewWidget", "Event Date")),
+            (c.get("event_date", "#7C3AED"), _tr("CalendarViewWidget", "Event Date")),
         ]:
             lbl = QLabel(
                 f'<span style="color:{hex_c};">\u25a0</span> '
