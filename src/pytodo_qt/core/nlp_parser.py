@@ -46,6 +46,7 @@ class EntityKind(Enum):
     EVENT_DATE = "event_date"
     CONDITION = "condition"
     FILLER = "filler"
+    SUBTASK = "subtask"
 
 
 @dataclass
@@ -2317,31 +2318,60 @@ def _build_reminder(text: str, spans: list[EntitySpan]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _extract_subtasks(reminder: str) -> tuple[str, list[str]]:
-    """Extract inline subtask items from delimiter patterns in reminder text.
+def _extract_subtasks(text: str, tracker: _SpanTracker) -> list[str]:
+    """Find an inline-subtask delimiter pattern in unclaimed text and reserve
+    a SUBTASK span covering the delimiter and the items list.
 
-    Patterns: colon ("buy groceries: milk, bread, eggs"),
-    "with tasks/subtasks", "including".
+    Patterns: colon (``"buy groceries: milk, bread, eggs"``),
+    ``" with tasks "``, ``" with subtasks "``, ``" including "``.
 
-    Returns (parent_reminder, subtask_reminders). If no delimiter found,
-    returns (reminder, []).
+    The reserved span covers from the start of the delimiter through the
+    end of the text (or until the next reserved span boundary), so
+    _build_reminder excludes the delimiter+items tail from the reminder
+    while the parent text remains. Items are split on commas with
+    Oxford-comma and "and" handling. The earliest delimiter wins.
     """
     _delimiters = [": ", " with tasks ", " with subtasks ", " including "]
 
-    lower = reminder.lower()
+    lower = text.lower()
+    best_idx = -1
+    best_delim_len = 0
     for delim in _delimiters:
         idx = lower.find(delim)
         if idx == -1:
             continue
-        parent = reminder[:idx].strip()
-        items_text = reminder[idx + len(delim) :].strip()
-        if not parent or not items_text:
-            continue
-        items = _split_list_items(items_text)
-        if items:
-            return parent, items
+        if best_idx == -1 or idx < best_idx:
+            best_idx = idx
+            best_delim_len = len(delim)
 
-    return reminder, []
+    if best_idx == -1:
+        return []
+
+    items_start = best_idx + best_delim_len
+    if items_start >= len(text):
+        return []
+
+    # Span covers from the delimiter start to either the next reserved
+    # span boundary that follows it, or to end of text.
+    next_boundary = len(text)
+    for s in tracker.spans:
+        if s.start > best_idx and s.start < next_boundary:
+            next_boundary = s.start
+
+    items_text = text[items_start:next_boundary].strip()
+    if not items_text:
+        return []
+    items = _split_list_items(items_text)
+    if not items:
+        return []
+
+    # Refuse to claim a region that overlaps an already-reserved span.
+    if not tracker.is_free(best_idx, next_boundary):
+        return []
+
+    display = f"Subtasks ({len(items)})"
+    tracker.reserve(EntitySpan(best_idx, next_boundary, EntityKind.SUBTASK, display))
+    return items
 
 
 def _split_list_items(text: str) -> list[str]:
@@ -2549,7 +2579,12 @@ def parse(text: str, today: date | None = None) -> ParseResult:
     # 8. Conditions (after all other extraction so span boundaries are settled)
     conditions = _extract_conditions(tokens, tracker)
 
-    # 9. Filler / connective phrases left in unclaimed text. Runs last so
+    # 9. Subtask extraction (before filler so the delimiter+items tail is
+    # claimed as a single SUBTASK span and filler matching never reaches
+    # into the items list).
+    subtask_reminders = _extract_subtasks(text, tracker)
+
+    # 10. Filler / connective phrases left in unclaimed text. Runs last so
     # entity-claimed regions act as natural delimiters.
     _extract_fillers(text, tracker)
 
@@ -2561,9 +2596,6 @@ def parse(text: str, today: date | None = None) -> ParseResult:
         reminder = f"{reminder} {times_anno}"
     elif times_anno:
         reminder = times_anno
-
-    # 10. Subtask extraction from reminder text
-    reminder, subtask_reminders = _extract_subtasks(reminder)
 
     return ParseResult(
         reminder=reminder,

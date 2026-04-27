@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QRadioButton,
     QScrollArea,
     QSpinBox,
@@ -344,6 +345,26 @@ class AddTodoDialog(QDialog):
         tags_form.addRow(self.tr("Tags:"), self.tags_edit)
         adv_layout.addLayout(tags_form)
 
+        # --- Subtasks (standalone) ---
+        subtasks_form = QFormLayout()
+        self.subtasks_edit = QPlainTextEdit()
+        self.subtasks_edit.setPlaceholderText(
+            self.tr("One subtask per line\ne.g.\nbook flight\npack")
+        )
+        self.subtasks_edit.setToolTip(
+            self.tr(
+                "One subtask per line. Each line becomes a child task of the "
+                "item being created. Inline syntax (parent: a, b, c) in the "
+                "smart input populates this field automatically."
+            )
+        )
+        # Cap visible height so the field doesn't dominate the dialog;
+        # users can still enter many lines and scroll.
+        fm = self.subtasks_edit.fontMetrics()
+        self.subtasks_edit.setFixedHeight(int(fm.lineSpacing() * 4 + 12))
+        subtasks_form.addRow(self.tr("Subtasks:"), self.subtasks_edit)
+        adv_layout.addLayout(subtasks_form)
+
         adv_layout.addStretch()
 
         layout.addWidget(self._advanced_scroll, 1)  # stretch factor for scroll area
@@ -443,6 +464,12 @@ class AddTodoDialog(QDialog):
                 self.tags_edit.setText(", ".join(result.tags))
             else:
                 self.tags_edit.clear()
+
+            # Subtasks (one per line)
+            if result.subtask_reminders:
+                self.subtasks_edit.setPlainText("\n".join(result.subtask_reminders))
+            else:
+                self.subtasks_edit.clear()
 
             # Pomodoro
             self.estimated_pomodoros_spin.setValue(result.pomodoro_estimate or 0)
@@ -833,6 +860,12 @@ class AddTodoDialog(QDialog):
                 break_duration=self.task_break_duration_spin.value(),
                 long_break_duration=self.task_long_break_spin.value(),
             )
+            # Subtasks: one per non-empty line in the multiline field.
+            self._subtask_reminders = [
+                line.strip()
+                for line in self.subtasks_edit.toPlainText().splitlines()
+                if line.strip()
+            ]
 
         # Apply the board column dropdown selection to the item
         # regardless of which build path (smart input or advanced

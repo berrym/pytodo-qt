@@ -239,4 +239,10 @@ class TestSmartInputWidget:
     def test_placeholder_text(self, qtbot) -> None:
         widget = SmartInputWidget()
         qtbot.addWidget(widget)
-        assert "groceries" in widget._text_edit.placeholderText()
+        text = widget._text_edit.placeholderText()
+        # Hints surface entity-bearing tokens (date / tag / priority) plus
+        # the subtask-syntax delimiter so a user discovers each from the
+        # placeholder alone.
+        assert "tomorrow" in text
+        assert "@" in text
+        assert ":" in text

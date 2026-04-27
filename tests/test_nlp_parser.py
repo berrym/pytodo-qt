@@ -2016,3 +2016,50 @@ class TestFillerExtraction:
         assert result.due_date is not None
         assert "@work" in result.tags
         assert "i need to" not in result.reminder.lower()
+
+
+# ---------------------------------------------------------------------------
+# TestSubtaskSpan — SUBTASK EntityKind span is emitted when subtasks recognized
+# ---------------------------------------------------------------------------
+
+
+class TestSubtaskSpan:
+    """Recognized inline subtask syntax must emit a SUBTASK span so the
+    smart input can render parse-time visual confirmation, alongside the
+    parsed subtask_reminders list."""
+
+    def test_colon_emits_subtask_span(self) -> None:
+        result = parse("Buy groceries: milk, bread, eggs", today=TODAY)
+        assert result.subtask_reminders == ["milk", "bread", "eggs"]
+        sub_spans = [s for s in result.spans if s.kind == EntityKind.SUBTASK]
+        assert len(sub_spans) == 1
+        assert "Subtasks" in sub_spans[0].display
+        assert "(3)" in sub_spans[0].display
+
+    def test_with_tasks_emits_span(self) -> None:
+        result = parse("Pack with tasks charger, passport", today=TODAY)
+        assert result.subtask_reminders == ["charger", "passport"]
+        sub_spans = [s for s in result.spans if s.kind == EntityKind.SUBTASK]
+        assert len(sub_spans) == 1
+
+    def test_no_delimiter_no_subtask_span(self) -> None:
+        result = parse("Buy groceries", today=TODAY)
+        assert result.subtask_reminders == []
+        sub_spans = [s for s in result.spans if s.kind == EntityKind.SUBTASK]
+        assert sub_spans == []
+
+    def test_subtask_span_excluded_from_reminder(self) -> None:
+        # The span covers the delimiter+items tail, so _build_reminder
+        # produces only the parent text.
+        result = parse("Plan trip: book flight, pack, set OOO", today=TODAY)
+        assert result.reminder == "Plan trip"
+
+    def test_subtask_span_position_in_original_text(self) -> None:
+        text = "Buy groceries: milk, bread, eggs"
+        result = parse(text, today=TODAY)
+        sub_spans = [s for s in result.spans if s.kind == EntityKind.SUBTASK]
+        assert len(sub_spans) == 1
+        span = sub_spans[0]
+        # Span starts at the colon and runs to end of text.
+        assert text[span.start] == ":"
+        assert span.end == len(text)

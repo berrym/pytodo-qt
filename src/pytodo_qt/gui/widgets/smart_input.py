@@ -49,6 +49,7 @@ _ENTITY_COLORS: dict[Theme, dict[EntityKind, str]] = {
         EntityKind.EVENT_DATE: "#7C3AED",
         EntityKind.CONDITION: "#DC2626",
         EntityKind.FILLER: "#94A3B8",
+        EntityKind.SUBTASK: "#0EA5E9",
     },
     Theme.DARK: {
         EntityKind.DATE: "#6AB0F3",
@@ -63,6 +64,7 @@ _ENTITY_COLORS: dict[Theme, dict[EntityKind, str]] = {
         EntityKind.EVENT_DATE: "#A78BFA",
         EntityKind.CONDITION: "#F87171",
         EntityKind.FILLER: "#94A3B8",
+        EntityKind.SUBTASK: "#38BDF8",
     },
 }
 
@@ -315,7 +317,7 @@ class SmartInputWidget(QWidget):
         self._text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._text_edit.setFixedHeight(32)
         self._text_edit.setPlaceholderText(
-            self.tr("e.g. Buy groceries tomorrow at 3pm @errands p1")
+            self.tr("e.g. Plan trip tomorrow at 3pm @errands p1: book flight, pack")
         )
         self._text_edit.textChanged.connect(self._on_text_changed)
         self._text_edit.installEventFilter(self)

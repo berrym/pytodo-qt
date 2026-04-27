@@ -907,3 +907,54 @@ class TestEditRecurrenceDialog:
         # Don't call _on_accept or _on_remove — simulate cancel
         result = dialog.get_recurrence()
         assert result == (None, 1, None, None)
+
+
+class TestAddTodoDialogSubtasks:
+    """Subtask field round-trip in both smart-input and advanced modes."""
+
+    def test_smart_input_subtasks_populate_advanced_field(self, app):
+        # Inline syntax in the smart input gets mirrored into the
+        # subtasks_edit when the advanced disclosure is opened.
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Plan trip: book flight, pack, set OOO")
+        dialog._smart_input.get_parse_result()
+        text = dialog.subtasks_edit.toPlainText()
+        lines = [line for line in text.splitlines() if line.strip()]
+        assert lines == ["book flight", "pack", "set OOO"]
+
+    def test_smart_input_no_subtasks_clears_field(self, app):
+        # Switching to a smart-input phrase with no subtask syntax must
+        # clear the subtasks field so stale items don't leak through.
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Plan trip: book flight, pack")
+        dialog._smart_input.get_parse_result()
+        assert dialog.subtasks_edit.toPlainText().strip() != ""
+        dialog._smart_input.set_text("Buy groceries tomorrow")
+        dialog._smart_input.get_parse_result()
+        assert dialog.subtasks_edit.toPlainText().strip() == ""
+
+    def test_advanced_subtasks_field_round_trip(self, app):
+        dialog = AddTodoDialog()
+        dialog._on_toggle_advanced()  # Open advanced
+        dialog.reminder_edit.setText("Plan trip")
+        dialog.subtasks_edit.setPlainText("book flight\npack\nset OOO\n")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.reminder == "Plan trip"
+        assert dialog.get_subtask_reminders() == ["book flight", "pack", "set OOO"]
+
+    def test_advanced_subtasks_blank_lines_ignored(self, app):
+        dialog = AddTodoDialog()
+        dialog._on_toggle_advanced()
+        dialog.reminder_edit.setText("Plan trip")
+        dialog.subtasks_edit.setPlainText("\nbook flight\n\n\npack\n  \n")
+        dialog._on_accept()
+        assert dialog.get_subtask_reminders() == ["book flight", "pack"]
+
+    def test_advanced_no_subtasks_yields_empty_list(self, app):
+        dialog = AddTodoDialog()
+        dialog._on_toggle_advanced()
+        dialog.reminder_edit.setText("Buy milk")
+        dialog._on_accept()
+        assert dialog.get_subtask_reminders() == []
