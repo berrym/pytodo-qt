@@ -8,6 +8,25 @@
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![basedpyright](https://img.shields.io/badge/type%20checked-basedpyright-blue.svg)](https://github.com/DetachHead/basedpyright)
 
+> ## v0.3.11 beta is here
+>
+> The v0.3.11 series is in active beta and ships substantial capability beyond v0.3.10. Headline additions across the b1 → b6 series:
+>
+> - **NLP-powered smart task input** with parse-time recognition chips for date, time, tag, priority, recurrence, pomodoro, time block, and inline subtask syntax (`Plan trip: book flight, pack`).
+> - **Full calendar surface** — Day, Week, Month, Agenda, and Timeline-Analytics sub-views; Gantt-bar event rendering with eight lifecycle states; drag-and-drop scheduling and edge-drag-to-reschedule.
+> - **Web UI** with secure mobile pairing via QR code, per-device authentication tokens, and a mobile-friendly PWA shell.
+> - **CalDAV interop** with Thunderbird / DAVx5 / Tasks.org (full RFC 5545 + 4791 round-trip).
+> - **Kanban board** with drag-and-drop, subtask CRUD, and per-column ordering.
+> - **Subtasks** (one-level nesting) with detail-panel CRUD, parent breadcrumb, and inline-syntax creation.
+> - **Time blocks and event windows** — `due_time_end` for explicit ranges, named time blocks (`morning`, `late afternoon`, etc.).
+> - **Pomodoro and stopwatch** with per-task durations, session logging, and analytics.
+> - **Meeting-link Join button** — auto-detection of Zoom, Microsoft Teams, Google Meet, Webex, and Jitsi URLs across the detail panel, kanban card, and calendar context menu.
+> - **Tags and private lists**, **WCAG AA themes**, **i18n readiness**, and **filler-word stripping** so natural-speech inputs produce clean reminders.
+>
+> Download the latest beta from the [Releases page](https://github.com/berrym/pytodo-qt/releases) — the most recent prerelease tag prefixed `v0.3.11b` is the one to try.
+>
+> The beta is suitable for users who want the v0.3.11 capability set or who are willing to help test before the final release. The v0.3.10 stable remains the recommended choice for users requiring strict release-stability guarantees.
+
 A cross-platform to-do list manager with encrypted peer-to-peer synchronization.
 
 ## Features
