@@ -4408,3 +4408,192 @@ class TestContinuingCellLabels:
             f"Got {len(distinct)} distinct non-white colors — too few "
             f"for text antialiasing."
         )
+
+
+# ---------------------------------------------------------------------------
+# Agenda / schedule sub-view
+# ---------------------------------------------------------------------------
+
+
+class TestAgendaRow:
+    """Single-row widget for the agenda list."""
+
+    def test_timed_item_shows_time(self, qtbot) -> None:
+        from datetime import time as time_type
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaRow
+
+        item = create_todo_item("Standup")
+        item.due_time = time_type(9, 30)
+        colors = _agenda_test_colors()
+        row = _AgendaRow(item, "12h", colors)
+        qtbot.addWidget(row)
+        # First QLabel is the time label.
+        from PyQt6.QtWidgets import QLabel
+
+        labels = row.findChildren(QLabel)
+        assert any("9:30" in lbl.text() for lbl in labels)
+
+    def test_all_day_item_shows_all_day(self, qtbot) -> None:
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaRow
+
+        item = create_todo_item("Holiday")
+        # No due_time → All Day
+        colors = _agenda_test_colors()
+        row = _AgendaRow(item, "12h", colors)
+        qtbot.addWidget(row)
+        from PyQt6.QtWidgets import QLabel
+
+        labels = row.findChildren(QLabel)
+        assert any("All Day" in lbl.text() for lbl in labels)
+
+    def test_24h_format(self, qtbot) -> None:
+        from datetime import time as time_type
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaRow
+
+        item = create_todo_item("Meeting")
+        item.due_time = time_type(14, 30)
+        colors = _agenda_test_colors()
+        row = _AgendaRow(item, "24h", colors)
+        qtbot.addWidget(row)
+        from PyQt6.QtWidgets import QLabel
+
+        labels = row.findChildren(QLabel)
+        assert any("14:30" in lbl.text() for lbl in labels)
+
+    def test_click_emits_item_id(self, qtbot) -> None:
+        from PyQt6.QtCore import QPointF, Qt
+        from PyQt6.QtGui import QMouseEvent
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaRow
+
+        item = create_todo_item("Task")
+        colors = _agenda_test_colors()
+        row = _AgendaRow(item, "12h", colors)
+        qtbot.addWidget(row)
+        received: list = []
+        row.clicked.connect(lambda iid: received.append(iid))
+        ev = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPointF(10.0, 10.0),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        row.mousePressEvent(ev)
+        assert received == [item.id]
+
+
+class TestAgendaView:
+    """Chronological list grouped by day."""
+
+    def test_empty_data_renders_placeholders_only(self, qtbot) -> None:
+        from datetime import date
+
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaView
+
+        view = _AgendaView()
+        qtbot.addWidget(view)
+        view.set_data([], date(2026, 5, 1), "12h")
+        # Every day in the range gets an empty placeholder, so the
+        # content layout has many entries but no _AgendaRow widgets.
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaRow
+
+        rows = view._content.findChildren(_AgendaRow)
+        assert rows == []
+
+    def test_grouping_by_day(self, qtbot) -> None:
+        from datetime import date
+        from datetime import time as time_type
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaRow, _AgendaView
+
+        anchor = date(2026, 5, 1)
+        on_day_one = create_todo_item("First")
+        on_day_one.due_date = anchor
+        on_day_one.due_time = time_type(10, 0)
+
+        on_day_three = create_todo_item("Third")
+        on_day_three.due_date = anchor.replace(day=3)
+        on_day_three.due_time = time_type(14, 0)
+
+        view = _AgendaView()
+        qtbot.addWidget(view)
+        view.set_data([on_day_one, on_day_three], anchor, "12h")
+
+        rows = view._content.findChildren(_AgendaRow)
+        assert len(rows) == 2
+
+    def test_all_day_renders_before_timed_in_same_day(self, qtbot) -> None:
+        from datetime import date
+        from datetime import time as time_type
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaRow, _AgendaView
+
+        anchor = date(2026, 5, 1)
+        timed = create_todo_item("Timed")
+        timed.due_date = anchor
+        timed.due_time = time_type(10, 0)
+
+        all_day = create_todo_item("AllDay")
+        all_day.due_date = anchor
+
+        view = _AgendaView()
+        qtbot.addWidget(view)
+        view.set_data([timed, all_day], anchor, "12h")
+
+        rows = view._content.findChildren(_AgendaRow)
+        # First widget visited is the all-day row, then the timed row.
+        assert rows[0]._item_id == all_day.id
+        assert rows[1]._item_id == timed.id
+
+    def test_click_forwards_to_view_signal(self, qtbot) -> None:
+        from datetime import date
+
+        from PyQt6.QtCore import QPointF, Qt
+        from PyQt6.QtGui import QMouseEvent
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaRow, _AgendaView
+
+        anchor = date(2026, 5, 1)
+        item = create_todo_item("Click me")
+        item.due_date = anchor
+
+        view = _AgendaView()
+        qtbot.addWidget(view)
+        view.set_data([item], anchor, "12h")
+
+        received: list = []
+        view.item_clicked.connect(lambda iid: received.append(iid))
+
+        rows = view._content.findChildren(_AgendaRow)
+        assert len(rows) == 1
+        ev = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPointF(10.0, 10.0),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        rows[0].mousePressEvent(ev)
+        assert received == [item.id]
+
+
+def _agenda_test_colors() -> dict[str, str]:
+    return {
+        "text": "#000000",
+        "completed_text": "#888888",
+        "border": "#cccccc",
+        "highlight": "#0078d4",
+        "priority_high": "#b12f25",
+        "priority_normal": "#1b5f98",
+        "priority_low": "#95a5a6",
+    }

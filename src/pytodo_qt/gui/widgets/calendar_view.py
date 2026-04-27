@@ -54,7 +54,7 @@ from PyQt6.QtWidgets import (
 )
 
 if TYPE_CHECKING:
-    from ...core.models import TodoList
+    from ...core.models import TodoItem, TodoList
     from ..widgets.search_filter import FilterState
 
 # Enable anti-aliasing for all pyqtgraph chart rendering
@@ -4890,6 +4890,238 @@ class _PinnedWeekContainer(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Schedule / agenda sub-view — chronological scrollable list grouped by day
+# ---------------------------------------------------------------------------
+
+
+class _AgendaRow(QFrame):
+    """Single row representing one scheduled item in the agenda list."""
+
+    clicked = pyqtSignal(object)  # (item_id)
+    double_clicked = pyqtSignal(object)
+    right_clicked = pyqtSignal(object, QPoint)
+
+    def __init__(
+        self,
+        item: TodoItem,
+        time_format: str,
+        colors: dict[str, str],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._item_id = item.id
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(
+            lambda pos: self.right_clicked.emit(self._item_id, self.mapToGlobal(pos))
+        )
+        # Subtle hover background mirrors what other clickable rows in
+        # the project use to signal interactivity.
+        self.setStyleSheet(
+            "_AgendaRow { background: transparent; border-radius: 4px; }"
+            "_AgendaRow:hover { background: palette(midlight); }"
+        )
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(8)
+
+        # Time / "All Day" — fixed-width column so reminders align.
+        if item.due_time is None:
+            time_text = self.tr("All Day")
+        elif time_format == "24h":
+            time_text = item.due_time.strftime("%H:%M")
+        else:
+            time_text = item.due_time.strftime("%I:%M %p").lstrip("0")
+        time_label = QLabel(time_text)
+        time_label.setFixedWidth(80)
+        time_label.setStyleSheet("color: palette(mid); font-size: 11px;")
+        layout.addWidget(time_label)
+
+        # Priority dot
+        priority_color = {
+            1: colors["priority_high"],
+            2: colors["priority_normal"],
+            3: colors["priority_low"],
+        }.get(item.priority, colors["priority_normal"])
+        dot = QLabel()
+        dot.setFixedSize(8, 8)
+        dot.setStyleSheet(f"background: {priority_color}; border-radius: 4px; border: none;")
+        layout.addWidget(dot)
+
+        # Reminder
+        text = item.reminder or self.tr("(no text)")
+        reminder_label = QLabel(text)
+        reminder_label.setWordWrap(False)
+        reminder_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        if item.complete:
+            reminder_label.setStyleSheet(
+                f"color: {colors['completed_text']};"
+                " text-decoration: line-through;"
+                " font-size: 12px; border: none;"
+            )
+        else:
+            reminder_label.setStyleSheet(f"color: {colors['text']}; font-size: 12px; border: none;")
+        layout.addWidget(reminder_label, 1)
+
+        # Tag chips — compact, capped at 3 + overflow count.
+        if item.tags:
+            shown = item.tags[:3]
+            tags_text = " ".join(shown)
+            if len(item.tags) > 3:
+                tags_text += f" +{len(item.tags) - 3}"
+            tag_label = QLabel(tags_text)
+            tag_label.setStyleSheet("color: #2DA5A5; font-size: 11px; border: none;")
+            layout.addWidget(tag_label)
+
+    def mousePressEvent(self, a0) -> None:  # noqa: N802
+        if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self._item_id)
+        super().mousePressEvent(a0)
+
+    def mouseDoubleClickEvent(self, a0) -> None:  # noqa: N802
+        if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
+            self.double_clicked.emit(self._item_id)
+        super().mouseDoubleClickEvent(a0)
+
+
+class _AgendaView(QWidget):
+    """Chronological scrollable list of scheduled items grouped by day.
+
+    Renders one section per day across a configurable forward-looking
+    range starting at `current_date`. Each section has a day-header
+    row plus one `_AgendaRow` per scheduled item; days with no items
+    show a single muted placeholder so absence is visible. All-day
+    items render before timed items within a single day.
+    """
+
+    item_clicked = pyqtSignal(object)
+    item_double_clicked = pyqtSignal(object)
+    item_right_clicked = pyqtSignal(object, QPoint)
+
+    DEFAULT_DAYS = 30
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._items: list[TodoItem] = []
+        self._current_date: date = date.today()
+        self._time_format: str = "system"
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        self._content = QWidget()
+        self._content_layout = QVBoxLayout(self._content)
+        self._content_layout.setContentsMargins(8, 8, 8, 8)
+        self._content_layout.setSpacing(0)
+
+        scroll.setWidget(self._content)
+        outer.addWidget(scroll)
+
+    def set_data(
+        self,
+        items: list[TodoItem],
+        current_date: date,
+        time_format: str,
+    ) -> None:
+        """Bind items, anchor date, and time-format preference."""
+        self._items = items
+        self._current_date = current_date
+        self._time_format = time_format
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        # Tear down previous content
+        while self._content_layout.count():
+            layout_item = self._content_layout.takeAt(0)
+            if layout_item is None:
+                continue
+            w = layout_item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        from ..styles.themes import get_colors
+
+        colors = get_colors()
+
+        # Group scheduled items by due_date.
+        from collections import defaultdict
+
+        by_day: dict[date, list[TodoItem]] = defaultdict(list)
+        for item in self._items:
+            if item.due_date is not None:
+                by_day[item.due_date].append(item)
+
+        # Sort each day: all-day items (no due_time) first, then timed
+        # items in chronological order within the day.
+        from datetime import time as _time
+
+        for d in by_day:
+            by_day[d].sort(key=lambda it: (it.due_time is not None, it.due_time or _time(0, 0)))
+
+        # Render the forward-looking range.
+        end = self._current_date + timedelta(days=self.DEFAULT_DAYS)
+        d = self._current_date
+        while d < end:
+            self._add_day_header(d, colors)
+            day_items = by_day.get(d, [])
+            if day_items:
+                for item in day_items:
+                    self._add_row(item, colors)
+            else:
+                self._add_empty_placeholder(colors)
+            d += timedelta(days=1)
+
+        self._content_layout.addStretch()
+
+    def _add_day_header(self, d: date, colors: dict[str, str]) -> None:
+        # Highlight today so it is visually anchored in a long range.
+        is_today = d == date.today()
+        text = d.strftime("%A, %B %-d, %Y")
+        if is_today:
+            text = self.tr("{date} — Today").format(date=text)
+        label = QLabel(text)
+        font = QFont()
+        font.setBold(True)
+        font.setPixelSize(13)
+        label.setFont(font)
+        if is_today:
+            label.setStyleSheet(f"color: {colors['highlight']}; padding: 12px 4px 4px 4px;")
+        else:
+            label.setStyleSheet(f"color: {colors['text']}; padding: 12px 4px 4px 4px;")
+        self._content_layout.addWidget(label)
+
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet(f"color: {colors['border']}; margin: 0 4px 4px 4px;")
+        self._content_layout.addWidget(line)
+
+    def _add_row(self, item: TodoItem, colors: dict[str, str]) -> None:
+        row = _AgendaRow(item, self._time_format, colors, parent=self._content)
+        row.clicked.connect(self.item_clicked.emit)
+        row.double_clicked.connect(self.item_double_clicked.emit)
+        row.right_clicked.connect(self.item_right_clicked.emit)
+        self._content_layout.addWidget(row)
+
+    def _add_empty_placeholder(self, colors: dict[str, str]) -> None:
+        label = QLabel(self.tr("(no scheduled items)"))
+        label.setStyleSheet(
+            f"color: {colors['completed_text']}; font-style: italic; padding: 4px 16px;"
+        )
+        self._content_layout.addWidget(label)
+
+
+# ---------------------------------------------------------------------------
 # Main calendar view widget
 # ---------------------------------------------------------------------------
 
@@ -4920,6 +5152,7 @@ class CalendarViewWidget(QWidget):
     SUB_WEEK = 1
     SUB_MONTH = 2
     SUB_TIMELINE = 3
+    SUB_AGENDA = 4
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -4938,6 +5171,7 @@ class CalendarViewWidget(QWidget):
             "week": self.SUB_WEEK,
             "month": self.SUB_MONTH,
             "timeline": self.SUB_TIMELINE,
+            "agenda": self.SUB_AGENDA,
         }
         self._sub_view = sub_map.get(saved, self.SUB_WEEK)
 
@@ -4977,7 +5211,13 @@ class CalendarViewWidget(QWidget):
 
         self._sub_buttons: list[QPushButton] = []
         for i, label in enumerate(
-            [self.tr("Day"), self.tr("Week"), self.tr("Month"), self.tr("Timeline")]
+            [
+                self.tr("Day"),
+                self.tr("Week"),
+                self.tr("Month"),
+                self.tr("Timeline"),
+                self.tr("Agenda"),
+            ]
         ):
             btn = QPushButton(label)
             btn.setCheckable(True)
@@ -5176,6 +5416,13 @@ class CalendarViewWidget(QWidget):
         tl_container_layout.addWidget(self._timeline_sub_stack)
         self._timeline_sub_stack.setCurrentIndex(self._tl_sub_view)
         self._sub_stack.addWidget(self._timeline_container)  # 3
+
+        # Agenda — chronological scrollable list grouped by day.
+        self._agenda_view = _AgendaView()
+        self._agenda_view.item_clicked.connect(self._on_task_clicked)
+        self._agenda_view.item_double_clicked.connect(self._on_task_double_clicked)
+        self._agenda_view.item_right_clicked.connect(self._on_task_right_clicked)
+        self._sub_stack.addWidget(self._agenda_view)  # 4
 
         self._sub_stack.setCurrentIndex(self._sub_view)
         content.addWidget(self._sub_stack, 1)
@@ -5407,6 +5654,14 @@ class CalendarViewWidget(QWidget):
         if self._sub_view == self.SUB_TIMELINE and self._tl_sub_view > 0:
             self._refresh_timeline_sub_view()
 
+        # Agenda — top-level items only, real schedule (no projections).
+        # Time format mirrors what the day/week views use.
+        from ...core.config import get_config
+
+        time_format = get_config().appearance.time_format
+        agenda_items = [it for it in top_level if it.due_date is not None]
+        self._agenda_view.set_data(agenda_items, self._current_date, time_format)
+
         self._unscheduled.set_items(unscheduled, todo_list=self._todo_list)
 
     def _max_all_day_height(self, model: _WeekModel, visible_dates: list[date]) -> int:
@@ -5622,6 +5877,8 @@ class CalendarViewWidget(QWidget):
         elif self._sub_view == self.SUB_TIMELINE and self._tl_sub_view == 1:
             # Daily: shift by week
             self._current_date -= timedelta(weeks=1)
+        elif self._sub_view == self.SUB_AGENDA:
+            self._current_date -= timedelta(days=_AgendaView.DEFAULT_DAYS)
         else:
             self._current_date -= timedelta(days=1)
         self._update_nav_label()
@@ -5640,6 +5897,8 @@ class CalendarViewWidget(QWidget):
         elif self._sub_view == self.SUB_TIMELINE and self._tl_sub_view == 1:
             # Daily: shift by week
             self._current_date += timedelta(weeks=1)
+        elif self._sub_view == self.SUB_AGENDA:
+            self._current_date += timedelta(days=_AgendaView.DEFAULT_DAYS)
         else:
             self._current_date += timedelta(days=1)
         self._update_nav_label()
@@ -5687,6 +5946,9 @@ class CalendarViewWidget(QWidget):
             self._nav_label.setText(f"{start.strftime('%b %d')} \u2014 {end.strftime('%b %d, %Y')}")
         elif self._sub_view == self.SUB_DAY:
             self._nav_label.setText(d.strftime("%A, %B %d, %Y"))
+        elif self._sub_view == self.SUB_AGENDA:
+            end = d + timedelta(days=_AgendaView.DEFAULT_DAYS - 1)
+            self._nav_label.setText(f"{d.strftime('%b %d')} — {end.strftime('%b %d, %Y')}")
         elif self._sub_view == self.SUB_TIMELINE:
             if self._tl_sub_view == 1:  # Daily
                 start = d - timedelta(days=d.weekday())
@@ -5734,6 +5996,7 @@ class CalendarViewWidget(QWidget):
             self.SUB_WEEK: "week",
             self.SUB_MONTH: "month",
             self.SUB_TIMELINE: "timeline",
+            self.SUB_AGENDA: "agenda",
         }
         get_config().database.calendar_sub_view = name_map.get(idx, "week")
         get_config_manager().save()
