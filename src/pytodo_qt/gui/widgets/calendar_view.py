@@ -5328,6 +5328,7 @@ class _AgendaRow(QFrame):
         self._item_id = item.id
         self._colors = colors
         self._selected = False
+        self._drag_start_pos: QPoint | None = None
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -5425,8 +5426,42 @@ class _AgendaRow(QFrame):
 
     def mousePressEvent(self, a0) -> None:  # noqa: N802
         if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
+            self._drag_start_pos = a0.pos()
             self.clicked.emit(self._item_id)
         super().mousePressEvent(a0)
+
+    def mouseMoveEvent(self, a0) -> None:  # noqa: N802
+        # Begin a drag once the cursor has moved past the system's drag
+        # threshold while the left button is held. Carries item_id in
+        # the same mime format that _AgendaView and _UnscheduledPanel
+        # already accept, so the drop side needs no changes.
+        if (
+            a0 is None
+            or self._drag_start_pos is None
+            or not (a0.buttons() & Qt.MouseButton.LeftButton)
+        ):
+            super().mouseMoveEvent(a0)
+            return
+        if (a0.pos() - self._drag_start_pos).manhattanLength() < QApplication.startDragDistance():
+            super().mouseMoveEvent(a0)
+            return
+
+        drag = QDrag(self)
+        mime = QMimeData()
+        mime.setData("application/x-pytodo-item-id", str(self._item_id).encode())
+        drag.setMimeData(mime)
+        # Drag preview = pixmap of the row itself so the cursor carries
+        # a recognizable representation of what's being moved.
+        pixmap = self.grab()
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(self._drag_start_pos)
+
+        self._drag_start_pos = None
+        drag.exec(Qt.DropAction.MoveAction)
+
+    def mouseReleaseEvent(self, a0) -> None:  # noqa: N802
+        self._drag_start_pos = None
+        super().mouseReleaseEvent(a0)
 
     def mouseDoubleClickEvent(self, a0) -> None:  # noqa: N802
         if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
@@ -5462,6 +5497,9 @@ class _AgendaView(QWidget):
         # walks this list to map a drop y-coordinate back to the day
         # section the drop landed in.
         self._day_widgets: list[tuple[date, QLabel]] = []
+        # Currently-hovered day section during a drag, used by
+        # _refresh_day_header_styles to paint a drop-target indicator.
+        self._drag_target_date: date | None = None
         self._setup_ui()
         # Accept drops from the unscheduled panel so dragging an
         # unscheduled task into a day grouping schedules it on that day.
@@ -5556,30 +5594,26 @@ class _AgendaView(QWidget):
         self._content_layout.addStretch()
 
     def _add_day_header(self, d: date, colors: dict[str, str]) -> None:
-        # Highlight today so it is visually anchored in a long range.
-        is_today = d == date.today()
         # Portable date formatting — %-d is POSIX only and rejected on
         # Windows ("Invalid format string"). Compose the day-of-month
         # without leading zero from d.day directly so the same source
         # renders identically across platforms.
         text = f"{d.strftime('%A, %B')} {d.day}, {d.year}"
-        if is_today:
+        if d == date.today():
             text = self.tr("{date} — Today").format(date=text)
         label = QLabel(text)
         font = QFont()
         font.setBold(True)
         font.setPixelSize(13)
         label.setFont(font)
-        if is_today:
-            label.setStyleSheet(f"color: {colors['highlight']}; padding: 12px 4px 4px 4px;")
-        else:
-            label.setStyleSheet(f"color: {colors['text']}; padding: 12px 4px 4px 4px;")
         self._content_layout.addWidget(label)
         # Track this header so drop handling can map a drop y back to
         # the day it landed in. The header is the y-anchor for its
         # day's section: every row that follows belongs to the day
         # whose header sits above it in the layout.
         self._day_widgets.append((d, label))
+        # Apply current style (today / drop-target / default).
+        self._style_day_header(d, label)
 
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
@@ -5605,8 +5639,43 @@ class _AgendaView(QWidget):
         )
         self._content_layout.addWidget(label)
 
+    def _style_day_header(self, d: date, label: QLabel) -> None:
+        """Paint a single day-section header with the right styling for
+        today / drop-target / default state.
+
+        Today is colored with the highlight tone so it stands out in
+        a long forward-looking range. The current drop target during a
+        drag carries a tinted background so users see exactly which
+        day will receive the drop.
+        """
+        from ..styles.themes import get_colors
+
+        colors = get_colors()
+        is_today = d == date.today()
+        is_target = d == self._drag_target_date
+        text_color = colors["highlight"] if is_today else colors["text"]
+        if is_target:
+            label.setStyleSheet(
+                f"color: {text_color}; background: {colors['highlight']};"
+                " border-radius: 4px; padding: 12px 4px 4px 4px;"
+            )
+        else:
+            label.setStyleSheet(f"color: {text_color}; padding: 12px 4px 4px 4px;")
+
+    def _refresh_day_header_styles(self) -> None:
+        """Re-apply styling on every day-section header. Used during a
+        drag to repaint the previous and current drop-target headers.
+        """
+        for d, label in self._day_widgets:
+            if label is not None:
+                self._style_day_header(d, label)
+
     # ------------------------------------------------------------------
-    # Drag-and-drop — accept drops from the unscheduled panel
+    # Drag-and-drop — accept drops from any agenda row or the
+    # unscheduled panel; emit task_dropped with the target date so the
+    # parent can route through EditDueDateCommand (which preserves
+    # due_time on a date-only change, satisfying the cross-day
+    # time-preservation rule).
     # ------------------------------------------------------------------
 
     def _date_at_y(self, y: int) -> date | None:
@@ -5644,12 +5713,28 @@ class _AgendaView(QWidget):
         if a0 is None:
             return
         mime = a0.mimeData()
-        if mime is not None and mime.hasFormat("application/x-pytodo-item-id"):
-            a0.acceptProposedAction()
-        else:
+        if mime is None or not mime.hasFormat("application/x-pytodo-item-id"):
             a0.ignore()
+            return
+        a0.acceptProposedAction()
+        # Repaint the day-section header that's currently under the
+        # cursor so the user sees the drop target.
+        target = self._date_at_y(int(a0.position().y()))
+        if target != self._drag_target_date:
+            self._drag_target_date = target
+            self._refresh_day_header_styles()
+
+    def dragLeaveEvent(self, a0) -> None:  # noqa: N802
+        self._drag_target_date = None
+        self._refresh_day_header_styles()
+        if a0 is not None:
+            a0.accept()
 
     def dropEvent(self, a0) -> None:  # noqa: N802
+        # Always clear the drop-target highlight before any early return
+        # so a rejected drop does not leave a section painted.
+        self._drag_target_date = None
+        self._refresh_day_header_styles()
         if a0 is None:
             return
         mime = a0.mimeData()

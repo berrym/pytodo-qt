@@ -4691,6 +4691,168 @@ class TestAgendaDragDrop:
         assert received == []
 
 
+class TestAgendaRowDragInitiation:
+    """_AgendaRow records a drag-start position on left-click and clears
+    it on release. The drag itself is initiated by mouseMoveEvent once
+    the cursor passes the system drag threshold; the side effect that
+    matters here is the position bookkeeping that controls when a
+    QDrag fires."""
+
+    def _row(self, qtbot):
+        from PyQt6.QtGui import QColor
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaRow
+
+        # Minimum theme-color set the row reads from.
+        colors = {
+            "text": QColor("black").name(),
+            "completed_text": QColor("gray").name(),
+            "priority_high": "#ff0000",
+            "priority_normal": "#999999",
+            "priority_low": "#00cc00",
+        }
+        item = create_todo_item("Test")
+        row = _AgendaRow(item, "12h", colors)
+        qtbot.addWidget(row)
+        return row, item
+
+    def test_left_click_records_drag_start(self, qtbot) -> None:
+        from PyQt6.QtCore import QPointF, Qt
+        from PyQt6.QtGui import QMouseEvent
+
+        row, _ = self._row(qtbot)
+        ev = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPointF(20.0, 10.0),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        row.mousePressEvent(ev)
+        assert row._drag_start_pos is not None
+
+    def test_release_clears_drag_start(self, qtbot) -> None:
+        from PyQt6.QtCore import QPointF, Qt
+        from PyQt6.QtGui import QMouseEvent
+
+        row, _ = self._row(qtbot)
+        press = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPointF(20.0, 10.0),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        row.mousePressEvent(press)
+        release = QMouseEvent(
+            QMouseEvent.Type.MouseButtonRelease,
+            QPointF(20.0, 10.0),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        row.mouseReleaseEvent(release)
+        assert row._drag_start_pos is None
+
+    def test_right_click_does_not_record_drag(self, qtbot) -> None:
+        # Right-click opens the context menu; it must not seed a
+        # subsequent drag because of leftover state.
+        from PyQt6.QtCore import QPointF, Qt
+        from PyQt6.QtGui import QMouseEvent
+
+        row, _ = self._row(qtbot)
+        ev = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPointF(20.0, 10.0),
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.RightButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        row.mousePressEvent(ev)
+        assert row._drag_start_pos is None
+
+
+class TestAgendaDropTargetHighlight:
+    """Drag-over a day section paints that section's header with a
+    drop-target tint so the user has a visual indication of which day
+    will receive the drop."""
+
+    def test_drag_move_marks_target_date(self, qtbot) -> None:
+        from datetime import date
+        from uuid import uuid4
+
+        from PyQt6.QtCore import QMimeData, QPointF, Qt
+        from PyQt6.QtGui import QDragMoveEvent
+
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaView
+
+        anchor = date.today()
+        view = _AgendaView()
+        view.show()
+        view.resize(400, 800)
+        qtbot.addWidget(view)
+        view.set_data([], anchor, "12h")
+        qtbot.wait(50)
+
+        mime = QMimeData()
+        mime.setData("application/x-pytodo-item-id", str(uuid4()).encode())
+        ev = QDragMoveEvent(
+            QPointF(50.0, 30.0).toPoint(),
+            Qt.DropAction.MoveAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        view.dragMoveEvent(ev)
+        # Target should be the first day in the rendered range (the anchor).
+        assert view._drag_target_date == anchor
+
+    def test_drag_leave_clears_target(self, qtbot) -> None:
+        from datetime import date
+
+        from PyQt6.QtGui import QDragLeaveEvent
+
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaView
+
+        view = _AgendaView()
+        qtbot.addWidget(view)
+        view.set_data([], date.today(), "12h")
+        view._drag_target_date = date.today()
+        view.dragLeaveEvent(QDragLeaveEvent())
+        assert view._drag_target_date is None
+
+    def test_drop_clears_target(self, qtbot) -> None:
+        from datetime import date
+        from uuid import uuid4
+
+        from PyQt6.QtCore import QMimeData, QPointF, Qt
+        from PyQt6.QtGui import QDropEvent
+
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaView
+
+        anchor = date.today()
+        view = _AgendaView()
+        view.show()
+        view.resize(400, 800)
+        qtbot.addWidget(view)
+        view.set_data([], anchor, "12h")
+        qtbot.wait(50)
+        view._drag_target_date = anchor
+
+        mime = QMimeData()
+        mime.setData("application/x-pytodo-item-id", str(uuid4()).encode())
+        ev = QDropEvent(
+            QPointF(50.0, 30.0),
+            Qt.DropAction.MoveAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        view.dropEvent(ev)
+        assert view._drag_target_date is None
+
+
 class TestEdgeHitTest:
     """Edge hit-test for #18 — returns the right edge / item / kind for
     each WindowKind, suppresses non-draggable cases (DEADLINE_FROM_CREATED
