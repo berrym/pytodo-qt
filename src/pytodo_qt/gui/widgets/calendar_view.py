@@ -3839,6 +3839,10 @@ class _WeekTableView(QTableView):
     task_right_clicked = pyqtSignal(object, object)
     task_dropped = pyqtSignal(object, object, object)  # (item_id, target_date, target_hour or None)
     more_clicked = pyqtSignal(object, object)  # (date, list[TodoItem])
+    # Edge-drag-to-resize completion. Emits (item_id, field_name, new_value)
+    # where field_name is one of "due_time", "due_time_end", or
+    # "estimated_minutes".
+    task_resized = pyqtSignal(object, str, object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -3901,6 +3905,33 @@ class _WeekTableView(QTableView):
             "font-size: 12px; font-weight: bold; }"
         )
         self._drag_preview_label.hide()
+
+        # Edge-drag-to-resize state (#18). None when not actively
+        # resizing; a dict otherwise:
+        #   item_id, edge ("top"|"bottom"), kind (WindowKind name),
+        #   original_due_time, original_due_time_end,
+        #   original_estimated_minutes, target_minute_of_day,
+        #   target_date.
+        self._edge_resize: dict | None = None
+        # Snap-line indicator painted at the snapped target y while
+        # resizing — gives the user visual confirmation of what minute
+        # the edge will land on. Transparent to mouse events.
+        self._resize_snap_line = QFrame(self.viewport())
+        self._resize_snap_line.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._resize_snap_line.setStyleSheet("QFrame { background: #2563eb; border: none; }")
+        self._resize_snap_line.setFixedHeight(2)
+        self._resize_snap_line.hide()
+        # Floating label showing the snap-target time during a resize.
+        self._resize_snap_label = QLabel(self)
+        self._resize_snap_label.setWindowFlags(
+            Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
+        )
+        self._resize_snap_label.setStyleSheet(
+            "QLabel { background: #2563eb; color: white; "
+            "border-radius: 6px; padding: 4px 8px; "
+            "font-size: 11px; font-weight: bold; }"
+        )
+        self._resize_snap_label.hide()
 
     def _hit_test(self, pos):
         """Find what was clicked at `pos`.
@@ -4049,6 +4080,126 @@ class _WeekTableView(QTableView):
 
         return None
 
+    # Within this many pixels of a bar's visible top or bottom edge,
+    # cursor switches to vertical-resize and a click enters edge-drag
+    # mode (#18). Tuned to the same 6 px the spec calls out — small
+    # enough not to swallow body clicks on tall bars, large enough to
+    # be reachable on a short floored bar.
+    _EDGE_HIT_PIXELS = 6
+
+    def _hit_test_edge(self, pos):
+        """Find a draggable bar edge at `pos`, or return None.
+
+        Tests starting (in-cell origin) slots only — continuing slot
+        edges are clip indicators per Q3 and are NOT draggable. The
+        top edge is also suppressed for DEADLINE_FROM_CREATED bars
+        per the #18 spec (the top of those bars is the clip-from-created
+        indicator, not a real start time).
+
+        Returns a dict on hit, None otherwise. The dict has:
+            edge: "top" or "bottom"
+            item: the TodoItem the edge belongs to
+            kind: WindowKind enum value
+            cell_rect: the cell rect in viewport coordinates
+            cell_date: the date the cell represents
+            slot_x_range: (left, right) slot x-bounds in viewport coords
+        """
+        from datetime import datetime as _dt
+
+        from ...core.calendar_layout import WindowKind, compute_bar_window
+
+        index = self.indexAt(pos)
+        if not index.isValid():
+            return None
+        cell_date = index.data(_WEEK_DATE_ROLE)
+        hour = index.data(_WEEK_HOUR_ROLE)
+        if cell_date is None or hour < 0:
+            return None
+
+        rect = self.visualRect(index)
+        column_items = index.data(_WEEK_COLUMN_ITEMS_ROLE) or []
+        if not column_items:
+            return None
+
+        cell_minute_start = hour * 60
+        cell_minute_end = (hour + 1) * 60
+        cell_minute_width = cell_minute_end - cell_minute_start
+        bar_left = rect.left() + 6
+        bar_width = rect.width() - 12
+        layout = _compute_cell_bar_layout(
+            column_items,
+            cell_date,
+            cell_minute_start,
+            cell_minute_end,
+            bar_left,
+            bar_width,
+            _dt.now(),
+        )
+
+        click_x = pos.x()
+        click_y = pos.y()
+
+        # Combine starting and continuing slots — both can hold a true
+        # edge of the bar in the current cell. A starting slot's
+        # clipped_top is False (origin in this cell); a continuing
+        # slot's clipped_bottom may be False (true end in this cell).
+        # The clipped_top / clipped_bottom flags on the segment are
+        # the source of truth for "is this a real edge or a clip
+        # indicator," not the slot category.
+        all_slots = list(layout.starting) + list(layout.continuing)
+        for item, _window, seg, slot_left, slot_right in all_slots:
+            if not (slot_left <= click_x <= slot_right):
+                continue
+            visible_start = max(seg.start_minute, cell_minute_start)
+            visible_end = min(seg.end_minute, cell_minute_end)
+            seg_top_y = rect.top() + int(
+                (visible_start - cell_minute_start) / cell_minute_width * rect.height()
+            )
+            seg_bot_y = rect.top() + int(
+                (visible_end - cell_minute_start) / cell_minute_width * rect.height()
+            )
+
+            window = compute_bar_window(item)
+            if window is None:
+                continue
+
+            # Top edge — only when the segment's true origin is in this
+            # cell (not clipped from earlier) and the bar's window kind
+            # has a draggable top per #18.
+            if (
+                not seg.clipped_top
+                and abs(click_y - seg_top_y) <= self._EDGE_HIT_PIXELS
+                and window.kind != WindowKind.DEADLINE_FROM_CREATED
+                and window.kind != WindowKind.ALL_DAY
+            ):
+                return {
+                    "edge": "top",
+                    "item": item,
+                    "kind": window.kind,
+                    "cell_rect": rect,
+                    "cell_date": cell_date,
+                    "slot_x_range": (slot_left, slot_right),
+                }
+
+            # Bottom edge — only when the segment's true end is in this
+            # cell. Draggable for every kind that renders in the hour
+            # grid (EVENT, WORKBACK, DEADLINE_FROM_CREATED).
+            if (
+                not seg.clipped_bottom
+                and abs(click_y - seg_bot_y) <= self._EDGE_HIT_PIXELS
+                and window.kind != WindowKind.ALL_DAY
+            ):
+                return {
+                    "edge": "bottom",
+                    "item": item,
+                    "kind": window.kind,
+                    "cell_rect": rect,
+                    "cell_date": cell_date,
+                    "slot_x_range": (slot_left, slot_right),
+                }
+
+        return None
+
     def mousePressEvent(self, e) -> None:  # noqa: N802
         self._tooltip_label.hide()
         self._tooltip_item_id = None
@@ -4105,6 +4256,23 @@ class _WeekTableView(QTableView):
             self._drag_item_reminder = ""
             self._dragging = False
             return
+        # Hover affordance for the edge-drag-to-resize interaction (#18).
+        # When the cursor is within _EDGE_HIT_PIXELS of a draggable
+        # bar edge, switch to vertical-resize so the user discovers
+        # the interaction without needing tooltip text. Cursor falls
+        # back to the table's default when not over an edge.
+        edge_hit = self._hit_test_edge(e.pos())
+        viewport = self.viewport()
+        if edge_hit is not None:
+            if viewport is not None:
+                viewport.setCursor(Qt.CursorShape.SizeVerCursor)
+            # Suppress the bar tooltip while the cursor is on an edge
+            # so the affordance reads cleanly.
+            self._tooltip_label.hide()
+            self._tooltip_item_id = None
+            return
+        if viewport is not None:
+            viewport.unsetCursor()
         # Tooltip handling — uses a persistent QLabel instead of
         # QToolTip.showText() so viewport repaints from the now-timer
         # don't dismiss it prematurely.
