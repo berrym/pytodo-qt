@@ -860,6 +860,10 @@ class MainWindow(QMainWindow):
         self.calendar_view.item_reminder_changed.connect(self._on_item_reminder_changed)
         self.calendar_view.item_due_date_changed.connect(self._on_item_due_date_changed)
         self.calendar_view.item_due_time_changed.connect(self._on_item_due_time_changed)
+        self.calendar_view.item_due_time_end_changed.connect(self._on_item_due_time_end_changed)
+        self.calendar_view.item_estimated_minutes_changed.connect(
+            self._on_item_estimated_minutes_changed
+        )
         self.calendar_view.date_and_time_dropped.connect(self._on_date_and_time_dropped)
         self.calendar_view.edit_tags_requested.connect(self._on_edit_tags_for_item)
         self.calendar_view.toggle_requested.connect(self._on_toggle_todo)
@@ -2576,6 +2580,25 @@ class MainWindow(QMainWindow):
 
                 cmd = EditDueTimeEndCommand(
                     self, active_list.id, item_id, item.due_time_end, due_time_end
+                )
+                self._undo_stack.push(cmd)
+
+    def _on_item_estimated_minutes_changed(self, item_id: UUID, estimated_minutes: int) -> None:
+        """Handle item estimated_minutes change (calendar edge-drag-to-resize)."""
+        if self._refreshing:
+            return
+        active_list = self._database.active_list
+        if active_list:
+            item = active_list.get_item(item_id)
+            if item:
+                from .commands import EditEstimatedMinutesCommand
+
+                cmd = EditEstimatedMinutesCommand(
+                    self,
+                    active_list.id,
+                    item_id,
+                    item.estimated_minutes,
+                    estimated_minutes,
                 )
                 self._undo_stack.push(cmd)
 

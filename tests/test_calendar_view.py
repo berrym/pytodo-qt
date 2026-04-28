@@ -4979,3 +4979,252 @@ class TestEdgeHitTest:
         rect = view.visualRect(idx)
         click = QPoint(rect.center().x(), rect.center().y())
         assert view._hit_test_edge(click) is None
+
+
+class TestResizeFieldDispatch:
+    """_minute_to_field_change correctness for each (edge, WindowKind) pair.
+
+    Pure logic tests, no widget event simulation. The drag state
+    machine is exercised separately by TestResizeDrag below."""
+
+    def _make_view_and_item(self, qtbot, **item_attrs):
+        from pytodo_qt.gui.widgets.calendar_view import _WeekModel, _WeekTableView
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        qtbot.addWidget(view)
+        item = create_todo_item("X")
+        for k, v in item_attrs.items():
+            setattr(item, k, v)
+        return view, item
+
+    def test_event_top_returns_due_time_change(self, qtbot):
+        from datetime import time
+
+        from pytodo_qt.core.calendar_layout import WindowKind
+
+        view, item = self._make_view_and_item(qtbot, due_time=time(9, 0), due_time_end=time(10, 0))
+        # Drag top to 540 - 30 = 510 minutes (8:30 AM)
+        change = view._minute_to_field_change("top", WindowKind.EVENT, item, 510)
+        assert change == ("due_time", time(8, 30))
+
+    def test_event_top_rejected_when_past_end(self, qtbot):
+        from datetime import time
+
+        from pytodo_qt.core.calendar_layout import WindowKind
+
+        view, item = self._make_view_and_item(qtbot, due_time=time(9, 0), due_time_end=time(10, 0))
+        # Drag top past end → invalid (would invert window)
+        change = view._minute_to_field_change("top", WindowKind.EVENT, item, 600)
+        assert change is None
+
+    def test_workback_top_returns_estimated_change(self, qtbot):
+        from datetime import time
+
+        from pytodo_qt.core.calendar_layout import WindowKind
+
+        view, item = self._make_view_and_item(qtbot, due_time=time(15, 0), estimated_minutes=120)
+        # Drag top to 12:00 (720 min) — new estimate = 900 - 720 = 180
+        change = view._minute_to_field_change("top", WindowKind.WORKBACK, item, 720)
+        assert change == ("estimated_minutes", 180)
+
+    def test_workback_top_rejected_when_at_due_time(self, qtbot):
+        from datetime import time
+
+        from pytodo_qt.core.calendar_layout import WindowKind
+
+        view, item = self._make_view_and_item(qtbot, due_time=time(15, 0), estimated_minutes=120)
+        # Drag top to due_time → estimate would be 0, rejected
+        change = view._minute_to_field_change("top", WindowKind.WORKBACK, item, 900)
+        assert change is None
+
+    def test_event_bottom_returns_due_time_end_change(self, qtbot):
+        from datetime import time
+
+        from pytodo_qt.core.calendar_layout import WindowKind
+
+        view, item = self._make_view_and_item(qtbot, due_time=time(9, 0), due_time_end=time(10, 0))
+        # Drag bottom to 11:00 (660 min)
+        change = view._minute_to_field_change("bottom", WindowKind.EVENT, item, 660)
+        assert change == ("due_time_end", time(11, 0))
+
+    def test_workback_bottom_returns_due_time_change(self, qtbot):
+        from datetime import time
+
+        from pytodo_qt.core.calendar_layout import WindowKind
+
+        view, item = self._make_view_and_item(qtbot, due_time=time(15, 0), estimated_minutes=120)
+        # Drag bottom to 16:00 (960 min)
+        change = view._minute_to_field_change("bottom", WindowKind.WORKBACK, item, 960)
+        assert change == ("due_time", time(16, 0))
+
+    def test_deadline_only_bottom_returns_due_time_change(self, qtbot):
+        from datetime import time
+
+        from pytodo_qt.core.calendar_layout import WindowKind
+
+        view, item = self._make_view_and_item(qtbot, due_time=time(16, 0))
+        # Drag bottom to 17:00 (1020 min)
+        change = view._minute_to_field_change(
+            "bottom", WindowKind.DEADLINE_FROM_CREATED, item, 1020
+        )
+        assert change == ("due_time", time(17, 0))
+
+    def test_no_change_when_value_unchanged(self, qtbot):
+        from datetime import time
+
+        from pytodo_qt.core.calendar_layout import WindowKind
+
+        view, item = self._make_view_and_item(qtbot, due_time=time(9, 0), due_time_end=time(10, 0))
+        # Drag bottom to current end (no-op)
+        change = view._minute_to_field_change("bottom", WindowKind.EVENT, item, 600)
+        assert change is None
+
+
+class TestResizeSnap:
+    """Snap arithmetic — 15-minute default, 1-minute with Shift held."""
+
+    def _view(self, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import _WeekTableView
+
+        view = _WeekTableView()
+        qtbot.addWidget(view)
+        return view
+
+    def test_snap_15_default(self, qtbot):
+        view = self._view(qtbot)
+        # 9:07 → snaps to 9:00; 9:08 → snaps to 9:15
+        assert view._snap_minute(547, fine=False) == 540  # 9:00
+        assert view._snap_minute(548, fine=False) == 555  # 9:15
+        assert view._snap_minute(540, fine=False) == 540  # already aligned
+        assert view._snap_minute(555, fine=False) == 555
+
+    def test_snap_1_with_fine(self, qtbot):
+        view = self._view(qtbot)
+        # Fine snap is identity at integer minutes.
+        for minute in [0, 7, 547, 1439]:
+            assert view._snap_minute(minute, fine=True) == minute
+
+    def test_snap_clamps_to_day_bounds(self, qtbot):
+        view = self._view(qtbot)
+        # Snap to nearest 15-min minute; clamp to [0, 1439].
+        assert view._snap_minute(-50, fine=False) == 0
+        assert view._snap_minute(2000, fine=False) == 1439
+
+
+class TestResizeDrag:
+    """End-to-end drag simulation — press, move, release on an edge,
+    then verify task_resized fires with the right field and value."""
+
+    @pytest.fixture()
+    def workback_view(self, qtbot):
+        """Workback bar 13:00–15:00 today, in a sized week view."""
+        from datetime import time
+
+        from pytodo_qt.gui.widgets.calendar_view import _WeekModel, _WeekTableView
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        qtbot.addWidget(view)
+        view.resize(800, 600)
+        view.show()
+        today = date.today()
+        item = create_todo_item("Workback")
+        item.due_date = today
+        item.due_time = time(15, 0)
+        item.estimated_minutes = 120  # origin 13:00, end 15:00
+        model._week_dates = [today] + [today + timedelta(days=i + 1) for i in range(6)]
+        model.set_items({today: [item]})
+        return view, model, item
+
+    def test_drag_top_emits_estimated_minutes_change(self, workback_view):
+        from PyQt6.QtCore import QPoint, Qt
+        from PyQt6.QtGui import QMouseEvent
+
+        view, model, item = workback_view
+
+        received: list = []
+        view.task_resized.connect(lambda iid, field, val: received.append((iid, field, val)))
+
+        # Press on the top edge of the bar (hour 13 cell, y near top)
+        idx_top = model.index(14, 0)
+        rect_top = view.visualRect(idx_top)
+        press_pos = QPoint(rect_top.center().x(), rect_top.top() + 1)
+
+        press_event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            press_pos.toPointF(),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        view.mousePressEvent(press_event)
+        assert view._edge_resize is not None
+        assert view._edge_resize["edge"] == "top"
+
+        # Move to hour 12 cell (12:00 = origin) — new estimate = 180
+        idx_target = model.index(13, 0)  # row 13 = hour 12
+        rect_target = view.visualRect(idx_target)
+        move_pos = QPoint(press_pos.x(), rect_target.top() + 1)
+        move_event = QMouseEvent(
+            QMouseEvent.Type.MouseMove,
+            move_pos.toPointF(),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        view.mouseMoveEvent(move_event)
+
+        # Release at the target.
+        release_event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonRelease,
+            move_pos.toPointF(),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        view.mouseReleaseEvent(release_event)
+
+        assert view._edge_resize is None
+        assert len(received) == 1
+        rec_id, rec_field, rec_value = received[0]
+        assert rec_id == item.id
+        assert rec_field == "estimated_minutes"
+        # 12:00 origin means estimate = (15:00 - 12:00) = 180.
+        # The actual value depends on the snap target; at row 13 top
+        # the y maps to minute 720 (12:00) which is on a 15-min boundary.
+        assert rec_value == 180
+
+    def test_drag_with_no_change_emits_nothing(self, workback_view):
+        from PyQt6.QtCore import QPoint, Qt
+        from PyQt6.QtGui import QMouseEvent
+
+        view, model, _item = workback_view
+
+        received: list = []
+        view.task_resized.connect(lambda iid, field, val: received.append((iid, field, val)))
+
+        # Press and release at the same position — no movement, value
+        # equals current state, no emission.
+        idx_top = model.index(14, 0)
+        rect_top = view.visualRect(idx_top)
+        press_pos = QPoint(rect_top.center().x(), rect_top.top() + 1)
+        press = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            press_pos.toPointF(),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        view.mousePressEvent(press)
+        release = QMouseEvent(
+            QMouseEvent.Type.MouseButtonRelease,
+            press_pos.toPointF(),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        view.mouseReleaseEvent(release)
+        assert received == []

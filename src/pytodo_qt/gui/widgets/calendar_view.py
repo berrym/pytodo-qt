@@ -4200,6 +4200,167 @@ class _WeekTableView(QTableView):
 
         return None
 
+    # Granularity for the resize-drag snap. Default is 15 minutes
+    # (the half-hour rhythm Google / Apple Calendar use); holding Shift
+    # disengages snap so the user can land on any minute.
+    _RESIZE_SNAP_MINUTES = 15
+
+    def _y_to_minute_of_day(self, y: int, x_for_column: int):
+        """Map a viewport y-coordinate to (minute_of_day, target_date).
+
+        Uses indexAt() at the given x to find which hour-cell the y is
+        in, then computes the fractional position within that cell.
+        Clamps to [0, 1440) so a drag that overshoots the top/bottom of
+        the visible grid still produces a sensible value. Returns
+        (None, None) only when no valid hour cell is reachable from
+        the x column at all (e.g. the All Day row).
+        """
+        from PyQt6.QtCore import QPoint as _QPoint
+
+        index = self.indexAt(_QPoint(x_for_column, y))
+        if index.isValid():
+            hour = index.data(_WEEK_HOUR_ROLE)
+            target_date = index.data(_WEEK_DATE_ROLE)
+            rect = self.visualRect(index)
+            if hour is not None and hour >= 0 and target_date is not None and rect.height() > 0:
+                frac = (y - rect.top()) / rect.height()
+                frac = max(0.0, min(1.0, frac))
+                minute_in_hour = int(round(frac * 60))
+                minute = hour * 60 + minute_in_hour
+                return max(0, min(1439, minute)), target_date
+        # Out of grid — clamp by walking to the nearest hour cell at
+        # row 1 (top) or row 24 (bottom) of the same column.
+        model = self.model()
+        if model is None:
+            return None, None
+        for probe_row in (1, 24):
+            probe = model.index(probe_row, 0)
+            if not probe.isValid():
+                continue
+            rect = self.visualRect(probe)
+            target_date = probe.data(_WEEK_DATE_ROLE)
+            if target_date is None:
+                continue
+            if y <= rect.top():
+                return 0, target_date
+            if y >= rect.bottom():
+                return 1439, target_date
+        return None, None
+
+    def _snap_minute(self, minute: int, fine: bool) -> int:
+        snap = 1 if fine else self._RESIZE_SNAP_MINUTES
+        return max(0, min(1439, round(minute / snap) * snap))
+
+    def _minute_to_field_change(self, edge: str, kind, item, target_minute: int):
+        """Return (field_name, new_value) for committing a resize, or None.
+
+        Maps each (edge, WindowKind) pair to the correct field per the
+        locked Q1 origin rules (see issue #18 and
+        docs/plans/calendar-gantt-redesign.md):
+
+            top + EVENT      → due_time = target
+            top + WORKBACK   → estimated_minutes = (due_minute - target)
+            bottom + EVENT   → due_time_end = target
+            bottom + WORKBACK → due_time = target
+            bottom + DEADLINE_FROM_CREATED → due_time = target
+
+        Returns None when the resulting value would be no-change or
+        would produce a negative duration (e.g. dragging the top of a
+        workback bar onto or past the due_time).
+        """
+        from datetime import time as _time
+
+        from ...core.calendar_layout import WindowKind
+
+        new_time = _time(target_minute // 60, target_minute % 60)
+
+        if edge == "top" and kind == WindowKind.EVENT:
+            if item.due_time_end is None:
+                return None
+            end_minute = item.due_time_end.hour * 60 + item.due_time_end.minute
+            if target_minute >= end_minute:
+                return None
+            if item.due_time == new_time:
+                return None
+            return ("due_time", new_time)
+
+        if edge == "top" and kind == WindowKind.WORKBACK:
+            if item.due_time is None:
+                return None
+            due_minute = item.due_time.hour * 60 + item.due_time.minute
+            new_estimate = due_minute - target_minute
+            if new_estimate <= 0:
+                return None
+            if item.estimated_minutes == new_estimate:
+                return None
+            return ("estimated_minutes", new_estimate)
+
+        if edge == "bottom" and kind == WindowKind.EVENT:
+            if item.due_time is None:
+                return None
+            start_minute = item.due_time.hour * 60 + item.due_time.minute
+            if target_minute <= start_minute:
+                return None
+            if item.due_time_end == new_time:
+                return None
+            return ("due_time_end", new_time)
+
+        if edge == "bottom" and kind in (WindowKind.WORKBACK, WindowKind.DEADLINE_FROM_CREATED):
+            if item.due_time == new_time:
+                return None
+            return ("due_time", new_time)
+
+        return None
+
+    def _update_resize_preview(self, target_minute: int) -> None:
+        """Position the snap-line overlay and update the snap label."""
+        from datetime import time as _time
+
+        if self._edge_resize is None:
+            return
+        slot_left, slot_right = self._edge_resize["slot_x_range"]
+        # Find the row whose cell contains target_minute and use its
+        # rect to compute the snap y. Row 0 is All Day, rows 1-24 are
+        # hours 0-23.
+        hour = max(0, min(23, target_minute // 60))
+        row = hour + 1
+        target_date = self._edge_resize["cell_date"]
+        # Find the column index whose date matches target_date — fall
+        # back to column 0 if the model isn't a multi-day week.
+        model = self.model()
+        if model is None:
+            return
+        col = 0
+        for c in range(model.columnCount()):
+            probe = model.index(row, c)
+            if probe.data(_WEEK_DATE_ROLE) == target_date:
+                col = c
+                break
+        index = model.index(row, col)
+        rect = self.visualRect(index)
+        if rect.height() <= 0:
+            return
+        minute_in_hour = target_minute - hour * 60
+        snap_y = rect.top() + int(minute_in_hour / 60 * rect.height())
+        viewport = self.viewport()
+        if viewport is None:
+            return
+        self._resize_snap_line.setGeometry(slot_left, snap_y - 1, slot_right - slot_left, 2)
+        self._resize_snap_line.show()
+        self._resize_snap_line.raise_()
+        # Snap label — render to the right of the slot, near the line.
+        snap_time = _time(target_minute // 60, target_minute % 60)
+        label_text = snap_time.strftime("%I:%M %p").lstrip("0")
+        self._resize_snap_label.setText(label_text)
+        self._resize_snap_label.adjustSize()
+        viewport_pt = viewport.mapToGlobal(QPoint(slot_right + 6, snap_y - 12))
+        self._resize_snap_label.move(viewport_pt)
+        self._resize_snap_label.show()
+
+    def _hide_resize_preview(self) -> None:
+        self._resize_snap_line.hide()
+        self._resize_snap_label.hide()
+
     def mousePressEvent(self, e) -> None:  # noqa: N802
         self._tooltip_label.hide()
         self._tooltip_item_id = None
@@ -4208,6 +4369,32 @@ class _WeekTableView(QTableView):
         self._drag_item_reminder = ""
         self._dragging = False
         if e is None:
+            return
+        # Edge-drag-to-resize takes precedence over body click — when
+        # the cursor is on a draggable edge, a press enters resize mode
+        # and the existing click-and-drag-to-reschedule path is skipped
+        # for this gesture.
+        edge_hit = self._hit_test_edge(e.pos())
+        if edge_hit is not None and e.button() == Qt.MouseButton.LeftButton:
+            slot_left, slot_right = edge_hit["slot_x_range"]
+            raw_minute, _td = self._y_to_minute_of_day(e.pos().y(), (slot_left + slot_right) // 2)
+            if raw_minute is None:
+                raw_minute = 0
+            # Snap immediately so a no-movement click doesn't commit a
+            # one-minute change just because the click landed inside the
+            # 6 px hit zone but a pixel off the true edge.
+            fine = bool(e.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            target_minute = self._snap_minute(raw_minute, fine)
+            self._edge_resize = {
+                "item_id": edge_hit["item"].id,
+                "item": edge_hit["item"],
+                "edge": edge_hit["edge"],
+                "kind": edge_hit["kind"],
+                "cell_date": edge_hit["cell_date"],
+                "slot_x_range": edge_hit["slot_x_range"],
+                "target_minute": target_minute,
+            }
+            self._update_resize_preview(target_minute)
             return
         hit = self._hit_test(e.pos())
         if not hit:
@@ -4222,6 +4409,26 @@ class _WeekTableView(QTableView):
             self.more_clicked.emit(hit[1], hit[2])
 
     def mouseReleaseEvent(self, e) -> None:  # noqa: N802
+        # Commit an in-progress edge resize, if any. Emits task_resized
+        # only when the resulting field value differs from the current
+        # one (no-op edits don't produce undo entries).
+        if self._edge_resize is not None:
+            from ...core.calendar_layout import WindowKind  # noqa: F401
+
+            state = self._edge_resize
+            self._hide_resize_preview()
+            self._edge_resize = None
+            change = self._minute_to_field_change(
+                state["edge"],
+                state["kind"],
+                state["item"],
+                state["target_minute"],
+            )
+            if change is not None:
+                field_name, new_value = change
+                self.task_resized.emit(state["item_id"], field_name, new_value)
+            super().mouseReleaseEvent(e)
+            return
         self._drag_start_pos = None
         self._drag_item_id = None
         self._drag_item_reminder = ""
@@ -4230,6 +4437,20 @@ class _WeekTableView(QTableView):
 
     def mouseMoveEvent(self, e) -> None:  # noqa: N802
         if e is None:
+            return
+        # Active edge resize — update the snap target and preview.
+        # Holding Shift disengages the 15-minute snap so the user can
+        # land on any minute. The resize commits on mouseReleaseEvent.
+        if self._edge_resize is not None:
+            slot_left, slot_right = self._edge_resize["slot_x_range"]
+            x_for_column = max(slot_left, min(slot_right, e.pos().x()))
+            raw_minute, _td = self._y_to_minute_of_day(e.pos().y(), x_for_column)
+            if raw_minute is None:
+                return
+            fine = bool(e.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+            snapped = self._snap_minute(raw_minute, fine)
+            self._edge_resize["target_minute"] = snapped
+            self._update_resize_preview(snapped)
             return
         # Drag initiation
         if (
@@ -5440,6 +5661,8 @@ class CalendarViewWidget(QWidget):
     item_reminder_changed = pyqtSignal(object, str)
     item_due_date_changed = pyqtSignal(object, object)
     item_due_time_changed = pyqtSignal(object, object)
+    item_due_time_end_changed = pyqtSignal(object, object)
+    item_estimated_minutes_changed = pyqtSignal(object, int)
     date_and_time_dropped = pyqtSignal(object, object, object)  # item_id, date, time
     edit_tags_requested = pyqtSignal(object)
     focus_requested = pyqtSignal(object)
@@ -5635,6 +5858,10 @@ class CalendarViewWidget(QWidget):
             self._on_week_task_dropped,
             self._on_more_clicked,
         )
+        # Edge-drag-to-resize emits from the hour-grid only (the All Day
+        # row has no bars to resize). Wire directly rather than threading
+        # an optional through connect_task_signals.
+        self._day_container.hour_grid_table.task_resized.connect(self._on_task_resized)
         # Backward-compat references — code that previously did
         # self._day_table.scrollTo(...) etc. now targets the hour-grid
         # table inside the container.
@@ -5652,6 +5879,7 @@ class CalendarViewWidget(QWidget):
             self._on_week_task_dropped,
             self._on_more_clicked,
         )
+        self._week_container.hour_grid_table.task_resized.connect(self._on_task_resized)
         self._week_table = self._week_container.hour_grid_table
         self._sub_stack.addWidget(self._week_container)  # 1
 
@@ -6660,6 +6888,24 @@ class CalendarViewWidget(QWidget):
         """Right-click on popover item — select and show context menu."""
         self._select_from_popover(item_id)
         self._show_context_menu(item_id, global_pos)
+
+    def _on_task_resized(self, item_id, field_name: str, new_value) -> None:
+        """Forward an edge-drag-to-resize completion to the matching
+        item-changed signal.
+
+        Mirrors the calendar widget's existing pattern (the dropped /
+        date / time handlers all emit signals up to MainWindow rather
+        than constructing commands directly). MainWindow owns the
+        QUndoStack and routes each item-changed signal through the
+        right Edit command — keeps the view layer free of database /
+        undo-stack coupling.
+        """
+        if field_name == "due_time":
+            self.item_due_time_changed.emit(item_id, new_value)
+        elif field_name == "due_time_end":
+            self.item_due_time_end_changed.emit(item_id, new_value)
+        elif field_name == "estimated_minutes":
+            self.item_estimated_minutes_changed.emit(item_id, int(new_value))
 
     def _on_task_dropped(self, item_id: UUID, target_date: date) -> None:
         """Handle a task being dropped onto a month calendar date."""
