@@ -5056,41 +5056,75 @@ class _CalendarLegend(QWidget):
 # ---------------------------------------------------------------------------
 
 
-# Bounds for the pinned all-day row. Minimum matches a single hour
-# row (60 px) so an empty calendar still has a recognizable row; the
-# maximum is twice that, after which the +N overflow path takes over.
-_ALL_DAY_MIN_HEIGHT = 60
-_ALL_DAY_MAX_HEIGHT = 120
-# Vertical footprint of one chip in the all-day row, including the
-# 2 px gap between stacked chips. _ALL_DAY_ROW_PADDING is the top +
-# bottom margin inside the row.
-_ALL_DAY_CHIP_SLOT = 24
-_ALL_DAY_ROW_PADDING = 8
+# Visible gap between the all-day band and the timed-hour grid. The
+# two surfaces are conceptually different — fixed top band for
+# undated/full-day tasks vs. scrolling chronological grid for timed
+# tasks — and the gap communicates that separation. Same pixel size
+# in both day and week views (structural separator, not a margin).
+_ALL_DAY_TO_GRID_GAP = 8
+
+# Padding around the "All Day" label in the vertical header. Total
+# header width is computed at runtime from fontMetrics so the label
+# never clips on any platform/DPI combination.
+_ALL_DAY_LABEL_PADDING = 24
 
 
-def _compute_all_day_height(chip_count: int) -> int:
-    """Return the pinned all-day row height for a given chip count.
+class _AllDayTableView(_WeekTableView):
+    """All-day band: a single visible row whose height tracks the
+    hour-grid's row height instead of dividing the band's small fixed
+    viewport across the full 25-row model.
 
-    Clamped to [_ALL_DAY_MIN_HEIGHT, _ALL_DAY_MAX_HEIGHT]. Beyond the
-    maximum the delegate's existing "+N more" overflow indicator
-    handles the spillover.
+    _WeekTableView's resizeEvent distributes the viewport equally across
+    all 25 rows in the model, which works for the hour grid (where 24
+    rows are visible) but produces a microscopic row height on the
+    all-day band (which only shows row 0 in a fixed-height area). This
+    subclass overrides resize so row 0 mirrors the hour grid's per-row
+    height supplied externally.
     """
-    natural = chip_count * _ALL_DAY_CHIP_SLOT + _ALL_DAY_ROW_PADDING
-    return max(_ALL_DAY_MIN_HEIGHT, min(_ALL_DAY_MAX_HEIGHT, natural))
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._desired_row_height = 60
+
+    def set_desired_row_height(self, height: int) -> None:
+        """Pin row 0 to a specific pixel height (and the hidden rows
+        1-24 to the same value for consistency, even though they don't
+        render).
+        """
+        if height <= 0:
+            return
+        self._desired_row_height = height
+        self._apply_row_height()
+
+    def _apply_row_height(self) -> None:
+        model = self.model()
+        if model is None:
+            return
+        for row in range(model.rowCount()):
+            self.setRowHeight(row, self._desired_row_height)
+
+    def resizeEvent(self, e) -> None:  # noqa: N802
+        # Skip _WeekTableView's auto-distributing logic; use the
+        # externally-supplied height instead so the all-day row matches
+        # the hour grid's per-row height regardless of band viewport.
+        QTableView.resizeEvent(self, e)
+        self._apply_row_height()
 
 
 class _PinnedWeekContainer(QWidget):
-    """Stacks an all-day _WeekTableView pinned above an hour-grid _WeekTableView.
+    """Stacks an all-day band above an hour-grid table with a visible gap.
 
     Both inner tables share the same _WeekModel and _WeekDelegate. The
     all-day table hides rows 1-24 (showing only row 0); the hour-grid
     table hides row 0 (showing only the scrollable hours). Horizontal
     scroll positions are kept in sync so columns stay aligned.
 
-    The all-day table has a fixed height that the parent widget tunes
-    after each refresh based on how many chips actually need to fit.
-    It never scrolls vertically; the hour-grid table fills the
-    remaining vertical space and scrolls as before.
+    The all-day band's row height mirrors the hour grid's per-row
+    height — when the user resizes the window and the hour grid's rows
+    grow or shrink, the all-day row tracks them so the two surfaces
+    always present rows of the same vertical size. Overflow chips
+    beyond what fits in the single row use the delegate's existing
+    "+N more" indicator. The band itself never scrolls.
     """
 
     def __init__(
@@ -5098,36 +5132,30 @@ class _PinnedWeekContainer(QWidget):
         model: _WeekModel,
         delegate: _WeekDelegate,
         parent: QWidget | None = None,
-        *,
-        all_day_height: int = _ALL_DAY_MIN_HEIGHT,
     ) -> None:
         super().__init__(parent)
         from PyQt6.QtWidgets import QHeaderView, QStyle
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(_ALL_DAY_TO_GRID_GAP)
 
-        # Shared geometry — both tables use these so columns line up
-        # perfectly regardless of scrollbar reservations. 72 px gives
-        # the "All Day" header label comfortable margin across fonts:
-        # macOS Noto Sans 10pt + header padding fits at ~56, but Linux
-        # and Windows render "All Day" wider and clip at 56. 72 is
-        # measured to fit on all three platforms with the bundled
-        # Noto Sans and reasonable future growth.
-        self._shared_v_header_width = 72
+        # Vertical header width — computed from "All Day" font metrics
+        # plus padding so the label never clips on any platform/DPI.
+        # The previous magic number (72 px) clipped on Linux at HiDPI.
+        fm = self.fontMetrics()
+        self._shared_v_header_width = fm.horizontalAdvance("All Day") + _ALL_DAY_LABEL_PADDING
         style = self.style()
         assert style is not None
         self._scrollbar_width = style.pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
 
-        # All Day pinned table — shows row 0 only. This is the ONLY
+        # All Day pinned band — shows row 0 only. This is the ONLY
         # table that shows the horizontal day header; the hour-grid's
-        # header is hidden so users see a single seamless day header
-        # above the hour grid.
-        self.all_day_table = _WeekTableView()
+        # header is hidden so users see a single day header above the
+        # all-day band.
+        self.all_day_table = _AllDayTableView()
         self.all_day_table.setModel(model)
         self.all_day_table.setItemDelegate(delegate)
-        self.all_day_table.setFixedHeight(all_day_height)
         v_header = self.all_day_table.verticalHeader()
         if v_header is not None:
             for source_row in range(1, 25):
@@ -5194,20 +5222,43 @@ class _PinnedWeekContainer(QWidget):
             self._syncing_hscroll = False
 
     def resizeEvent(self, a0) -> None:  # noqa: N802
-        """Compute matching column widths for both inner tables on resize.
+        """Compute matching column widths for both inner tables on resize,
+        then sync the all-day band's row height and table height to the
+        hour grid's current per-row height.
 
-        Uses Fixed resize mode with manual widths so alignment is exact
-        regardless of scrollbar reservations. The authoritative viewport
-        width is the hour grid's (which reserves vertical scrollbar space)
-        minus its vertical header — divided equally across visible
-        columns. Both tables get the same per-column width.
+        Uses Fixed resize mode with manual widths so column alignment is
+        exact regardless of scrollbar reservations. The authoritative
+        viewport width is the hour grid's (which reserves vertical
+        scrollbar space) minus its vertical header — divided equally
+        across visible columns. Both tables get the same per-column
+        width.
         """
         super().resizeEvent(a0)
         self._recompute_column_widths()
+        self._sync_all_day_to_hour_grid()
 
     def showEvent(self, a0) -> None:  # noqa: N802
         super().showEvent(a0)
         self._recompute_column_widths()
+        self._sync_all_day_to_hour_grid()
+
+    def _sync_all_day_to_hour_grid(self) -> None:
+        """Mirror the hour grid's per-row height onto the all-day band.
+
+        Reads the hour grid's row 1 height (first visible hour) — that's
+        the value its resizeEvent computed from its own viewport — and
+        applies it to the all-day band. Then resizes the all-day table
+        itself to fit one row plus its horizontal day header.
+        """
+        hour_row_height = self.hour_grid_table.rowHeight(1)
+        if hour_row_height <= 0:
+            hour_row_height = 60  # initial-paint fallback
+        self.all_day_table.set_desired_row_height(hour_row_height)
+
+        h_header = self.all_day_table.horizontalHeader()
+        h_header_height = h_header.height() if h_header is not None else 28
+        frame = self.all_day_table.frameWidth() * 2
+        self.all_day_table.setFixedHeight(h_header_height + hour_row_height + frame)
 
     def _recompute_column_widths(self) -> None:
         model = self.all_day_table.model()
@@ -5245,17 +5296,6 @@ class _PinnedWeekContainer(QWidget):
             viewport = table.viewport()
             if viewport is not None:
                 viewport.update()
-
-    def set_all_day_height(self, height: int) -> None:
-        """Resize the pinned all-day table to a fresh height.
-
-        Called by the parent widget after each refresh so the row
-        grows or shrinks to fit the actual chip count in the visible
-        date range.
-        """
-        if self.all_day_table.height() == height:
-            return
-        self.all_day_table.setFixedHeight(height)
 
     def connect_task_signals(
         self,
@@ -6171,17 +6211,6 @@ class CalendarViewWidget(QWidget):
         if h_header:
             h_header.hide()  # Single column doesn't need day header
 
-        # Resize the pinned all-day rows so they fit the actual chip
-        # count for whatever date range is now visible. Both views use
-        # the same min/max bounds so empty calendars share a baseline
-        # height and crowded calendars expand identically.
-        self._week_container.set_all_day_height(
-            self._max_all_day_height(self._week_model, week_dates_for_markers)
-        )
-        self._day_container.set_all_day_height(
-            self._max_all_day_height(self._day_model, [self._current_date])
-        )
-
         # Timeline view — top-level items, used for the Gantt chart.
         # Reuse the already-computed top_level list.
         self._timeline_tasks_widget.set_data(top_level, self._current_date, self._todo_list)
@@ -6199,26 +6228,6 @@ class CalendarViewWidget(QWidget):
         self._agenda_view.set_data(agenda_items, self._current_date, time_format)
 
         self._unscheduled.set_items(unscheduled, todo_list=self._todo_list)
-
-    def _max_all_day_height(self, model: _WeekModel, visible_dates: list[date]) -> int:
-        """Return the all-day row height needed to fit the busiest column.
-
-        Counts overdue markers + all-day chips for each visible date,
-        takes the maximum across columns, and converts to a pixel
-        height clamped to the configured min/max bounds. Beyond the
-        maximum the delegate's existing "+N more" overflow indicator
-        handles the spillover, so the row never grows past two hour
-        rows even on extremely crowded days.
-        """
-        max_count = 0
-        for d in visible_dates:
-            items = model._items_by_date.get(d, [])
-            markers = model._markers_by_date.get(d, [])
-            all_day = model._all_day_items(items, d)
-            deduped = _dedup_by_id(list(markers) + all_day)
-            if len(deduped) > max_count:
-                max_count = len(deduped)
-        return _compute_all_day_height(max_count)
 
     def _spill_cross_midnight(self, scheduled: dict[date, list]) -> None:
         """Add each item to every day its bar window intersects.
