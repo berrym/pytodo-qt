@@ -4670,3 +4670,119 @@ class TestSubViewPillOrder:
         assert widget.SUB_MONTH == 2
         assert widget.SUB_AGENDA == 3
         assert widget.SUB_TIMELINE == 4
+
+
+class TestAgendaDragDrop:
+    """Drag-from-unscheduled to agenda must route to the same scheduling
+    path the day/week/month views use, with the drop y-coordinate
+    mapping back to a specific day grouping."""
+
+    def test_accepts_pytodo_item_id_mime(self, qtbot) -> None:
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaView
+
+        view = _AgendaView()
+        qtbot.addWidget(view)
+        assert view.acceptDrops()
+
+    def test_drop_emits_signal_with_target_date(self, qtbot) -> None:
+        from datetime import date, timedelta
+        from uuid import uuid4
+
+        from PyQt6.QtCore import QMimeData, QPointF, Qt
+        from PyQt6.QtGui import QDropEvent
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaView
+
+        anchor = date.today()
+        item = create_todo_item("Existing")
+        item.due_date = anchor + timedelta(days=2)
+        view = _AgendaView()
+        view.show()
+        view.resize(400, 800)
+        qtbot.addWidget(view)
+        view.set_data([item], anchor, "12h")
+        # Force layout so widget geometries become valid for mapTo.
+        qtbot.wait(50)
+
+        dropped_item_id = uuid4()
+        received: list = []
+        view.task_dropped.connect(lambda iid, d: received.append((iid, d)))
+
+        mime = QMimeData()
+        mime.setData("application/x-pytodo-item-id", str(dropped_item_id).encode())
+        # Drop near the top so the first day section claims it.
+        ev = QDropEvent(
+            QPointF(50.0, 30.0),
+            Qt.DropAction.MoveAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        view.dropEvent(ev)
+        assert len(received) == 1
+        rec_id, rec_date = received[0]
+        assert rec_id == dropped_item_id
+        # Should match the first day section (the anchor).
+        assert rec_date == anchor
+
+    def test_drop_above_first_header_falls_back_to_anchor(self, qtbot) -> None:
+        from datetime import date
+
+        from PyQt6.QtCore import QMimeData, QPointF, Qt
+        from PyQt6.QtGui import QDropEvent
+
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaView
+        from uuid import uuid4
+
+        anchor = date(2026, 6, 15)
+        view = _AgendaView()
+        view.show()
+        view.resize(400, 800)
+        qtbot.addWidget(view)
+        view.set_data([], anchor, "12h")
+        qtbot.wait(50)
+
+        received: list = []
+        view.task_dropped.connect(lambda iid, d: received.append((iid, d)))
+
+        mime = QMimeData()
+        mime.setData("application/x-pytodo-item-id", str(uuid4()).encode())
+        # Drop at y=0 — above any header. Fallback path uses anchor.
+        ev = QDropEvent(
+            QPointF(50.0, 0.0),
+            Qt.DropAction.MoveAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        view.dropEvent(ev)
+        assert len(received) == 1
+        assert received[0][1] == anchor
+
+    def test_drop_with_invalid_mime_ignored(self, qtbot) -> None:
+        from datetime import date
+
+        from PyQt6.QtCore import QMimeData, QPointF, Qt
+        from PyQt6.QtGui import QDropEvent
+
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaView
+
+        view = _AgendaView()
+        qtbot.addWidget(view)
+        view.set_data([], date.today(), "12h")
+
+        received: list = []
+        view.task_dropped.connect(lambda *args: received.append(args))
+
+        mime = QMimeData()
+        mime.setText("not a pytodo id")
+        ev = QDropEvent(
+            QPointF(50.0, 30.0),
+            Qt.DropAction.MoveAction,
+            mime,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        view.dropEvent(ev)
+        assert received == []

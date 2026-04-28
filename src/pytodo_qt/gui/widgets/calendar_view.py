@@ -5031,6 +5031,7 @@ class _AgendaView(QWidget):
     item_clicked = pyqtSignal(object)
     item_double_clicked = pyqtSignal(object)
     item_right_clicked = pyqtSignal(object, QPoint)
+    task_dropped = pyqtSignal(object, object)  # (item_id UUID, target_date)
 
     DEFAULT_DAYS = 30
 
@@ -5041,7 +5042,14 @@ class _AgendaView(QWidget):
         self._time_format: str = "system"
         self._selected_item_id: UUID | None = None
         self._rows_by_id: dict[UUID, _AgendaRow] = {}
+        # (date, header_widget) pairs in render order. Drop handling
+        # walks this list to map a drop y-coordinate back to the day
+        # section the drop landed in.
+        self._day_widgets: list[tuple[date, QLabel]] = []
         self._setup_ui()
+        # Accept drops from the unscheduled panel so dragging an
+        # unscheduled task into a day grouping schedules it on that day.
+        self.setAcceptDrops(True)
         # Selection follows clicks and is repainted across rebuilds so
         # the user's last-clicked row stays visually anchored.
         self.item_clicked.connect(self._on_item_clicked)
@@ -5088,6 +5096,7 @@ class _AgendaView(QWidget):
     def _rebuild(self) -> None:
         # Tear down previous content
         self._rows_by_id = {}
+        self._day_widgets = []
         while self._content_layout.count():
             layout_item = self._content_layout.takeAt(0)
             if layout_item is None:
@@ -5150,6 +5159,11 @@ class _AgendaView(QWidget):
         else:
             label.setStyleSheet(f"color: {colors['text']}; padding: 12px 4px 4px 4px;")
         self._content_layout.addWidget(label)
+        # Track this header so drop handling can map a drop y back to
+        # the day it landed in. The header is the y-anchor for its
+        # day's section: every row that follows belongs to the day
+        # whose header sits above it in the layout.
+        self._day_widgets.append((d, label))
 
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
@@ -5174,6 +5188,71 @@ class _AgendaView(QWidget):
             f"color: {colors['completed_text']}; font-style: italic; padding: 4px 16px;"
         )
         self._content_layout.addWidget(label)
+
+    # ------------------------------------------------------------------
+    # Drag-and-drop — accept drops from the unscheduled panel
+    # ------------------------------------------------------------------
+
+    def _date_at_y(self, y: int) -> date | None:
+        """Map a y-coordinate (in this view's local frame) back to the
+        day section that contains it.
+
+        Walks the recorded (date, header_widget) pairs and picks the
+        latest header whose top is at or above the drop y in this
+        widget's coordinate space. Returns None when the view is empty
+        or the drop falls above every section header.
+        """
+        if not self._day_widgets:
+            return None
+        best: date | None = None
+        for d, header in self._day_widgets:
+            if header is None:
+                continue
+            top_left = header.mapTo(self, QPoint(0, 0))
+            if top_left.y() <= y:
+                best = d
+            else:
+                break
+        return best
+
+    def dragEnterEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None:
+            return
+        mime = a0.mimeData()
+        if mime is not None and mime.hasFormat("application/x-pytodo-item-id"):
+            a0.acceptProposedAction()
+        else:
+            a0.ignore()
+
+    def dragMoveEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None:
+            return
+        mime = a0.mimeData()
+        if mime is not None and mime.hasFormat("application/x-pytodo-item-id"):
+            a0.acceptProposedAction()
+        else:
+            a0.ignore()
+
+    def dropEvent(self, a0) -> None:  # noqa: N802
+        if a0 is None:
+            return
+        mime = a0.mimeData()
+        if mime is None or not mime.hasFormat("application/x-pytodo-item-id"):
+            a0.ignore()
+            return
+        try:
+            item_id_str = bytes(mime.data("application/x-pytodo-item-id")).decode()  # type: ignore[arg-type]
+            item_id = UUID(item_id_str)
+        except (ValueError, UnicodeDecodeError):
+            a0.ignore()
+            return
+        target_date = self._date_at_y(int(a0.position().y()))
+        if target_date is None:
+            # Drop landed above the first day header — fall back to the
+            # anchor date so the drop still has a sensible result.
+            target_date = self._current_date
+        a0.acceptProposedAction()
+        self.task_dropped.emit(item_id, target_date)
 
 
 # ---------------------------------------------------------------------------
@@ -5480,6 +5559,7 @@ class CalendarViewWidget(QWidget):
         self._agenda_view.item_clicked.connect(self._on_task_clicked)
         self._agenda_view.item_double_clicked.connect(self._on_task_double_clicked)
         self._agenda_view.item_right_clicked.connect(self._on_task_right_clicked)
+        self._agenda_view.task_dropped.connect(self._on_task_dropped)
         self._sub_stack.addWidget(self._agenda_view)  # 3
 
         self._sub_stack.addWidget(self._timeline_container)  # 4
