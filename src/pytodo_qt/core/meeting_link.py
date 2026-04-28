@@ -60,6 +60,114 @@ _PROVIDERS: list[tuple[str, re.Pattern[str]]] = [
         "Jitsi",
         re.compile(r"https?://meet\.jit\.si/[^\s<>\"']+", re.IGNORECASE),
     ),
+    # Zoom for Government (separate domain from commercial Zoom)
+    (
+        "Zoom",
+        re.compile(r"https?://[a-z0-9.-]*zoomgov\.com/(?:j|my|s|w)/[^\s<>\"']+", re.IGNORECASE),
+    ),
+    (
+        "BlueJeans",
+        re.compile(
+            r"https?://(?:[a-z0-9.-]+\.)?bluejeans\.com/\d+(?:[/?][^\s<>\"']*)?", re.IGNORECASE
+        ),
+    ),
+    (
+        "GoToMeeting",
+        re.compile(
+            r"https?://(?:[a-z0-9.-]+\.)?gotomeeting\.com/join/[^\s<>\"']+",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "GoToMeeting",
+        re.compile(r"https?://meet\.goto\.com/[^\s<>\"']+", re.IGNORECASE),
+    ),
+    (
+        "GoTo Webinar",
+        re.compile(
+            r"https?://(?:attendee|register)\.gotowebinar\.com/[^\s<>\"']+",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "Whereby",
+        re.compile(r"https?://(?:[a-z0-9.-]+\.)?whereby\.com/[^\s<>\"']+", re.IGNORECASE),
+    ),
+    (
+        "8x8",
+        re.compile(r"https?://8x8\.vc/[^\s<>\"']+", re.IGNORECASE),
+    ),
+    (
+        "8x8",
+        re.compile(r"https?://meetings\.8x8\.com/[^\s<>\"']+", re.IGNORECASE),
+    ),
+    (
+        "RingCentral",
+        re.compile(
+            r"https?://(?:meetings|app|video)\.ringcentral\.com/(?:j|meetings|join)/[^\s<>\"']+",
+            re.IGNORECASE,
+        ),
+    ),
+    # Daily.co — subdomain-per-account convention with a room path.
+    # The host shape "<account>.daily.co/<room>" is recognizable
+    # without false-matching the company's own marketing URLs.
+    (
+        "Daily.co",
+        re.compile(r"https?://[a-z0-9-]+\.daily\.co/[^\s<>\"']+", re.IGNORECASE),
+    ),
+    (
+        "Skype",
+        re.compile(r"https?://join\.skype\.com/[^\s<>\"']+", re.IGNORECASE),
+    ),
+    (
+        "FaceTime",
+        re.compile(r"https?://facetime\.apple\.com/join[^\s<>\"']*", re.IGNORECASE),
+    ),
+    (
+        "Riverside",
+        re.compile(r"https?://(?:www\.)?riverside\.fm/(?:studio|s)/[^\s<>\"']+", re.IGNORECASE),
+    ),
+    (
+        "Around",
+        re.compile(r"https?://(?:www\.)?around\.co/(?:r|join)/[^\s<>\"']+", re.IGNORECASE),
+    ),
+    (
+        "Vowel",
+        re.compile(
+            r"https?://(?:www\.)?vowel\.com/(?:best-meetings|meet)/[^\s<>\"']+",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "Lifesize",
+        re.compile(r"https?://call\.lifesize\.com/[^\s<>\"']+", re.IGNORECASE),
+    ),
+    (
+        "Demio",
+        re.compile(r"https?://event\.demio\.com/[^\s<>\"']+", re.IGNORECASE),
+    ),
+    (
+        "Dialpad",
+        re.compile(
+            r"https?://(?:meet|dialpad)\.dialpad\.com/[^\s<>\"']+",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "Dialpad",
+        re.compile(r"https?://dialpad\.com/conference/[^\s<>\"']+", re.IGNORECASE),
+    ),
+    # Discord invites — Discord is commonly used for voice/video calls
+    # by smaller teams; a Discord invite is the most direct "join us
+    # here" link the platform exposes.
+    (
+        "Discord",
+        re.compile(r"https?://discord\.gg/[a-z0-9-]+", re.IGNORECASE),
+    ),
+    (
+        "Discord",
+        re.compile(r"https?://(?:www\.)?discord\.com/invite/[a-z0-9-]+", re.IGNORECASE),
+    ),
 ]
 
 

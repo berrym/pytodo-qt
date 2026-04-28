@@ -113,3 +113,161 @@ class TestNamedTupleApi:
         assert isinstance(result, MeetingLink)
         assert result[0] == result.provider
         assert result[1] == result.url
+
+
+class TestExtendedProviders:
+    """Coverage for the long-tail providers added by extending the
+    PROVIDERS table beyond the original five (Zoom / Teams / Meet /
+    Webex / Jitsi)."""
+
+    @pytest.mark.parametrize(
+        ("text", "provider", "url"),
+        [
+            (
+                "Government https://example.zoomgov.com/j/12345",
+                "Zoom",
+                "https://example.zoomgov.com/j/12345",
+            ),
+            (
+                "BJ https://bluejeans.com/123456789",
+                "BlueJeans",
+                "https://bluejeans.com/123456789",
+            ),
+            (
+                "GTM https://www.gotomeeting.com/join/123456789",
+                "GoToMeeting",
+                "https://www.gotomeeting.com/join/123456789",
+            ),
+            (
+                "GTM new https://meet.goto.com/JohnDoe",
+                "GoToMeeting",
+                "https://meet.goto.com/JohnDoe",
+            ),
+            (
+                "Webinar https://attendee.gotowebinar.com/register/123",
+                "GoTo Webinar",
+                "https://attendee.gotowebinar.com/register/123",
+            ),
+            (
+                "Whereby https://whereby.com/myroom",
+                "Whereby",
+                "https://whereby.com/myroom",
+            ),
+            (
+                "Whereby sub https://acme.whereby.com/myroom",
+                "Whereby",
+                "https://acme.whereby.com/myroom",
+            ),
+            (
+                "8x8 https://8x8.vc/myroom",
+                "8x8",
+                "https://8x8.vc/myroom",
+            ),
+            (
+                "8x8 alt https://meetings.8x8.com/12345",
+                "8x8",
+                "https://meetings.8x8.com/12345",
+            ),
+            (
+                "RC https://meetings.ringcentral.com/j/123456",
+                "RingCentral",
+                "https://meetings.ringcentral.com/j/123456",
+            ),
+            (
+                "RC app https://app.ringcentral.com/meetings/join/123",
+                "RingCentral",
+                "https://app.ringcentral.com/meetings/join/123",
+            ),
+            (
+                "Daily https://acme.daily.co/standup",
+                "Daily.co",
+                "https://acme.daily.co/standup",
+            ),
+            (
+                "Skype https://join.skype.com/AbCdEf",
+                "Skype",
+                "https://join.skype.com/AbCdEf",
+            ),
+            (
+                "FaceTime https://facetime.apple.com/join#abcdef",
+                "FaceTime",
+                "https://facetime.apple.com/join#abcdef",
+            ),
+            (
+                "Riverside https://riverside.fm/studio/abc-123",
+                "Riverside",
+                "https://riverside.fm/studio/abc-123",
+            ),
+            (
+                "Around https://around.co/r/team-call",
+                "Around",
+                "https://around.co/r/team-call",
+            ),
+            (
+                "Vowel https://vowel.com/best-meetings/abc",
+                "Vowel",
+                "https://vowel.com/best-meetings/abc",
+            ),
+            (
+                "Lifesize https://call.lifesize.com/12345",
+                "Lifesize",
+                "https://call.lifesize.com/12345",
+            ),
+            (
+                "Demio https://event.demio.com/anywhere/123",
+                "Demio",
+                "https://event.demio.com/anywhere/123",
+            ),
+            (
+                "Dialpad https://meet.dialpad.com/standup",
+                "Dialpad",
+                "https://meet.dialpad.com/standup",
+            ),
+            (
+                "Dialpad alt https://dialpad.com/conference/12345",
+                "Dialpad",
+                "https://dialpad.com/conference/12345",
+            ),
+            (
+                "Discord https://discord.gg/abcDEF",
+                "Discord",
+                "https://discord.gg/abcDEF",
+            ),
+            (
+                "Discord new https://discord.com/invite/xyz789",
+                "Discord",
+                "https://discord.com/invite/xyz789",
+            ),
+        ],
+    )
+    def test_extended_provider_positive(self, text: str, provider: str, url: str) -> None:
+        result = detect_meeting_link(text)
+        assert result is not None, f"no match for {text!r}"
+        assert result.provider == provider
+        assert result.url == url
+
+
+class TestExtendedProviderNegatives:
+    """Negative cases — plausibly-similar URLs that must NOT match the
+    extended providers, to confirm the regexes haven't been too
+    permissive."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Bare top-level marketing pages should not match.
+            "Read https://daily.co/about",
+            "Discord landing https://discord.com/",
+            "GoTo top-level https://goto.com/",
+            # Wrong path on a recognized host.
+            "Zoom blog https://blog.zoom.us/posts/123",
+            "Webex blog https://www.webex.com/blog/articles",
+            # Hosts that contain a provider name as substring but are not the provider.
+            "Off-host https://zoomy-app.example.com/j/123",
+            "Off-host https://my-bluejeans-clone.example.com/12345",
+            # Discord top-level paths that are not invites.
+            "Discord settings https://discord.com/login",
+        ],
+    )
+    def test_no_false_positive_extended(self, text: str) -> None:
+        assert detect_meeting_link(text) is None
