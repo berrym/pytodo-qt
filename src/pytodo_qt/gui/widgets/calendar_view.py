@@ -5061,39 +5061,40 @@ class _CalendarLegend(QWidget):
 # undated/full-day tasks vs. scrolling chronological grid for timed
 # tasks — and the gap communicates that separation. Same pixel size
 # in both day and week views (structural separator, not a margin).
-_ALL_DAY_TO_GRID_GAP = 8
+_ALL_DAY_TO_GRID_GAP = 14
 
 # Padding around the "All Day" label in the vertical header. Total
 # header width is computed at runtime from fontMetrics so the label
 # never clips on any platform/DPI combination.
 _ALL_DAY_LABEL_PADDING = 24
 
+# Fixed baseline height for the all-day row's content area, applied
+# identically in day and week views. Day view's hour-grid uses a
+# larger row size for detail (see CalendarViewWidget.__init__), but
+# the all-day row stays on this shared baseline so the band looks
+# pixel-identical above the hour grid no matter which view is active.
+# Comparable in size to a typical hour row; chip overflow beyond what
+# fits in the row falls through to the delegate's existing "+N more"
+# indicator.
+_ALL_DAY_ROW_HEIGHT = 60
+
 
 class _AllDayTableView(_WeekTableView):
-    """All-day band: a single visible row whose height tracks the
-    hour-grid's row height instead of dividing the band's small fixed
-    viewport across the full 25-row model.
+    """All-day band: a single visible row pinned to a fixed baseline
+    height shared across day and week views.
 
     _WeekTableView's resizeEvent distributes the viewport equally across
     all 25 rows in the model, which works for the hour grid (where 24
     rows are visible) but produces a microscopic row height on the
     all-day band (which only shows row 0 in a fixed-height area). This
-    subclass overrides resize so row 0 mirrors the hour grid's per-row
-    height supplied externally.
+    subclass overrides resize so row 0 always uses the shared baseline
+    `_ALL_DAY_ROW_HEIGHT`. Day view's larger hour-grid row size is
+    intentionally not propagated here so the all-day band looks
+    pixel-identical no matter which view is active.
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._desired_row_height = 60
-
-    def set_desired_row_height(self, height: int) -> None:
-        """Pin row 0 to a specific pixel height (and the hidden rows
-        1-24 to the same value for consistency, even though they don't
-        render).
-        """
-        if height <= 0:
-            return
-        self._desired_row_height = height
+    def resizeEvent(self, e) -> None:  # noqa: N802
+        QTableView.resizeEvent(self, e)
         self._apply_row_height()
 
     def _apply_row_height(self) -> None:
@@ -5101,14 +5102,7 @@ class _AllDayTableView(_WeekTableView):
         if model is None:
             return
         for row in range(model.rowCount()):
-            self.setRowHeight(row, self._desired_row_height)
-
-    def resizeEvent(self, e) -> None:  # noqa: N802
-        # Skip _WeekTableView's auto-distributing logic; use the
-        # externally-supplied height instead so the all-day row matches
-        # the hour grid's per-row height regardless of band viewport.
-        QTableView.resizeEvent(self, e)
-        self._apply_row_height()
+            self.setRowHeight(row, _ALL_DAY_ROW_HEIGHT)
 
 
 class _PinnedWeekContainer(QWidget):
@@ -5223,8 +5217,8 @@ class _PinnedWeekContainer(QWidget):
 
     def resizeEvent(self, a0) -> None:  # noqa: N802
         """Compute matching column widths for both inner tables on resize,
-        then sync the all-day band's row height and table height to the
-        hour grid's current per-row height.
+        then size the all-day band's table to fit its fixed baseline row
+        plus the horizontal day header.
 
         Uses Fixed resize mode with manual widths so column alignment is
         exact regardless of scrollbar reservations. The authoritative
@@ -5235,30 +5229,23 @@ class _PinnedWeekContainer(QWidget):
         """
         super().resizeEvent(a0)
         self._recompute_column_widths()
-        self._sync_all_day_to_hour_grid()
+        self._size_all_day_table()
 
     def showEvent(self, a0) -> None:  # noqa: N802
         super().showEvent(a0)
         self._recompute_column_widths()
-        self._sync_all_day_to_hour_grid()
+        self._size_all_day_table()
 
-    def _sync_all_day_to_hour_grid(self) -> None:
-        """Mirror the hour grid's per-row height onto the all-day band.
-
-        Reads the hour grid's row 1 height (first visible hour) — that's
-        the value its resizeEvent computed from its own viewport — and
-        applies it to the all-day band. Then resizes the all-day table
-        itself to fit one row plus its horizontal day header.
+    def _size_all_day_table(self) -> None:
+        """Set the all-day table's total height to fit one shared-baseline
+        row plus its horizontal day header. Identical between day and
+        week views so the band is pixel-identical above the hour grid
+        regardless of view.
         """
-        hour_row_height = self.hour_grid_table.rowHeight(1)
-        if hour_row_height <= 0:
-            hour_row_height = 60  # initial-paint fallback
-        self.all_day_table.set_desired_row_height(hour_row_height)
-
         h_header = self.all_day_table.horizontalHeader()
         h_header_height = h_header.height() if h_header is not None else 28
         frame = self.all_day_table.frameWidth() * 2
-        self.all_day_table.setFixedHeight(h_header_height + hour_row_height + frame)
+        self.all_day_table.setFixedHeight(h_header_height + _ALL_DAY_ROW_HEIGHT + frame)
 
     def _recompute_column_widths(self) -> None:
         model = self.all_day_table.model()
