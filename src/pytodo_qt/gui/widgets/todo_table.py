@@ -359,6 +359,32 @@ class TodoTableWidget(QTableWidget):
         menu = QMenu(self)
 
         if len(item_ids) == 1:
+            # Join meeting — only when the single selected row's
+            # reminder contains a recognized video-conference URL.
+            # Sits at the top of the menu for fast reach during a
+            # meeting block, mirroring the calendar bar's pattern so
+            # users encounter the same affordance shape across surfaces.
+            item = self._current_list.get_item(item_ids[0]) if self._current_list else None
+            if item is not None:
+                from ...core.meeting_link import detect_meeting_link
+
+                meeting = detect_meeting_link(item.reminder)
+                if meeting is not None:
+                    join_action = QAction(
+                        self.tr("Join {provider} meeting").format(provider=meeting.provider),
+                        self,
+                    )
+
+                    def _open_join(_checked=False, url=meeting.url):
+                        from PyQt6.QtCore import QUrl
+                        from PyQt6.QtGui import QDesktopServices
+
+                        QDesktopServices.openUrl(QUrl(url))
+
+                    join_action.triggered.connect(_open_join)
+                    menu.addAction(join_action)
+                    menu.addSeparator()
+
             edit_tags_action = QAction(self.tr("Edit Tags..."), self)
             edit_tags_action.triggered.connect(lambda: self.edit_tags_requested.emit(item_ids[0]))
             menu.addAction(edit_tags_action)

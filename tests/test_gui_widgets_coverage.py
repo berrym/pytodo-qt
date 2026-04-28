@@ -1295,3 +1295,73 @@ class TestSearchFilterIntegration:
 
         search.clear_filters()
         assert table.rowCount() == 5
+
+
+class TestTodoTableMeetingLinkContextMenu:
+    """The list-view context menu surfaces a Join action at the top
+    when the selected row's reminder contains a recognized meeting URL,
+    mirroring the calendar bar's pattern. Closes parity with kanban
+    card and detail panel which use a visible button instead."""
+
+    def _capture_menu(self, qtbot, monkeypatch):
+        from PyQt6.QtWidgets import QMenu
+
+        captured: dict = {}
+
+        def fake_exec(self, *_args, **_kwargs):
+            captured["menu"] = self
+            return None
+
+        monkeypatch.setattr(QMenu, "exec", fake_exec)
+        return captured
+
+    def test_zoom_link_adds_join_action(self, qtbot, monkeypatch, todo_table):
+        from PyQt6.QtCore import QPoint
+
+        captured = self._capture_menu(qtbot, monkeypatch)
+
+        lst = TodoList(name="L")
+        item = create_todo_item("Standup https://us02web.zoom.us/j/12345")
+        lst.items[item.id] = item
+        todo_table.set_list(lst)
+        todo_table.selectRow(0)
+
+        todo_table._on_context_menu(QPoint(0, 0))
+        menu = captured.get("menu")
+        assert menu is not None
+        texts = [a.text() for a in menu.actions()]
+        assert any("Join" in t and "Zoom" in t for t in texts)
+
+    def test_no_meeting_url_no_join_action(self, qtbot, monkeypatch, todo_table):
+        from PyQt6.QtCore import QPoint
+
+        captured = self._capture_menu(qtbot, monkeypatch)
+
+        lst = TodoList(name="L")
+        item = create_todo_item("Buy groceries")
+        lst.items[item.id] = item
+        todo_table.set_list(lst)
+        todo_table.selectRow(0)
+
+        todo_table._on_context_menu(QPoint(0, 0))
+        menu = captured.get("menu")
+        assert menu is not None
+        texts = [a.text() for a in menu.actions()]
+        assert not any("Join" in t for t in texts)
+
+    def test_jitsi_link_adds_join_action_with_provider_name(self, qtbot, monkeypatch, todo_table):
+        from PyQt6.QtCore import QPoint
+
+        captured = self._capture_menu(qtbot, monkeypatch)
+
+        lst = TodoList(name="L")
+        item = create_todo_item("Catchup https://meet.jit.si/MyRoom")
+        lst.items[item.id] = item
+        todo_table.set_list(lst)
+        todo_table.selectRow(0)
+
+        todo_table._on_context_menu(QPoint(0, 0))
+        menu = captured.get("menu")
+        assert menu is not None
+        texts = [a.text() for a in menu.actions()]
+        assert any("Join" in t and "Jitsi" in t for t in texts)
