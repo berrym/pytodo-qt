@@ -19,7 +19,7 @@ settled in planning rounds tied to each release milestone.
   `due_time_block`, `event_date`, recurrence fields (`recurrence_type`,
   `_interval`, `_end_date`, `_end_count`, `_count`, `missed_recurrences`),
   `estimated_minutes`, `estimated_pomodoros`, `work_duration`, `time_spent`,
-  `pomodoro_count`, `completed_at`, `board_column`. Schema at v19.
+  `pomodoro_count`, `completed_at`, `board_column`. Schema at v21.
 - Gantt-bar rendering with seven locked decisions: four origin rules (event /
   workback / deadline-from-created / all-day), eight lifecycle states
   (FUTURE / IN_WORK_WINDOW / DUE_NOW / OVERDUE_ACTIVE / COMPLETED_EARLY /
@@ -28,9 +28,6 @@ settled in planning rounds tied to each release milestone.
   recurring cycle reset.
 - Views: day, week, month, timeline analytics (Gantt / daily stacked /
   productivity heatmap / estimate accuracy).
-- CalDAV / iCal interop: full VTODO round-trip (RFC 5545) and CalDAV HTTP
-  endpoints (RFC 4791) for Thunderbird, DAVx5, Tasks.org sync. Implemented in
-  `core/caldav.py` and `web/caldav_handler.py`.
 - NLP parser: natural-language extraction of due dates, times, time blocks,
   recurrence, estimates. Intent-based via `dateparser + rapidfuzz + YAML
   intent dictionaries`.
@@ -58,10 +55,8 @@ settled in planning rounds tied to each release milestone.
 ### Missing
 
 - Attendees / participants / RSVP tracking
-- Location (address, Maps resolution)
-- Meeting links (Zoom/Teams/Meet/Webex/Jitsi detection + Join button)
 - Calendar categories beyond priority (named, color-coded, filterable)
-- Multiple user-owned calendars / calendar sets / subscribed ICS feeds
+- Multiple user-owned calendars / calendar sets
 - Shared calendars with granular permissions
 - Scheduling-assistant grid across invitees
 - Proposals (multi-time vote) and public booking links
@@ -197,13 +192,10 @@ supporting infrastructure).
 
 | Feature | Work | Size |
 |---|---|---|
-| Attendees / RSVP | New `attendees` field (list of contact entries: name/email/status). Schema migration. VTODO `ATTENDEE` mapping. Detail-panel UI. Invite-sending path. | **L→XL** |
-| Location | New `location` string field. Detail-panel UI + tooltip. Optional Maps autocomplete. VTODO `LOCATION` mapping. | **M** |
-| Meeting link | New `meeting_link` string field. Auto-detection of Zoom/Teams/Meet/Webex/Jitsi URLs in notes. Join button surfaced on bars/cards. | **M** |
+| Attendees / RSVP | New `attendees` field (list of contact entries: name/email/status). Schema migration. Detail-panel UI. Invite-sending path. | **L→XL** |
 | Calendar categories | New `category` field OR promote `board_column` semantics. Per-category color. Filter UX. | **M→L** |
 | Busy/free flag | New `show_as` enum (busy / free / tentative / out-of-office). | **S→M** |
 | Multiple user-owned calendars | Partial foundation (TodoList already exists). UX: multi-select visibility, per-list color, per-list filter. | **L** |
-| Subscribed ICS feeds | New `SubscribedCalendar` entity. Periodic fetch + parse. Read-only items stored distinctly. | **L** |
 | Shared calendars with permissions | Auth model, permission tiers, sync path beyond P2P. | **XXL** |
 
 ### Pure UX / wiring (no schema)
@@ -243,26 +235,20 @@ here is binding. Each is internally coherent and independently shippable.
 
 Smallest items, highest payoff per hour of work. No schema changes.
 
-1. `due_time_end` interactive UI (S)
-2. Location string field + UI + VTODO (M)
-3. Meeting-link field + detection + Join button (M)
-4. Busy/free flag (S)
-5. Edge-drag-to-resize in week/day (M)
-6. Schedule / agenda view (M)
-7. Conference-link detection extension (S)
-
-Approximately 2–3 weeks. Delivers a recognizably more calendar-app-like
-surface without schema or architecture work.
+1. `due_time_end` interactive UI (S) — shipped
+2. Meeting-link field + detection + Join button (M) — shipped
+3. Edge-drag-to-resize in week/day (M) — shipped
+4. Schedule / agenda view (M) — shipped
+5. Conference-link detection extension (S) — shipped
 
 ### Arc B — meeting app
 
 For workflows centered on scheduling. Schema-heavy up front.
 
-1. Attendees field + schema migration + VTODO `ATTENDEE` mapping (L→XL)
-2. Location + meeting link (M + M)
-3. Scheduling Assistant grid, after attendees ship (L)
-4. Scheduling Poll / Proposals (public voting page) (L)
-5. Openings / public booking link (L)
+1. Attendees field + schema migration (L→XL)
+2. Scheduling Assistant grid, after attendees ship (L)
+3. Scheduling Poll / Proposals (public voting page) (L)
+4. Openings / public booking link (L)
 
 Approximately 6–10 weeks. Positions the app as an Outlook/Fantastical
 alternative for scheduling-heavy use.
@@ -301,8 +287,14 @@ Apply to every phase of any arc.
   that modify spatial extent, layout, or result sets.
 - **No phase/step labels in code or commits**. Descriptive names only.
   See `feedback-no-phase-labels.md`.
-- **CalDAV round-trip preserved** on every schema change touching exportable
-  fields.
+- **Interop is P2P, not external protocols**. The app does not speak CalDAV,
+  CardDAV, iCal/.ics, or any other calendar-ecosystem protocol. The strategic
+  decision is documented: the consumer-cloud calendar protocols (Apple,
+  Google, Microsoft) are structurally non-interoperable for tasks, and the
+  remaining CalDAV ecosystem (self-hosters with Nextcloud / Tasks.org /
+  Thunderbird) is served better by their existing tooling than by anything
+  pytodo-qt could ship. Sync is the P2P system with E2E encryption. New
+  calendar features stand on their own user value, not on protocol parity.
 
 ---
 

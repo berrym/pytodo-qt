@@ -233,8 +233,7 @@ class SyncEngine:
             changes_made = True
         elif local_item.completed_at != remote_item.completed_at:
             # Same complete flag but different timestamps — the remote knows
-            # something we don't (e.g. it learned the actual completion time
-            # via a CalDAV import). Sync the timestamp without raising a
+            # something we don't. Sync the timestamp without raising a
             # conflict on `complete` itself.
             local_item.completed_at = remote_item.completed_at
             changes_made = True

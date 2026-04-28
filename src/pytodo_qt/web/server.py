@@ -229,45 +229,6 @@ class WebServer:
         """Return the device store (for middleware and testing)."""
         return self._device_store
 
-    def _ensure_caldav_password(self) -> None:
-        """Generate CalDAV password if not set."""
-        if not self._config or self._config.caldav_password:
-            return
-        import secrets
-
-        self._config.caldav_password = secrets.token_urlsafe(24)
-        if self._config_manager:
-            self._config_manager.save()
-        logger.log.info("Generated CalDAV password")
-
-    @property
-    def caldav_password(self) -> str:
-        """Return the CalDAV password."""
-        if self._config:
-            return self._config.caldav_password
-        return ""
-
-    def validate_caldav_auth(self, username: str, password: str) -> bool:
-        """Validate CalDAV Basic Auth credentials."""
-        if not self._config:
-            logger.log.debug("CalDAV auth: no config")
-            return False
-        if username != "pytodo":
-            logger.log.debug("CalDAV auth: wrong username %r", username)
-            return False
-        if not self._config.caldav_password:
-            logger.log.debug("CalDAV auth: no password configured")
-            return False
-        if password != self._config.caldav_password:
-            logger.log.debug(
-                "CalDAV auth: password mismatch (got %d chars, expected %d chars)",
-                len(password),
-                len(self._config.caldav_password),
-            )
-            return False
-        logger.log.debug("CalDAV auth: success for user %r", username)
-        return True
-
     def _create_ssl_context(self) -> ssl.SSLContext | None:
         """Create TLS context using a local CA and server certificate.
 
@@ -516,14 +477,6 @@ class WebServer:
 
         # API routes
         setup_routes(app)
-
-        # CalDAV routes
-        if not self._config or self._config.caldav_enabled:
-            from .caldav_handler import setup_caldav_routes
-
-            setup_caldav_routes(app)
-            self._ensure_caldav_password()
-            logger.log.info("CalDAV server enabled (user: pytodo)")
 
         # Static file serving
         app.router.add_get("/", self._serve_index)

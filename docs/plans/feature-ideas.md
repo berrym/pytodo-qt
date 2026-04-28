@@ -32,7 +32,6 @@ Status of features for the 0.3.x release series. Current schema: **v15**. Test c
 | ~~Web undo/redo~~ | ~~Critical~~ | **Done** (c583d3f + 0cdabda) — unified QUndoStack + offline undo |
 | ~~.local hostname~~ | ~~Critical~~ | **Done** (0e47342) — IP-resilient mobile access |
 | NLP enhancements | **Blocker** | Voice dictation patterns, compound times, "first Monday of month", "every other week" |
-| CalDAV interop | **Blocker** | [caldav-interop.md](caldav-interop.md) — full .ics export/import, testers need this |
 | Subtask collapsible toggle | High | Web UI parity with desktop |
 | Device name editing | High | Let users rename devices in wizard |
 | Auto-cleanup stale devices | High | Remove devices not seen in 30+ days |
@@ -53,7 +52,6 @@ All items below are in scope for the 0.3.x series. 0.4.0 changes the fundamental
 | Tablet split-view | Two-column layout for web UI |
 | Smart add quick actions | Priority/date/tag/recurrence pickers below NLP input |
 | Web dark/light theme toggle | Manual toggle (currently auto only) |
-| CalDAV server mode | Full two-way sync with calendar apps |
 | Background sync API | Browser Background Sync where supported |
 
 ---

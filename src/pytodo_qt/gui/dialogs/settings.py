@@ -685,59 +685,6 @@ class SettingsDialog(QDialog):
         self.web_revoke_btn.clicked.connect(self._revoke_web_token)
         form.addRow("", self.web_revoke_btn)
 
-        # CalDAV credentials
-        caldav_group = QGroupBox(self.tr("CalDAV (Calendar Sync)"))
-        caldav_form = QFormLayout(caldav_group)
-
-        self.caldav_url_label = QLabel("")
-        self.caldav_url_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.caldav_url_label.setStyleSheet("font-size: 11px;")
-        caldav_form.addRow(self.tr("URL:"), self.caldav_url_label)
-
-        self.caldav_user_label = QLabel("pytodo")
-        self.caldav_user_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        caldav_form.addRow(self.tr("Username:"), self.caldav_user_label)
-
-        caldav_pw_row = QHBoxLayout()
-        self.caldav_password_label = QLineEdit()
-        self.caldav_password_label.setReadOnly(True)
-        self.caldav_password_label.setEchoMode(QLineEdit.EchoMode.Password)
-        caldav_pw_row.addWidget(self.caldav_password_label)
-        self.caldav_show_btn = QPushButton(self.tr("Show"))
-        self.caldav_show_btn.setFixedWidth(50)
-        self.caldav_show_btn.clicked.connect(self._toggle_caldav_visibility)
-        caldav_pw_row.addWidget(self.caldav_show_btn)
-        self.caldav_copy_btn = QPushButton(self.tr("Copy"))
-        self.caldav_copy_btn.setFixedWidth(50)
-        self.caldav_copy_btn.clicked.connect(self._copy_caldav_password)
-        caldav_pw_row.addWidget(self.caldav_copy_btn)
-        caldav_form.addRow(self.tr("Password:"), caldav_pw_row)
-
-        # Certificate section
-        cert_row = QHBoxLayout()
-        self.caldav_cert_btn = QPushButton(self.tr("Open CA Certificate"))
-        self.caldav_cert_btn.setToolTip(
-            self.tr("Open the certificate file for import into your CalDAV client")
-        )
-        self.caldav_cert_btn.clicked.connect(self._open_caldav_cert)
-        cert_row.addWidget(self.caldav_cert_btn)
-        cert_row.addStretch()
-        caldav_form.addRow(self.tr("Certificate:"), cert_row)
-
-        caldav_hint = QLabel(
-            self.tr(
-                "CalDAV clients need to trust the certificate before connecting.\n"
-                "Thunderbird: Settings \u2192 Privacy & Security \u2192 Certificates"
-                " \u2192 View Certificates \u2192 Authorities \u2192 Import\n"
-                "DAVx5: accepts self-signed certs during setup"
-            )
-        )
-        caldav_hint.setWordWrap(True)
-        caldav_hint.setStyleSheet("font-size: 10px; color: palette(mid);")
-        caldav_form.addRow("", caldav_hint)
-
-        layout.addWidget(caldav_group)
-
         layout.addWidget(group)
         layout.addStretch()
 
@@ -880,26 +827,10 @@ class SettingsDialog(QDialog):
             count = len(devices)
             self.web_device_count_label.setText(f"{count} device{'s' if count != 1 else ''} paired")
             self.web_pin_label.setText(web_server.pairing_pin)
-            # CalDAV credentials
-            from ..dialogs.web_connect import _get_local_hostname
-
-            hostname = _get_local_hostname()
-            port = config.web.port
-            if hostname:
-                self.caldav_url_label.setText(f"https://{hostname}:{port}/caldav/")
-            else:
-                from ..dialogs.web_connect import _get_lan_ip
-
-                ip = _get_lan_ip()
-                if ip:
-                    self.caldav_url_label.setText(f"https://{ip}:{port}/caldav/")
-            self.caldav_password_label.setText(web_server.caldav_password)
         else:
             self.web_device_count_label.setText(self.tr("Server not running"))
             self.web_pin_label.setText(self.tr("Start web server to generate"))
             self.web_pin_label.setStyleSheet("font-size: 12px; color: palette(mid); padding: 8px;")
-            self.caldav_url_label.setText(self.tr("Start web server first"))
-            self.caldav_password_label.setText("")
 
     def _save_settings(self) -> bool:
         """Save settings from UI to config."""
@@ -996,47 +927,6 @@ class SettingsDialog(QDialog):
 
         logger.log.info("Settings saved")
         return True
-
-    def _open_caldav_cert(self) -> None:
-        """Open the CA certificate file for the user to import."""
-        parent = self.parent()
-        web_server = getattr(parent, "_web_server", None) if parent else None
-        if web_server is None or web_server.ca_cert_path is None:
-            QMessageBox.information(
-                self, self.tr("Certificate"), self.tr("Web server is not running.")
-            )
-            return
-        import subprocess
-        import sys
-
-        cert_path = str(web_server.ca_cert_path)
-        if sys.platform == "darwin":
-            subprocess.Popen(["open", "-R", cert_path])
-        elif sys.platform == "win32":
-            subprocess.Popen(["explorer", "/select,", cert_path])
-        else:
-            subprocess.Popen(["xdg-open", str(web_server.ca_cert_path.parent)])
-
-    def _toggle_caldav_visibility(self) -> None:
-        """Toggle CalDAV password visibility."""
-        if self.caldav_password_label.echoMode() == QLineEdit.EchoMode.Password:
-            self.caldav_password_label.setEchoMode(QLineEdit.EchoMode.Normal)
-            self.caldav_show_btn.setText(self.tr("Hide"))
-        else:
-            self.caldav_password_label.setEchoMode(QLineEdit.EchoMode.Password)
-            self.caldav_show_btn.setText(self.tr("Show"))
-
-    def _copy_caldav_password(self) -> None:
-        """Copy CalDAV password to clipboard."""
-        from PyQt6.QtWidgets import QApplication
-
-        clipboard = QApplication.clipboard()
-        if clipboard:
-            clipboard.setText(self.caldav_password_label.text())
-            self.caldav_copy_btn.setText("\u2713")
-            from PyQt6.QtCore import QTimer
-
-            QTimer.singleShot(2000, lambda: self.caldav_copy_btn.setText(self.tr("Copy")))
 
     def _copy_fingerprint(self) -> None:
         """Copy fingerprint to clipboard."""

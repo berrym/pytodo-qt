@@ -448,52 +448,6 @@ class EditEstimatedMinutesCommand(QUndoCommand):
         self._window._refresh_ui()
 
 
-class EditLocationCommand(QUndoCommand):
-    """Change an item's location (free-form text).
-
-    Round-trips through VTODO LOCATION for CalDAV interop, so the
-    field is observable from any compliant client (Thunderbird, DAVx5,
-    Tasks.org). Empty string is the canonical "no location" value.
-    """
-
-    def __init__(
-        self,
-        window: MainWindow,
-        list_id: UUID,
-        item_id: UUID,
-        old_location: str,
-        new_location: str,
-    ) -> None:
-        super().__init__("Change location")
-        self._window = window
-        self._list_id = list_id
-        self._item_id = item_id
-        self._old_location = old_location
-        self._new_location = new_location
-
-    def redo(self) -> None:
-        todo_list = self._window._database.lists.get(self._list_id)
-        if not todo_list:
-            return
-        item = todo_list.get_item(self._item_id)
-        if item:
-            item.location = self._new_location
-            item.mark_updated()
-        self._window._save_database()
-        self._window._refresh_ui()
-
-    def undo(self) -> None:
-        todo_list = self._window._database.lists.get(self._list_id)
-        if not todo_list:
-            return
-        item = todo_list.get_item(self._item_id)
-        if item:
-            item.location = self._old_location
-            item.mark_updated()
-        self._window._save_database()
-        self._window._refresh_ui()
-
-
 class EditTagsCommand(QUndoCommand):
     """Change an item's tags."""
 

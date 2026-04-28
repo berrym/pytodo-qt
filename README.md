@@ -15,7 +15,6 @@
 > - **NLP-powered smart task input** with parse-time recognition chips for date, time, tag, priority, recurrence, pomodoro, time block, and inline subtask syntax (`Plan trip: book flight, pack`).
 > - **Full calendar surface** — Day, Week, Month, Agenda, and Timeline-Analytics sub-views; Gantt-bar event rendering with eight lifecycle states; drag-and-drop scheduling and edge-drag-to-reschedule.
 > - **Web UI** with secure mobile pairing via QR code, per-device authentication tokens, and a mobile-friendly PWA shell.
-> - **CalDAV interop** with Thunderbird / DAVx5 / Tasks.org (full RFC 5545 + 4791 round-trip).
 > - **Kanban board** with drag-and-drop, subtask CRUD, and per-column ordering.
 > - **Subtasks** (one-level nesting) with detail-panel CRUD, parent breadcrumb, and inline-syntax creation.
 > - **Time blocks and event windows** — `due_time_end` for explicit ranges, named time blocks (`morning`, `late afternoon`, etc.).

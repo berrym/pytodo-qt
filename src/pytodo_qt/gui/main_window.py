@@ -27,7 +27,6 @@ from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QDialog,
-    QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QMainWindow,
@@ -287,16 +286,6 @@ class MainWindow(QMainWindow):
     def _setup_actions(self) -> None:
         """Create all actions."""
         # File actions
-        self.import_ics_action = QAction(self.tr("&Import from .ics..."), self)
-        self.import_ics_action.setShortcut("Ctrl+I")
-        self.import_ics_action.setToolTip(self._tip(self.tr("Import from .ics file"), "Ctrl+I"))
-        self.import_ics_action.triggered.connect(self._on_import_ics)
-
-        self.export_ics_action = QAction(self.tr("&Export List as .ics..."), self)
-        self.export_ics_action.setShortcut("Ctrl+E")
-        self.export_ics_action.setToolTip(self._tip(self.tr("Export list as .ics file"), "Ctrl+E"))
-        self.export_ics_action.triggered.connect(self._on_export_ics)
-
         self.export_charts_action = QAction(self.tr("Export &Charts..."), self)
         self.export_charts_action.setToolTip(
             self.tr("Export analytics charts as PNG or multi-page PDF report")
@@ -549,8 +538,6 @@ class MainWindow(QMainWindow):
         # File menu
         file_menu = menu_bar.addMenu(self.tr("&File"))
         if file_menu:
-            file_menu.addAction(self.import_ics_action)
-            file_menu.addAction(self.export_ics_action)
             file_menu.addAction(self.export_charts_action)
             file_menu.addSeparator()
             file_menu.addAction(self.print_action)
@@ -905,7 +892,6 @@ class MainWindow(QMainWindow):
         self._detail_panel.item_due_date_changed.connect(self._on_item_due_date_changed)
         self._detail_panel.item_due_time_changed.connect(self._on_item_due_time_changed)
         self._detail_panel.item_due_time_end_changed.connect(self._on_item_due_time_end_changed)
-        self._detail_panel.item_location_changed.connect(self._on_item_location_changed)
         self._detail_panel.toggle_requested.connect(self._on_toggle_todo)
         self._detail_panel.edit_tags_requested.connect(self._on_edit_tags_for_item)
         self._detail_panel.edit_requested.connect(self._on_detail_panel_edit)
@@ -2584,19 +2570,6 @@ class MainWindow(QMainWindow):
                 )
                 self._undo_stack.push(cmd)
 
-    def _on_item_location_changed(self, item_id: UUID, location: str) -> None:
-        """Handle item location change."""
-        if self._refreshing:
-            return
-        active_list = self._database.active_list
-        if active_list:
-            item = active_list.get_item(item_id)
-            if item:
-                from .commands import EditLocationCommand
-
-                cmd = EditLocationCommand(self, active_list.id, item_id, item.location, location)
-                self._undo_stack.push(cmd)
-
     def _on_item_estimated_minutes_changed(self, item_id: UUID, estimated_minutes: int) -> None:
         """Handle item estimated_minutes change (calendar edge-drag-to-resize)."""
         if self._refreshing:
@@ -4220,88 +4193,6 @@ class MainWindow(QMainWindow):
 
         dialog = MobileAccessWizard(parent=self)
         dialog.exec()
-
-    def _on_import_ics(self) -> None:
-        """Import items from an .ics file into the active list."""
-        from ..core.caldav import import_ics_to_items
-
-        active_list = self._database.active_list
-        if active_list is None:
-            QMessageBox.warning(self, self.tr("Import"), self.tr("No list selected."))
-            return
-
-        path, _ = QFileDialog.getOpenFileName(
-            self, self.tr("Import from .ics"), "", self.tr("iCalendar Files (*.ics);;All Files (*)")
-        )
-        if not path:
-            return
-
-        try:
-            data = Path(path).read_bytes()
-            items = import_ics_to_items(data)
-        except Exception as e:
-            QMessageBox.critical(
-                self, self.tr("Import Error"), self.tr(f"Could not parse file:\n{e}")
-            )
-            return
-
-        if not items:
-            QMessageBox.information(
-                self,
-                self.tr("Import"),
-                self.tr("No tasks found in file (may contain only events)."),
-            )
-            return
-
-        # Import through undo stack for consistency with unified undo system
-        from .commands import AddItemCommand
-
-        completed = 0
-        self._undo_stack.beginMacro(f"Import {len(items)} items from .ics")
-        for item in items:
-            # Assign default board column
-            if not item.board_column and active_list.board_columns:
-                item.board_column = active_list.board_columns[0]
-            cmd = AddItemCommand(self, active_list.id, item)
-            self._undo_stack.push(cmd)
-            if item.complete:
-                completed += 1
-        self._undo_stack.endMacro()
-
-        self.status_bar_widget.show_message(
-            self.tr(f"Imported {len(items)} items ({completed} completed) from {Path(path).name}")
-        )
-
-    def _on_export_ics(self) -> None:
-        """Export the active list as an .ics file."""
-        from ..core.caldav import export_list_to_ics
-
-        active_list = self._database.active_list
-        if active_list is None:
-            QMessageBox.warning(self, self.tr("Export"), self.tr("No list selected."))
-            return
-
-        default_name = f"{active_list.name}.ics"
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            self.tr("Export List as .ics"),
-            default_name,
-            self.tr("iCalendar Files (*.ics);;All Files (*)"),
-        )
-        if not path:
-            return
-
-        try:
-            ics_data = export_list_to_ics(active_list)
-            Path(path).write_bytes(ics_data)
-        except Exception as e:
-            QMessageBox.critical(
-                self, self.tr("Export Error"), self.tr(f"Could not write file:\n{e}")
-            )
-            return
-
-        count = active_list.active_item_count()
-        self.status_bar_widget.show_message(self.tr(f"Exported {count} items to {Path(path).name}"))
 
     def _on_export_charts(self) -> None:
         """Open the Export Charts dialog with date range, selection, and live preview."""

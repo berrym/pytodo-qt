@@ -89,31 +89,6 @@ async def auth_middleware(request: web.Request, handler: Callable[..., Any]) -> 
     if path in ("/", "/sw.js", "/api/auth", "/ca.pem") or path.startswith("/static/"):
         return await handler(request)
 
-    # CalDAV paths use HTTP Basic Auth (CalDAV clients don't support Bearer)
-    if path.startswith("/caldav/") or path == "/.well-known/caldav":
-        import base64
-
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Basic "):
-            try:
-                decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
-                username, _, password = decoded.partition(":")
-                username = username.strip()
-                password = password.strip()
-                server = request.app.get(web_server_key)
-                if server and server.validate_caldav_auth(username, password):
-                    return await handler(request)
-            except Exception:
-                pass
-        # Allow well-known redirect without auth (client hasn't sent creds yet)
-        if path == "/.well-known/caldav":
-            return await handler(request)
-        return web.Response(
-            status=401,
-            headers={"WWW-Authenticate": 'Basic realm="PyTodo-Qt CalDAV"'},
-            text="Authentication required",
-        )
-
     # Extract token from Bearer header or query param
     token = None
     auth_header = request.headers.get("Authorization", "")
@@ -692,10 +667,10 @@ def _apply_item_fields(item: TodoItem, body: dict[str, Any], lst: TodoList | Non
     if "complete" in body:
         new_complete = bool(body["complete"])
         if "completed_at" in body:
-            # Sync path (e.g. CalDAV import) — preserve the remote's actual
-            # completion timestamp verbatim instead of stamping with NOW.
-            # Direct field assignment, not set_complete(), so the timestamp
-            # stays exactly as the remote sent it.
+            # Sync path — preserve the remote's actual completion timestamp
+            # verbatim instead of stamping with NOW. Direct field assignment,
+            # not set_complete(), so the timestamp stays exactly as the
+            # remote sent it.
             item.complete = new_complete
             ca = body["completed_at"]
             item.completed_at = int(ca) if ca is not None else None

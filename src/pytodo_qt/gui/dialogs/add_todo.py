@@ -361,17 +361,6 @@ class AddTodoDialog(QDialog):
         tags_form.addRow(self.tr("Tags:"), self.tags_edit)
         adv_layout.addLayout(tags_form)
 
-        # Location — physical address, meeting room, "phone call",
-        # whatever the user types. Round-trips through VTODO LOCATION
-        # for CalDAV interop with Thunderbird / DAVx5 / Tasks.org.
-        location_form = QFormLayout()
-        self.location_edit = QLineEdit()
-        self.location_edit.setPlaceholderText(
-            self.tr("e.g. Conference Room B, 123 Main St, phone call")
-        )
-        location_form.addRow(self.tr("Location:"), self.location_edit)
-        adv_layout.addLayout(location_form)
-
         # --- Subtasks (standalone) ---
         subtasks_form = QFormLayout()
         self.subtasks_edit = QPlainTextEdit()
@@ -923,14 +912,6 @@ class AddTodoDialog(QDialog):
             selected = self.board_column_combo.currentData()
             if selected:
                 self._item.board_column = selected
-
-        # Apply location from the Advanced disclosure to the item
-        # regardless of which build path constructed it. The smart
-        # input parser does not extract location (out of scope for
-        # the v0.3.11 cycle), so reading the explicit field is the
-        # only path that puts a value on the item.
-        if self._item is not None:
-            self._item.location = self.location_edit.text().strip()
 
         logger.log.info("Created new todo item: %s", reminder[:50])
         self.accept()
