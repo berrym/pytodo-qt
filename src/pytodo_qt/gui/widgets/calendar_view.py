@@ -4910,6 +4910,8 @@ class _AgendaRow(QFrame):
     ) -> None:
         super().__init__(parent)
         self._item_id = item.id
+        self._colors = colors
+        self._selected = False
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -4917,18 +4919,17 @@ class _AgendaRow(QFrame):
         self.customContextMenuRequested.connect(
             lambda pos: self.right_clicked.emit(self._item_id, self.mapToGlobal(pos))
         )
-        # Subtle hover background mirrors what other clickable rows in
-        # the project use to signal interactivity.
-        self.setStyleSheet(
-            "_AgendaRow { background: transparent; border-radius: 4px; }"
-            "_AgendaRow:hover { background: palette(midlight); }"
-        )
+        self._apply_row_style()
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(8)
 
-        # Time / "All Day" — fixed-width column so reminders align.
+        # Time / "All Day" — fixed-width column so reminders align. Uses
+        # the theme's standard text color (rather than palette(mid))
+        # because muted-gray fails WCAG against the dark-theme cell
+        # background; the time column carries functional information
+        # and must remain legible in either theme.
         if item.due_time is None:
             time_text = self.tr("All Day")
         elif time_format == "24h":
@@ -4937,7 +4938,7 @@ class _AgendaRow(QFrame):
             time_text = item.due_time.strftime("%I:%M %p").lstrip("0")
         time_label = QLabel(time_text)
         time_label.setFixedWidth(80)
-        time_label.setStyleSheet("color: palette(mid); font-size: 11px;")
+        time_label.setStyleSheet(f"color: {colors['text']}; font-size: 11px; border: none;")
         layout.addWidget(time_label)
 
         # Priority dot
@@ -4976,6 +4977,36 @@ class _AgendaRow(QFrame):
             tag_label.setStyleSheet("color: #2DA5A5; font-size: 11px; border: none;")
             layout.addWidget(tag_label)
 
+    def set_selected(self, selected: bool) -> None:
+        """Toggle the selected visual state. The selected row paints with a
+        highlight tint so the user has a visual confirmation that their
+        click was registered, separate from the detail panel content
+        update on the side."""
+        if self._selected == selected:
+            return
+        self._selected = selected
+        self._apply_row_style()
+
+    def _apply_row_style(self) -> None:
+        """Apply the row's stylesheet for the current selection state.
+
+        Hover shows a subtle midlight tint; selection shows a stronger
+        highlight tint so the row reads as "the one you clicked" without
+        competing with the detail panel's own selection indicators.
+        """
+        if self._selected:
+            self.setStyleSheet(
+                "_AgendaRow { background: palette(highlight);"
+                " border-radius: 4px; border: 1px solid palette(highlight); }"
+                "_AgendaRow QLabel { color: palette(highlightedText); }"
+            )
+        else:
+            self.setStyleSheet(
+                "_AgendaRow { background: transparent; border-radius: 4px;"
+                " border: 1px solid transparent; }"
+                "_AgendaRow:hover { background: palette(midlight); }"
+            )
+
     def mousePressEvent(self, a0) -> None:  # noqa: N802
         if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self._item_id)
@@ -5008,7 +5039,12 @@ class _AgendaView(QWidget):
         self._items: list[TodoItem] = []
         self._current_date: date = date.today()
         self._time_format: str = "system"
+        self._selected_item_id: UUID | None = None
+        self._rows_by_id: dict[UUID, _AgendaRow] = {}
         self._setup_ui()
+        # Selection follows clicks and is repainted across rebuilds so
+        # the user's last-clicked row stays visually anchored.
+        self.item_clicked.connect(self._on_item_clicked)
 
     def _setup_ui(self) -> None:
         outer = QVBoxLayout(self)
@@ -5040,8 +5076,18 @@ class _AgendaView(QWidget):
         self._time_format = time_format
         self._rebuild()
 
+    def _on_item_clicked(self, item_id: UUID) -> None:
+        """Update internal selection state and repaint affected rows."""
+        prev = self._selected_item_id
+        self._selected_item_id = item_id
+        if prev is not None and prev in self._rows_by_id:
+            self._rows_by_id[prev].set_selected(False)
+        if item_id in self._rows_by_id:
+            self._rows_by_id[item_id].set_selected(True)
+
     def _rebuild(self) -> None:
         # Tear down previous content
+        self._rows_by_id = {}
         while self._content_layout.count():
             layout_item = self._content_layout.takeAt(0)
             if layout_item is None:
@@ -5115,6 +5161,11 @@ class _AgendaView(QWidget):
         row.clicked.connect(self.item_clicked.emit)
         row.double_clicked.connect(self.item_double_clicked.emit)
         row.right_clicked.connect(self.item_right_clicked.emit)
+        # Re-apply selection state across rebuilds so a refresh doesn't
+        # silently drop the user's last-clicked anchor.
+        if item.id == self._selected_item_id:
+            row.set_selected(True)
+        self._rows_by_id[item.id] = row
         self._content_layout.addWidget(row)
 
     def _add_empty_placeholder(self, colors: dict[str, str]) -> None:
@@ -5155,8 +5206,8 @@ class CalendarViewWidget(QWidget):
     SUB_DAY = 0
     SUB_WEEK = 1
     SUB_MONTH = 2
-    SUB_TIMELINE = 3
-    SUB_AGENDA = 4
+    SUB_AGENDA = 3
+    SUB_TIMELINE = 4
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -5219,8 +5270,8 @@ class CalendarViewWidget(QWidget):
                 self.tr("Day"),
                 self.tr("Week"),
                 self.tr("Month"),
-                self.tr("Timeline"),
                 self.tr("Agenda"),
+                self.tr("Timeline"),
             ]
         ):
             btn = QPushButton(label)
@@ -5419,14 +5470,19 @@ class CalendarViewWidget(QWidget):
 
         tl_container_layout.addWidget(self._timeline_sub_stack)
         self._timeline_sub_stack.setCurrentIndex(self._tl_sub_view)
-        self._sub_stack.addWidget(self._timeline_container)  # 3
 
         # Agenda — chronological scrollable list grouped by day.
+        # Added before Timeline so the QStackedWidget index matches
+        # SUB_AGENDA = 3 / SUB_TIMELINE = 4 (agenda is conceptually
+        # closer to the spatial calendar views than to the timeline
+        # analytics charts and reads more naturally beside Month).
         self._agenda_view = _AgendaView()
         self._agenda_view.item_clicked.connect(self._on_task_clicked)
         self._agenda_view.item_double_clicked.connect(self._on_task_double_clicked)
         self._agenda_view.item_right_clicked.connect(self._on_task_right_clicked)
-        self._sub_stack.addWidget(self._agenda_view)  # 4
+        self._sub_stack.addWidget(self._agenda_view)  # 3
+
+        self._sub_stack.addWidget(self._timeline_container)  # 4
 
         self._sub_stack.setCurrentIndex(self._sub_view)
         content.addWidget(self._sub_stack, 1)

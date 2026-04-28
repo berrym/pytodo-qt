@@ -94,7 +94,7 @@ def calendar_widget(qtbot, todo_list):
 class TestSubViewSwitching:
     def test_initial_sub_view(self, calendar_widget):
         """Default sub-view should be week (or whatever config says)."""
-        assert calendar_widget._sub_view in (0, 1, 2, 3)
+        assert calendar_widget._sub_view in (0, 1, 2, 3, 4)
 
     def test_switch_to_timeline(self, calendar_widget):
         calendar_widget._set_sub_view(calendar_widget.SUB_TIMELINE)
@@ -4597,3 +4597,76 @@ def _agenda_test_colors() -> dict[str, str]:
         "priority_normal": "#1b5f98",
         "priority_low": "#95a5a6",
     }
+
+
+class TestAgendaSelection:
+    """Selection visual state on agenda rows survives re-rebuilds and
+    only the most-recently-clicked row carries it."""
+
+    def test_set_selected_toggles_state(self, qtbot) -> None:
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaRow
+
+        item = create_todo_item("Task")
+        row = _AgendaRow(item, "12h", _agenda_test_colors())
+        qtbot.addWidget(row)
+        assert row._selected is False
+        row.set_selected(True)
+        assert row._selected is True
+        # Stylesheet swaps to the highlighted variant.
+        assert "palette(highlight)" in row.styleSheet()
+        row.set_selected(False)
+        assert row._selected is False
+
+    def test_view_tracks_clicked_id(self, qtbot) -> None:
+        from datetime import date
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaView
+
+        anchor = date(2026, 5, 1)
+        a = create_todo_item("First")
+        a.due_date = anchor
+        b = create_todo_item("Second")
+        b.due_date = anchor
+        view = _AgendaView()
+        qtbot.addWidget(view)
+        view.set_data([a, b], anchor, "12h")
+
+        # Programmatically simulate a click via the signal path the UI uses.
+        view._on_item_clicked(a.id)
+        assert view._selected_item_id == a.id
+
+        # Rebuild (e.g. data refresh) — selection survives. Use the
+        # canonical _rows_by_id rather than findChildren(_AgendaRow)
+        # because rows scheduled for deferred deletion are still
+        # discoverable via findChildren until Qt actually disposes them.
+        view.set_data([a, b], anchor, "12h")
+        sel = [r for r in view._rows_by_id.values() if r._selected]
+        assert len(sel) == 1
+        assert sel[0]._item_id == a.id
+
+        # Click second item — first deselects, second selects.
+        view._on_item_clicked(b.id)
+        sel = [r for r in view._rows_by_id.values() if r._selected]
+        assert len(sel) == 1
+        assert sel[0]._item_id == b.id
+
+
+class TestSubViewPillOrder:
+    """The pill row ordering: Day | Week | Month | Agenda | Timeline,
+    with Agenda mapped to constant 3 and Timeline to 4 so SUB_AGENDA
+    is conceptually adjacent to the spatial calendar views."""
+
+    def test_constants_match_pill_order(self, qtbot) -> None:
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        widget = CalendarViewWidget()
+        qtbot.addWidget(widget)
+        labels = [btn.text() for btn in widget._sub_buttons]
+        assert labels == ["Day", "Week", "Month", "Agenda", "Timeline"]
+        assert widget.SUB_DAY == 0
+        assert widget.SUB_WEEK == 1
+        assert widget.SUB_MONTH == 2
+        assert widget.SUB_AGENDA == 3
+        assert widget.SUB_TIMELINE == 4
