@@ -4728,12 +4728,12 @@ class TestAgendaDragDrop:
 
     def test_drop_above_first_header_falls_back_to_anchor(self, qtbot) -> None:
         from datetime import date
+        from uuid import uuid4
 
         from PyQt6.QtCore import QMimeData, QPointF, Qt
         from PyQt6.QtGui import QDropEvent
 
         from pytodo_qt.gui.widgets.calendar_view import _AgendaView
-        from uuid import uuid4
 
         anchor = date(2026, 6, 15)
         view = _AgendaView()

@@ -401,6 +401,53 @@ class EditDueTimeEndCommand(QUndoCommand):
         self._window._refresh_ui()
 
 
+class EditEstimatedMinutesCommand(QUndoCommand):
+    """Change an item's estimated_minutes value.
+
+    Used by the calendar edge-drag-to-resize interaction on
+    deadline-with-estimate bars (top-edge drag) and by any future
+    surface that wants to mutate just the estimate without touching
+    other timing fields.
+    """
+
+    def __init__(
+        self,
+        window: MainWindow,
+        list_id: UUID,
+        item_id: UUID,
+        old_estimated_minutes: int,
+        new_estimated_minutes: int,
+    ) -> None:
+        super().__init__("Change estimated duration")
+        self._window = window
+        self._list_id = list_id
+        self._item_id = item_id
+        self._old_estimated_minutes = old_estimated_minutes
+        self._new_estimated_minutes = new_estimated_minutes
+
+    def redo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if item:
+            item.estimated_minutes = self._new_estimated_minutes
+            item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+    def undo(self) -> None:
+        todo_list = self._window._database.lists.get(self._list_id)
+        if not todo_list:
+            return
+        item = todo_list.get_item(self._item_id)
+        if item:
+            item.estimated_minutes = self._old_estimated_minutes
+            item.mark_updated()
+        self._window._save_database()
+        self._window._refresh_ui()
+
+
 class EditTagsCommand(QUndoCommand):
     """Change an item's tags."""
 

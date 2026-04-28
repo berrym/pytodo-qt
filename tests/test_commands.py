@@ -27,6 +27,7 @@ from pytodo_qt.gui.commands import (
     DeleteItemsCommand,
     DeleteListCommand,
     EditDueDateCommand,
+    EditEstimatedMinutesCommand,
     EditPriorityCommand,
     EditReminderCommand,
     RenameListCommand,
@@ -1062,3 +1063,64 @@ class TestEdgeCases:
         assert item1.priority == 2
         assert item1.reminder == "Buy milk"
         assert item1.complete is False
+
+
+class TestEditEstimatedMinutesCommand:
+    def test_redo_changes_estimate(self):
+        db, lst, item1, _ = make_populated_db()
+        item1.estimated_minutes = 30
+        window = make_window(db)
+        cmd = EditEstimatedMinutesCommand(window, lst.id, item1.id, 30, 60)
+
+        cmd.redo()
+
+        assert item1.estimated_minutes == 60
+
+    def test_undo_restores_estimate(self):
+        db, lst, item1, _ = make_populated_db()
+        item1.estimated_minutes = 30
+        window = make_window(db)
+        cmd = EditEstimatedMinutesCommand(window, lst.id, item1.id, 30, 60)
+
+        cmd.redo()
+        cmd.undo()
+
+        assert item1.estimated_minutes == 30
+
+    def test_redo_undo_marks_updated(self):
+        db, lst, item1, _ = make_populated_db()
+        item1.estimated_minutes = 0
+        window = make_window(db)
+        cmd = EditEstimatedMinutesCommand(window, lst.id, item1.id, 0, 90)
+
+        ts_before = item1.updated_at
+        time.sleep(0.002)
+        cmd.redo()
+        assert item1.updated_at >= ts_before
+
+        ts_after_redo = item1.updated_at
+        time.sleep(0.002)
+        cmd.undo()
+        assert item1.updated_at >= ts_after_redo
+
+    def test_zero_estimate_is_valid(self):
+        # Resizing a deadline-with-estimate bar back to a deadline-only
+        # bar collapses estimated_minutes to 0; the command must handle
+        # that without coercion.
+        db, lst, item1, _ = make_populated_db()
+        item1.estimated_minutes = 45
+        window = make_window(db)
+        cmd = EditEstimatedMinutesCommand(window, lst.id, item1.id, 45, 0)
+
+        cmd.redo()
+        assert item1.estimated_minutes == 0
+        cmd.undo()
+        assert item1.estimated_minutes == 45
+
+    def test_noop_if_item_missing(self):
+        db, lst, _, _ = make_populated_db()
+        window = make_window(db)
+        cmd = EditEstimatedMinutesCommand(window, lst.id, uuid4(), 30, 60)
+
+        cmd.redo()  # Should not raise
+        cmd.undo()  # Should not raise
