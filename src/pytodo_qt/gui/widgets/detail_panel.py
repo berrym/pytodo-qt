@@ -57,6 +57,7 @@ class TaskDetailPanel(QDockWidget):
     item_due_date_changed = pyqtSignal(object, object)
     item_due_time_changed = pyqtSignal(object, object)
     item_due_time_end_changed = pyqtSignal(object, object)
+    item_location_changed = pyqtSignal(object, str)
     toggle_requested = pyqtSignal()
     edit_tags_requested = pyqtSignal(object)
     # Subtask CRUD: emitted so MainWindow can route each action through
@@ -353,11 +354,20 @@ class TaskDetailPanel(QDockWidget):
 
         self._time_block_value = self._make_value_label()
         self._event_date_value = self._make_value_label()
+        # Location — free-form text, edit-mode-gated like the other
+        # row-level edits in this section. Round-trips through VTODO
+        # LOCATION for CalDAV interop.
+        self._location_edit = self._track_editable(QLineEdit())
+        self._location_edit.setPlaceholderText(
+            self.tr("e.g. Conference Room B, 123 Main St, phone call")
+        )
+        self._location_edit.editingFinished.connect(self._on_location_changed)
         form.addRow(self.tr("Due date:"), self._due_date_edit)
         form.addRow(self.tr("Due time:"), self._due_time_edit)
         form.addRow(self.tr("End time:"), self._due_time_end_edit)
         form.addRow(self.tr("Time block:"), self._time_block_value)
         form.addRow(self.tr("Event date:"), self._event_date_value)
+        form.addRow(self.tr("Location:"), self._location_edit)
 
     def _on_due_date_changed(self, qdate: QDate) -> None:
         if self._populating or not self._edit_mode:
@@ -387,6 +397,14 @@ class TaskDetailPanel(QDockWidget):
             self.item_due_time_end_changed.emit(
                 self._item.id, time_type(qtime.hour(), qtime.minute())
             )
+
+    def _on_location_changed(self) -> None:
+        if self._populating or not self._edit_mode:
+            return
+        if self._item is not None:
+            new_location = self._location_edit.text().strip()
+            if new_location != (self._item.location or ""):
+                self.item_location_changed.emit(self._item.id, new_location)
 
     def _build_estimate_section(self) -> None:
         form = self._add_section(self.tr("Estimates"))
@@ -800,6 +818,8 @@ class TaskDetailPanel(QDockWidget):
             self._event_date_value.setText(item.event_date.strftime("%a, %b %d %Y"))
         else:
             self._event_date_value.setText("\u2014")
+
+        self._location_edit.setText(item.location or "")
 
         # Estimates
         self._est_minutes_spin.setValue(item.estimated_minutes)

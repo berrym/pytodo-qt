@@ -905,6 +905,7 @@ class MainWindow(QMainWindow):
         self._detail_panel.item_due_date_changed.connect(self._on_item_due_date_changed)
         self._detail_panel.item_due_time_changed.connect(self._on_item_due_time_changed)
         self._detail_panel.item_due_time_end_changed.connect(self._on_item_due_time_end_changed)
+        self._detail_panel.item_location_changed.connect(self._on_item_location_changed)
         self._detail_panel.toggle_requested.connect(self._on_toggle_todo)
         self._detail_panel.edit_tags_requested.connect(self._on_edit_tags_for_item)
         self._detail_panel.edit_requested.connect(self._on_detail_panel_edit)
@@ -2581,6 +2582,19 @@ class MainWindow(QMainWindow):
                 cmd = EditDueTimeEndCommand(
                     self, active_list.id, item_id, item.due_time_end, due_time_end
                 )
+                self._undo_stack.push(cmd)
+
+    def _on_item_location_changed(self, item_id: UUID, location: str) -> None:
+        """Handle item location change."""
+        if self._refreshing:
+            return
+        active_list = self._database.active_list
+        if active_list:
+            item = active_list.get_item(item_id)
+            if item:
+                from .commands import EditLocationCommand
+
+                cmd = EditLocationCommand(self, active_list.id, item_id, item.location, location)
                 self._undo_stack.push(cmd)
 
     def _on_item_estimated_minutes_changed(self, item_id: UUID, estimated_minutes: int) -> None:

@@ -120,6 +120,11 @@ def _item_to_vtodo(item: TodoItem) -> Todo:
         clean_tags = [t.lstrip("@") for t in item.tags]
         todo.add("categories", clean_tags)
 
+    # Location — RFC 5545 LOCATION property. Round-trips with
+    # Thunderbird, DAVx5, Tasks.org and any other VTODO-aware client.
+    if item.location:
+        todo.add("location", item.location)
+
     todo.add("created", _ms_to_utc_datetime(item.created_at))
     todo.add("last-modified", _ms_to_utc_datetime(item.updated_at))
 
@@ -236,6 +241,12 @@ def _vtodo_to_item(vtodo: Component) -> TodoItem | None:
             raw_tags = [str(c) for c in categories]
         # Ensure @ prefix
         item.tags = [t if t.startswith("@") else f"@{t}" for t in raw_tags]
+
+    # Location — RFC 5545 LOCATION. Empty / missing maps to "" because
+    # the model uses an empty string rather than None for "no location."
+    location_val = vtodo.get("location")
+    if location_val is not None:
+        item.location = str(location_val)
 
     # Timestamps
     created = vtodo.get("created")

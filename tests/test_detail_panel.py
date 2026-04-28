@@ -430,3 +430,74 @@ class TestMeetingLinkJoin:
         panel.set_item(None)
         assert not panel._join_meeting_btn.isVisible()
         assert panel._meeting_link_url is None
+
+
+class TestLocation:
+    """Detail panel exposes location as an editable QLineEdit that
+    round-trips through item_location_changed in edit mode only."""
+
+    def test_loads_location_from_item(self, qtbot):
+        panel = TaskDetailPanel()
+        qtbot.addWidget(panel)
+        lst = create_todo_list("L")
+        item = create_todo_item("Standup")
+        item.location = "Conference Room B"
+        lst.add_item(item)
+        panel.set_item(item, lst)
+        assert panel._location_edit.text() == "Conference Room B"
+
+    def test_loads_empty_when_no_location(self, qtbot):
+        panel = TaskDetailPanel()
+        qtbot.addWidget(panel)
+        lst = create_todo_list("L")
+        item = create_todo_item("Standup")
+        lst.add_item(item)
+        panel.set_item(item, lst)
+        assert panel._location_edit.text() == ""
+
+    def test_edit_emits_signal(self, qtbot):
+        panel = TaskDetailPanel()
+        qtbot.addWidget(panel)
+        lst = create_todo_list("L")
+        item = create_todo_item("Standup")
+        item.location = "Old"
+        lst.add_item(item)
+        panel.set_item(item, lst)
+        panel.set_edit_mode(True)
+
+        received: list = []
+        panel.item_location_changed.connect(lambda iid, loc: received.append((iid, loc)))
+        panel._location_edit.setText("New Place")
+        panel._location_edit.editingFinished.emit()
+        assert received == [(item.id, "New Place")]
+
+    def test_view_mode_no_emit(self, qtbot):
+        panel = TaskDetailPanel()
+        qtbot.addWidget(panel)
+        lst = create_todo_list("L")
+        item = create_todo_item("Standup")
+        item.location = "Old"
+        lst.add_item(item)
+        panel.set_item(item, lst)
+        # Stay in view mode — no emit even on text change.
+        received: list = []
+        panel.item_location_changed.connect(lambda iid, loc: received.append((iid, loc)))
+        panel._location_edit.setText("New Place")
+        panel._location_edit.editingFinished.emit()
+        assert received == []
+
+    def test_unchanged_value_no_emit(self, qtbot):
+        # Setting the same text shouldn't emit — the comparison happens
+        # against the current item.location.
+        panel = TaskDetailPanel()
+        qtbot.addWidget(panel)
+        lst = create_todo_list("L")
+        item = create_todo_item("Standup")
+        item.location = "Same"
+        lst.add_item(item)
+        panel.set_item(item, lst)
+        panel.set_edit_mode(True)
+        received: list = []
+        panel.item_location_changed.connect(lambda iid, loc: received.append((iid, loc)))
+        panel._location_edit.editingFinished.emit()
+        assert received == []

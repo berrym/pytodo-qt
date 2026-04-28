@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS items (
     notified_at INTEGER NOT NULL DEFAULT 0,
     conditions TEXT,
     completed_at INTEGER,
+    location TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (list_id) REFERENCES lists(id)
 )
 """
@@ -305,6 +306,7 @@ class DatabaseStorage:
         self._migrate_schema_16_to_17()
         self._migrate_schema_17_to_18()
         self._migrate_schema_18_to_19()
+        self._migrate_schema_19_to_20()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -627,6 +629,27 @@ class DatabaseStorage:
 
         self.set_schema_version(19)
 
+    def _migrate_schema_19_to_20(self) -> None:
+        """Migrate schema from version 19 to 20 (add location text column).
+
+        Adds a non-null TEXT column with empty-string default. The column
+        carries the user-entered location for an item — physical address,
+        meeting room, "phone call", whatever — and round-trips through
+        VTODO's LOCATION property for CalDAV interop.
+        """
+        current_version = self.get_schema_version()
+        if current_version >= 20:
+            return
+
+        columns = [row[1] for row in self.connection.execute("PRAGMA table_info(items)")]
+        if "location" not in columns:
+            self.connection.execute(
+                "ALTER TABLE items ADD COLUMN location TEXT NOT NULL DEFAULT ''"
+            )
+            logger.log.info("Migrated schema 19->20: added location column to items")
+
+        self.set_schema_version(20)
+
     def get_schema_version(self) -> int:
         """Get current schema version."""
         cursor = self.connection.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
@@ -872,6 +895,7 @@ class DatabaseStorage:
             "notified_at": item.notified_at,
             "conditions": json.dumps(item.conditions) if item.conditions else None,
             "completed_at": item.completed_at,
+            "location": item.location,
         }
         columns = ", ".join(params.keys())
         placeholders = ", ".join(f":{k}" for k in params)
@@ -1030,6 +1054,12 @@ class DatabaseStorage:
         except (KeyError, IndexError):
             completed_at = None
 
+        # Handle location column (v20+)
+        try:
+            location = row["location"] or ""
+        except (KeyError, IndexError):
+            location = ""
+
         return TodoItem(
             id=UUID(row["id"]),
             reminder=row["reminder"],
@@ -1064,6 +1094,7 @@ class DatabaseStorage:
             notified_at=notified_at,
             conditions=conditions,
             completed_at=completed_at,
+            location=location,
         )
 
     # Bulk operations (for sync and migration)

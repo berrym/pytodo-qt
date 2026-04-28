@@ -66,6 +66,7 @@ class TodoItem:
     notified_at: int = 0  # Last notification timestamp in ms (0 = never)
     conditions: list[dict[str, str]] | None = None  # Structured conditions (JSON)
     completed_at: int | None = None  # Completion timestamp in ms (schema v19, None = unknown)
+    location: str = ""  # User-entered location — address, room, "phone call", etc. (schema v20)
 
     @property
     def is_subtask(self) -> bool:
@@ -145,6 +146,7 @@ class TodoItem:
             "notified_at": self.notified_at,
             "conditions": self.conditions,
             "completed_at": self.completed_at,
+            "location": self.location,
         }
 
     @classmethod
@@ -196,6 +198,7 @@ class TodoItem:
             notified_at=data.get("notified_at", 0),
             conditions=data.get("conditions"),
             completed_at=data.get("completed_at"),
+            location=data.get("location", ""),
         )
 
 

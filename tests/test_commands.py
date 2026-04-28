@@ -1124,3 +1124,47 @@ class TestEditEstimatedMinutesCommand:
 
         cmd.redo()  # Should not raise
         cmd.undo()  # Should not raise
+
+
+class TestEditLocationCommand:
+    def test_redo_changes_location(self):
+        db, lst, item1, _ = make_populated_db()
+        item1.location = ""
+        window = make_window(db)
+        from pytodo_qt.gui.commands import EditLocationCommand
+
+        cmd = EditLocationCommand(window, lst.id, item1.id, "", "Conference Room B")
+        cmd.redo()
+        assert item1.location == "Conference Room B"
+
+    def test_undo_restores_location(self):
+        db, lst, item1, _ = make_populated_db()
+        item1.location = "Old Place"
+        window = make_window(db)
+        from pytodo_qt.gui.commands import EditLocationCommand
+
+        cmd = EditLocationCommand(window, lst.id, item1.id, "Old Place", "New Place")
+        cmd.redo()
+        cmd.undo()
+        assert item1.location == "Old Place"
+
+    def test_clearing_location(self):
+        db, lst, item1, _ = make_populated_db()
+        item1.location = "Some Place"
+        window = make_window(db)
+        from pytodo_qt.gui.commands import EditLocationCommand
+
+        cmd = EditLocationCommand(window, lst.id, item1.id, "Some Place", "")
+        cmd.redo()
+        assert item1.location == ""
+        cmd.undo()
+        assert item1.location == "Some Place"
+
+    def test_noop_if_item_missing(self):
+        db, lst, _, _ = make_populated_db()
+        window = make_window(db)
+        from pytodo_qt.gui.commands import EditLocationCommand
+
+        cmd = EditLocationCommand(window, lst.id, uuid4(), "", "X")
+        cmd.redo()
+        cmd.undo()

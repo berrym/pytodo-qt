@@ -728,3 +728,63 @@ class TestEdgeCases:
         items = import_ics_to_items(cal.to_ical())
         ids = {item.id for item in items}
         assert len(ids) == 5
+
+
+class TestLocationRoundTrip:
+    """LOCATION property round-trips through VTODO export/import — the
+    core CalDAV interop guarantee for the new field."""
+
+    def test_export_includes_location(self):
+        from pytodo_qt.core.caldav import _item_to_vtodo
+        from pytodo_qt.core.models import create_todo_item
+
+        item = create_todo_item("Standup")
+        item.location = "Conference Room B"
+        vtodo = _item_to_vtodo(item)
+        loc = vtodo.get("location")
+        assert loc is not None
+        assert str(loc) == "Conference Room B"
+
+    def test_export_omits_location_when_empty(self):
+        from pytodo_qt.core.caldav import _item_to_vtodo
+        from pytodo_qt.core.models import create_todo_item
+
+        item = create_todo_item("Standup")
+        item.location = ""
+        vtodo = _item_to_vtodo(item)
+        assert vtodo.get("location") is None
+
+    def test_import_picks_up_location(self):
+        from pytodo_qt.core.caldav import _item_to_vtodo, _vtodo_to_item
+        from pytodo_qt.core.models import create_todo_item
+
+        item = create_todo_item("Standup")
+        item.location = "123 Main St"
+        vtodo = _item_to_vtodo(item)
+        restored = _vtodo_to_item(vtodo)
+        assert restored is not None
+        assert restored.location == "123 Main St"
+
+    def test_import_with_no_location_yields_empty(self):
+        from pytodo_qt.core.caldav import _item_to_vtodo, _vtodo_to_item
+        from pytodo_qt.core.models import create_todo_item
+
+        item = create_todo_item("Standup")
+        # location not set → empty string default
+        vtodo = _item_to_vtodo(item)
+        restored = _vtodo_to_item(vtodo)
+        assert restored is not None
+        assert restored.location == ""
+
+    def test_full_round_trip_via_ics_bytes(self):
+        from pytodo_qt.core.caldav import export_list_to_ics, import_ics_to_items
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+
+        lst = create_todo_list("L")
+        item = create_todo_item("Standup")
+        item.location = "Office"
+        lst.add_item(item)
+        ics = export_list_to_ics(lst)
+        restored = import_ics_to_items(ics)
+        assert len(restored) == 1
+        assert restored[0].location == "Office"
