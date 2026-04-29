@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDateEdit,
     QDialog,
+    QFrame,
     QGraphicsOpacityEffect,
     QHBoxLayout,
     QHeaderView,
@@ -288,6 +289,12 @@ class TodoTableWidget(QTableWidget):
     add_subtask_requested = pyqtSignal(object)  # (parent_id)
     set_time_block_requested = pyqtSignal(object)  # (item_id)
     set_event_date_requested = pyqtSignal(object)  # (item_id)
+    # Empty-state action signals — wired by MainWindow to the same
+    # handlers the kanban view uses, so the two views offer identical
+    # exit paths from a zero-rows state.
+    add_task_requested = pyqtSignal()
+    clear_filters_requested = pyqtSignal()
+    show_completed_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -307,6 +314,27 @@ class TodoTableWidget(QTableWidget):
         self._completed_font = make_font(12)
         self._completed_font.setBold(True)
         self._completed_font.setStrikeOut(True)
+
+        # Empty-state overlay — child of self so it floats over the
+        # table area without disrupting layout. Three cases distinguish
+        # "no items yet" (offer Add task) from "all complete and the
+        # filter hides them" (offer Show completed) from "filter is
+        # active and matches nothing" (offer Clear filters).
+        self._empty_state = QFrame(self)
+        self._empty_state.setFrameShape(QFrame.Shape.StyledPanel)
+        self._empty_state_label = QLabel("", self._empty_state)
+        self._empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_state_label.setWordWrap(True)
+        self._empty_state_button = QPushButton("", self._empty_state)
+        self._empty_state_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        _es_layout = QVBoxLayout(self._empty_state)
+        _es_layout.setContentsMargins(28, 22, 28, 22)
+        _es_layout.setSpacing(14)
+        _es_layout.addWidget(self._empty_state_label)
+        _es_layout.addWidget(self._empty_state_button, 0, Qt.AlignmentFlag.AlignCenter)
+        self._empty_state.hide()
+        self._empty_state_action: str = ""
+        self._empty_state_button.clicked.connect(self._on_empty_state_button)
 
     def _setup_table(self) -> None:
         """Configure the table widget."""
@@ -446,10 +474,14 @@ class TodoTableWidget(QTableWidget):
                     self._v_header_filter_installed = True
 
     def resizeEvent(self, e) -> None:  # noqa: N802
-        """Update ellipsis visibility when table resizes (e.g. scrollbar appears)."""
+        """Update ellipsis visibility when table resizes (e.g. scrollbar
+        appears) and reposition the empty-state overlay so it stays
+        centered on viewport changes."""
         super().resizeEvent(e)
         if self._ellipsis_pairs:
             self._update_ellipsis_visibility()
+        if self._empty_state.isVisible():
+            self._position_empty_state()
 
     def _on_corner_clicked(self) -> None:
         """Toggle between select-all and deselect-all."""
@@ -604,6 +636,75 @@ class TodoTableWidget(QTableWidget):
                         return
         super().keyPressEvent(e)
 
+    def _on_empty_state_button(self) -> None:
+        """Dispatch the empty-state button click to the right signal
+        based on which case is currently displayed."""
+        if self._empty_state_action == "add":
+            self.add_task_requested.emit()
+        elif self._empty_state_action == "show_completed":
+            self.show_completed_requested.emit()
+        elif self._empty_state_action == "clear_filters":
+            self.clear_filters_requested.emit()
+
+    def _show_empty_state(self, case: str) -> None:
+        """Populate the overlay for one of the three cases and show it.
+
+        case == "no_list"        → "No tasks yet" + Add task
+        case == "all_done"       → "All done!" + Show completed
+        case == "filtered_empty" → "No tasks match..." + Clear filters
+        """
+        colors = get_colors()
+        if case == "no_list":
+            self._empty_state_label.setText(
+                self.tr("No tasks yet.\nAdd your first one to get started.")
+            )
+            self._empty_state_button.setText(self.tr("Add task"))
+            self._empty_state_action = "add"
+        elif case == "all_done":
+            self._empty_state_label.setText(
+                self.tr("All done!\nEvery task in this list is complete.")
+            )
+            self._empty_state_button.setText(self.tr("Show completed"))
+            self._empty_state_action = "show_completed"
+        else:
+            self._empty_state_label.setText(self.tr("No tasks match the current filter."))
+            self._empty_state_button.setText(self.tr("Clear filters"))
+            self._empty_state_action = "clear_filters"
+
+        self._empty_state.setStyleSheet(
+            f"QFrame {{ background: {colors['base']}; "
+            f"border: 1px solid {colors['border']}; border-radius: 12px; }}"
+            f"QLabel {{ color: {colors['text']}; font-size: 14px; "
+            f"background: transparent; border: none; }}"
+            f"QPushButton {{ background: {colors['highlight']}; "
+            f"color: {colors['highlight_text']}; border: none; "
+            f"padding: 8px 18px; border-radius: 8px; font-weight: bold; }}"
+            f"QPushButton:hover {{ background: {colors['link']}; }}"
+        )
+        self._empty_state.show()
+        self._empty_state.raise_()
+        self._position_empty_state()
+
+    def _hide_empty_state(self) -> None:
+        self._empty_state.hide()
+        self._empty_state_action = ""
+
+    def _position_empty_state(self) -> None:
+        self._empty_state.adjustSize()
+        viewport = self.viewport()
+        if viewport is None:
+            return
+        cx = (viewport.width() - self._empty_state.width()) // 2
+        cy = (viewport.height() - self._empty_state.height()) // 2
+        # Position relative to the viewport, then map back to widget
+        # coords so the overlay sits over the table body and not under
+        # the headers.
+        viewport_top_left = viewport.mapTo(self, QPoint(0, 0))
+        self._empty_state.move(
+            max(0, viewport_top_left.x() + cx),
+            max(0, viewport_top_left.y() + cy),
+        )
+
     def refresh(self) -> None:
         """Refresh the table contents."""
         self.setRowCount(0)
@@ -612,6 +713,7 @@ class TodoTableWidget(QTableWidget):
         self._context_row_ids.clear()
 
         if self._current_list is None:
+            self._hide_empty_state()
             return
 
         colors = get_colors()
@@ -641,9 +743,33 @@ class TodoTableWidget(QTableWidget):
             logger.log.exception("Sort failed, falling back to unsorted")
             items = list(self._current_list.active_items())
 
+        # Snapshot the unfiltered items so the empty-state dispatcher
+        # can tell "no items at all" from "filter hides everything."
+        items_all = list(items)
+
         # Apply filter if active
         if self._filter_state is not None and self._filter_state.is_active:
             items = self._apply_filter(items)
+
+        # Empty-state dispatch — three cases mirror the kanban view so
+        # the two surfaces offer identical exit paths from a zero-rows
+        # state. "no_list" when there are no items at all; "all_done"
+        # when the user is hiding completed and every item is complete;
+        # "filtered_empty" for any other filter combo that matches
+        # nothing.
+        if not items:
+            if not items_all:
+                self._show_empty_state("no_list")
+            elif (
+                self._filter_state is not None
+                and getattr(self._filter_state, "status", 0) == 1
+                and all(it.complete for it in items_all)
+            ):
+                self._show_empty_state("all_done")
+            else:
+                self._show_empty_state("filtered_empty")
+        else:
+            self._hide_empty_state()
 
         # Build hierarchical display order
         display_items = self._build_display_order(items, sort_key)

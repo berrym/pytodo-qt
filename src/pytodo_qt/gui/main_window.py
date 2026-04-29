@@ -815,6 +815,12 @@ class MainWindow(QMainWindow):
         self.todo_table.set_time_block_requested.connect(self._on_set_time_block)
         self.todo_table.set_event_date_requested.connect(self._on_set_event_date)
         self.todo_table.item_selected.connect(lambda _: self._update_detail_panel())
+        # Empty-state overlay actions — same handlers the kanban view
+        # uses, so the two surfaces share exit paths from a zero-rows
+        # state.
+        self.todo_table.add_task_requested.connect(self._on_add_todo)
+        self.todo_table.clear_filters_requested.connect(self.search_filter.clear_filters)
+        self.todo_table.show_completed_requested.connect(self._on_show_completed_requested)
 
     def _connect_kanban_signals(self) -> None:
         """Connect KanbanBoardWidget signals to handlers (same as table)."""
