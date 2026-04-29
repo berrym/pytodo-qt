@@ -635,9 +635,7 @@ class MobileAccessWizard(QDialog):
         if not devices:
             empty = QLabel(self.tr("No devices connected yet."))
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty.setStyleSheet(
-                "font-size: 13px; color: palette(placeholderText); padding: 20px;"
-            )
+            empty.setStyleSheet("font-size: 13px; color: palette(placeholderText); padding: 20px;")
             layout.addWidget(empty)
         else:
             for device in devices:
