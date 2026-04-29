@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from PyQt6.QtCore import QCoreApplication, QMimeData, QPoint, Qt, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QMimeData, QPoint, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QDrag, QKeyEvent, QMouseEvent
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -897,10 +897,14 @@ class KanbanBoardWidget(QWidget):
     add_item_in_column_requested = pyqtSignal(str)  # (column_name) — new item
 
     # Empty-state action signals — main_window wires these to add-task,
-    # search-filter clear, and status-filter "show completed" respectively.
+    # search-filter clear, status-filter "show completed", and add-list
+    # respectively. The first three exit a zero-rows state inside an
+    # existing list; create_list_requested onboards a user who has no
+    # lists in the database at all.
     add_task_requested = pyqtSignal()
     clear_filters_requested = pyqtSignal()
     show_completed_requested = pyqtSignal()
+    create_list_requested = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -963,10 +967,13 @@ class KanbanBoardWidget(QWidget):
             self.show_completed_requested.emit()
         elif self._empty_state_action == "clear_filters":
             self.clear_filters_requested.emit()
+        elif self._empty_state_action == "create_list":
+            self.create_list_requested.emit()
 
     def _show_empty_state(self, case: str) -> None:
-        """Populate the overlay for one of the three cases and show it.
+        """Populate the overlay for one of the four cases and show it.
 
+        case == "no_lists"       → "Welcome! Create your first list..." + Create list
         case == "no_list"        → "No tasks yet" + Add task
         case == "all_done"       → "All done!" + Show completed
         case == "filtered_empty" → "No tasks match..." + Clear filters
@@ -974,7 +981,16 @@ class KanbanBoardWidget(QWidget):
         from ..styles.themes import get_colors
 
         colors = get_colors()
-        if case == "no_list":
+        if case == "no_lists":
+            self._empty_state_label.setText(
+                self.tr(
+                    "Welcome to PyTodo-Qt.\n"
+                    "Create your first list to get started — it's where your tasks live."
+                )
+            )
+            self._empty_state_button.setText(self.tr("Create list"))
+            self._empty_state_action = "create_list"
+        elif case == "no_list":
             self._empty_state_label.setText(
                 self.tr("No tasks yet.\nAdd your first one to get started.")
             )
@@ -1004,6 +1020,10 @@ class KanbanBoardWidget(QWidget):
         self._empty_state.show()
         self._empty_state.raise_()
         self._position_empty_state()
+        # Defer a second position pass to the next event-loop tick so
+        # an overlay shown from inside a _refresh_ui sequence still
+        # ends up centered after the surrounding layout settles.
+        QTimer.singleShot(0, self._position_empty_state)
 
     def _hide_empty_state(self) -> None:
         self._empty_state.hide()
@@ -1053,7 +1073,10 @@ class KanbanBoardWidget(QWidget):
             self._layout_btn = None
 
         if self._todo_list is None:
-            self._hide_empty_state()
+            # No active list — usually means the database has no lists
+            # at all (fresh user, or last list deleted). Onboard with
+            # the no_lists overlay so a Create list button is visible.
+            self._show_empty_state("no_lists")
             return
 
         colors = get_colors()

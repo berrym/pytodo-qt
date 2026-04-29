@@ -412,14 +412,17 @@ class TestKanbanEmptyState:
         board.set_list(lst)
         assert board._empty_state.isHidden()
 
-    def test_overlay_hidden_when_no_list(self, qtbot):
-        """Without a selected list, the overlay should not appear —
-        the existing behaviour is to show nothing at all, and we
-        should not regress that."""
+    def test_overlay_shows_no_lists_when_no_list_set(self, qtbot):
+        """A None list now triggers the onboarding "no_lists" overlay
+        with a Create list action — important for new users who open
+        the app to a fresh database with no lists yet, so they have a
+        visible path to creating their first list rather than a blank
+        view they cannot interact with."""
         board = KanbanBoardWidget()
         qtbot.addWidget(board)
         board.set_list(None)
-        assert board._empty_state.isHidden()
+        assert not board._empty_state.isHidden()
+        assert board._empty_state_action == "create_list"
 
     def test_all_done_priority_over_filtered_empty(self, qtbot):
         """When the user has exactly the "all tasks complete with
