@@ -315,12 +315,14 @@ class TodoTableWidget(QTableWidget):
         self._completed_font.setBold(True)
         self._completed_font.setStrikeOut(True)
 
-        # Empty-state overlay — child of self so it floats over the
-        # table area without disrupting layout. Three cases distinguish
+        # Empty-state overlay — child of the viewport so it stacks
+        # above the table cells (a child of self would render behind
+        # the QTableWidget's internal viewport). Three cases distinguish
         # "no items yet" (offer Add task) from "all complete and the
         # filter hides them" (offer Show completed) from "filter is
         # active and matches nothing" (offer Clear filters).
-        self._empty_state = QFrame(self)
+        _vp = self.viewport()
+        self._empty_state = QFrame(_vp if _vp is not None else self)
         self._empty_state.setFrameShape(QFrame.Shape.StyledPanel)
         self._empty_state_label = QLabel("", self._empty_state)
         self._empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -690,20 +692,20 @@ class TodoTableWidget(QTableWidget):
         self._empty_state_action = ""
 
     def _position_empty_state(self) -> None:
+        """Center the overlay inside the viewport. The overlay is a
+        viewport child, so the coordinates are viewport-local.
+        """
         self._empty_state.adjustSize()
         viewport = self.viewport()
         if viewport is None:
             return
-        cx = (viewport.width() - self._empty_state.width()) // 2
-        cy = (viewport.height() - self._empty_state.height()) // 2
-        # Position relative to the viewport, then map back to widget
-        # coords so the overlay sits over the table body and not under
-        # the headers.
-        viewport_top_left = viewport.mapTo(self, QPoint(0, 0))
-        self._empty_state.move(
-            max(0, viewport_top_left.x() + cx),
-            max(0, viewport_top_left.y() + cy),
-        )
+        # Empty viewport on initial layout — fall back to widget size
+        # so the first paint after a fresh empty list still positions.
+        vp_w = viewport.width() or self.width()
+        vp_h = viewport.height() or self.height()
+        cx = (vp_w - self._empty_state.width()) // 2
+        cy = (vp_h - self._empty_state.height()) // 2
+        self._empty_state.move(max(0, cx), max(0, cy))
 
     def refresh(self) -> None:
         """Refresh the table contents."""
