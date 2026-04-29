@@ -33,6 +33,7 @@ class AddListDialog(QDialog):
     def __init__(self, parent=None, database: Database | None = None):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Add List"))
+        self.setAccessibleName(self.tr("Add List"))
         self.setMinimumWidth(350)
 
         self._database = database

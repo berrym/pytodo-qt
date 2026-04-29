@@ -62,6 +62,7 @@ class BatchDueDateDialog(QDialog):
     def __init__(self, items: list[TodoItem], parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("Edit Due Dates"))
+        self.setAccessibleName(self.tr("Edit Due Dates"))
         self.setMinimumWidth(550)
         self.setMinimumHeight(300)
         self._items = items

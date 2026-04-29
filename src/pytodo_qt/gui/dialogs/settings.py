@@ -46,6 +46,7 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Settings"))
+        self.setAccessibleName(self.tr("Settings"))
         self.setMinimumWidth(620)
         self.setMinimumHeight(460)
 

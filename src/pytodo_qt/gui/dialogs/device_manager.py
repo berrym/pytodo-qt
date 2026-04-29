@@ -66,6 +66,7 @@ class DeviceManagerDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Device & Sync Manager"))
+        self.setAccessibleName(self.tr("Device and Sync Manager"))
         self.setMinimumWidth(700)
         self.setMinimumHeight(500)
 

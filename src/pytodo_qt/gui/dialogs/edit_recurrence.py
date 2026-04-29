@@ -35,6 +35,7 @@ class EditRecurrenceDialog(QDialog):
     def __init__(self, item: TodoItem, parent=None):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Edit Recurrence"))
+        self.setAccessibleName(self.tr("Edit Recurrence"))
         self.setMinimumWidth(400)
 
         self._result: tuple[str | None, int, date | None, int | None] | None = None

@@ -59,6 +59,7 @@ class AddTodoDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Add Todo"))
+        self.setAccessibleName(self.tr("Add Todo"))
         self.setMinimumWidth(720)
 
         self._item: TodoItem | None = None

@@ -183,6 +183,9 @@ class FocusTimerDialog(QDialog):
         self._mode = mode
         is_stopwatch = mode == "stopwatch"
         self.setWindowTitle(self.tr("Stopwatch") if is_stopwatch else self.tr("Focus Timer"))
+        self.setAccessibleName(
+            self.tr("Stopwatch") if is_stopwatch else self.tr("Focus Timer")
+        )
         self._progress_bar.setVisible(not is_stopwatch)
         self._session_label.setVisible(not is_stopwatch)
         self._skip_btn.setVisible(False)

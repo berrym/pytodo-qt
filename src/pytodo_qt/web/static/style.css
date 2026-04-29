@@ -2658,3 +2658,38 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ============================================================
+   Keyboard focus indicators (WCAG 2.4.7)
+
+   `:focus-visible` triggers only on keyboard navigation, so
+   click-focused buttons do not paint a stray outline. Every
+   interactive element shows a visible focus state when reached
+   by Tab or arrow keys.
+   ============================================================ */
+
+button:focus-visible,
+[role="button"]:focus-visible,
+[tabindex="0"]:focus-visible,
+[tabindex="-1"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius);
+}
+
+/* Inputs use border-color on :focus for both mouse and keyboard
+   (inputs need to indicate "type here" on click), and add an
+   additional accent halo on keyboard-only focus so the keyboard
+   state is distinguishable from the click state. */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-subtle);
+}
+
+/* The FAB and sheet-close button have circular shapes; their focus
+   ring matches their geometry. */
+.add-btn:focus-visible,
+.sheet-close:focus-visible {
+  border-radius: 50%;
+}

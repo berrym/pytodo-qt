@@ -134,6 +134,7 @@ class FocusStatsDialog(QDialog):
         self._config = config
 
         self.setWindowTitle(self.tr("Focus Statistics"))
+        self.setAccessibleName(self.tr("Focus Statistics"))
         self.setMinimumWidth(450)
         self.setMinimumHeight(500)
 

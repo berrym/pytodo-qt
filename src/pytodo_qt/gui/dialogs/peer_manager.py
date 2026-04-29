@@ -54,6 +54,7 @@ class PeerManagerDialog(QDialog):
     ):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Peer Manager"))
+        self.setAccessibleName(self.tr("Peer Manager"))
         self.setMinimumWidth(600)
         self.setMinimumHeight(400)
 

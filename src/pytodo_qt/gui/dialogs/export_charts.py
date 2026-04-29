@@ -124,6 +124,7 @@ class ExportChartsDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("Export Charts"))
+        self.setAccessibleName(self.tr("Export Charts"))
         self.setMinimumSize(1100, 800)
         self.resize(1200, 900)
 

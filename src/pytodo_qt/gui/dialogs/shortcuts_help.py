@@ -60,6 +60,7 @@ class ShortcutsHelpDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Keyboard Shortcuts"))
+        self.setAccessibleName(self.tr("Keyboard Shortcuts"))
         self.setMinimumSize(450, 400)
         self._setup_ui()
 
