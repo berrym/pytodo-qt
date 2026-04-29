@@ -3649,7 +3649,6 @@ class _WeekDelegate(QStyledItemDelegate):
         col_base = QColor(c["base"])
         col_alt_base = QColor(c["alternate_base"])
         col_highlight = QColor(c["highlight"])
-        col_highlight_text = QColor(c["highlight_text"])
         col_text = QColor(c["text"])
         col_completed_text = QColor(c["completed_text"])
         col_border = QColor(c["border"])
@@ -3660,7 +3659,14 @@ class _WeekDelegate(QStyledItemDelegate):
         is_all_day = hour == -1
 
         if is_today and is_all_day:
-            painter.fillRect(rect, col_highlight)
+            # Translucent today tint — paint the base first so the
+            # highlight reads as a wash, not a solid block. Higher
+            # alpha than hour-grid today cells (60 vs 30) since the
+            # all-day band is the primary today-orientation cue.
+            today_bg = QColor(col_highlight)
+            today_bg.setAlpha(60)
+            painter.fillRect(rect, col_base)
+            painter.fillRect(rect, today_bg)
         elif is_today:
             # Subtle today tint for hour cells
             today_bg = QColor(col_highlight)
@@ -3775,8 +3781,6 @@ class _WeekDelegate(QStyledItemDelegate):
             # Text
             if item.complete:
                 painter.setPen(col_completed_text)
-            elif is_today and is_all_day:
-                painter.setPen(col_highlight_text)
             else:
                 painter.setPen(col_text)
 
@@ -3803,20 +3807,18 @@ class _WeekDelegate(QStyledItemDelegate):
                     strike_y,
                 )
 
-        # Overflow indicator. Mirrors the chip-text color rule so the
-        # "+N more" stays readable on the today-all-day highlight
-        # background — using completed_text (muted gray) on top of the
-        # accent-colored highlight produces near-zero contrast.
+        # Overflow indicator. Today-all-day no longer needs a special
+        # text color override now that its background is a translucent
+        # tint over col_base rather than a solid highlight fill — the
+        # standard muted-gray reads against the wash the same way it
+        # does on a non-today cell.
         overflow = len(items) - max_chips
         if overflow > 0:
             overflow_y = y + max_chips * chip_height
             overflow_rect = rect.adjusted(4, 0, -4, 0)
             overflow_rect.setTop(overflow_y)
             overflow_rect.setHeight(overflow_height)
-            if is_today and is_all_day:
-                painter.setPen(col_highlight_text)
-            else:
-                painter.setPen(QColor(c["completed_text"]))
+            painter.setPen(QColor(c["completed_text"]))
             painter.drawText(
                 overflow_rect,
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,

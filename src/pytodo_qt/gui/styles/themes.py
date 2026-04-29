@@ -54,9 +54,9 @@ LIGHT_COLORS = {
     "text": "#1a1a1a",
     "button": "#e0e0e0",
     "button_text": "#1a1a1a",
-    "highlight": "#0078d4",
+    "highlight": "#2196f3",
     "highlight_text": "#ffffff",
-    "link": "#0066cc",
+    "link": "#1976d2",
     "border": "#d0d0d0",
     "completed_bg": "#f0f8f0",
     "completed_text": "#787878",
@@ -91,9 +91,9 @@ DARK_COLORS = {
     "text": "#e0e0e0",
     "button": "#3c3c3c",
     "button_text": "#e0e0e0",
-    "highlight": "#0078d4",
+    "highlight": "#64b5f6",
     "highlight_text": "#ffffff",
-    "link": "#58a6ff",
+    "link": "#90caf9",
     "border": "#3c3c3c",
     "completed_bg": "#1a2f1a",
     "completed_text": "#8c8c8c",
@@ -347,7 +347,7 @@ QTableWidget {{
     background-color: {colors["base"]};
     alternate-background-color: {colors["alternate_base"]};
     border: 1px solid {colors["border"]};
-    border-radius: 4px;
+    border-radius: 8px;
     gridline-color: {colors["border"]};
 }}
 
@@ -375,7 +375,7 @@ QPushButton {{
     background-color: {colors["button"]};
     color: {colors["button_text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 4px;
+    border-radius: 8px;
     padding: 8px 16px;
     min-width: 80px;
 }}
@@ -389,6 +389,10 @@ QPushButton:pressed {{
     background-color: {colors["highlight"]};
 }}
 
+QPushButton:focus {{
+    border: 2px solid {colors["highlight"]};
+}}
+
 QPushButton:default {{
     border: 2px solid {colors["highlight"]};
 }}
@@ -398,8 +402,8 @@ QLineEdit, QTextEdit, QPlainTextEdit {{
     background-color: {colors["base"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 4px;
-    padding: 6px;
+    border-radius: 8px;
+    padding: 8px;
 }}
 
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {{
@@ -411,8 +415,8 @@ QComboBox {{
     background-color: {colors["base"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 4px;
-    padding: 6px;
+    border-radius: 8px;
+    padding: 8px;
     min-width: 100px;
 }}
 
@@ -435,7 +439,7 @@ QComboBox QAbstractItemView {{
 /* Tab widgets */
 QTabWidget::pane {{
     border: 1px solid {colors["border"]};
-    border-radius: 4px;
+    border-radius: 8px;
     background-color: {colors["base"]};
 }}
 
@@ -444,8 +448,8 @@ QTabBar::tab {{
     color: {colors["button_text"]};
     padding: 8px 16px;
     margin-right: 2px;
-    border-top-left-radius: 4px;
-    border-top-right-radius: 4px;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
 }}
 
 QTabBar::tab:selected {{
@@ -460,7 +464,7 @@ QTabBar::tab:hover:!selected {{
 /* Group boxes */
 QGroupBox {{
     border: 1px solid {colors["border"]};
-    border-radius: 4px;
+    border-radius: 8px;
     margin-top: 12px;
     padding-top: 8px;
     font-weight: bold;
@@ -516,7 +520,7 @@ QProgressBar {{
 
 QProgressBar::chunk {{
     background-color: {colors["highlight"]};
-    border-radius: 3px;
+    border-radius: 4px;
 }}
 
 /* Status bar */
@@ -540,7 +544,7 @@ QMenu {{
     background-color: {colors["base"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 4px;
+    border-radius: 8px;
 }}
 
 QMenu::item {{
@@ -569,7 +573,7 @@ QToolBar {{
 QToolButton {{
     background-color: transparent;
     border: 1px solid transparent;
-    border-radius: 4px;
+    border-radius: 8px;
     padding: 6px;
 }}
 
@@ -587,7 +591,7 @@ QToolTip {{
     background-color: {colors["base"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 4px;
+    border-radius: 8px;
     padding: 4px;
 }}
 
@@ -619,7 +623,7 @@ QSpinBox, QDoubleSpinBox {{
     background-color: {colors["base"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 4px;
+    border-radius: 8px;
     padding: 4px;
 }}
 
@@ -633,7 +637,7 @@ QListView {{
     background-color: {colors["base"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 4px;
+    border-radius: 8px;
 }}
 
 QListView::item {{
