@@ -12,7 +12,6 @@ from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QDialog,
     QFrame,
-    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -21,7 +20,26 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..styles.themes import get_colors
+
 _TOMATO_EMOJI = "\U0001f345"
+
+
+def _format_duration(seconds: int) -> str:
+    """Format a duration in seconds as a human-readable string.
+
+    Picks the most readable unit based on magnitude:
+      < 1 minute  → "Ns"
+      < 1 hour    → "MmSSs" (e.g. "12m 03s")
+      otherwise   → "HhMMm" (e.g. "2h 30m")
+    """
+    if seconds < 60:
+        return f"{seconds}s"
+    h, remainder = divmod(seconds, 3600)
+    m, s = divmod(remainder, 60)
+    if h > 0:
+        return f"{h}h {m:02d}m"
+    return f"{m}m {s:02d}s"
 
 
 class FocusTimerDialog(QDialog):
@@ -107,12 +125,64 @@ class FocusTimerDialog(QDialog):
         self._streak_label.hide()
         layout.addWidget(self._streak_label)
 
-        # Focus score display
+        # Focus score display — score text plus a small info icon
+        # that surfaces the formula on hover (compact tooltip) or
+        # click (richer popover). Without this affordance "Score: D"
+        # is meaningless to a first-time user — they have no way to
+        # know what's being measured or how to improve it.
+        self._focus_score_container = QWidget()
+        _fs_layout = QHBoxLayout(self._focus_score_container)
+        _fs_layout.setContentsMargins(0, 0, 0, 0)
+        _fs_layout.setSpacing(4)
+        _fs_layout.addStretch()
         self._focus_score_label = QLabel()
-        self._focus_score_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._focus_score_label.setStyleSheet("color: gray;")
-        self._focus_score_label.hide()
-        layout.addWidget(self._focus_score_label)
+        _fs_layout.addWidget(self._focus_score_label)
+        self._focus_score_info_btn = QPushButton("ⓘ")  # circled-i glyph
+        self._focus_score_info_btn.setFlat(True)
+        self._focus_score_info_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._focus_score_info_btn.setFixedWidth(20)
+        self._focus_score_info_btn.setStyleSheet(
+            "QPushButton { color: gray; font-size: 14px; border: none;"
+            " padding: 0; background: transparent; }"
+            "QPushButton:hover { color: palette(highlight); }"
+        )
+        self._focus_score_info_btn.setToolTip(
+            self.tr("What's this? Click for the full explanation.")
+        )
+        self._focus_score_info_btn.clicked.connect(self._show_focus_score_explanation)
+        _fs_layout.addWidget(self._focus_score_info_btn)
+        _fs_layout.addStretch()
+        self._focus_score_container.hide()
+        layout.addWidget(self._focus_score_container)
+
+        # Stopwatch-specific stats — parallel to the pomodoro
+        # daily-goal / streak / focus-score widgets but populated from
+        # session_type="stopwatch" data only. Hidden in pomodoro mode.
+
+        # Total stopwatch time tracked on the active item across all
+        # sessions (parallel to the per-item pomodoro tomato row).
+        self._item_tracked_label = QLabel()
+        self._item_tracked_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._item_tracked_label.setStyleSheet("color: gray;")
+        self._item_tracked_label.hide()
+        layout.addWidget(self._item_tracked_label)
+
+        # Total stopwatch time tracked today across all items
+        # (parallel to the daily pomodoro goal).
+        self._daily_tracked_label = QLabel()
+        self._daily_tracked_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._daily_tracked_label.setStyleSheet("color: gray;")
+        self._daily_tracked_label.hide()
+        layout.addWidget(self._daily_tracked_label)
+
+        # Consecutive days with at least one stopwatch session
+        # (parallel to the pomodoro streak).
+        self._tracking_streak_label = QLabel()
+        self._tracking_streak_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._tracking_streak_label.setStyleSheet("color: gray;")
+        self._tracking_streak_label.hide()
+        layout.addWidget(self._tracking_streak_label)
 
         # Buttons
         btn_layout = QHBoxLayout()
@@ -168,29 +238,65 @@ class FocusTimerDialog(QDialog):
         """Toggle the sessions section visibility."""
         self._sessions_expanded = not self._sessions_expanded
         self._sessions_container.setVisible(self._sessions_expanded)
-        arrow = "\u25bc" if self._sessions_expanded else "\u25b6"
-        self._sessions_toggle.setText(
-            self.tr(f"{arrow} Today's Sessions ({self._session_total_count})")
-        )
+        self._refresh_sessions_toggle_text()
         self.adjustSize()
+
+    def _refresh_sessions_toggle_text(self) -> None:
+        """Update the toggle button label using the right phrasing
+        for the current mode. Pomodoro shows "Today's Sessions";
+        stopwatch shows "Today's Tracking" \u2014 distinct labels make it
+        clear the dropdown reflects this mode's data, not the other.
+        """
+        arrow = "\u25bc" if self._sessions_expanded else "\u25b6"
+        if self._mode == "stopwatch":
+            self._sessions_toggle.setText(
+                self.tr(f"{arrow} Today's Tracking ({self._session_total_count})")
+            )
+        else:
+            self._sessions_toggle.setText(
+                self.tr(f"{arrow} Today's Sessions ({self._session_total_count})")
+            )
 
     def set_mode(self, mode: str) -> None:
         """Set the dialog mode: 'pomodoro' or 'stopwatch'.
 
-        In stopwatch mode, hides progress bar, skip button, session counter,
-        and tomato progress. Shows elapsed time counting up.
+        Toggles visibility of the mode-specific subset of widgets so
+        each mode shows only stats that make sense for it. The two
+        modes share the layout shape (countdown + progress bar +
+        item name + collapsible Today's panel) but render distinct
+        data underneath: pomodoro shows session counter / tomato row /
+        daily goal / streak / focus score; stopwatch shows total
+        tracked on this item / daily total tracked / tracking streak.
+        Pomodoro session-history and stopwatch session-history never
+        mix \u2014 the two are filtered by `session_type` upstream.
         """
         self._mode = mode
         is_stopwatch = mode == "stopwatch"
         self.setWindowTitle(self.tr("Stopwatch") if is_stopwatch else self.tr("Focus Timer"))
         self.setAccessibleName(self.tr("Stopwatch") if is_stopwatch else self.tr("Focus Timer"))
+        # Pomodoro-only widgets
         self._progress_bar.setVisible(not is_stopwatch)
         self._session_label.setVisible(not is_stopwatch)
         self._skip_btn.setVisible(False)
         self._item_progress_container.setVisible(not is_stopwatch)
         self._daily_goal_label.setVisible(False)
         self._streak_label.setVisible(False)
-        self._focus_score_label.setVisible(False)
+        # Hide the focus-score *container* (which holds the label and
+        # the info icon together). Hiding only the label leaves the
+        # icon visible alone and persists across update_focus_score
+        # calls because the label's own setVisible(False) sticks.
+        self._focus_score_container.setVisible(False)
+        # Stopwatch-only widgets \u2014 hidden when entering pomodoro mode,
+        # shown empty initially when entering stopwatch mode (the
+        # main_window callers populate them with real values via the
+        # update_stopwatch_* methods below).
+        self._item_tracked_label.setVisible(False)
+        self._daily_tracked_label.setVisible(False)
+        self._tracking_streak_label.setVisible(False)
+        # Reset the session counter and toggle label so a mode switch
+        # never leaves stale text from the previous mode.
+        self._session_total_count = 0
+        self._refresh_sessions_toggle_text()
 
     def update_stopwatch_display(
         self,
@@ -219,11 +325,13 @@ class FocusTimerDialog(QDialog):
         else:
             self._time_label.setText(f"{m:02d}:{s:02d}")
 
-        # Color
+        # Color — sourced from the canonical theme palette so light /
+        # dark themes each render the timer in their tuned variant.
+        colors = get_colors()
         if state == "stopwatch_running":
-            self._time_label.setStyleSheet("color: #3498DB;")
+            self._time_label.setStyleSheet(f"color: {colors['focus_timer_stopwatch_running']};")
         elif state == "stopwatch_paused":
-            self._time_label.setStyleSheet("color: #F39C12;")
+            self._time_label.setStyleSheet(f"color: {colors['focus_timer_paused']};")
 
         # Progress bar — show if estimate exists
         if estimated_minutes > 0:
@@ -252,6 +360,122 @@ class FocusTimerDialog(QDialog):
         self._pause_btn.setEnabled(True)
         self._skip_btn.setVisible(False)
 
+    # ------------------------------------------------------------------
+    # Stopwatch-mode stats — populate the stopwatch-specific labels
+    # and the "Today's Tracking" dropdown. Pomodoro has its own
+    # update_daily_goal / update_streak / update_focus_score / update_sessions
+    # methods; the stopwatch equivalents below carry exclusively
+    # stopwatch (`session_type == "stopwatch"`) data.
+    # ------------------------------------------------------------------
+
+    def update_stopwatch_item_total(self, seconds: int) -> None:
+        """Show total stopwatch time tracked on the active item across
+        all sessions. Hidden when zero so a fresh item doesn't display
+        "0m" and clutter the dialog."""
+        if seconds <= 0:
+            self._item_tracked_label.setVisible(False)
+            return
+        self._item_tracked_label.setText(
+            self.tr(f"Tracked on this item: {_format_duration(seconds)}")
+        )
+        self._item_tracked_label.setVisible(True)
+
+    def update_stopwatch_daily_total(self, seconds: int) -> None:
+        """Show total stopwatch time tracked today across all items.
+        Hidden when zero."""
+        if seconds <= 0:
+            self._daily_tracked_label.setVisible(False)
+            return
+        self._daily_tracked_label.setText(self.tr(f"Today's tracked: {_format_duration(seconds)}"))
+        self._daily_tracked_label.setVisible(True)
+
+    def update_stopwatch_streak(self, days: int) -> None:
+        """Show consecutive days with at least one stopwatch session.
+        Hidden when streak is 0 or 1 — a one-day streak is just "today,"
+        not yet a streak worth surfacing."""
+        if days < 2:
+            self._tracking_streak_label.setVisible(False)
+            return
+        self._tracking_streak_label.setText(self.tr(f"\U0001f525 {days}-day tracking streak"))
+        self._tracking_streak_label.setVisible(True)
+
+    def update_stopwatch_sessions(self, sessions: list[dict[str, Any]]) -> None:
+        """Populate the "Today's Tracking" dropdown with stopwatch
+        sessions. Mirrors `update_sessions` but uses stopwatch
+        terminology and includes the item name on each row, since
+        for stopwatch sessions the item being tracked is more
+        identifying than a sequence number."""
+        self._session_total_count = len(sessions)
+
+        durations = [
+            s.get("duration_seconds", 0) for s in sessions if s.get("duration_seconds", 0) > 0
+        ]
+        total_time = sum(durations)
+        unique_items = {s.get("item_name", "") for s in sessions if s.get("item_name")}
+
+        stats_parts = [self.tr(f"Sessions: {len(sessions)}")]
+        if total_time > 0:
+            stats_parts.append(self.tr(f"Time: {_format_duration(total_time)}"))
+        if durations and len(durations) > 1:
+            longest = max(durations)
+            shortest = min(durations)
+            stats_parts.append(self.tr(f"Longest: {_format_duration(longest)}"))
+            stats_parts.append(self.tr(f"Shortest: {_format_duration(shortest)}"))
+        if unique_items:
+            stats_parts.append(self.tr(f"Items: {len(unique_items)}"))
+
+        self._stats_label.setText("  •  ".join(stats_parts))
+
+        # Clear recent sessions
+        while self._recent_layout.count():
+            item = self._recent_layout.takeAt(0)
+            if item is not None:
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+
+        # Show most recent 5 sessions, item name first
+        max_recent = 5
+        recent = sessions[-max_recent:]
+        for s in recent:
+            label = self._format_stopwatch_session_label(s)
+            self._recent_layout.addWidget(label)
+
+        if len(sessions) > max_recent:
+            more = QLabel(self.tr(f"... and {len(sessions) - max_recent} earlier"))
+            more.setStyleSheet("color: gray; font-size: 10px; font-style: italic;")
+            self._recent_layout.insertWidget(0, more)
+
+        # Update toggle button text via the mode-aware helper.
+        self._refresh_sessions_toggle_text()
+
+        if self._sessions_expanded:
+            self.adjustSize()
+
+    def _format_stopwatch_session_label(self, session: dict[str, Any]) -> QLabel:
+        """Stopwatch session row: item name + duration + time range."""
+        duration = session.get("duration_seconds", 0)
+        item_name = session.get("item_name", "") or self.tr("(unknown item)")
+        # Elide the item name so a long task title doesn't blow out
+        # the dropdown's compact layout.
+        if len(item_name) > 28:
+            item_name = item_name[:27] + "…"
+        time_range = ""
+        try:
+            from datetime import datetime
+
+            start_dt = datetime.fromisoformat(session.get("start_time", ""))
+            end_dt = datetime.fromisoformat(session.get("end_time", ""))
+            time_range = f"  ({start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')})"
+        except (ValueError, TypeError):
+            pass
+
+        text = f"{item_name}: {_format_duration(duration)}{time_range}"
+        label = QLabel(text)
+        label.setStyleSheet("color: gray; font-size: 11px;")
+        label.setFrameShape(QFrame.Shape.NoFrame)
+        return label
+
     def update_sessions(self, sessions: list[dict[str, Any]]) -> None:
         """Update the Today's Sessions display.
 
@@ -259,6 +483,13 @@ class FocusTimerDialog(QDialog):
             sessions: List of dicts with keys: start_time, end_time,
                       duration_seconds, completed, session_type
         """
+        # Pomodoro-mode dropdown only. Stopwatch mode populates the
+        # same toggle/container via update_stopwatch_sessions and uses
+        # different stat formatting; ignoring this call in stopwatch
+        # mode prevents pomodoro-format text from clobbering it on a
+        # background tick.
+        if self._mode == "stopwatch":
+            return
         self._session_total_count = len(sessions)
 
         # Compute stats
@@ -315,9 +546,10 @@ class FocusTimerDialog(QDialog):
             # Insert at top
             self._recent_layout.insertWidget(0, more)
 
-        # Update toggle button text
-        arrow = "\u25bc" if self._sessions_expanded else "\u25b6"
-        self._sessions_toggle.setText(self.tr(f"{arrow} Today's Sessions ({len(sessions)})"))
+        # Update toggle button text via the mode-aware helper so a
+        # mode switch never leaves stale "Today's Sessions" text under
+        # stopwatch mode (or vice-versa).
+        self._refresh_sessions_toggle_text()
 
         if self._sessions_expanded:
             self.adjustSize()
@@ -389,13 +621,14 @@ class FocusTimerDialog(QDialog):
             self._progress_bar.setMaximum(1)
             self._progress_bar.setValue(0)
 
-        # Color based on state
+        # Color based on state — theme-aware via the canonical palette.
+        colors = get_colors()
         if state == "working":
-            self._time_label.setStyleSheet("color: #E74C3C;")
+            self._time_label.setStyleSheet(f"color: {colors['focus_timer_working']};")
         elif state == "break":
-            self._time_label.setStyleSheet("color: #27AE60;")
+            self._time_label.setStyleSheet(f"color: {colors['focus_timer_break']};")
         elif state == "paused":
-            self._time_label.setStyleSheet("color: #F39C12;")
+            self._time_label.setStyleSheet(f"color: {colors['focus_timer_paused']};")
 
         # Item name — elide to ~2 lines, tooltip for full text
         display_name = self._elide_item_name(item_name)
@@ -425,17 +658,25 @@ class FocusTimerDialog(QDialog):
             self._skip_btn.setVisible(skip_visible)
             self.adjustSize()
 
-    def update_item_progress(self, pomodoro_count: int, estimated: int) -> None:
-        """Update the focused item's pomodoro progress as tomato icons.
+    def update_item_progress(self, pomodoro_count: int, estimated: int = 0) -> None:
+        """Show one tomato emoji per completed pomodoro session.
 
-        Shows filled tomatoes for completed sessions and dimmed tomatoes for
-        remaining slots (when an estimate is set). Hidden when count is 0.
+        Capped at 12 icons; beyond that, a `+N` overflow label fills
+        in for the rest. Hidden until the item has at least one
+        completed pomodoro — there's nothing to show until then, and
+        an empty row is just visual noise.
 
-        Args:
-            pomodoro_count: Completed pomodoros for this item
-            estimated: Estimated pomodoros (0 = no estimate)
+        The `estimated` parameter is accepted for backward compatibility
+        with existing callers but is not used: pending / not-yet-done
+        slots are deliberately not rendered. The simpler "completed
+        sessions only" model avoids the cross-platform emoji-opacity
+        problem (macOS renders emoji as colored bitmaps that don't
+        respond to QGraphicsOpacityEffect) and reads more cleanly —
+        each tomato that appears means a session was actually done.
         """
-        if pomodoro_count <= 0 and estimated <= 0:
+        # Stopwatch mode never shows the tomato row — its per-item
+        # equivalent is the item-tracked label populated separately.
+        if self._mode == "stopwatch" or pomodoro_count <= 0:
             self._item_progress_container.hide()
             return
 
@@ -448,24 +689,17 @@ class FocusTimerDialog(QDialog):
                 if widget is not None:
                     widget.deleteLater()
 
-        total = max(pomodoro_count, estimated)
-        # Cap display to avoid overflow — show "N+" text beyond limit
         max_icons = 12
-        show_icons = min(total, max_icons)
-        overflow = total > max_icons
+        show_icons = min(pomodoro_count, max_icons)
+        overflow = pomodoro_count > max_icons
 
-        for i in range(show_icons):
+        for _ in range(show_icons):
             icon_label = QLabel(_TOMATO_EMOJI)
-            if i >= pomodoro_count:
-                # Dimmed for remaining/unfilled slots
-                effect = QGraphicsOpacityEffect(icon_label)
-                effect.setOpacity(0.3)
-                icon_label.setGraphicsEffect(effect)
             # Insert before the trailing stretch
             layout.insertWidget(layout.count() - 1, icon_label)
 
         if overflow:
-            overflow_label = QLabel(f"+{total - max_icons}")
+            overflow_label = QLabel(f"+{pomodoro_count - max_icons}")
             overflow_label.setStyleSheet("color: gray; font-size: 11px;")
             layout.insertWidget(layout.count() - 1, overflow_label)
 
@@ -478,7 +712,9 @@ class FocusTimerDialog(QDialog):
             completed: Number of completed work sessions today
             goal: Daily goal target (0 = no goal)
         """
-        if goal <= 0:
+        # Pomodoro-only stat — never visible in stopwatch mode, even
+        # when callers update unconditionally on a tick.
+        if self._mode == "stopwatch" or goal <= 0:
             self._daily_goal_label.hide()
             return
         self._daily_goal_label.setText(self.tr(f"Today: {completed}/{goal} sessions"))
@@ -490,7 +726,9 @@ class FocusTimerDialog(QDialog):
         Args:
             streak: Current consecutive days with focus sessions
         """
-        if streak <= 0:
+        # Pomodoro streak is gated on daily goal; stopwatch has its
+        # own tracking_streak label populated by update_stopwatch_streak.
+        if self._mode == "stopwatch" or streak <= 0:
             self._streak_label.hide()
             return
         self._streak_label.setText(self.tr(f"Streak: {streak} day{'s' if streak != 1 else ''}"))
@@ -502,8 +740,11 @@ class FocusTimerDialog(QDialog):
         Args:
             score: Focus score 0-100
         """
-        if score < 0:
-            self._focus_score_label.hide()
+        # Focus score is a pomodoro-completion metric — N/A in
+        # stopwatch mode (stopwatch sessions are open-ended, no
+        # completed/incomplete distinction).
+        if self._mode == "stopwatch" or score < 0:
+            self._focus_score_container.hide()
             return
         if score >= 90:
             grade = "A"
@@ -516,7 +757,45 @@ class FocusTimerDialog(QDialog):
         else:
             grade = "F"
         self._focus_score_label.setText(self.tr(f"Score: {grade} ({score})"))
-        self._focus_score_label.show()
+        # Defensive: re-show the inner label in case a prior set_mode
+        # hid it directly (older builds did so before the container
+        # wrapper was introduced; this keeps the label visible across
+        # any mode-toggle sequence).
+        self._focus_score_label.setVisible(True)
+        self._focus_score_container.show()
+
+    def _show_focus_score_explanation(self) -> None:
+        """Display the focus-score formula in a popover anchored to
+        the info icon. The explanation matches the implementation in
+        `core/analytics.py::focus_score`; if the formula changes,
+        keep this text in sync."""
+        from PyQt6.QtWidgets import QToolTip
+
+        text = self.tr(
+            "<b>Focus Score</b><br/>"
+            "A 0–100 measure of today's focus quality, computed from "
+            "three components.<br/><br/>"
+            "<b>Goal ratio</b> &nbsp;(up to 40 points)<br/>"
+            "Your completed sessions today vs. your daily goal. "
+            "Hits 40 when you complete the goal; partial progress "
+            "scales linearly. With no goal set, each completed session "
+            "is worth 10 points up to 40.<br/><br/>"
+            "<b>Completion rate</b> &nbsp;(up to 40 points)<br/>"
+            "The share of today's sessions you finished without "
+            "interrupting them. 40 points if every session was "
+            "completed; less if some were stopped early.<br/><br/>"
+            "<b>Streak bonus</b> &nbsp;(up to 20 points)<br/>"
+            "4 points for each consecutive day with at least one "
+            "session, capped at 20 (5 days).<br/><br/>"
+            "<b>Grade</b><br/>"
+            "A 90+ &nbsp; B 75+ &nbsp; C 60+ &nbsp; D 40+ &nbsp; F below 40"
+        )
+        # Anchor the popover at the icon's bottom-left so it appears
+        # below the label rather than covering it.
+        anchor = self._focus_score_info_btn.mapToGlobal(
+            self._focus_score_info_btn.rect().bottomLeft()
+        )
+        QToolTip.showText(anchor, text, self._focus_score_info_btn)
 
     def _elide_item_name(self, name: str, max_lines: int = 2) -> str:
         """Truncate name to fit within max_lines, adding ellipsis if needed."""

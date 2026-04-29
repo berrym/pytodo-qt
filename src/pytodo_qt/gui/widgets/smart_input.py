@@ -29,52 +29,35 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.nlp_parser import EntityKind, EntitySpan, ParseResult, parse
-from ..styles.themes import Theme, get_current_theme
+from ..styles.themes import get_colors
 
 # ---------------------------------------------------------------------------
-# Entity colors — tuned for readability on light and dark backgrounds
+# Entity colors — sourced from the canonical theme palette in
+# `themes.py`. Each EntityKind maps to a theme key; `get_colors()`
+# returns the active-theme value automatically.
 # ---------------------------------------------------------------------------
 
-_ENTITY_COLORS: dict[Theme, dict[EntityKind, str]] = {
-    Theme.LIGHT: {
-        EntityKind.DATE: "#4A90D9",
-        EntityKind.TIME: "#4A90D9",
-        EntityKind.PRIORITY: "#E8912D",
-        EntityKind.TAG: "#2DA5A5",
-        EntityKind.RECURRENCE: "#5BA55B",
-        EntityKind.POMODORO: "#8B5CF6",
-        EntityKind.ESTIMATE: "#D97706",
-        EntityKind.WORK_DURATION: "#9333EA",
-        EntityKind.TIME_BLOCK: "#4A90D9",
-        EntityKind.EVENT_DATE: "#7C3AED",
-        EntityKind.CONDITION: "#DC2626",
-        EntityKind.FILLER: "#94A3B8",
-        EntityKind.SUBTASK: "#0EA5E9",
-    },
-    Theme.DARK: {
-        EntityKind.DATE: "#6AB0F3",
-        EntityKind.TIME: "#6AB0F3",
-        EntityKind.PRIORITY: "#F0A850",
-        EntityKind.TAG: "#4DC4C4",
-        EntityKind.RECURRENCE: "#7DC87D",
-        EntityKind.POMODORO: "#A78BFA",
-        EntityKind.ESTIMATE: "#FBBF24",
-        EntityKind.WORK_DURATION: "#C084FC",
-        EntityKind.TIME_BLOCK: "#6AB0F3",
-        EntityKind.EVENT_DATE: "#A78BFA",
-        EntityKind.CONDITION: "#F87171",
-        EntityKind.FILLER: "#94A3B8",
-        EntityKind.SUBTASK: "#38BDF8",
-    },
+_ENTITY_KEY_BY_KIND: dict[EntityKind, str] = {
+    EntityKind.DATE: "entity_date",
+    EntityKind.TIME: "entity_time",
+    EntityKind.PRIORITY: "entity_priority",
+    EntityKind.TAG: "entity_tag",
+    EntityKind.RECURRENCE: "entity_recurrence",
+    EntityKind.POMODORO: "entity_pomodoro",
+    EntityKind.ESTIMATE: "entity_estimate",
+    EntityKind.WORK_DURATION: "entity_work_duration",
+    EntityKind.TIME_BLOCK: "entity_time_block",
+    EntityKind.EVENT_DATE: "entity_event_date",
+    EntityKind.CONDITION: "entity_condition",
+    EntityKind.FILLER: "entity_filler",
+    EntityKind.SUBTASK: "entity_subtask",
 }
 
 
 def _get_entity_colors() -> dict[EntityKind, str]:
     """Return entity color map for the active theme."""
-    theme = get_current_theme()
-    if theme == Theme.DARK:
-        return _ENTITY_COLORS[Theme.DARK]
-    return _ENTITY_COLORS[Theme.LIGHT]
+    palette = get_colors()
+    return {kind: palette[key] for kind, key in _ENTITY_KEY_BY_KIND.items()}
 
 
 # ---------------------------------------------------------------------------

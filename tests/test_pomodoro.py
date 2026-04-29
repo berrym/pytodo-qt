@@ -1749,20 +1749,20 @@ class TestItemProgress:
                     widgets.append(w)
         return widgets
 
-    def test_with_estimate_shows_icons(self, qtbot):
-        from PyQt6.QtWidgets import QGraphicsOpacityEffect
-
+    def test_with_estimate_shows_only_completed(self, qtbot):
+        """Only completed pomodoros render — pending slots are not
+        drawn at all. The `estimated` parameter is accepted for
+        backward compatibility but is not used. (Avoids the macOS
+        emoji-opacity rendering issue and reads more cleanly: every
+        tomato visible represents a session actually completed.)"""
         from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
 
         dialog = FocusTimerDialog()
         qtbot.addWidget(dialog)
         dialog.update_item_progress(3, 4)
         assert not dialog._item_progress_container.isHidden()
-        assert self._icon_count(dialog) == 4
-        # First 3 should have no opacity effect (filled), 4th should be dimmed
-        icons = self._get_widgets(dialog)
-        assert icons[2].graphicsEffect() is None  # 3rd icon: filled
-        assert isinstance(icons[3].graphicsEffect(), QGraphicsOpacityEffect)  # 4th: dimmed
+        # 3 completed sessions → 3 icons, regardless of estimate.
+        assert self._icon_count(dialog) == 3
 
     def test_without_estimate_shows_filled_only(self, qtbot):
         from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
@@ -2292,13 +2292,15 @@ class TestFocusScore:
     """Tests for focus score computation."""
 
     def test_no_sessions_returns_negative(self, qtbot):
-        """No sessions today → score hidden (returns -1)."""
+        """No sessions today → score row hidden (returns -1)."""
         from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog
 
         dialog = FocusTimerDialog()
         qtbot.addWidget(dialog)
         dialog.update_focus_score(-1)
-        assert dialog._focus_score_label.isHidden()
+        # The score row is now a container (label + info icon); hiding
+        # the container removes the whole row from view.
+        assert dialog._focus_score_container.isHidden()
 
     def test_grade_mapping(self, qtbot):
         from pytodo_qt.gui.dialogs.focus_timer import FocusTimerDialog

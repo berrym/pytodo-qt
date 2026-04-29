@@ -9,7 +9,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from PyQt6.QtCore import QDate, Qt, QTimer, pyqtSlot
@@ -3277,6 +3277,11 @@ class MainWindow(QMainWindow):
             self.tr(f"Tracked {elapsed_str} \u2014 Total: {spent_str}")
         )
 
+        # Refresh the floating dialog's stopwatch stats so the new
+        # session lands in the "Today's Tracking" dropdown and the
+        # daily total / streak / item-total labels stay current.
+        self._update_focus_timer_stopwatch_data()
+
     def _on_stopwatch_stopped(
         self, item_id: object, elapsed: int, start_iso: str, session_type: str
     ) -> None:
@@ -3428,6 +3433,96 @@ class MainWindow(QMainWindow):
             if s.date == today and s.session_type == "work"
         ]
         self._focus_timer_dialog.update_sessions(sessions)
+
+    def _lookup_item_name(self, item_id: UUID) -> str:
+        """Find an item's reminder text across every list in the database.
+
+        Stopwatch sessions reference an item by id only; the dialog
+        wants the item name on each row. The item may live on any
+        list, so iterate all of them rather than just the active list.
+        Returns empty string if the item no longer exists (deleted).
+        """
+        for lst in self._database.lists.values():
+            item = lst.get_item(item_id)
+            if item is not None:
+                return item.reminder
+        return ""
+
+    def _get_stopwatch_today_sessions(self) -> list[dict[str, Any]]:
+        """Return today's stopwatch sessions in chronological order,
+        each enriched with the item name for display in the dialog."""
+        from datetime import date as _date
+
+        today = _date.today().isoformat()
+        sessions: list[dict[str, Any]] = []
+        for s in self._database.focus_sessions:
+            if s.date != today or s.session_type != "stopwatch":
+                continue
+            sessions.append(
+                {
+                    "start_time": s.start_time,
+                    "end_time": s.end_time,
+                    "duration_seconds": s.duration_seconds,
+                    "completed": s.completed,
+                    "session_type": s.session_type,
+                    "item_name": self._lookup_item_name(s.item_id),
+                }
+            )
+        sessions.sort(key=lambda x: x["start_time"])
+        return sessions
+
+    def _get_stopwatch_item_total(self, item_id: UUID) -> int:
+        """Sum stopwatch duration across all sessions for one item."""
+        return sum(
+            s.duration_seconds
+            for s in self._database.focus_sessions
+            if s.item_id == item_id and s.session_type == "stopwatch"
+        )
+
+    def _get_stopwatch_daily_total(self) -> int:
+        """Sum stopwatch duration across every session recorded today."""
+        from datetime import date as _date
+
+        today = _date.today().isoformat()
+        return sum(
+            s.duration_seconds
+            for s in self._database.focus_sessions
+            if s.date == today and s.session_type == "stopwatch"
+        )
+
+    def _get_stopwatch_streak(self) -> int:
+        """Consecutive days, counting back from today, with at least
+        one stopwatch session. Today counts toward the streak even if
+        the user hasn't tracked yet — the streak is "I tracked on day
+        N and day N-1 …", not gated on "I tracked since the streak
+        was last extended."""
+        from datetime import date as _date
+        from datetime import timedelta as _timedelta
+
+        days_with_stopwatch: set[str] = {
+            s.date for s in self._database.focus_sessions if s.session_type == "stopwatch"
+        }
+        if not days_with_stopwatch:
+            return 0
+        streak = 0
+        d = _date.today()
+        while d.isoformat() in days_with_stopwatch:
+            streak += 1
+            d -= _timedelta(days=1)
+        return streak
+
+    def _update_focus_timer_stopwatch_data(self) -> None:
+        """Push stopwatch-specific stats and session history to the
+        floating timer dialog. Called when the dialog is shown in
+        stopwatch mode and after each completed stopwatch session."""
+        if self._focus_timer_dialog is None or not self._focus_timer_dialog.isVisible():
+            return
+        item_id = self._stopwatch.item_id
+        item_total = self._get_stopwatch_item_total(item_id) if item_id is not None else 0
+        self._focus_timer_dialog.update_stopwatch_item_total(item_total)
+        self._focus_timer_dialog.update_stopwatch_daily_total(self._get_stopwatch_daily_total())
+        self._focus_timer_dialog.update_stopwatch_streak(self._get_stopwatch_streak())
+        self._focus_timer_dialog.update_stopwatch_sessions(self._get_stopwatch_today_sessions())
 
     def _get_today_session_count(self) -> int:
         """Count today's completed work/stopwatch sessions via analytics."""
@@ -3669,6 +3764,10 @@ class MainWindow(QMainWindow):
                 self._stopwatch.item_name,
                 estimated_minutes=estimated_min,
             )
+            # Populate the stopwatch-only stats / today-tracking dropdown
+            # so the dialog shows real data the moment it opens, not on
+            # the next tick.
+            self._update_focus_timer_stopwatch_data()
         else:
             self._focus_timer_dialog.set_mode("pomodoro")
             count, estimated = self._get_focused_item_stats()

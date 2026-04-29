@@ -66,7 +66,29 @@ LIGHT_COLORS = {
     "due_overdue": "#b12f25",
     "due_today": "#ae6e13",
     "due_soon": "#2a7e4d",
-    "event_date": "#7C3AED",  # Matches smart_input chip color for visual parity
+    # Smart-input entity highlight palette — applied as foreground
+    # color on parsed entity spans. Tuned for >= 4.5:1 contrast on the
+    # light base background.
+    "entity_date": "#4A90D9",
+    "entity_time": "#4A90D9",
+    "entity_priority": "#E8912D",
+    "entity_tag": "#2DA5A5",
+    "entity_recurrence": "#5BA55B",
+    "entity_pomodoro": "#8B5CF6",
+    "entity_estimate": "#D97706",
+    "entity_work_duration": "#9333EA",
+    "entity_time_block": "#4A90D9",
+    "entity_event_date": "#7C3AED",
+    "entity_condition": "#DC2626",
+    "entity_filler": "#94A3B8",
+    "entity_subtask": "#0EA5E9",
+    # Focus-timer state colors — drive the countdown text color in
+    # `dialogs/focus_timer.py`. Distinct enough to read state at a
+    # glance even out of the corner of the eye.
+    "focus_timer_working": "#E74C3C",
+    "focus_timer_break": "#27AE60",
+    "focus_timer_paused": "#F39C12",
+    "focus_timer_stopwatch_running": "#3498DB",
     # Chart/timeline colors (Okabe-Ito + industry standards for light backgrounds)
     "chart_span": "#5470c6",  # ECharts blue — time span bar
     "chart_span_alpha": "100",  # Opacity 0-255
@@ -103,7 +125,31 @@ DARK_COLORS = {
     "due_overdue": "#e77c74",
     "due_today": "#ddad5f",
     "due_soon": "#6bc791",
-    "event_date": "#A78BFA",  # Matches smart_input chip color for visual parity
+    # Smart-input entity highlight palette — desaturated and lightened
+    # so each entity reads against the dark base while staying tonally
+    # related to its light-theme companion.
+    "entity_date": "#6AB0F3",
+    "entity_time": "#6AB0F3",
+    "entity_priority": "#F0A850",
+    "entity_tag": "#4DC4C4",
+    "entity_recurrence": "#7DC87D",
+    "entity_pomodoro": "#A78BFA",
+    "entity_estimate": "#FBBF24",
+    "entity_work_duration": "#C084FC",
+    "entity_time_block": "#6AB0F3",
+    "entity_event_date": "#A78BFA",
+    "entity_condition": "#F87171",
+    "entity_filler": "#94A3B8",
+    "entity_subtask": "#38BDF8",
+    # Focus-timer state colors, dark-theme variants. Previously the
+    # focus-timer dialog used the light-theme hex values regardless of
+    # active theme, producing washed-out chart colors on dark
+    # backgrounds; this fixes that by giving each state a desaturated
+    # dark-theme companion.
+    "focus_timer_working": "#F87171",
+    "focus_timer_break": "#34D399",
+    "focus_timer_paused": "#FBBF24",
+    "focus_timer_stopwatch_running": "#60A5FA",
     # Chart/timeline colors (ECharts dark + desaturated for dark backgrounds)
     "chart_span": "#4992ff",  # ECharts dark blue — time span bar
     "chart_span_alpha": "90",  # Subtle, recedes
