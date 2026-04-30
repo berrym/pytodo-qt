@@ -3027,10 +3027,18 @@ class _TimelineTimingWidget(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        import pyqtgraph as pg
 
         self._analytics = None
         self._list_id: str | None = None
+        # Lazy PlotWidget — created on first rebuild(). Eager construction
+        # in __init__ exposed a pyqtgraph teardown race on Linux/Windows
+        # 3.12 + offscreen CI: the AxisItem queues a deferred boundingRect
+        # repaint that fires after pytest-qt destroys the widget, by which
+        # time the linked ViewBox has been deleted and the call crashes
+        # the test runner. Deferring construction until the widget is
+        # actually used means the PlotWidget never exists for the
+        # off-screen QStackedWidget pages, sidestepping the race entirely.
+        self._plot = None
 
         self._title_text = QCoreApplication.translate("CalendarViewWidget", "Completion Timing")
         self._title_label = QLabel(_wrap_title_with_info_link(self._title_text))
@@ -3044,18 +3052,29 @@ class _TimelineTimingWidget(QWidget):
 
         self._create_styles()
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        layout.addWidget(self._title_label)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(0)
+        self._layout.addWidget(self._title_label)
+        # Plot slot; replaced with the real PlotWidget on first rebuild().
+        self._plot_placeholder = QWidget()
+        self._layout.addWidget(self._plot_placeholder, 1)
+        self._layout.addWidget(self._note_label)
+
+    def _ensure_plot(self) -> None:
+        """First-use construction of the pg.PlotWidget. Replaces the
+        placeholder so layout stretching is preserved."""
+        if self._plot is not None:
+            return
+        import pyqtgraph as pg
 
         self._plot = pg.PlotWidget()
         self._plot.setBackground(self._colors.get("base", "#252526"))
         self._plot.setMouseEnabled(x=False, y=False)
         self._plot.showGrid(x=True, y=False, alpha=0.2)
         self._plot.setMenuEnabled(False)
-        layout.addWidget(self._plot, 1)
-        layout.addWidget(self._note_label)
+        self._layout.replaceWidget(self._plot_placeholder, self._plot)
+        self._plot_placeholder.deleteLater()
 
     def _create_styles(self) -> None:
         from ...core.bar_palette import get_palette
@@ -3096,6 +3115,8 @@ class _TimelineTimingWidget(QWidget):
         import pyqtgraph as pg
 
         self._create_styles()
+        self._ensure_plot()
+        assert self._plot is not None  # _ensure_plot() guarantees this
         plot = self._plot
         plot.clear()
         plot.setBackground(self._colors.get("base", "#252526"))
@@ -3176,6 +3197,9 @@ class _TimelineTimingWidget(QWidget):
     def _show_empty(self, message: str) -> None:
         import pyqtgraph as pg
 
+        # _show_empty is only called from rebuild() which has already
+        # ensured the plot exists; the assert documents the invariant.
+        assert self._plot is not None
         text = pg.TextItem(message, color=self._col_muted, anchor=(0.5, 0.5))
         text.setPos(0.5, 0.5)
         self._plot.addItem(text)
