@@ -82,13 +82,17 @@ Color values are theme-aware. The token system defines *roles* (accent, danger, 
 
 ### Canonical accent
 
-`#2196f3` (Material Design 500 blue) on light theme; `#64b5f6` (lightened for dark-on-dark contrast) on dark theme. Both desktop `themes.py` and web `style.css` use these values.
+`#1976d2` (Material Design 700 blue) on light theme; `#64b5f6` (Material 300, lightened for dark-on-dark contrast) on dark theme. Both desktop `themes.py` and web `style.css` use these values for `accent` / `highlight` and the `--accent` CSS variable.
+
+`#1976d2` was selected because it clears WCAG 2.1 AA on white in both roles the accent serves: as a foreground (link / accent text on `bg`, ratio 4.62:1) and as a fill carrying white text (`highlight_text` on `highlight`, ratio 4.62:1). Material 500 (`#2196f3`) was the prior canonical and remains the family the accent belongs to, but it could not carry text against either white text or white surface and would have required splitting the token into separate fill / text variants. The 700-shift produces a slightly darker but visually-recognizable Material blue on both surfaces.
+
+The companion `accent-hover` is Material Blue 800 (`#1565c0`, 6.36:1 on white). On the dark theme `highlight_text` is `#1a1a1a` (dark text on the light-blue highlight band) — `#ffffff` on `#64b5f6` failed the same way Material 500 did against white.
 
 ### Anti-patterns to remove
 
 - **`palette(mid)` for functional text.** Qt's `mid` palette role is a mid-tone gray that fails WCAG AA in dark mode (the dark-mode value of `mid` is itself dark). Use `palette(text)` for primary text and `text-secondary` for muted text — never `mid`.
-- **Inline hex colors that bypass the theme system.** Currently present in `dialogs/focus_timer.py` (chart colors `#3498DB`, `#F39C12`, `#E74C3C`, `#27AE60`). These migrate to the theme files so dark theme renders them correctly.
-- **Cross-surface accent divergence.** Desktop `#0078d4` (Microsoft Fluent) and web `#2196f3` (Material). Both unify on `#2196f3`.
+- **Inline hex colors that bypass the theme system.** Currently present in `widgets/status_bar.py` and several other widgets/dialogs (tracked in #40). These migrate to the theme files so dark theme renders them correctly.
+- **Cross-surface accent divergence.** Desktop `#0078d4` (Microsoft Fluent) and web `#2196f3` (Material) both unified on `#2196f3` in the design-tokens migration; the WCAG audit (#24, #34) then bumped the canonical accent one shade darker to Material 700 (`#1976d2`) so it could meet AA in every role.
 
 ---
 

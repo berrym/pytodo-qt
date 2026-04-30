@@ -153,8 +153,8 @@ def _web_pairs() -> list[Pair]:
         "text": "#212121",
         "text-secondary": "#757575",
         "border": "#e0e0e0",
-        "accent": "#2196f3",
-        "accent-hover": "#1976d2",
+        "accent": "#1976d2",
+        "accent-hover": "#1565c0",
         "danger": "#e53935",
         "success": "#43a047",
         "warning": "#f57c00",
@@ -168,7 +168,7 @@ def _web_pairs() -> list[Pair]:
         "entity-recurrence": "#2e7d32",
         "entity-pomodoro": "#6a1b9a",
         "high": "#e53935",
-        "normal": "#2196f3",
+        "normal": "#1976d2",
         "low": "#9e9e9e",
     }
     dark = {
