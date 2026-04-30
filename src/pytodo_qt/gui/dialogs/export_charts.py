@@ -344,10 +344,12 @@ class ExportChartsDialog(QDialog):
             w = item.widget()
             if w:
                 w.deleteLater()
+        from ..styles.themes import get_colors
+
         label = QLabel(msg)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label.setWordWrap(True)
-        label.setStyleSheet("color: #ef4444; padding: 20px;")
+        label.setStyleSheet(f"color: {get_colors()['due_overdue']}; padding: 20px;")
         self.preview_layout.addWidget(label)
 
     def _on_export_pdf(self) -> None:

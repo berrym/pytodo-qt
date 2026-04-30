@@ -1262,6 +1262,7 @@ def build_rich_tooltip(
     item: TodoItem,
     time_format: str = "system",
     status_label: str | None = None,
+    theme_colors: dict[str, str] | None = None,
 ) -> str:
     """Build a comprehensive HTML tooltip showing all task metadata.
 
@@ -1282,8 +1283,17 @@ def build_rich_tooltip(
     Fields that are unset or at default values are omitted to keep the
     tooltip clean. The result is HTML suitable for Qt's rich-text tooltip
     rendering.
+
+    ``theme_colors`` is the active palette dict (typically passed in from
+    ``themes.get_colors()``); when supplied, semantic spans inside the
+    tooltip pull their foreground from the palette so the rendered colors
+    track the active theme. ``None`` is accepted for backward compatibility
+    with non-Qt callers (tests) and falls back to plain ``<b>`` emphasis
+    without color.
     """
     from datetime import datetime as _dt
+
+    overdue_color = (theme_colors or {}).get("due_overdue")
 
     lines: list[str] = []
 
@@ -1325,7 +1335,12 @@ def build_rich_tooltip(
         if not item.complete and item.due_date < date.today():
             overdue = _format_overdue_delta(item.due_date, item.due_time)
             if overdue:
-                lines.append(f"<span style='color:#ef4444'>{_html_escape(overdue)}</span>")
+                if overdue_color:
+                    lines.append(
+                        f"<span style='color:{overdue_color}'>{_html_escape(overdue)}</span>"
+                    )
+                else:
+                    lines.append(f"<b>{_html_escape(overdue)}</b>")
 
     # Estimates
     est_parts: list[str] = []

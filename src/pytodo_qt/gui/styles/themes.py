@@ -91,6 +91,12 @@ LIGHT_COLORS = {
     "focus_timer_break": "#15803d",
     "focus_timer_paused": "#b45309",
     "focus_timer_stopwatch_running": "#1976d2",
+    # Interactive cursor-affordance overlay — used for floating
+    # drag-preview / resize-snap labels that need a vivid blue
+    # readable in both themes paired with white text. Tailwind
+    # blue-600 stays at >=5:1 against #ffffff on light and against
+    # #1e1e1e on dark, so the same hex serves both themes.
+    "interactive_overlay": "#2563eb",
     # Chart/timeline colors (Okabe-Ito + industry standards for light backgrounds)
     "chart_span": "#5470c6",  # ECharts blue — time span bar
     "chart_span_alpha": "100",  # Opacity 0-255
@@ -152,6 +158,9 @@ DARK_COLORS = {
     "focus_timer_break": "#34D399",
     "focus_timer_paused": "#FBBF24",
     "focus_timer_stopwatch_running": "#60A5FA",
+    # Interactive cursor-affordance overlay (matches LIGHT_COLORS;
+    # deliberately theme-invariant for white-text legibility).
+    "interactive_overlay": "#2563eb",
     # Chart/timeline colors (ECharts dark + desaturated for dark backgrounds)
     "chart_span": "#4992ff",  # ECharts dark blue — time span bar
     "chart_span_alpha": "90",  # Subtle, recedes

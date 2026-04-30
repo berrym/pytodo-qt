@@ -833,7 +833,7 @@ class TodoTableWidget(QTableWidget):
 
             from ...core.models import build_rich_tooltip
 
-            priority_combo.setToolTip(build_rich_tooltip(item))
+            priority_combo.setToolTip(build_rich_tooltip(item, theme_colors=colors))
 
             self.setCellWidget(row, 0, priority_combo)
 
@@ -887,7 +887,7 @@ class TodoTableWidget(QTableWidget):
 
             from ...core.models import build_rich_tooltip
 
-            reminder_edit.setToolTip(build_rich_tooltip(item))
+            reminder_edit.setToolTip(build_rich_tooltip(item, theme_colors=colors))
 
             reminder_layout.addWidget(reminder_edit, 1)
             reminder_edit.setCursorPosition(0)
@@ -1022,7 +1022,7 @@ class TodoTableWidget(QTableWidget):
             elif item.due_date:
                 due_widget.label.setStyleSheet(f"color: {colors['completed_text']};")
 
-            due_widget.setToolTip(build_rich_tooltip(item))
+            due_widget.setToolTip(build_rich_tooltip(item, theme_colors=colors))
 
             self.setCellWidget(row, 2, due_widget)
 

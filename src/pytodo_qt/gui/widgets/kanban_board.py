@@ -224,8 +224,9 @@ class KanbanCardWidget(QFrame):
         # database tool. Hover anywhere on the card to see all fields
         # that affect the task's visual representation.
         from ...core.models import build_rich_tooltip
+        from ..styles.themes import get_colors
 
-        self.setToolTip(build_rich_tooltip(item))
+        self.setToolTip(build_rich_tooltip(item, theme_colors=get_colors()))
 
         # Drop shadow (enhanced glow for active focus session)
         shadow = QGraphicsDropShadowEffect(self)

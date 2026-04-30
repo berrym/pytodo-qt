@@ -32,6 +32,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..styles.themes import get_colors
+
 if TYPE_CHECKING:
     from ...web.device_store import PairedDevice
     from ..main_window import MainWindow
@@ -392,7 +394,7 @@ class _DeviceRow(QFrame):
         if is_stale:
             stale_lbl = QLabel(self.tr("\u26a0 Needs certificate reinstall"))
             stale_lbl.setStyleSheet(
-                "font-size: 10px; color: #e67e22; font-weight: bold;"
+                f"font-size: 10px; color: {get_colors()['due_today']}; font-weight: bold;"
                 " border: none; background: none;"
             )
             info.addWidget(stale_lbl)
@@ -437,10 +439,12 @@ class _DeviceRow(QFrame):
 
         forget_btn = QPushButton(self.tr("Forget"))
         forget_btn.setFixedWidth(72)
+        _danger = get_colors()["due_overdue"]
         forget_btn.setStyleSheet(
-            "QPushButton { color: #c0392b; font-size: 11px; border: 1px solid #c0392b;"
+            f"QPushButton {{ color: {_danger}; font-size: 11px; "
+            f"border: 1px solid {_danger};"
             " border-radius: 4px; padding: 4px 8px; background: none; }"
-            " QPushButton:hover { background: #c0392b; color: white; }"
+            f" QPushButton:hover {{ background: {_danger}; color: white; }}"
         )
         forget_btn.clicked.connect(on_forget)
         btn_col.addWidget(forget_btn)
@@ -668,7 +672,9 @@ class MobileAccessWizard(QDialog):
         if devices:
             revoke_btn = QPushButton(self.tr("Forget all devices"))
             revoke_btn.setFlat(True)
-            revoke_btn.setStyleSheet("color: #c0392b; font-size: 11px; padding: 4px;")
+            revoke_btn.setStyleSheet(
+                f"color: {get_colors()['due_overdue']}; font-size: 11px; padding: 4px;"
+            )
             revoke_btn.clicked.connect(self._on_revoke_all)
             revoke_row = QHBoxLayout()
             revoke_row.addStretch()
@@ -1012,7 +1018,9 @@ class MobileAccessWizard(QDialog):
 
         title = QLabel(self.tr("\u26a0 Certificate Changed"))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 18px; font-weight: bold; color: #e67e22;")
+        title.setStyleSheet(
+            f"font-size: 18px; font-weight: bold; color: {get_colors()['due_today']};"
+        )
         layout.addWidget(title)
 
         explanation = QLabel(
@@ -1056,7 +1064,8 @@ class MobileAccessWizard(QDialog):
             # Action buttons
             reinstall_btn = QPushButton(self.tr("Show certificate install steps"))
             reinstall_btn.setStyleSheet(
-                "QPushButton { background: #1976D2; color: white; border: none;"
+                f"QPushButton {{ background: {get_colors()['highlight']}; "
+                "color: white; border: none;"
                 " border-radius: 6px; padding: 10px 20px; font-weight: bold; }"
             )
             reinstall_btn.clicked.connect(lambda: self._go_to_page(self.PAGE_TRUSTED))

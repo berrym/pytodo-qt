@@ -936,6 +936,9 @@ class _CalendarTableView(QTableView):
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
         self.setStyleSheet("QTableView { border: none; background: palette(window); }")
+        from ...gui.styles.themes import get_colors as _get_colors
+
+        _overlay = _get_colors()["interactive_overlay"]
         # Persistent tooltip label — same pattern as _WeekTableView
         self._tooltip_label = QLabel(self)
         self._tooltip_label.setWindowFlags(
@@ -959,7 +962,7 @@ class _CalendarTableView(QTableView):
         self._drop_highlight.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._drop_highlight.setStyleSheet(
             "QFrame { background: rgba(37, 99, 235, 40); "
-            "border: 2px solid #2563eb; border-radius: 4px; }"
+            f"border: 2px solid {_overlay}; border-radius: 4px; }}"
         )
         self._drop_highlight.hide()
 
@@ -1077,12 +1080,13 @@ class _CalendarTableView(QTableView):
         hit = self._hit_test(e.pos())
         if hit is not None and hit[0] == "task":
             from ...core.models import build_rich_tooltip
+            from ...gui.styles.themes import get_colors
 
             item = hit[1]
             item_id = getattr(item, "id", None)
             if item_id != self._tooltip_item_id:
                 self._tooltip_item_id = item_id
-                self._tooltip_label.setText(build_rich_tooltip(item))
+                self._tooltip_label.setText(build_rich_tooltip(item, theme_colors=get_colors()))
                 self._tooltip_label.adjustSize()
             cursor = e.globalPosition().toPoint()
             self._tooltip_label.move(cursor.x() + 16, cursor.y() + 8)
@@ -1763,16 +1767,18 @@ class _TimelineTasksWidget(QWidget):
 
     def _build_tooltip(self, item) -> str:
         from ...core.config import get_config
+        from ...gui.styles.themes import get_colors
 
         config_work_mins = get_config().pomodoro.work_duration
         work_mins = _item_work_mins(item, config_work_mins)
+        overdue_color = get_colors()["due_overdue"]
         parts = [f"<b>{item.reminder}</b>"]
 
         if item.due_date:
             overdue = ""
             if date.today() > item.due_date and not item.complete:
                 days_over = (date.today() - item.due_date).days
-                overdue = f" <span style='color:#ff6e76;'>({days_over}d overdue)</span>"
+                overdue = f" <span style='color:{overdue_color};'>({days_over}d overdue)</span>"
             parts.append(f"Due: {item.due_date.strftime('%b %d, %Y')}{overdue}")
         if item.due_time:
             parts.append(f"Time: {item.due_time.strftime('%I:%M %p').lstrip('0')}")
@@ -3866,6 +3872,13 @@ class _WeekTableView(QTableView):
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
         self.setStyleSheet("QTableView { border: none; background: palette(window); }")
+        # Cached interactive-overlay color for drag-preview / resize-snap
+        # affordances created below. Looked up once at construction time;
+        # the value is theme-invariant by design (#2563eb in both LIGHT
+        # and DARK_COLORS) so a runtime theme switch does not change it.
+        from ...gui.styles.themes import get_colors as _get_colors
+
+        _overlay = _get_colors()["interactive_overlay"]
         # Persistent tooltip label — stays visible as long as the mouse
         # hovers over a task bar, unaffected by viewport repaints from
         # the now-timer. Same pattern as the timeline chart tooltips.
@@ -3890,7 +3903,7 @@ class _WeekTableView(QTableView):
         self._drop_highlight.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._drop_highlight.setStyleSheet(
             "QFrame { background: rgba(37, 99, 235, 40); "
-            "border: 2px solid #2563eb; border-radius: 4px; }"
+            f"border: 2px solid {_overlay}; border-radius: 4px; }}"
         )
         self._drop_highlight.hide()
         # Floating preview label that follows the cursor during a drag
@@ -3902,7 +3915,7 @@ class _WeekTableView(QTableView):
             Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
         )
         self._drag_preview_label.setStyleSheet(
-            "QLabel { background: #2563eb; color: white; "
+            f"QLabel {{ background: {_overlay}; color: white; "
             "border-radius: 6px; padding: 6px 10px; "
             "font-size: 12px; font-weight: bold; }"
         )
@@ -3920,7 +3933,7 @@ class _WeekTableView(QTableView):
         # the edge will land on. Transparent to mouse events.
         self._resize_snap_line = QFrame(self.viewport())
         self._resize_snap_line.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self._resize_snap_line.setStyleSheet("QFrame { background: #2563eb; border: none; }")
+        self._resize_snap_line.setStyleSheet(f"QFrame {{ background: {_overlay}; border: none; }}")
         self._resize_snap_line.setFixedHeight(2)
         self._resize_snap_line.hide()
         # Floating label showing the snap-target time during a resize.
@@ -3929,7 +3942,7 @@ class _WeekTableView(QTableView):
             Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
         )
         self._resize_snap_label.setStyleSheet(
-            "QLabel { background: #2563eb; color: white; "
+            f"QLabel {{ background: {_overlay}; color: white; "
             "border-radius: 6px; padding: 4px 8px; "
             "font-size: 11px; font-weight: bold; }"
         )
@@ -4529,13 +4542,14 @@ class _WeekTableView(QTableView):
 
         from ...core.calendar_layout import compute_bar_state, compute_bar_window
         from ...core.models import build_rich_tooltip
+        from ...gui.styles.themes import get_colors
 
         window = compute_bar_window(item)
         status_label: str | None = None
         if window is not None:
             state = compute_bar_state(item, window, datetime.now())
             status_label = bar_state_label(state)
-        return build_rich_tooltip(item, status_label=status_label)
+        return build_rich_tooltip(item, status_label=status_label, theme_colors=get_colors())
 
     def leaveEvent(self, a0) -> None:  # noqa: N802
         self._tooltip_label.hide()
@@ -5393,7 +5407,9 @@ class _AgendaRow(QFrame):
             if len(item.tags) > 3:
                 tags_text += f" +{len(item.tags) - 3}"
             tag_label = QLabel(tags_text)
-            tag_label.setStyleSheet("color: #2DA5A5; font-size: 11px; border: none;")
+            tag_label.setStyleSheet(
+                f"color: {colors['entity_tag']}; font-size: 11px; border: none;"
+            )
             layout.addWidget(tag_label)
 
     def set_selected(self, selected: bool) -> None:

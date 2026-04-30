@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 from ...core.config import get_config, get_config_manager
 from ...core.logger import Logger
 from ...crypto import get_or_create_identity
-from ..styles.themes import MONO_FONT_FAMILIES, apply_current_theme
+from ..styles.themes import MONO_FONT_FAMILIES, apply_current_theme, get_colors
 
 if TYPE_CHECKING:
     pass
@@ -682,7 +682,7 @@ class SettingsDialog(QDialog):
         form.addRow(self.tr("Devices:"), self.web_device_count_label)
 
         self.web_revoke_btn = QPushButton(self.tr("Disconnect All Devices"))
-        self.web_revoke_btn.setStyleSheet("color: #c0392b;")
+        self.web_revoke_btn.setStyleSheet(f"color: {get_colors()['due_overdue']};")
         self.web_revoke_btn.clicked.connect(self._revoke_web_token)
         form.addRow("", self.web_revoke_btn)
 

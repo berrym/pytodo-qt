@@ -716,6 +716,12 @@ class TaskDetailPanel(QDockWidget):
             self._populating = False
 
     def _populate_inner(self, item: TodoItem) -> None:
+        from ..styles.themes import get_colors
+
+        colors = get_colors()
+        warn_color = colors["due_today"]
+        overdue_color = colors["due_overdue"]
+
         # Header
         self._reminder_edit.setText(item.reminder or "")
 
@@ -755,7 +761,7 @@ class TaskDetailPanel(QDockWidget):
                 self._completed_at_value.setText(dt.strftime("%b %d %Y %I:%M %p"))
             else:
                 self._completed_at_value.setText(
-                    "<span style='color:#f59e0b'>Unknown (pre-v19)</span>"
+                    f"<span style='color:{warn_color}'>Unknown (pre-v19)</span>"
                 )
         else:
             self._completed_at_value.setText("\u2014")
@@ -826,7 +832,7 @@ class TaskDetailPanel(QDockWidget):
             self._effective_value.setText(" ".join(parts))
         elif item.due_time is not None:
             self._effective_value.setText(
-                "<span style='color:#f59e0b'>None \u2192 1h deadline clamp</span>"
+                f"<span style='color:{warn_color}'>None \u2192 1h deadline clamp</span>"
             )
         else:
             self._effective_value.setText("\u2014")
@@ -852,7 +858,8 @@ class TaskDetailPanel(QDockWidget):
             self._rec_count_value.setText(f"{item.recurrence_count} completed")
             if item.missed_recurrences > 0:
                 self._rec_missed_value.setText(
-                    f"<span style='color:#ef4444'>{item.missed_recurrences} auto-advanced</span>"
+                    f"<span style='color:{overdue_color}'>"
+                    f"{item.missed_recurrences} auto-advanced</span>"
                 )
             else:
                 self._rec_missed_value.setText("0")

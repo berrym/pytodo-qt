@@ -306,105 +306,30 @@ def _bar_pairs() -> list[Pair]:
 def _inline_pairs() -> list[Pair]:
     """Inline color literals embedded in widgets and dialogs.
 
-    Each pair tests a hex color used in `setStyleSheet(...)` or HTML
-    `<span style=...>` against the background it is most likely to
-    appear over. Both themes are included where the foreground is a
-    pure hex (not a `palette(...)` call).
+    All previously-tracked inline hex literals were retired in the
+    #33 / #40 cleanup waves — the widgets / dialogs / models now read
+    foreground colors from `themes.get_colors()`. Surfaces that need
+    a theme-invariant cursor-affordance color (drag-preview labels,
+    resize-snap indicator) read the new `interactive_overlay` theme
+    key, which carries the same `#2563eb` value across LIGHT_COLORS
+    and DARK_COLORS by design.
+
+    The `interactive_overlay` pair below confirms the white text used
+    by those affordances clears AA against the overlay background; it
+    is the only inline pair the audit still tracks.
     """
-    light_base = LIGHT_COLORS["base"]
-    dark_base = DARK_COLORS["base"]
-    light_window = LIGHT_COLORS["window"]
-    dark_window = DARK_COLORS["window"]
-
     out: list[Pair] = []
-
-    # Detail panel / models / calendar — overdue / warning span colors
-    # in HTML rendering inside QLabel (lives in the detail panel which
-    # uses base as its background).
-    for theme, bg in (("light", light_base), ("dark", dark_base)):
-        out.append(
-            Pair(
-                "inline #ef4444 (overdue text) on base",
-                theme,
-                "#ef4444",
-                bg,
-                THRESHOLD_TEXT,
-                "text",
-            )
-        )
-        out.append(
-            Pair(
-                "inline #f59e0b (warning text) on base",
-                theme,
-                "#f59e0b",
-                bg,
-                THRESHOLD_TEXT,
-                "text",
-            )
-        )
-        out.append(
-            Pair(
-                "inline #ff6e76 (calendar overdue) on base",
-                theme,
-                "#ff6e76",
-                bg,
-                THRESHOLD_TEXT,
-                "text",
-            )
-        )
-
-    # Settings / web_connect destructive-action hint text. Text sits on
-    # the dialog window background.
-    for theme, bg in (("light", light_window), ("dark", dark_window)):
-        out.append(
-            Pair(
-                "inline #c0392b (revoke text) on window",
-                theme,
-                "#c0392b",
-                bg,
-                THRESHOLD_TEXT,
-                "text",
-            )
-        )
-        out.append(
-            Pair(
-                "inline #e67e22 (warning title) on window",
-                theme,
-                "#e67e22",
-                bg,
-                THRESHOLD_TEXT,
-                "text",
-            )
-        )
-
-    # White-on-button pairs (calendar resize labels, web-connect CTA).
-    out.append(
-        Pair("inline white on #2563eb button", "both", "#ffffff", "#2563eb", THRESHOLD_TEXT, "text")
-    )
-    out.append(
-        Pair("inline white on #1976D2 button", "both", "#ffffff", "#1976D2", THRESHOLD_TEXT, "text")
-    )
+    overlay = LIGHT_COLORS["interactive_overlay"]
     out.append(
         Pair(
-            "inline white on #c0392b button hover",
+            "white text on interactive_overlay",
             "both",
             "#ffffff",
-            "#c0392b",
+            overlay,
             THRESHOLD_TEXT,
             "text",
         )
     )
-
-    # status_bar.py pomodoro state inlines were retired in #33 — the
-    # widget now reads `focus_timer_*` from `themes.get_colors()`, so
-    # the desktop focus_timer pairs above are the only check needed.
-
-    # Calendar tag chip — small text on base.
-    for theme, bg in (("light", light_base), ("dark", dark_base)):
-        out.append(
-            Pair("inline #2DA5A5 (tag chip) on base", theme, "#2DA5A5", bg, THRESHOLD_TEXT, "text")
-        )
-
     return out
 
 
