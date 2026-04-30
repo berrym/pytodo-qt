@@ -103,6 +103,16 @@
     --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
     --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.4);
 
+    /* Smart-input entity highlight palette — dark-theme overrides
+       so the same tokens clear AA on #121212 / #1e1e1e. Values mirror
+       the desktop DARK_COLORS entity_* keys for cross-surface
+       consistency. */
+    --entity-date: #6AB0F3;
+    --entity-priority: #F0A850;
+    --entity-tag: #4DC4C4;
+    --entity-recurrence: #7DC87D;
+    --entity-pomodoro: #A78BFA;
+
     /* Dark-theme calendar bar lifecycle palette */
     --bar-future: #93c5fd;
     --bar-future-deviation: #93c5fd;
@@ -147,6 +157,13 @@
   --surface: #1e1e1e;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.4);
+
+  /* Smart-input entity highlight palette — dark-theme overrides */
+  --entity-date: #6AB0F3;
+  --entity-priority: #F0A850;
+  --entity-tag: #4DC4C4;
+  --entity-recurrence: #7DC87D;
+  --entity-pomodoro: #A78BFA;
 
   /* Dark-theme calendar bar lifecycle palette */
   --bar-future: #93c5fd;
