@@ -370,19 +370,9 @@ def _inline_pairs() -> list[Pair]:
         )
     )
 
-    # Status bar pomodoro state labels — sit on the window background.
-    pomodoro_state_colors = {
-        "pomodoro_working #E74C3C": "#E74C3C",
-        "pomodoro_break #27AE60": "#27AE60",
-        "pomodoro_paused #F39C12": "#F39C12",
-        "pomodoro_stopwatch #3498DB": "#3498DB",
-        "pomodoro_idle #4A90D9": "#4A90D9",
-    }
-    for theme, bg in (("light", light_window), ("dark", dark_window)):
-        for label, hex_val in pomodoro_state_colors.items():
-            out.append(
-                Pair(f"inline {label} on window", theme, hex_val, bg, THRESHOLD_TEXT, "text")
-            )
+    # status_bar.py pomodoro state inlines were retired in #33 — the
+    # widget now reads `focus_timer_*` from `themes.get_colors()`, so
+    # the desktop focus_timer pairs above are the only check needed.
 
     # Calendar tag chip — small text on base.
     for theme, bg in (("light", light_base), ("dark", dark_base)):

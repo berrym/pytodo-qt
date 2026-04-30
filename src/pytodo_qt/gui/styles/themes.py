@@ -87,10 +87,10 @@ LIGHT_COLORS = {
     # Focus-timer state colors — drive the countdown text color in
     # `dialogs/focus_timer.py`. Distinct enough to read state at a
     # glance even out of the corner of the eye.
-    "focus_timer_working": "#E74C3C",
-    "focus_timer_break": "#27AE60",
-    "focus_timer_paused": "#F39C12",
-    "focus_timer_stopwatch_running": "#3498DB",
+    "focus_timer_working": "#c0392b",
+    "focus_timer_break": "#15803d",
+    "focus_timer_paused": "#b45309",
+    "focus_timer_stopwatch_running": "#1976d2",
     # Chart/timeline colors (Okabe-Ito + industry standards for light backgrounds)
     "chart_span": "#5470c6",  # ECharts blue — time span bar
     "chart_span_alpha": "100",  # Opacity 0-255

@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.logger import Logger
+from ..styles.themes import get_colors
 
 _POMODORO_EMOJI = {"work": "\U0001f345", "break": "\u2615", "pause": "\u23f8\ufe0f"}
 _STOPWATCH_EMOJI = {"running": "\u23f1\ufe0f", "paused": "\u23f8\ufe0f"}
@@ -86,7 +87,12 @@ class DailyGoalRingWidget(QWidget):
         # Progress arc
         ratio = min(1.0, self._completed / self._goal) if self._goal > 0 else 0.0
         if ratio > 0:
-            color = QColor("#43a047") if self._completed >= self._goal else QColor("#4A90D9")
+            colors = get_colors()
+            color = (
+                QColor("#43a047")
+                if self._completed >= self._goal
+                else QColor(colors["focus_timer_stopwatch_running"])
+            )
             fg_pen = QPen(color, pen_width)
             fg_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             painter.setPen(fg_pen)
@@ -310,7 +316,9 @@ class StatusBarWidget(QStatusBar):
         """
         if state == "syncing":
             self.sync_status_label.setText(self.tr("Syncing"))
-            self.sync_status_label.setStyleSheet("color: #4A90D9;")  # Blue
+            self.sync_status_label.setStyleSheet(
+                f"color: {get_colors()['focus_timer_stopwatch_running']};"
+            )
         elif state == "success":
             self._last_sync_time = datetime.now()
             self._last_auto_sync = auto
@@ -348,41 +356,35 @@ class StatusBarWidget(QStatusBar):
             self._pomodoro_icon_label.setVisible(False)
             self.pomodoro_label.setVisible(False)
             self._pomodoro_separator.setVisible(False)
-        elif state == "working":
+            return
+
+        colors = get_colors()
+        state_color = {
+            "working": colors["focus_timer_working"],
+            "break": colors["focus_timer_break"],
+            "paused": colors["focus_timer_paused"],
+            "stopwatch_running": colors["focus_timer_stopwatch_running"],
+            "stopwatch_paused": colors["focus_timer_paused"],
+        }.get(state)
+        if state_color is None:
+            return
+
+        if state == "working":
             self._set_pomodoro_icon("work")
-            self.pomodoro_label.setText(time_str)
-            self.pomodoro_label.setStyleSheet("color: #E74C3C; font-weight: bold;")
-            self._pomodoro_icon_label.setVisible(True)
-            self.pomodoro_label.setVisible(True)
-            self._pomodoro_separator.setVisible(True)
         elif state == "break":
             self._set_pomodoro_icon("break")
-            self.pomodoro_label.setText(time_str)
-            self.pomodoro_label.setStyleSheet("color: #27AE60; font-weight: bold;")
-            self._pomodoro_icon_label.setVisible(True)
-            self.pomodoro_label.setVisible(True)
-            self._pomodoro_separator.setVisible(True)
         elif state == "paused":
             self._set_pomodoro_icon("pause")
-            self.pomodoro_label.setText(time_str)
-            self.pomodoro_label.setStyleSheet("color: #F39C12; font-weight: bold;")
-            self._pomodoro_icon_label.setVisible(True)
-            self.pomodoro_label.setVisible(True)
-            self._pomodoro_separator.setVisible(True)
         elif state == "stopwatch_running":
             self._pomodoro_icon_label.setText(_STOPWATCH_EMOJI.get("running", "\u23f1\ufe0f"))
-            self.pomodoro_label.setText(time_str)
-            self.pomodoro_label.setStyleSheet("color: #3498DB; font-weight: bold;")
-            self._pomodoro_icon_label.setVisible(True)
-            self.pomodoro_label.setVisible(True)
-            self._pomodoro_separator.setVisible(True)
         elif state == "stopwatch_paused":
             self._pomodoro_icon_label.setText(_STOPWATCH_EMOJI.get("paused", "\u23f8\ufe0f"))
-            self.pomodoro_label.setText(time_str)
-            self.pomodoro_label.setStyleSheet("color: #F39C12; font-weight: bold;")
-            self._pomodoro_icon_label.setVisible(True)
-            self.pomodoro_label.setVisible(True)
-            self._pomodoro_separator.setVisible(True)
+
+        self.pomodoro_label.setText(time_str)
+        self.pomodoro_label.setStyleSheet(f"color: {state_color}; font-weight: bold;")
+        self._pomodoro_icon_label.setVisible(True)
+        self.pomodoro_label.setVisible(True)
+        self._pomodoro_separator.setVisible(True)
 
     def _set_pomodoro_icon(self, state_name: str) -> None:
         """Set the pomodoro icon emoji for the given state."""

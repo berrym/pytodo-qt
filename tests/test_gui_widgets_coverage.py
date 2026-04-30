@@ -417,9 +417,12 @@ class TestStatusBarSyncStatus:
         assert status_bar.sync_status_label.text() == "Syncing"
 
     def test_syncing_color_is_blue(self, status_bar):
-        """Syncing state should have blue color."""
+        """Syncing state should pull its blue from the theme palette."""
+        from pytodo_qt.gui.styles.themes import get_colors
+
         status_bar.set_sync_status("syncing")
-        assert "#4A90D9" in status_bar.sync_status_label.styleSheet()
+        expected = get_colors()["focus_timer_stopwatch_running"]
+        assert expected in status_bar.sync_status_label.styleSheet()
 
     def test_success_state(self, status_bar):
         """Success state should show 'Synced just now'."""
