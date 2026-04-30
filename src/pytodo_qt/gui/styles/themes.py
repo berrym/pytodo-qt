@@ -62,9 +62,9 @@ LIGHT_COLORS = {
     "completed_text": "#787878",
     "priority_high": "#b12f25",
     "priority_normal": "#1b5f98",
-    "priority_low": "#95a5a6",
+    "priority_low": "#757575",
     "due_overdue": "#b12f25",
-    "due_today": "#ae6e13",
+    "due_today": "#92611f",
     "due_soon": "#2a7e4d",
     # Smart-input entity highlight palette — applied as foreground
     # color on parsed entity spans. Tuned for >= 4.5:1 contrast on the
@@ -123,7 +123,7 @@ DARK_COLORS = {
     "completed_text": "#8c8c8c",
     "priority_high": "#e77c74",
     "priority_normal": "#85b1d6",
-    "priority_low": "#7f8c8d",
+    "priority_low": "#9ca3af",
     "due_overdue": "#e77c74",
     "due_today": "#ddad5f",
     "due_soon": "#6bc791",

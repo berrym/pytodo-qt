@@ -169,7 +169,7 @@ def _web_pairs() -> list[Pair]:
         "entity-pomodoro": "#6a1b9a",
         "high": "#c62828",
         "normal": "#1976d2",
-        "low": "#9e9e9e",
+        "low": "#757575",
     }
     dark = {
         "bg": "#121212",
