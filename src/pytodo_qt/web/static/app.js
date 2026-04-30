@@ -3450,6 +3450,9 @@
     // the data lands; the render call fills in bars and title once
     // the fetch resolves.
     var timingChart = _chartCanvas("Completion Timing", 700, 140);
+    timingChart.container
+      .querySelector("h3")
+      .appendChild(_metricInfoButton(_TIMING_INFO_HTML));
     wrap.appendChild(timingChart.container);
     _loadCompletionTiming(timingChart);
 
@@ -3458,9 +3461,12 @@
     // rather than a chart because the underlying data is scalar.
     var cycleRow = document.createElement("div");
     cycleRow.className = "timeline-stat-row";
-    cycleRow.textContent = "Cycle time — loading\u2026";
+    var cycleText = document.createElement("span");
+    cycleText.textContent = "Cycle time — loading\u2026";
+    cycleRow.appendChild(cycleText);
+    cycleRow.appendChild(_metricInfoButton(_CYCLE_INFO_HTML));
     wrap.appendChild(cycleRow);
-    _loadCycleTime(cycleRow);
+    _loadCycleTime(cycleText);
 
     calContainer.appendChild(wrap);
   }
@@ -3488,15 +3494,14 @@
     var mutedColor =
       rootStyle.getPropertyValue("--text-secondary").trim() || "#888";
 
-    var h3 = chart.container.querySelector("h3");
-    if (h3) {
+    if (chart.titleSpan) {
       if (slip && slip.rate != null) {
-        h3.textContent =
+        chart.titleSpan.textContent =
           "Completion Timing \u2014 slip rate " +
           Math.round(slip.rate * 100) +
           "%";
       } else {
-        h3.textContent = "Completion Timing";
+        chart.titleSpan.textContent = "Completion Timing";
       }
     }
 
@@ -3609,7 +3614,10 @@
     var div = document.createElement("div");
     div.className = "timeline-chart-box";
     var h3 = document.createElement("h3");
-    h3.textContent = title;
+    var titleSpan = document.createElement("span");
+    titleSpan.className = "title-text";
+    titleSpan.textContent = title;
+    h3.appendChild(titleSpan);
     div.appendChild(h3);
     var canvas = document.createElement("canvas");
     canvas.width = width;
@@ -3617,8 +3625,85 @@
     canvas.style.width = "100%";
     canvas.style.height = "auto";
     div.appendChild(canvas);
-    return { container: div, canvas: canvas, ctx: canvas.getContext("2d") };
+    return {
+      container: div,
+      canvas: canvas,
+      ctx: canvas.getContext("2d"),
+      titleSpan: titleSpan,
+    };
   }
+
+  // Info-icon popover used by the analytics blocks. Click toggles a
+  // floating panel anchored under the icon; click outside dismisses.
+  // Mirrors the focus-score popover pattern in the desktop UI.
+  var _METRIC_INFO_OPEN = null;
+  function _metricInfoButton(htmlText) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "metric-info-btn";
+    btn.textContent = "ⓘ";
+    btn.setAttribute("aria-label", "What's this?");
+    btn.title = "What's this? Click for the full explanation.";
+    btn.addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      if (_METRIC_INFO_OPEN && _METRIC_INFO_OPEN.btn === btn) {
+        _closeMetricInfoPopover();
+        return;
+      }
+      _closeMetricInfoPopover();
+      var pop = document.createElement("div");
+      pop.className = "metric-info-popover";
+      pop.innerHTML = htmlText;
+      document.body.appendChild(pop);
+      var rect = btn.getBoundingClientRect();
+      var top = rect.bottom + window.scrollY + 6;
+      var maxLeft = window.scrollX + document.documentElement.clientWidth - pop.offsetWidth - 8;
+      var left = Math.min(rect.left + window.scrollX, maxLeft);
+      pop.style.top = top + "px";
+      pop.style.left = Math.max(8, left) + "px";
+      _METRIC_INFO_OPEN = { btn: btn, pop: pop };
+    });
+    return btn;
+  }
+
+  function _closeMetricInfoPopover() {
+    if (_METRIC_INFO_OPEN) {
+      _METRIC_INFO_OPEN.pop.remove();
+      _METRIC_INFO_OPEN = null;
+    }
+  }
+
+  document.addEventListener("click", function (ev) {
+    if (!_METRIC_INFO_OPEN) return;
+    if (_METRIC_INFO_OPEN.pop.contains(ev.target)) return;
+    if (_METRIC_INFO_OPEN.btn.contains(ev.target)) return;
+    _closeMetricInfoPopover();
+  });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape") _closeMetricInfoPopover();
+  });
+
+  var _TIMING_INFO_HTML =
+    "<b>Completion Timing</b><br/>" +
+    "Where completed tasks landed relative to their deadline.<br/><br/>" +
+    "<b>Early</b> &nbsp;completed before the deadline<br/>" +
+    "<b>On time</b> &nbsp;completed exactly at the deadline<br/>" +
+    "<b>Late</b> &nbsp;completed after the deadline<br/><br/>" +
+    "The deadline is the task's <code>due_date</code>+<code>due_time</code> " +
+    "when set, or end-of-day (next-day midnight) for all-day items.<br/><br/>" +
+    "<b>Slip rate</b> = late ÷ (early + on time + late). Tasks completed " +
+    "without a recorded timestamp are excluded from both the count and the rate.";
+
+  var _CYCLE_INFO_HTML =
+    "<b>Cycle Time</b><br/>" +
+    "How long tasks stay open — from creation " +
+    "(<code>created_at</code>) to completion (<code>completed_at</code>).<br/><br/>" +
+    "<b>Mean</b> &nbsp;arithmetic average across the sample<br/>" +
+    "<b>Median</b> &nbsp;middle value (50th percentile); robust to outliers<br/>" +
+    "<b>p90</b> &nbsp;90th percentile; 90% of tasks finished at or below " +
+    "this duration<br/><br/>" +
+    "Only completed tasks with both timestamps are included. Negative " +
+    "durations from clock drift or manual edits are excluded.";
 
   function _chartGantt(items) {
     // Only items that have a temporal window computed server-side

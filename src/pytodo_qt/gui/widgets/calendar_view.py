@@ -3004,6 +3004,24 @@ class _TimelineAccuracyWidget(QWidget):
 # ---------------------------------------------------------------------------
 
 
+def _build_info_button(tooltip: str, on_click) -> QPushButton:
+    """Small ⓘ glyph button matching the focus-score popover pattern in
+    `dialogs/focus_timer.py`. Click pops a QToolTip with the metric's
+    explanation."""
+    btn = QPushButton("ⓘ")  # circled-i glyph
+    btn.setFlat(True)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.setFixedWidth(20)
+    btn.setStyleSheet(
+        "QPushButton { color: gray; font-size: 14px; border: none;"
+        " padding: 0; background: transparent; }"
+        "QPushButton:hover { color: palette(highlight); }"
+    )
+    btn.setToolTip(tooltip)
+    btn.clicked.connect(on_click)
+    return btn
+
+
 class _TimelineTimingWidget(QWidget):
     """Horizontal bar chart showing the Early / On-time / Late split.
 
@@ -3024,6 +3042,10 @@ class _TimelineTimingWidget(QWidget):
             QCoreApplication.translate("CalendarViewWidget", "Completion Timing")
         )
         self._title_label.setStyleSheet("font-size: 13px; font-weight: bold; padding: 6px 10px;")
+        self._info_btn = _build_info_button(
+            self.tr("What's this? Click for the full explanation."),
+            self._show_explanation,
+        )
         self._note_label = QLabel("")
         self._note_label.setStyleSheet("font-size: 11px; padding: 0px 10px 6px 10px;")
         self._note_label.setVisible(False)
@@ -3033,7 +3055,13 @@ class _TimelineTimingWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(self._title_label)
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 6, 0)
+        header_row.setSpacing(0)
+        header_row.addWidget(self._title_label)
+        header_row.addWidget(self._info_btn)
+        header_row.addStretch()
+        layout.addLayout(header_row)
 
         self._plot = pg.PlotWidget()
         self._plot.setBackground(self._colors.get("base", "#252526"))
@@ -3168,6 +3196,28 @@ class _TimelineTimingWidget(QWidget):
         self._plot.setXRange(0, 1, padding=0)  # type: ignore[call-arg]
         self._plot.setYRange(0, 1, padding=0)  # type: ignore[call-arg]
 
+    def _show_explanation(self) -> None:
+        """Popover anchored at the info icon. Mirrors the focus-score
+        pattern in `dialogs/focus_timer.py`. The text matches the
+        classification rules in `core/analytics.py::completion_timing`;
+        keep the two in sync if the rules change."""
+        from PyQt6.QtWidgets import QToolTip
+
+        text = self.tr(
+            "<b>Completion Timing</b><br/>"
+            "Where completed tasks landed relative to their deadline.<br/><br/>"
+            "<b>Early</b> &nbsp;completed before the deadline<br/>"
+            "<b>On time</b> &nbsp;completed exactly at the deadline<br/>"
+            "<b>Late</b> &nbsp;completed after the deadline<br/><br/>"
+            "The deadline is the task's <code>due_date</code>+<code>due_time</code> "
+            "when set, or end-of-day (next-day midnight) for all-day items.<br/><br/>"
+            "<b>Slip rate</b> = late ÷ (early + on time + late). Tasks completed "
+            "without a recorded timestamp are excluded from both the count and "
+            "the rate."
+        )
+        anchor = self._info_btn.mapToGlobal(self._info_btn.rect().bottomLeft())
+        QToolTip.showText(anchor, text, self._info_btn)
+
 
 # ---------------------------------------------------------------------------
 # Timeline Cycle Chart — created→completed cycle-time stats
@@ -3190,6 +3240,10 @@ class _TimelineCycleWidget(QWidget):
 
         self._title_label = QLabel(QCoreApplication.translate("CalendarViewWidget", "Cycle Time"))
         self._title_label.setStyleSheet("font-size: 13px; font-weight: bold; padding: 6px 10px;")
+        self._info_btn = _build_info_button(
+            self.tr("What's this? Click for the full explanation."),
+            self._show_explanation,
+        )
 
         self._tiles_widget = QWidget()
         self._tiles_layout = QHBoxLayout(self._tiles_widget)
@@ -3213,7 +3267,13 @@ class _TimelineCycleWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(self._title_label)
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 6, 0)
+        header_row.setSpacing(0)
+        header_row.addWidget(self._title_label)
+        header_row.addWidget(self._info_btn)
+        header_row.addStretch()
+        layout.addLayout(header_row)
         layout.addWidget(self._tiles_widget)
         layout.addWidget(self._subtitle_label)
         layout.addStretch(1)
@@ -3327,6 +3387,27 @@ class _TimelineCycleWidget(QWidget):
         if minutes < 1440:
             return f"{minutes / 60:.1f}h"
         return f"{minutes / 1440:.1f}d"
+
+    def _show_explanation(self) -> None:
+        """Popover anchored at the info icon. Mirrors the focus-score
+        pattern in `dialogs/focus_timer.py`. Statistics computed in
+        `core/analytics.py::cycle_time`; keep in sync."""
+        from PyQt6.QtWidgets import QToolTip
+
+        text = self.tr(
+            "<b>Cycle Time</b><br/>"
+            "How long tasks stay open — from creation "
+            "(<code>created_at</code>) to completion "
+            "(<code>completed_at</code>).<br/><br/>"
+            "<b>Mean</b> &nbsp;arithmetic average across the sample<br/>"
+            "<b>Median</b> &nbsp;middle value (50th percentile); robust to outliers<br/>"
+            "<b>p90</b> &nbsp;90th percentile; 90% of tasks finished at or "
+            "below this duration<br/><br/>"
+            "Only completed tasks with both timestamps are included. "
+            "Negative durations from clock drift or manual edits are excluded."
+        )
+        anchor = self._info_btn.mapToGlobal(self._info_btn.rect().bottomLeft())
+        QToolTip.showText(anchor, text, self._info_btn)
 
 
 # ---------------------------------------------------------------------------

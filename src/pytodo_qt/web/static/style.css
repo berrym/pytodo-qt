@@ -1258,6 +1258,9 @@ body {
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .timeline-chart-box canvas {
   display: block;
@@ -1270,6 +1273,48 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.metric-info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  border-radius: 50%;
+}
+.metric-info-btn:hover,
+.metric-info-btn:focus-visible {
+  color: var(--accent);
+  background: var(--hover);
+  outline: none;
+}
+.metric-info-popover {
+  position: absolute;
+  z-index: 1000;
+  max-width: 360px;
+  padding: 12px 14px;
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.metric-info-popover code {
+  background: var(--hover);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
 }
 .cal-empty {
   text-align: center;
