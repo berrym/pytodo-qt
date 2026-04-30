@@ -79,6 +79,13 @@ class Pair:
     bg: str  # hex
     threshold: float
     kind: str  # "text" | "ui" — for the report column
+    essential: bool = True
+    """Whether a failure should gate the run (`True`) or surface
+    informatively only (`False`).  Non-essential pairs cover decorative
+    zones whose meaning is carried by an adjacent high-contrast element
+    — the canonical case is a paired sub-zone inside a calendar
+    Gantt bar where the base color identifies the state and the
+    deviation color is intentionally a subtle tint.  See issue #38."""
 
 
 def _desktop_pairs() -> list[Pair]:
@@ -244,11 +251,17 @@ def _bar_pairs() -> list[Pair]:
     Bars are rectangular fills against the calendar grid background;
     they carry no in-bar text, so the threshold is the UI component
     floor. The grid background matches `base` in each theme.
+
+    Completion-state deviation colors are paired sub-zones rendered
+    inside a high-contrast base bar (early surplus, late overflow);
+    their meaning is carried by the adjacent base, not by their
+    contrast against the canvas. They are flagged `essential=False`
+    so the audit surfaces them informatively without gating the run.
     """
     light_bg = LIGHT_COLORS["base"]
     dark_bg = DARK_COLORS["base"]
     light_bars = {
-        "bar-future": "#60a5fa",
+        "bar-future": "#2563eb",
         "bar-in-work-window": "#0d9488",
         "bar-due-now": "#d97706",
         "bar-overdue-active": "#dc2626",
@@ -271,10 +284,22 @@ def _bar_pairs() -> list[Pair]:
         "bar-completed-late-deviation": "#7f1d1d",
         "bar-completed-unknown": "#9ca3af",
     }
+    deviation_keys = {"bar-completed-early-deviation", "bar-completed-late-deviation"}
     out: list[Pair] = []
     for theme_name, bars, bg in (("light", light_bars, light_bg), ("dark", dark_bars, dark_bg)):
         for name, hex_val in bars.items():
-            out.append(Pair(f"{name} on base", theme_name, hex_val, bg, THRESHOLD_UI, "ui"))
+            essential = name not in deviation_keys
+            out.append(
+                Pair(
+                    f"{name} on base",
+                    theme_name,
+                    hex_val,
+                    bg,
+                    THRESHOLD_UI,
+                    "ui",
+                    essential=essential,
+                )
+            )
     return out
 
 
@@ -393,16 +418,26 @@ def collect_pairs() -> list[Pair]:
 
 
 def _fmt_row(
-    label: str, theme: str, fg: str, bg: str, ratio: float, threshold: float, status: str
+    label: str,
+    theme: str,
+    fg: str,
+    bg: str,
+    ratio: float,
+    threshold: float,
+    status: str,
+    essential: bool = True,
 ) -> str:
+    tag = "" if essential else " [exempt]"
     return (
-        f"  {status}  {ratio:5.2f}:1  (need {threshold:>3.1f})  [{theme:>5}]  {label}  {fg} on {bg}"
+        f"  {status}{tag}  {ratio:5.2f}:1  (need {threshold:>3.1f})  "
+        f"[{theme:>5}]  {label}  {fg} on {bg}"
     )
 
 
 def main() -> int:
     pairs = collect_pairs()
-    failed: list[Pair] = []
+    failed_essential: list[Pair] = []
+    failed_exempt: list[Pair] = []
 
     sections: dict[str, list[Pair]] = {
         "Desktop (themes.py)": _desktop_pairs(),
@@ -424,22 +459,34 @@ def main() -> int:
             r = contrast_ratio(p.fg, p.bg)
             ok = r >= p.threshold
             status = "PASS" if ok else "FAIL"
-            print(_fmt_row(p.label, p.theme, p.fg, p.bg, r, p.threshold, status))
+            print(_fmt_row(p.label, p.theme, p.fg, p.bg, r, p.threshold, status, p.essential))
             if not ok:
-                failed.append(p)
+                if p.essential:
+                    failed_essential.append(p)
+                else:
+                    failed_exempt.append(p)
 
+    pass_count = len(pairs) - len(failed_essential) - len(failed_exempt)
     print("\n" + "=" * 78)
-    print(f"Result: {len(pairs) - len(failed)} pass, {len(failed)} fail")
+    print(
+        f"Result: {pass_count} pass, {len(failed_essential)} fail, {len(failed_exempt)} exempt-fail"
+    )
     print("=" * 78)
 
+    failed = failed_essential + failed_exempt
     if failed:
         print("\nFailures (sorted worst-first):")
         for p in sorted(failed, key=lambda q: contrast_ratio(q.fg, q.bg)):
             r = contrast_ratio(p.fg, p.bg)
-            print(_fmt_row(p.label, p.theme, p.fg, p.bg, r, p.threshold, "FAIL"))
+            print(_fmt_row(p.label, p.theme, p.fg, p.bg, r, p.threshold, "FAIL", p.essential))
+
+    if failed_essential:
         return 1
 
-    print("\nAll pairs meet WCAG 2.1 AA.")
+    if failed_exempt:
+        print("\nAll essential pairs meet WCAG 2.1 AA. Exempt-fail pairs are decorative.")
+    else:
+        print("\nAll pairs meet WCAG 2.1 AA.")
     return 0
 
 

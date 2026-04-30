@@ -59,8 +59,8 @@
      values are chosen for >=4.5:1 contrast against the matching
      theme background and to remain distinguishable to viewers
      with red-green color vision deficiency. */
-  --bar-future: #60a5fa;
-  --bar-future-deviation: #60a5fa;
+  --bar-future: #2563eb;
+  --bar-future-deviation: #2563eb;
   --bar-in-work-window: #0d9488;
   --bar-in-work-window-deviation: #0d9488;
   --bar-due-now: #d97706;
