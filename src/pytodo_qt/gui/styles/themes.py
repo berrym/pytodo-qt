@@ -10,8 +10,16 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from PyQt6.QtCore import QEvent, QObject
 from PyQt6.QtGui import QColor, QFont, QFontDatabase, QPalette
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QListView,
+    QStyledItemDelegate,
+    QTreeView,
+    QWidget,
+)
 
 from ...core.config import get_config
 from ...core.logger import Logger
@@ -97,6 +105,12 @@ LIGHT_COLORS = {
     # blue-600 stays at >=5:1 against #ffffff on light and against
     # #1e1e1e on dark, so the same hex serves both themes.
     "interactive_overlay": "#2563eb",
+    # Persistent-selection indicator — narrow vertical bar drawn at
+    # the left edge of the currently-selected row so the persistent
+    # selection is distinguishable from the transient hover state
+    # (both use the highlight band; the bar marks "actually selected").
+    # #1a1a1a clears 4.65:1 on the light-theme highlight band.
+    "selection_indicator": "#1a1a1a",
     # Chart/timeline colors (Okabe-Ito + industry standards for light backgrounds)
     "chart_span": "#5470c6",  # ECharts blue — time span bar
     "chart_span_alpha": "100",  # Opacity 0-255
@@ -161,6 +175,9 @@ DARK_COLORS = {
     # Interactive cursor-affordance overlay (matches LIGHT_COLORS;
     # deliberately theme-invariant for white-text legibility).
     "interactive_overlay": "#2563eb",
+    # Persistent-selection indicator (matches LIGHT_COLORS; #1a1a1a
+    # clears 9.34:1 on the dark-theme #64b5f6 highlight band).
+    "selection_indicator": "#1a1a1a",
     # Chart/timeline colors (ECharts dark + desaturated for dark backgrounds)
     "chart_span": "#4992ff",  # ECharts dark blue — time span bar
     "chart_span_alpha": "90",  # Subtle, recedes
@@ -491,6 +508,23 @@ QComboBox QAbstractItemView {{
     color: {colors["text"]};
     selection-background-color: {colors["highlight"]};
     selection-color: {colors["highlight_text"]};
+    outline: 0;
+}}
+
+QComboBox QAbstractItemView::item {{
+    padding: 6px 8px;
+    border-left: 3px solid transparent;
+}}
+
+QComboBox QAbstractItemView::item:hover {{
+    background-color: {colors["highlight"]};
+    color: {colors["highlight_text"]};
+}}
+
+QComboBox QAbstractItemView::item:selected {{
+    background-color: {colors["highlight"]};
+    color: {colors["highlight_text"]};
+    border-left: 3px solid {colors["selection_indicator"]};
 }}
 
 /* Tab widgets */
@@ -689,7 +723,12 @@ QLabel {{
     color: {colors["text"]};
 }}
 
-/* List views */
+/* List + tree views — share hover/selected treatment so dropdown
+   popups, settings lists, and tree-style selectors all paint a
+   solid blue band on hover and add a high-contrast left accent
+   bar on the persistently-selected row. The bar reserves space
+   on every item via a transparent border so selection does not
+   shift content sideways. */
 QListView {{
     background-color: {colors["base"]};
     color: {colors["text"]};
@@ -699,13 +738,82 @@ QListView {{
 
 QListView::item {{
     padding: 6px;
+    border-left: 3px solid transparent;
+}}
+
+QListView::item:hover {{
+    background-color: {colors["highlight"]};
+    color: {colors["highlight_text"]};
 }}
 
 QListView::item:selected {{
     background-color: {colors["highlight"]};
     color: {colors["highlight_text"]};
+    border-left: 3px solid {colors["selection_indicator"]};
+}}
+
+QTreeView {{
+    background-color: {colors["base"]};
+    color: {colors["text"]};
+    border: 1px solid {colors["border"]};
+    border-radius: 8px;
+}}
+
+QTreeView::item {{
+    padding: 4px;
+    border-left: 3px solid transparent;
+}}
+
+QTreeView::item:hover {{
+    background-color: {colors["highlight"]};
+    color: {colors["highlight_text"]};
+}}
+
+QTreeView::item:selected {{
+    background-color: {colors["highlight"]};
+    color: {colors["highlight_text"]};
+    border-left: 3px solid {colors["selection_indicator"]};
 }}
 """
+
+
+def _configure_dropdown(widget: QWidget) -> None:
+    """Toggle the per-widget settings Qt requires before the QSS
+    `::item:hover` and `::item:selected` rules can paint.
+
+    Two settings are needed and neither is reachable from a global
+    stylesheet:
+
+    1. `mouseTracking = True` on the view — without it the view only
+       receives mouse-move events while a button is pressed, so the
+       hover pseudo-state never fires from a bare cursor pass.
+    2. `QStyledItemDelegate` on `QComboBox` popups — Qt's default
+       combo popup uses a platform delegate that bypasses QSS item
+       rules entirely on Linux and on macOS native styles, so combo
+       dropdowns paint with the platform style instead of the theme.
+    """
+    if isinstance(widget, QComboBox):
+        view = widget.view()
+        if view is not None:
+            view.setMouseTracking(True)
+            view.setItemDelegate(QStyledItemDelegate(view))
+    elif isinstance(widget, (QListView, QTreeView)):
+        widget.setMouseTracking(True)
+
+
+class _DropdownConfigurator(QObject):
+    """Application-wide event filter that configures dropdown views as
+    they are constructed, so widgets created after `apply_theme` runs
+    still pick up the hover / selection-indicator treatment.
+    """
+
+    def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:  # noqa: N802
+        if a1 is not None and a1.type() == QEvent.Type.Polish and isinstance(a0, QWidget):
+            _configure_dropdown(a0)
+        return False
+
+
+_dropdown_configurator: _DropdownConfigurator | None = None
 
 
 def apply_theme(app: QApplication, theme: Theme | None = None) -> None:
@@ -716,6 +824,17 @@ def apply_theme(app: QApplication, theme: Theme | None = None) -> None:
     palette = create_palette(theme)
     app.setPalette(palette)
     app.setStyleSheet(get_stylesheet(theme))
+
+    # Install the dropdown event filter once per application instance —
+    # all subsequently-polished widgets get their mouseTracking / delegate
+    # toggled. Sweep the already-constructed widgets too so existing
+    # dropdowns light up the first time `apply_theme` runs.
+    global _dropdown_configurator
+    if _dropdown_configurator is None:
+        _dropdown_configurator = _DropdownConfigurator()
+        app.installEventFilter(_dropdown_configurator)
+    for w in app.allWidgets():
+        _configure_dropdown(w)
 
     logger.log.debug("Applied theme: %s", theme.value)
 

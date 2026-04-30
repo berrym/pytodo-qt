@@ -144,6 +144,10 @@ def _desktop_pairs() -> list[Pair]:
             ("border on window", c["border"], c["window"]),
             ("highlight on base", c["highlight"], c["base"]),  # focus ring
             ("highlight on window", c["highlight"], c["window"]),  # focus ring
+            # Persistent-selection indicator bar painted on the left edge
+            # of selected list/tree/combo items, against the highlight
+            # band that fills the rest of the row.
+            ("selection_indicator on highlight", c["selection_indicator"], c["highlight"]),
         ]
         for label, fg, bg in ui_pairs:
             out.append(Pair(label, theme_name, fg, bg, THRESHOLD_UI, "ui"))
