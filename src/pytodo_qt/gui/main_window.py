@@ -2487,10 +2487,13 @@ class MainWindow(QMainWindow):
     def _on_list_changed(self, todo_list: TodoList | None) -> None:
         """Handle list selection change."""
         self._analytics.invalidate()
-        if self._view_stack.currentIndex() == 0:
-            self.todo_table.set_list(todo_list)
-        else:
-            self.kanban_board.set_list(todo_list)
+        # Keep every view in sync with the new list — updating only the
+        # currently-visible view leaves the others rendering stale items
+        # the next time the user flips to them, and the calendar view
+        # never gets told at all under that pattern.
+        self.todo_table.set_list(todo_list)
+        self.kanban_board.set_list(todo_list)
+        self.calendar_view.set_list(todo_list)
 
         # Clear unseen indicator for the list being viewed
         if todo_list:
