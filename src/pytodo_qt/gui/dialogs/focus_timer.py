@@ -207,9 +207,28 @@ class FocusTimerDialog(QDialog):
         layout.addLayout(btn_layout)
 
         # Today's Sessions — compact stats + collapsible recent list
+        # Muted text for the resting state; :hover / :pressed / :focus
+        # switch to highlight_text on the highlight band so the label
+        # stays legible when the focus rectangle or press tint lands on
+        # it (the inline `color: gray` this replaces went unreadable on
+        # the blue band).
+        _toggle_colors = get_colors()
         self._sessions_toggle = QPushButton(self.tr("\u25b6 Today's Sessions"))
         self._sessions_toggle.setFlat(True)
-        self._sessions_toggle.setStyleSheet("text-align: left; color: gray;")
+        self._sessions_toggle.setStyleSheet(
+            "QPushButton {"
+            f" text-align: left; color: {_toggle_colors['completed_text']};"
+            " border: none; background: transparent; padding: 4px 0px;"
+            "}"
+            "QPushButton:hover {"
+            f" color: {_toggle_colors['text']};"
+            "}"
+            "QPushButton:pressed, QPushButton:focus {"
+            f" color: {_toggle_colors['highlight_text']};"
+            f" background: {_toggle_colors['highlight']};"
+            " border-radius: 4px;"
+            "}"
+        )
         self._sessions_toggle.clicked.connect(self._toggle_sessions)
         layout.addWidget(self._sessions_toggle)
 
@@ -220,7 +239,9 @@ class FocusTimerDialog(QDialog):
 
         # Stats summary row
         self._stats_label = QLabel()
-        self._stats_label.setStyleSheet("color: gray; font-size: 11px;")
+        self._stats_label.setStyleSheet(
+            f"color: {_toggle_colors['completed_text']}; font-size: 11px;"
+        )
         self._stats_label.setWordWrap(True)
         sessions_outer.addWidget(self._stats_label)
 

@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QEvent, QRectF, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QPainter, QPen
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -142,6 +142,12 @@ class StatusBarWidget(QStatusBar):
         self._pomodoro_icon_label.setCursor(Qt.CursorShape.PointingHandCursor)
         self.pomodoro_label = QLabel()
         self.pomodoro_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Monospace digits so the timer doesn't shift width as glyphs change each second.
+        # Bold is set on the QFont (not via QSS font-weight) so per-state setStyleSheet
+        # calls below can change color without resetting the font family.
+        _timer_font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        _timer_font.setBold(True)
+        self.pomodoro_label.setFont(_timer_font)
         self._daily_goal_ring = DailyGoalRingWidget()
         self._daily_goal_ring.hide()
         # Install event filters after both labels exist to avoid AttributeError
@@ -381,7 +387,7 @@ class StatusBarWidget(QStatusBar):
             self._pomodoro_icon_label.setText(_STOPWATCH_EMOJI.get("paused", "\u23f8\ufe0f"))
 
         self.pomodoro_label.setText(time_str)
-        self.pomodoro_label.setStyleSheet(f"color: {state_color}; font-weight: bold;")
+        self.pomodoro_label.setStyleSheet(f"color: {state_color};")
         self._pomodoro_icon_label.setVisible(True)
         self.pomodoro_label.setVisible(True)
         self._pomodoro_separator.setVisible(True)
