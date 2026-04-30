@@ -35,7 +35,9 @@ class DatabaseConfig:
     # user picked in Settings and view switches don't mutate it.
     remember_last_view: bool = True
     calendar_sub_view: str = "week"  # "day", "week", "month", "timeline", or "agenda"
-    timeline_sub_view: str = "tasks"  # "tasks", "daily", "productivity", or "accuracy"
+    timeline_sub_view: str = (
+        "tasks"  # "tasks", "daily", "productivity", "accuracy", "timing", or "cycle"
+    )
     sort_updated_at: float = 0.0  # Timestamp of last sort config change
     day_start_hour: int = 0  # Hour when the logical day starts (0-23)
 

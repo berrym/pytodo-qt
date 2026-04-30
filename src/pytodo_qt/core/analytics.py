@@ -1020,7 +1020,12 @@ class AnalyticsService:
             if bool(pd.isna(row["completed_at"])):
                 unknown_count += 1
                 continue
-            due_end_ms = self._due_end_ms(cast(str, row["due_date"]), cast(str, row["due_time"]))
+            # due_time is nullable in SQLite and reads back as NaN (a
+            # float) rather than None, so the cast hint does not protect
+            # _due_end_ms from a non-string. Coerce explicitly.
+            due_time_raw = row["due_time"]
+            due_time_str = None if bool(pd.isna(due_time_raw)) else str(due_time_raw)
+            due_end_ms = self._due_end_ms(cast(str, row["due_date"]), due_time_str)
             completed_ms = int(cast(int, row["completed_at"]))
             deviation_minutes = (completed_ms - due_end_ms) // 60_000
             if completed_ms < due_end_ms:

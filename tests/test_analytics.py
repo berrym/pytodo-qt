@@ -806,6 +806,38 @@ class TestCompletionTiming:
         result = svc.completion_timing()
         assert result.early_count == 1
 
+    def test_mixed_null_and_timed_due_times(self, db, svc):
+        """Mixed cohort: some items have due_time, some are all-day.
+
+        Regression for a TypeError raised by `time.fromisoformat` when
+        pandas read NULL `due_time` values back as NaN (float) rather
+        than None — the pre-fix code passed NaN straight through to
+        `_due_end_ms`, which then crashed because `if due_time_str:`
+        evaluated NaN as truthy.
+        """
+        timed_completed = _ms(datetime(2026, 4, 10, 14, 0, 0))
+        all_day_completed = _ms(datetime(2026, 4, 10, 23, 30, 0))
+        _insert_item(
+            db,
+            reminder="Timed",
+            due_date="2026-04-10",
+            due_time="15:00:00",
+            complete=1,
+            completed_at=timed_completed,
+        )
+        _insert_item(
+            db,
+            reminder="All day",
+            due_date="2026-04-10",
+            due_time=None,
+            complete=1,
+            completed_at=all_day_completed,
+        )
+        result = svc.completion_timing()
+        assert result.total == 2
+        assert result.early_count == 2
+        assert result.unknown_count == 0
+
     def test_date_range_filter(self, db, svc):
         """Date range filters operate on due_date."""
         completed = _ms(datetime(2026, 4, 10, 14, 0, 0))

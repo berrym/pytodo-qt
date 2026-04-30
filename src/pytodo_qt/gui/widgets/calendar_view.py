@@ -3000,6 +3000,336 @@ class _TimelineAccuracyWidget(QWidget):
 
 
 # ---------------------------------------------------------------------------
+# Timeline Timing Chart — completion-timing bars (Early / On time / Late)
+# ---------------------------------------------------------------------------
+
+
+class _TimelineTimingWidget(QWidget):
+    """Horizontal bar chart showing the Early / On-time / Late split.
+
+    Uses the same `BarState` palette as the day/week calendar bars and
+    the matplotlib export so completion-timing reads identically across
+    surfaces. The slip rate is shown in the title; the unknown cohort
+    is summarized as a footer note when present.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        import pyqtgraph as pg
+
+        self._analytics = None
+        self._list_id: str | None = None
+
+        self._title_label = QLabel(
+            QCoreApplication.translate("CalendarViewWidget", "Completion Timing")
+        )
+        self._title_label.setStyleSheet("font-size: 13px; font-weight: bold; padding: 6px 10px;")
+        self._note_label = QLabel("")
+        self._note_label.setStyleSheet("font-size: 11px; padding: 0px 10px 6px 10px;")
+        self._note_label.setVisible(False)
+
+        self._create_styles()
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self._title_label)
+
+        self._plot = pg.PlotWidget()
+        self._plot.setBackground(self._colors.get("base", "#252526"))
+        self._plot.setMouseEnabled(x=False, y=False)
+        self._plot.showGrid(x=True, y=False, alpha=0.2)
+        self._plot.setMenuEnabled(False)
+        layout.addWidget(self._plot, 1)
+        layout.addWidget(self._note_label)
+
+    def _create_styles(self) -> None:
+        from ...core.bar_palette import get_palette
+        from ...core.calendar_layout import BarState
+        from ...gui.styles.themes import Theme, get_colors, get_current_theme
+
+        c = get_colors()
+        self._colors = c
+        theme_name = "dark" if get_current_theme() == Theme.DARK else "light"
+        bar_palette = get_palette(theme_name)
+        # Use deviation color for LATE since base is the universal
+        # "completed" green; the deviation channel is what marks late
+        # bars in the calendar UI.
+        self._row_colors = {
+            "early": bar_palette[BarState.COMPLETED_EARLY].base,
+            "ontime": bar_palette[BarState.COMPLETED_ONTIME].base,
+            "late": bar_palette[BarState.COMPLETED_LATE].deviation,
+        }
+        self._col_text = QColor(c.get("text", "#e0e0e0"))
+        self._col_border = QColor(c.get("border", "#3c3c3c"))
+        self._col_muted = QColor(c.get("completed_text", "#8c8c8c"))
+
+    def set_analytics(self, analytics) -> None:
+        self._analytics = analytics
+
+    def set_list_id(self, list_id: str | None) -> None:
+        self._list_id = list_id
+
+    def set_active_session(
+        self, item_id: UUID | None = None, elapsed: int = 0, session_type: str = ""
+    ) -> None:
+        # Completion-timing changes only when items reach completion;
+        # accept the call for shape parity with sibling widgets but
+        # don't react to in-progress focus sessions.
+        del item_id, elapsed, session_type
+
+    def rebuild(self) -> None:
+        import pyqtgraph as pg
+
+        self._create_styles()
+        plot = self._plot
+        plot.clear()
+        plot.setBackground(self._colors.get("base", "#252526"))
+        self._note_label.setVisible(False)
+
+        _tr = QCoreApplication.translate
+        if self._analytics is None:
+            self._title_label.setText(_tr("CalendarViewWidget", "Completion Timing"))
+            self._show_empty(_tr("CalendarViewWidget", "Analytics service not available"))
+            return
+
+        timing = self._analytics.completion_timing(list_id=self._list_id)
+        slip = self._analytics.slip_rate(list_id=self._list_id)
+
+        if slip.rate is not None:
+            pct = round(slip.rate * 100)
+            self._title_label.setText(
+                _tr("CalendarViewWidget", "Completion Timing — slip rate {pct}%").format(pct=pct)
+            )
+        else:
+            self._title_label.setText(_tr("CalendarViewWidget", "Completion Timing"))
+
+        if timing.total == 0:
+            self._show_empty(_tr("CalendarViewWidget", "No completed tasks in range"))
+            return
+
+        rows = [
+            ("late", _tr("CalendarViewWidget", "Late"), timing.late_count),
+            ("ontime", _tr("CalendarViewWidget", "On time"), timing.ontime_count),
+            ("early", _tr("CalendarViewWidget", "Early"), timing.early_count),
+        ]
+        max_count = max(timing.early_count, timing.ontime_count, timing.late_count, 1)
+
+        y_ticks = []
+        for i, (key, label, count) in enumerate(rows):
+            y = float(i)
+            y_ticks.append((y, label))
+            color = QColor(self._row_colors[key])
+            bar = pg.BarGraphItem(
+                x0=[0],
+                y0=[y - 0.35],
+                width=[count],
+                height=[0.7],
+                brush=color,
+                pen=pg.mkPen(color.darker(130), width=1),
+            )
+            plot.addItem(bar)
+            value_text = pg.TextItem(str(count), color=self._col_text, anchor=(0, 0.5))
+            value_text.setPos(count + max_count * 0.02, y)
+            plot.addItem(value_text)
+
+        left_axis = plot.getAxis("left")
+        left_axis.setTicks([y_ticks])
+        left_axis.setTextPen(self._col_text)
+        left_axis.setPen(pg.mkPen(self._col_border))
+        left_axis.setWidth(80)
+
+        bottom_axis = plot.getAxis("bottom")
+        bottom_axis.setTextPen(self._col_text)
+        bottom_axis.setPen(pg.mkPen(self._col_border))
+        bottom_axis.setLabel(_tr("CalendarViewWidget", "Tasks"))
+
+        plot.setXRange(0, max_count * 1.2, padding=0)  # type: ignore[call-arg]
+        plot.setYRange(-0.7, len(rows) - 0.3, padding=0.02)  # type: ignore[call-arg]
+
+        if timing.unknown_count > 0:
+            self._note_label.setStyleSheet(
+                f"font-size: 11px; color: {self._col_muted.name()}; padding: 0px 10px 6px 10px;"
+            )
+            self._note_label.setText(
+                _tr(
+                    "CalendarViewWidget",
+                    "{n} completed without a recorded timestamp (excluded from classification)",
+                ).format(n=timing.unknown_count)
+            )
+            self._note_label.setVisible(True)
+
+    def _show_empty(self, message: str) -> None:
+        import pyqtgraph as pg
+
+        text = pg.TextItem(message, color=self._col_muted, anchor=(0.5, 0.5))
+        text.setPos(0.5, 0.5)
+        self._plot.addItem(text)
+        self._plot.setXRange(0, 1, padding=0)  # type: ignore[call-arg]
+        self._plot.setYRange(0, 1, padding=0)  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------------------
+# Timeline Cycle Chart — created→completed cycle-time stats
+# ---------------------------------------------------------------------------
+
+
+class _TimelineCycleWidget(QWidget):
+    """Stat tiles for created→completed cycle time (mean / median / p90).
+
+    `cycle_time` returns scalar statistics with no underlying
+    distribution at this layer, so a stat-tile layout is the honest
+    rendering — a chart of three numbers would be theatre.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+
+        self._analytics = None
+        self._list_id: str | None = None
+
+        self._title_label = QLabel(QCoreApplication.translate("CalendarViewWidget", "Cycle Time"))
+        self._title_label.setStyleSheet("font-size: 13px; font-weight: bold; padding: 6px 10px;")
+
+        self._tiles_widget = QWidget()
+        self._tiles_layout = QHBoxLayout(self._tiles_widget)
+        self._tiles_layout.setContentsMargins(20, 10, 20, 10)
+        self._tiles_layout.setSpacing(20)
+
+        self._mean_value = QLabel("—")
+        self._mean_label = QLabel(QCoreApplication.translate("CalendarViewWidget", "Mean"))
+        self._median_value = QLabel("—")
+        self._median_label = QLabel(QCoreApplication.translate("CalendarViewWidget", "Median"))
+        self._p90_value = QLabel("—")
+        self._p90_label = QLabel(QCoreApplication.translate("CalendarViewWidget", "p90"))
+
+        for tile_widget in self._build_tiles():
+            self._tiles_layout.addWidget(tile_widget, 1)
+
+        self._subtitle_label = QLabel("")
+        self._subtitle_label.setStyleSheet("font-size: 11px; padding: 0px 10px 10px 10px;")
+        self._subtitle_label.setWordWrap(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self._title_label)
+        layout.addWidget(self._tiles_widget)
+        layout.addWidget(self._subtitle_label)
+        layout.addStretch(1)
+
+        self._apply_styles()
+
+    def _build_tiles(self) -> list[QWidget]:
+        tiles: list[QWidget] = []
+        for value, label in [
+            (self._mean_value, self._mean_label),
+            (self._median_value, self._median_label),
+            (self._p90_value, self._p90_label),
+        ]:
+            tile = QWidget()
+            tile_layout = QVBoxLayout(tile)
+            tile_layout.setContentsMargins(12, 14, 12, 14)
+            tile_layout.setSpacing(4)
+            value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            tile_layout.addWidget(value)
+            tile_layout.addWidget(label)
+            tiles.append(tile)
+        return tiles
+
+    def _apply_styles(self) -> None:
+        from ...gui.styles.themes import get_colors
+
+        c = get_colors()
+        text_color = c.get("text", "#e0e0e0")
+        muted_color = c.get("completed_text", "#8c8c8c")
+        border_color = c.get("border", "#3c3c3c")
+        alt_bg = c.get("alternate_base", "#2d2d30")
+
+        for value_label in (self._mean_value, self._median_value, self._p90_value):
+            value_label.setStyleSheet(f"font-size: 28px; font-weight: bold; color: {text_color};")
+        for tag_label in (self._mean_label, self._median_label, self._p90_label):
+            tag_label.setStyleSheet(
+                f"font-size: 11px; color: {muted_color}; text-transform: uppercase;"
+                " letter-spacing: 1px;"
+            )
+        self._tiles_widget.setStyleSheet(
+            f"QWidget {{ background: {alt_bg}; border: 1px solid {border_color};"
+            " border-radius: 6px; }"
+        )
+        self._subtitle_label.setStyleSheet(
+            f"font-size: 11px; color: {muted_color}; padding: 0px 10px 10px 10px;"
+        )
+
+    def set_analytics(self, analytics) -> None:
+        self._analytics = analytics
+
+    def set_list_id(self, list_id: str | None) -> None:
+        self._list_id = list_id
+
+    def set_active_session(
+        self, item_id: UUID | None = None, elapsed: int = 0, session_type: str = ""
+    ) -> None:
+        # Cycle time only updates on completion events.
+        del item_id, elapsed, session_type
+
+    def rebuild(self) -> None:
+        self._apply_styles()
+        _tr = QCoreApplication.translate
+
+        if self._analytics is None:
+            self._set_values("—", "—", "—")
+            self._subtitle_label.setText(
+                _tr("CalendarViewWidget", "Analytics service not available")
+            )
+            return
+
+        result = self._analytics.cycle_time(list_id=self._list_id)
+        if result.sample_count == 0 or result.mean_minutes is None:
+            self._set_values("—", "—", "—")
+            self._subtitle_label.setText(
+                _tr(
+                    "CalendarViewWidget",
+                    "No data yet — cycle time emerges as items reach completion",
+                )
+            )
+            return
+
+        self._set_values(
+            self._format_minutes(result.mean_minutes),
+            self._format_minutes(result.median_minutes),
+            self._format_minutes(result.p90_minutes),
+        )
+        parts = [
+            _tr("CalendarViewWidget", "over {n} completed tasks").format(n=result.sample_count)
+        ]
+        if result.unknown_count > 0:
+            parts.append(
+                _tr(
+                    "CalendarViewWidget",
+                    "{n} completed without a recorded timestamp",
+                ).format(n=result.unknown_count)
+            )
+        self._subtitle_label.setText(" — ".join(parts))
+
+    def _set_values(self, mean: str, median: str, p90: str) -> None:
+        self._mean_value.setText(mean)
+        self._median_value.setText(median)
+        self._p90_value.setText(p90)
+
+    @staticmethod
+    def _format_minutes(minutes: float | None) -> str:
+        if minutes is None:
+            return "—"
+        if minutes < 60:
+            return f"{round(minutes)}m"
+        if minutes < 1440:
+            return f"{minutes / 60:.1f}h"
+        return f"{minutes / 1440:.1f}d"
+
+
+# ---------------------------------------------------------------------------
 # Day-of-week header bar
 # ---------------------------------------------------------------------------
 
@@ -5831,7 +6161,14 @@ class CalendarViewWidget(QWidget):
         self._sub_view = sub_map.get(saved, self.SUB_WEEK)
 
         # Load saved timeline sub-view
-        tl_sub_map = {"tasks": 0, "daily": 1, "productivity": 2, "accuracy": 3}
+        tl_sub_map = {
+            "tasks": 0,
+            "daily": 1,
+            "productivity": 2,
+            "accuracy": 3,
+            "timing": 4,
+            "cycle": 5,
+        }
         self._initial_tl_sub_view = tl_sub_map.get(config.database.timeline_sub_view, 0)
 
         self._setup_ui()
@@ -5942,7 +6279,14 @@ class CalendarViewWidget(QWidget):
         self._tl_sub_view = self._initial_tl_sub_view
         self._tl_sub_buttons: list[QPushButton] = []
         for i, label in enumerate(
-            [self.tr("Tasks"), self.tr("Daily"), self.tr("Productivity"), self.tr("Accuracy")]
+            [
+                self.tr("Tasks"),
+                self.tr("Daily"),
+                self.tr("Productivity"),
+                self.tr("Accuracy"),
+                self.tr("Timing"),
+                self.tr("Cycle"),
+            ]
         ):
             btn = QPushButton(label)
             btn.setCheckable(True)
@@ -6073,6 +6417,14 @@ class CalendarViewWidget(QWidget):
         self._timeline_accuracy_widget = _TimelineAccuracyWidget()
         self._timeline_sub_stack.addWidget(self._timeline_accuracy_widget)  # 3
 
+        # [4] Timing — completion-timing horizontal bars
+        self._timeline_timing_widget = _TimelineTimingWidget()
+        self._timeline_sub_stack.addWidget(self._timeline_timing_widget)  # 4
+
+        # [5] Cycle — created→completed cycle-time stat tiles
+        self._timeline_cycle_widget = _TimelineCycleWidget()
+        self._timeline_sub_stack.addWidget(self._timeline_cycle_widget)  # 5
+
         tl_container_layout.addWidget(self._timeline_sub_stack)
         self._timeline_sub_stack.setCurrentIndex(self._tl_sub_view)
 
@@ -6171,6 +6523,8 @@ class CalendarViewWidget(QWidget):
         self._timeline_daily_widget.set_analytics(analytics)
         self._timeline_productivity_widget.set_analytics(analytics)
         self._timeline_accuracy_widget.set_analytics(analytics)
+        self._timeline_timing_widget.set_analytics(analytics)
+        self._timeline_cycle_widget.set_analytics(analytics)
 
     def set_active_session(
         self, item_id: UUID | None, elapsed: int = 0, session_type: str = ""
@@ -6476,13 +6830,21 @@ class CalendarViewWidget(QWidget):
         # Persist timeline sub-view choice
         from ...core.config import get_config, get_config_manager
 
-        tl_name_map = {0: "tasks", 1: "daily", 2: "productivity", 3: "accuracy"}
+        tl_name_map = {
+            0: "tasks",
+            1: "daily",
+            2: "productivity",
+            3: "accuracy",
+            4: "timing",
+            5: "cycle",
+        }
         get_config().database.timeline_sub_view = tl_name_map.get(idx, "tasks")
         get_config_manager().save()
 
     def _update_timeline_nav_state(self) -> None:
         """Enable/disable navigation buttons based on active timeline sub-view."""
-        # Tasks and Daily support navigation; Productivity and Accuracy don't
+        # Tasks and Daily support navigation; Productivity, Accuracy,
+        # Timing, and Cycle are all-time aggregates with no nav.
         nav_enabled = self._tl_sub_view <= 1  # 0=Tasks, 1=Daily
         self._prev_btn.setEnabled(nav_enabled)
         self._next_btn.setEnabled(nav_enabled)
@@ -6490,14 +6852,20 @@ class CalendarViewWidget(QWidget):
 
     def _refresh_timeline_sub_view(self) -> None:
         """Refresh the active timeline sub-view chart."""
+        list_id = str(self._todo_list.id) if self._todo_list else None
         if self._tl_sub_view == 1:  # Daily
             self._timeline_daily_widget.set_current_date(self._current_date)
         elif self._tl_sub_view == 2:  # Productivity
             self._timeline_productivity_widget.rebuild()
         elif self._tl_sub_view == 3:  # Accuracy
-            list_id = str(self._todo_list.id) if self._todo_list else None
             self._timeline_accuracy_widget.set_list_id(list_id)
             self._timeline_accuracy_widget.rebuild()
+        elif self._tl_sub_view == 4:  # Timing
+            self._timeline_timing_widget.set_list_id(list_id)
+            self._timeline_timing_widget.rebuild()
+        elif self._tl_sub_view == 5:  # Cycle
+            self._timeline_cycle_widget.set_list_id(list_id)
+            self._timeline_cycle_widget.rebuild()
 
     def _navigate_prev(self) -> None:
         if self._sub_view == self.SUB_MONTH:
@@ -6595,6 +6963,10 @@ class CalendarViewWidget(QWidget):
                 self._nav_label.setText(self.tr("Productivity \u2014 All Time"))
             elif self._tl_sub_view == 3:  # Accuracy
                 self._nav_label.setText(self.tr("Accuracy \u2014 All Time"))
+            elif self._tl_sub_view == 4:  # Timing
+                self._nav_label.setText(self.tr("Timing \u2014 All Time"))
+            elif self._tl_sub_view == 5:  # Cycle
+                self._nav_label.setText(self.tr("Cycle Time \u2014 All Time"))
             else:  # Tasks
                 self._nav_label.setText(f"Timeline \u2014 {d.strftime('%B %Y')}")
 
