@@ -68,20 +68,22 @@ LIGHT_COLORS = {
     "due_soon": "#2a7e4d",
     # Smart-input entity highlight palette — applied as foreground
     # color on parsed entity spans. Tuned for >= 4.5:1 contrast on the
-    # light base background.
-    "entity_date": "#4A90D9",
-    "entity_time": "#4A90D9",
-    "entity_priority": "#E8912D",
-    "entity_tag": "#2DA5A5",
-    "entity_recurrence": "#5BA55B",
-    "entity_pomodoro": "#8B5CF6",
-    "entity_estimate": "#D97706",
+    # light base background; values picked from Tailwind 700 /
+    # Material 700-800 families so each entity kind reads at AA against
+    # white while remaining tonally related to its dark-theme sibling.
+    "entity_date": "#1976d2",
+    "entity_time": "#1976d2",
+    "entity_priority": "#b45309",
+    "entity_tag": "#00796b",
+    "entity_recurrence": "#15803d",
+    "entity_pomodoro": "#6d28d9",
+    "entity_estimate": "#92400e",
     "entity_work_duration": "#9333EA",
-    "entity_time_block": "#4A90D9",
+    "entity_time_block": "#1976d2",
     "entity_event_date": "#7C3AED",
     "entity_condition": "#DC2626",
-    "entity_filler": "#94A3B8",
-    "entity_subtask": "#0EA5E9",
+    "entity_filler": "#64748b",
+    "entity_subtask": "#0369a1",
     # Focus-timer state colors — drive the countdown text color in
     # `dialogs/focus_timer.py`. Distinct enough to read state at a
     # glance even out of the corner of the eye.

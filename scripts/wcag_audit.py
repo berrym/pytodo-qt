@@ -163,7 +163,7 @@ def _web_pairs() -> list[Pair]:
         "tag-bg": "#e3f2fd",
         "tag-text": "#1565c0",
         "entity-date": "#1565c0",
-        "entity-priority": "#e65100",
+        "entity-priority": "#b45309",
         "entity-tag": "#00695c",
         "entity-recurrence": "#2e7d32",
         "entity-pomodoro": "#6a1b9a",
