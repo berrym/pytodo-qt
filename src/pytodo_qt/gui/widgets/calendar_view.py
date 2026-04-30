@@ -3004,22 +3004,16 @@ class _TimelineAccuracyWidget(QWidget):
 # ---------------------------------------------------------------------------
 
 
-def _build_info_button(tooltip: str, on_click) -> QPushButton:
-    """Small ⓘ glyph button matching the focus-score popover pattern in
-    `dialogs/focus_timer.py`. Click pops a QToolTip with the metric's
-    explanation."""
-    btn = QPushButton("ⓘ")  # circled-i glyph
-    btn.setFlat(True)
-    btn.setCursor(Qt.CursorShape.PointingHandCursor)
-    btn.setFixedWidth(20)
-    btn.setStyleSheet(
-        "QPushButton { color: gray; font-size: 14px; border: none;"
-        " padding: 0; background: transparent; }"
-        "QPushButton:hover { color: palette(highlight); }"
-    )
-    btn.setToolTip(tooltip)
-    btn.clicked.connect(on_click)
-    return btn
+def _wrap_title_with_info_link(title: str) -> str:
+    """Compose a title label string with a trailing ⓘ glyph rendered as
+    an `info://` link. The widget owns the QLabel and connects its
+    `linkActivated` signal to its own `_show_explanation` slot. Using a
+    link inside the existing QLabel rather than a sibling QPushButton
+    keeps the widget tree shape identical to the pre-popover layout —
+    important because adding a peer widget under the same parent shifted
+    pyqtgraph teardown ordering enough to surface a ViewBox-deletion
+    race on the Ubuntu 3.12 + offscreen CI matrix only."""
+    return f"{title} <a href='info://' style='color: gray; text-decoration: none;'>ⓘ</a>"
 
 
 class _TimelineTimingWidget(QWidget):
@@ -3038,14 +3032,12 @@ class _TimelineTimingWidget(QWidget):
         self._analytics = None
         self._list_id: str | None = None
 
-        self._title_label = QLabel(
-            QCoreApplication.translate("CalendarViewWidget", "Completion Timing")
-        )
+        self._title_text = QCoreApplication.translate("CalendarViewWidget", "Completion Timing")
+        self._title_label = QLabel(_wrap_title_with_info_link(self._title_text))
         self._title_label.setStyleSheet("font-size: 13px; font-weight: bold; padding: 6px 10px;")
-        self._info_btn = _build_info_button(
-            self.tr("What's this? Click for the full explanation."),
-            self._show_explanation,
-        )
+        self._title_label.setOpenExternalLinks(False)
+        self._title_label.setToolTip(self.tr("Click ⓘ for the full explanation."))
+        self._title_label.linkActivated.connect(lambda _href: self._show_explanation())
         self._note_label = QLabel("")
         self._note_label.setStyleSheet("font-size: 11px; padding: 0px 10px 6px 10px;")
         self._note_label.setVisible(False)
@@ -3055,13 +3047,7 @@ class _TimelineTimingWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        header_row = QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 6, 0)
-        header_row.setSpacing(0)
-        header_row.addWidget(self._title_label)
-        header_row.addWidget(self._info_btn)
-        header_row.addStretch()
-        layout.addLayout(header_row)
+        layout.addWidget(self._title_label)
 
         self._plot = pg.PlotWidget()
         self._plot.setBackground(self._colors.get("base", "#252526"))
@@ -3117,7 +3103,7 @@ class _TimelineTimingWidget(QWidget):
 
         _tr = QCoreApplication.translate
         if self._analytics is None:
-            self._title_label.setText(_tr("CalendarViewWidget", "Completion Timing"))
+            self._set_title(_tr("CalendarViewWidget", "Completion Timing"))
             self._show_empty(_tr("CalendarViewWidget", "Analytics service not available"))
             return
 
@@ -3126,11 +3112,11 @@ class _TimelineTimingWidget(QWidget):
 
         if slip.rate is not None:
             pct = round(slip.rate * 100)
-            self._title_label.setText(
+            self._set_title(
                 _tr("CalendarViewWidget", "Completion Timing — slip rate {pct}%").format(pct=pct)
             )
         else:
-            self._title_label.setText(_tr("CalendarViewWidget", "Completion Timing"))
+            self._set_title(_tr("CalendarViewWidget", "Completion Timing"))
 
         if timing.total == 0:
             self._show_empty(_tr("CalendarViewWidget", "No completed tasks in range"))
@@ -3196,8 +3182,12 @@ class _TimelineTimingWidget(QWidget):
         self._plot.setXRange(0, 1, padding=0)  # type: ignore[call-arg]
         self._plot.setYRange(0, 1, padding=0)  # type: ignore[call-arg]
 
+    def _set_title(self, text: str) -> None:
+        """Update the title while preserving the trailing ⓘ link."""
+        self._title_label.setText(_wrap_title_with_info_link(text))
+
     def _show_explanation(self) -> None:
-        """Popover anchored at the info icon. Mirrors the focus-score
+        """Popover anchored at the title label. Mirrors the focus-score
         pattern in `dialogs/focus_timer.py`. The text matches the
         classification rules in `core/analytics.py::completion_timing`;
         keep the two in sync if the rules change."""
@@ -3215,8 +3205,8 @@ class _TimelineTimingWidget(QWidget):
             "without a recorded timestamp are excluded from both the count and "
             "the rate."
         )
-        anchor = self._info_btn.mapToGlobal(self._info_btn.rect().bottomLeft())
-        QToolTip.showText(anchor, text, self._info_btn)
+        anchor = self._title_label.mapToGlobal(self._title_label.rect().bottomLeft())
+        QToolTip.showText(anchor, text, self._title_label)
 
 
 # ---------------------------------------------------------------------------
@@ -3238,12 +3228,15 @@ class _TimelineCycleWidget(QWidget):
         self._analytics = None
         self._list_id: str | None = None
 
-        self._title_label = QLabel(QCoreApplication.translate("CalendarViewWidget", "Cycle Time"))
-        self._title_label.setStyleSheet("font-size: 13px; font-weight: bold; padding: 6px 10px;")
-        self._info_btn = _build_info_button(
-            self.tr("What's this? Click for the full explanation."),
-            self._show_explanation,
+        self._title_label = QLabel(
+            _wrap_title_with_info_link(
+                QCoreApplication.translate("CalendarViewWidget", "Cycle Time")
+            )
         )
+        self._title_label.setStyleSheet("font-size: 13px; font-weight: bold; padding: 6px 10px;")
+        self._title_label.setOpenExternalLinks(False)
+        self._title_label.setToolTip(self.tr("Click ⓘ for the full explanation."))
+        self._title_label.linkActivated.connect(lambda _href: self._show_explanation())
 
         self._tiles_widget = QWidget()
         self._tiles_layout = QHBoxLayout(self._tiles_widget)
@@ -3267,13 +3260,7 @@ class _TimelineCycleWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        header_row = QHBoxLayout()
-        header_row.setContentsMargins(0, 0, 6, 0)
-        header_row.setSpacing(0)
-        header_row.addWidget(self._title_label)
-        header_row.addWidget(self._info_btn)
-        header_row.addStretch()
-        layout.addLayout(header_row)
+        layout.addWidget(self._title_label)
         layout.addWidget(self._tiles_widget)
         layout.addWidget(self._subtitle_label)
         layout.addStretch(1)
@@ -3389,7 +3376,7 @@ class _TimelineCycleWidget(QWidget):
         return f"{minutes / 1440:.1f}d"
 
     def _show_explanation(self) -> None:
-        """Popover anchored at the info icon. Mirrors the focus-score
+        """Popover anchored at the title label. Mirrors the focus-score
         pattern in `dialogs/focus_timer.py`. Statistics computed in
         `core/analytics.py::cycle_time`; keep in sync."""
         from PyQt6.QtWidgets import QToolTip
@@ -3406,8 +3393,8 @@ class _TimelineCycleWidget(QWidget):
             "Only completed tasks with both timestamps are included. "
             "Negative durations from clock drift or manual edits are excluded."
         )
-        anchor = self._info_btn.mapToGlobal(self._info_btn.rect().bottomLeft())
-        QToolTip.showText(anchor, text, self._info_btn)
+        anchor = self._title_label.mapToGlobal(self._title_label.rect().bottomLeft())
+        QToolTip.showText(anchor, text, self._title_label)
 
 
 # ---------------------------------------------------------------------------
