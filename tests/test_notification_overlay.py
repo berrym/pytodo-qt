@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 from PyQt6.QtCore import QSize
 
 from pytodo_qt.gui.widgets.notification_overlay import (
+    _MAX_HEIGHT,
+    _MIN_HEIGHT,
     NotificationManager,
     NotificationOverlay,
 )
@@ -211,6 +215,84 @@ class TestNotificationManagerGeometry:
         assert second.x() == first.x()
         # spacing constant is 10; banner height 88 → delta is 98
         assert second.y() - first.y() == 88 + 10
+
+    def test_stacking_accounts_for_mixed_heights(self, qtbot):
+        """When existing visible banners have different heights (because
+        they sized to content), a new banner's slot position must walk
+        through the actual heights of preceding banners — not assume a
+        uniform height. Pre-fix this used `index * uniform_height`,
+        which mis-stacks any two-different-size pair.
+        """
+        mgr = NotificationManager()
+        # Build two visible banners with deliberately different heights.
+        first = NotificationOverlay("short", "short body")
+        qtbot.addWidget(first)
+        second = NotificationOverlay("long", "long body " * 50)
+        qtbot.addWidget(second)
+        first.adjustSize()
+        second.adjustSize()
+        first.resize(first.width(), 88)
+        second.resize(second.width(), 200)
+
+        mgr._visible.append(first)
+        mgr._visible.append(second)
+
+        # A third banner's slot must be positioned below the cumulative
+        # heights of the first two, not at index * uniform_height.
+        third_size = QSize(360, 88)
+        third_pos = mgr._slot_position(2, third_size)
+        screen = mgr._primary_screen_geometry()
+        # spacing constant = 10; cumulative = 88 + 10 + 200 + 10 = 308
+        expected_y = screen.top() + 16 + 88 + 10 + 200 + 10
+        assert third_pos.y() == expected_y
+
+
+class TestNotificationOverlayBodySizing:
+    """Banners size to content between _MIN_HEIGHT and _MAX_HEIGHT so
+    long text doesn't clip — closes the second half of #43."""
+
+    def test_minimum_height_preserved_for_short_body(self, qtbot):
+        """Short body keeps the original 88 px visual baseline."""
+        overlay = NotificationOverlay("Title", "short")
+        qtbot.addWidget(overlay)
+        overlay.adjustSize()
+        assert overlay.height() >= _MIN_HEIGHT
+
+    def test_long_body_grows_beyond_minimum(self, qtbot):
+        """A multi-line body produces a banner taller than the minimum
+        baseline so the content is visible. The pre-fix overlay used a
+        fixed height of 88 px regardless of body length, which clipped
+        anything past two wrapped lines."""
+        long_body = (
+            "Conference call with the engineering team to discuss the "
+            "next sprint, the mobile roadmap, and how the new sync "
+            "protocol changes affect downstream consumers across the "
+            "release pipeline."
+        )
+        overlay = NotificationOverlay("Long-body banner", long_body)
+        qtbot.addWidget(overlay)
+        overlay.adjustSize()
+        # Show is required for layout/font-metrics to resolve in some
+        # offscreen QPA configurations.
+        overlay.show()
+        # On the offscreen QPA platform some Qt builds never emit an
+        # expose event; the size is already resolved by adjustSize() so
+        # the wait is best-effort.
+        with contextlib.suppress(Exception):
+            qtbot.waitExposed(overlay, timeout=1000)
+        assert overlay.height() > _MIN_HEIGHT
+
+    def test_height_capped_at_maximum(self, qtbot):
+        """Pathologically long body still respects the maximum-height
+        bound so a single banner can't take over the screen."""
+        pathological_body = "very long word " * 500
+        overlay = NotificationOverlay("Pathological body", pathological_body)
+        qtbot.addWidget(overlay)
+        overlay.adjustSize()
+        overlay.show()
+        with contextlib.suppress(Exception):
+            qtbot.waitExposed(overlay, timeout=1000)
+        assert overlay.height() <= _MAX_HEIGHT
 
 
 @pytest.fixture(autouse=True)

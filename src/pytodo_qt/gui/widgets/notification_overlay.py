@@ -46,7 +46,14 @@ _log = logging.getLogger(__name__)
 
 _MIN_WIDTH = 360
 _MAX_WIDTH = 420
-_HEIGHT = 88
+# Banners size to content within these bounds. _MIN_HEIGHT preserves the
+# visual baseline that short single-line bodies always landed at; _MAX_HEIGHT
+# caps growth so a pathologically long body can't take over the screen.
+# Bodies past the cap word-wrap to the available space and clip — the
+# next escalation if pathological inputs become real is a QScrollArea wrap,
+# but the cap covers realistic worst-case content (meeting reminder + notes).
+_MIN_HEIGHT = 88
+_MAX_HEIGHT = 240
 _HORIZONTAL_MARGIN = 16
 _TOP_MARGIN = 16
 _STACK_SPACING = 10
@@ -95,7 +102,10 @@ class NotificationOverlay(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.setFixedHeight(_HEIGHT)
+        # Size to content between min and max so long bodies don't clip;
+        # short bodies still settle at the original 88 px visual baseline.
+        self.setMinimumHeight(_MIN_HEIGHT)
+        self.setMaximumHeight(_MAX_HEIGHT)
         self.setMinimumWidth(_MIN_WIDTH)
         self.setMaximumWidth(_MAX_WIDTH)
 
@@ -362,9 +372,24 @@ class NotificationManager:
         return screen.availableGeometry()
 
     def _slot_position(self, index: int, size: QSize) -> QPoint:
+        """Top-right corner position for a banner at the given stack index.
+
+        Walks through the actual heights of preceding visible banners
+        rather than assuming a uniform height — banners now size to
+        content between ``_MIN_HEIGHT`` and ``_MAX_HEIGHT`` so a flat
+        ``index * height`` calculation would mis-stack mixed-size rows.
+        """
         screen = self._primary_screen_geometry()
         x = screen.right() - size.width() - _HORIZONTAL_MARGIN
-        y = screen.top() + _TOP_MARGIN + index * (size.height() + _STACK_SPACING)
+        y = screen.top() + _TOP_MARGIN
+        for i in range(min(index, len(self._visible))):
+            y += self._visible[i].height() + _STACK_SPACING
+        # Indices beyond _visible (only happens on a freshly-arrived banner
+        # that hasn't been appended yet) get the conservative min-height
+        # contribution per slot — _MAX_VISIBLE is small enough that the
+        # cumulative drift of a few _MIN_HEIGHT placeholders stays bounded.
+        for _ in range(max(0, index - len(self._visible))):
+            y += _MIN_HEIGHT + _STACK_SPACING
         return QPoint(x, y)
 
     # ------------------------------------------------------------------

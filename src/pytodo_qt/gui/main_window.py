@@ -81,6 +81,27 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 
+def _prefer_os_notification(*, notifier_available: bool, platform: str) -> bool:
+    """Decide whether the OS-native notification path is preferred over
+    the in-app overlay for the given runtime configuration.
+
+    Returns True when the desktop-notifier instance is available **and**
+    the platform's OS notification surface produces a useful result. The
+    only platform where it does not is macOS — on an ad-hoc-signed app
+    bundle (no paid Apple Developer ID) the system fires the notification
+    successfully but substitutes a generic placeholder banner that omits
+    the title and body, which is worse UX than the in-app overlay.
+    Linux (libnotify), Windows (WinRT toast), and any other platform
+    desktop-notifier supports get the OS path.
+
+    Pure function — extracted so the platform-decision logic is unit-
+    testable without constructing a MainWindow.
+    """
+    if not notifier_available:
+        return False
+    return platform != "darwin"
+
+
 class MainWindow(QMainWindow):
     """Main application window."""
 
@@ -3593,24 +3614,42 @@ class MainWindow(QMainWindow):
                 )
 
     async def _notify(self, title: str, body: str, *, timeout: int = 5) -> None:
-        """Deliver a notification through the in-app overlay and, when
-        available, the OS notification center.
+        """Deliver a notification through exactly one channel per platform.
+
+        Linux and Windows route through ``desktop-notifier`` to the OS
+        native notification system (libnotify, WinRT toast). Native paths
+        handle long text gracefully (KDE scrolls overflow, Windows toasts
+        truncate readably), match platform conventions, and respect the
+        user's notification preferences and Do Not Disturb state.
+
+        macOS routes through the in-app overlay. The OS path on an
+        ad-hoc-signed app bundle (no paid Apple Developer ID) fires
+        notifications successfully but the system substitutes a generic
+        placeholder banner that omits the title and body — the overlay
+        is the better UX in that configuration. See
+        ``project-macos-notifications-text.md`` for the bundle-identity
+        wall this works around.
+
+        If the OS path fails at runtime (desktop-notifier missing, daemon
+        not reachable, dispatch raises), fall back to the overlay so the
+        user still sees the notification.
 
         Fire-and-forget from sync Qt slots via ``asyncio.create_task(...)``.
-        The overlay is the reliable cross-platform channel; the OS path
-        via `desktop-notifier` is secondary and silently degrades on
-        platforms/backends that cannot deliver (notably ``uv run``
-        outside a ``.app`` bundle on macOS, and macOS Sequoia ad-hoc
-        bundles where the system shows a generic placeholder).
         """
-        self._notification_manager.show(title, body, timeout_ms=timeout * 1000)
+        use_os_notification = _prefer_os_notification(
+            notifier_available=self._notifier is not None,
+            platform=sys.platform,
+        )
 
-        if self._notifier is None:
-            return
-        try:
-            await self._notifier.send(title=title, message=body, timeout=timeout)
-        except Exception as exc:
-            logger.log.debug("Notification send failed: %s", exc)
+        if use_os_notification:
+            try:
+                assert self._notifier is not None  # narrowed by use_os_notification guard
+                await self._notifier.send(title=title, message=body, timeout=timeout)
+                return
+            except Exception as exc:
+                logger.log.debug("OS notification send failed; falling back to overlay: %s", exc)
+
+        self._notification_manager.show(title, body, timeout_ms=timeout * 1000)
 
     async def _request_notification_permission(self) -> None:
         """Request OS permission to deliver notifications.
