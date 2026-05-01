@@ -10,7 +10,7 @@
 
 > ## v0.3.11 beta is here
 >
-> The v0.3.11 series is in active beta and ships substantial capability beyond v0.3.10. Headline additions across the b1 → b6 series:
+> The v0.3.11 beta cycle ships substantial capability beyond v0.3.10. Headline additions:
 >
 > - **NLP-powered smart task input** with parse-time recognition chips for date, time, tag, priority, recurrence, pomodoro, time block, and inline subtask syntax (`Plan trip: book flight, pack`).
 > - **Full calendar surface** — Day, Week, Month, Agenda, and Timeline-Analytics sub-views; Gantt-bar event rendering with eight lifecycle states; drag-and-drop scheduling and edge-drag-to-reschedule.
@@ -22,9 +22,11 @@
 > - **Meeting-link Join button** — auto-detection of Zoom, Microsoft Teams, Google Meet, Webex, and Jitsi URLs across the detail panel, kanban card, and calendar context menu.
 > - **Tags and private lists**, **WCAG AA themes**, **i18n readiness**, and **filler-word stripping** so natural-speech inputs produce clean reminders.
 >
-> Download the latest beta from the [Releases page](https://github.com/berrym/pytodo-qt/releases) — the most recent prerelease tag prefixed `v0.3.11b` is the one to try.
+> Download the latest beta from the [Releases page](https://github.com/berrym/pytodo-qt/releases). The most recent prerelease tag (prefix `v0.3.11b`) is the one to try — the page lists releases newest-first, so the top prerelease is the right one.
 >
 > The beta is suitable for users who want the v0.3.11 capability set or who are willing to help test before the final release. The v0.3.10 stable remains the recommended choice for users requiring strict release-stability guarantees.
+>
+> **New to installing software from GitHub?** The [Installation](#installation) section below walks through every step, including the file decoder ("which download is for me"), the first-launch warnings each platform shows, and how to verify the download. **Helping test the beta?** See [Helping test the beta](#helping-test-the-beta) for what to try and how to file what you find — being non-technical is welcome.
 
 A cross-platform to-do list manager with encrypted peer-to-peer synchronization.
 
@@ -51,11 +53,33 @@ A cross-platform to-do list manager with encrypted peer-to-peer synchronization.
 
 ## Installation
 
+The path most users want is **pre-built binaries**. PyPI and source installs at the bottom of this section are for developers.
+
 ### Pre-built Binaries
 
-Download the latest release for your platform from the [Releases page](https://github.com/berrym/pytodo-qt/releases).
+Download the latest release for your platform from the [Releases page](https://github.com/berrym/pytodo-qt/releases). The page lists releases newest-first; the top entry under the v0.3.11 beta cycle (prefix `v0.3.11b`) is the current beta.
+
+#### Which file do I download?
+
+The Releases page lists several files per release. Pick the one that matches your computer:
+
+| Your system | Download |
+|---|---|
+| **Mac with Apple Silicon** (M1, M2, M3, M4 — 2020 or later) | `pytodo-qt-VERSION-macos-arm64.dmg` |
+| **Mac with Intel processor** (most pre-2020 Macs) | `pytodo-qt-VERSION-macos-x86_64.dmg` |
+| **Windows 10 / 11** (most PCs) | `pytodo-qt-VERSION-windows-x86_64-setup.exe` (recommended) or `.zip` (portable) |
+| **Linux on most laptops/desktops** (Intel/AMD CPUs) | `pytodo-qt-VERSION-linux-x86_64.AppImage` (recommended) or `.tar.gz` |
+| **Linux on Raspberry Pi 4/5 or other ARM hardware** | `pytodo-qt-VERSION-linux-arm64.AppImage` or `.tar.gz` |
+
+**Not sure if your Mac is Apple Silicon or Intel?** Click the Apple menu → About This Mac. If it says "Apple M1/M2/M3/M4" → arm64. If it says "Intel" → x86_64.
+
+**Not sure about your Windows architecture?** Press `Win + Pause/Break` (or Settings → System → About). For nearly all home and office PCs, you want the `x86_64` file.
+
+Each artifact has a sibling `.sha256` file. Verifying the checksum before installing is **optional but recommended for paranoid users** — the [Checksums](#checksums) section below has the per-platform commands.
 
 #### macOS
+
+> **What to expect on first launch:** macOS will refuse to open the app the first time and may show *"Apple could not verify..."* This is **normal** for any open-source app distributed outside the App Store. It happens because pytodo-qt is ad-hoc signed (free) rather than signed with a paid Apple Developer ID ($99/year). The instructions below walk through the one-time approval step. Once approved, the app opens normally on every subsequent launch.
 
 1. Download `pytodo-qt-VERSION-macos-arm64.dmg` (Apple Silicon) or `pytodo-qt-VERSION-macos-x86_64.dmg` (Intel)
 2. Open the DMG — a window appears with the app icon and an Applications shortcut
@@ -89,10 +113,14 @@ Two formats are provided for each architecture (`x86_64` and `arm64`).
 **AppImage** — single-file, self-contained, no install required:
 
 1. Download `pytodo-qt-VERSION-linux-x86_64.AppImage` (or `-linux-arm64.AppImage`)
-2. Make it executable: `chmod +x pytodo-qt-VERSION-linux-x86_64.AppImage`
-3. Run it: `./pytodo-qt-VERSION-linux-x86_64.AppImage`
+2. Make it executable. Either:
+   - **In a terminal:** `chmod +x pytodo-qt-VERSION-linux-x86_64.AppImage`
+   - **In your file manager:** right-click the file → **Properties** → **Permissions** tab → check **Allow executing file as program** (wording varies by file manager — GNOME Files, Dolphin, Nemo, Thunar all have this option)
+3. Run it: double-click in your file manager, or `./pytodo-qt-VERSION-linux-x86_64.AppImage` in a terminal.
 
-If your distribution dropped `libfuse2` (Ubuntu 22.04+, Fedora 38+), pass `--appimage-extract-and-run` the first time, or install `libfuse2` with your package manager.
+If your distribution dropped `libfuse2` (Ubuntu 22.04+, Fedora 38+) you may see a "fuse: not found" error on first launch. Either:
+- Run with `--appimage-extract-and-run` once: `./pytodo-qt-VERSION-linux-x86_64.AppImage --appimage-extract-and-run`
+- Or install `libfuse2` with your package manager (e.g. `sudo apt install libfuse2`)
 
 **Tarball** — traditional install to `~/.local/`:
 
@@ -133,7 +161,7 @@ Two formats are provided:
 2. Extract the zip file to any directory (e.g. your Desktop, a USB drive, or `%LOCALAPPDATA%`)
 3. Run `pytodo-qt.exe` from the extracted folder
 
-> **Note:** The installer and the binaries inside the zip are not code-signed. Windows SmartScreen may show a "Windows protected your PC" warning on first launch — click **More info** → **Run anyway**.
+> **What to expect on first launch:** Windows SmartScreen may show a *"Windows protected your PC"* warning the first time you run the installer or the unzipped `.exe`. This is **normal** for any open-source app that isn't signed with a paid Microsoft / EV code-signing certificate. Click **More info** → **Run anyway** to proceed. Once approved, the app launches normally on every subsequent run.
 
 #### Checksums
 
@@ -151,14 +179,18 @@ shasum -a 256 -c pytodo-qt-VERSION-macos-x86_64.dmg.sha256
 # Then compare against the hash printed in the .sha256 file
 ```
 
-### From PyPI
+### For developers
+
+These paths assume a working Python 3.11+ environment and are not the recommended route for end users — pre-built binaries above are.
+
+#### From PyPI
 
 ```bash
 pipx install pytodo-qt    # recommended
 pip install pytodo-qt     # alternative
 ```
 
-### From source
+#### From source
 
 ```bash
 git clone https://github.com/berrym/pytodo-qt.git
@@ -166,11 +198,43 @@ cd pytodo-qt
 pip install .
 ```
 
-### Development install
+#### Development install
 
 ```bash
 pip install -e ".[dev]"
 ```
+
+## Helping test the beta
+
+If you're trying the beta to help test, thank you. Here's a focused list of flows that exercise the most material parts of the app — running through them takes about 15 minutes and surfaces the kinds of issues that benefit most from real-world testing:
+
+1. **Smart input.** In the main window, click the new-item field and type something natural like *"Pick up groceries tomorrow at 5pm #errands p:high"*. Watch for the parse chips to highlight date / time / tag / priority. Hit Enter. The task should appear with the correct fields filled in.
+2. **Calendar views.** Switch to the Calendar tab. Try Day, Week, Month, Agenda, and Timeline sub-views. Drag a task from the sidebar onto a day. Drag the bottom edge of a day/week task to extend it.
+3. **Detail panel.** Click any task to open its detail panel. Try editing the date, time, priority, recurrence, tags. Add a meeting URL like a Zoom or Teams link — a "Join" button should appear.
+4. **Kanban board.** Switch to the Kanban tab. Drag tasks between columns. The state should persist after restart.
+5. **Pomodoro / stopwatch.** Open the Focus Timer (clock icon). Start a session against a task. Watch the status bar timer. Stop early and confirm the partial session is logged.
+6. **Web UI on a phone or second device on the same network.** Settings → Web → start the server → scan the QR code on a phone browser → confirm the mobile web UI loads and shows your tasks.
+7. **Sync between two computers on the same LAN.** Run pytodo-qt on a second machine; both should auto-discover via mDNS. Pair them, push/pull a list, edit on one, watch it land on the other.
+8. **Dark/light themes.** Settings → Appearance. Both should look right; let us know if anything reads poorly.
+
+**What to file:** anything that surprised you, looked broken, looked ugly, didn't do what you expected, or made you say "huh." Issues at https://github.com/berrym/pytodo-qt/issues — being non-technical is welcome. The most useful bug report includes:
+- What you were doing (one sentence)
+- What you expected to happen
+- What actually happened
+- Your OS (Mac/Windows/Linux + version) and which download you used
+
+Screenshots are gold but optional. Don't worry about whether something is "really" a bug — file it. We'd rather sort through false alarms than miss real issues.
+
+## Need help / something not working?
+
+Trouble installing or first-launch problems:
+
+- **macOS Gatekeeper warning won't go away** — make sure you're following the macOS section above for *your specific macOS version*. Sequoia (15.x) and Sonoma (14.x and earlier) have different bypass flows. The command-line `xattr -rd com.apple.quarantine /Applications/pytodo-qt.app` works on every macOS version if the GUI flows aren't cooperating.
+- **Linux AppImage won't run** — see the `libfuse2` note in the AppImage section. If you still hit trouble, the tarball install is a reliable fallback.
+- **Windows SmartScreen keeps blocking** — click **More info** → **Run anyway**. If your antivirus is more aggressive, you may need to add an exception for the install location or the unzipped folder.
+- **App opens but shows a database error** — the data location is in the [Configuration](#configuration) section below. If you upgraded across a major version, the schema migrates forward automatically. If something looks wrong, file an issue with the log output (run from a terminal to see logs).
+
+If none of the above match what you're seeing, **please open an issue** at https://github.com/berrym/pytodo-qt/issues. Filing an issue is the right thing to do, not a bother — it's how problems get found and fixed. Including your OS, the version of pytodo-qt you tried, and what you saw is enough to start with.
 
 ## Usage
 
