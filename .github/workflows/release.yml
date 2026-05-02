@@ -285,6 +285,22 @@ jobs:
             --hdiutil-retries 10 \
             "${PACKAGE_NAME}.dmg" \
             dmg-staging
+          # Apply UF_HIDDEN to .background so the folder stays hidden
+          # in Finder even when the user has hidden files visible
+          # (create-dmg relies only on the leading-dot, which Finder
+          # honors only at default preferences). Mount read-write,
+          # chflags, convert back to compressed read-only.
+          MOUNT_POINT="/tmp/pytodo-qt-dmg-mount"
+          mkdir -p "${MOUNT_POINT}"
+          hdiutil convert "${PACKAGE_NAME}.dmg" -format UDRW -o "${PACKAGE_NAME}-rw.dmg"
+          hdiutil attach "${PACKAGE_NAME}-rw.dmg" -nobrowse -mountpoint "${MOUNT_POINT}"
+          chflags hidden "${MOUNT_POINT}/.background"
+          sync
+          hdiutil detach "${MOUNT_POINT}"
+          rm "${PACKAGE_NAME}.dmg"
+          hdiutil convert "${PACKAGE_NAME}-rw.dmg" -format UDZO -imagekey zlib-level=9 -o "${PACKAGE_NAME}.dmg"
+          rm "${PACKAGE_NAME}-rw.dmg"
+          rmdir "${MOUNT_POINT}"
           echo "ASSET_PATH=${PACKAGE_NAME}.dmg" >> $GITHUB_ENV
           echo "ASSET_NAME=${PACKAGE_NAME}.dmg" >> $GITHUB_ENV
 
