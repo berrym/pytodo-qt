@@ -36,21 +36,38 @@ symlinks = {"Applications": "/Applications"}
 # `icon_locations` placing them far offscreen, the entries do not appear
 # in Finder regardless of the user's hidden-files preference (Cmd+Shift+.
 # does not surface items not present in the icon view's saved item list).
+#
+# dmgbuild copies the configured background image into the DMG root as
+# `.background.<ext>` where <ext> matches the source file's extension
+# (so `dmg_background.png` becomes `.background.png` at the root). Both
+# the legacy `.background/` directory name and the actual `.background.png`
+# file name are listed for safety across dmgbuild internal changes.
 
-hide = [".background", ".DS_Store", ".fseventsd", ".Trashes", ".VolumeIcon.icns"]
+hide = [
+    ".background",
+    ".background.png",
+    ".background.jpg",
+    ".background.tiff",
+    ".DS_Store",
+    ".fseventsd",
+    ".Trashes",
+    ".VolumeIcon.icns",
+]
 
 
 # --- Icon positions --------------------------------------------------------
 #
-# Visible items get explicit in-window coordinates. `.background` and
-# the other system folders get positions far outside the window so even
-# users who toggle hidden files visible cannot see them in the default
-# window bounds.
+# Visible items get explicit in-window coordinates. Hidden system items
+# get positions far outside the window so even users who toggle hidden
+# files visible cannot see them in the default window bounds.
 
 icon_locations = {
     _app_name: (150, 180),
     "Applications": (450, 180),
     ".background": (10000, 10000),
+    ".background.png": (10000, 10000),
+    ".background.jpg": (10000, 10000),
+    ".background.tiff": (10000, 10000),
     ".DS_Store": (10000, 10000),
     ".fseventsd": (10000, 10000),
     ".Trashes": (10000, 10000),
