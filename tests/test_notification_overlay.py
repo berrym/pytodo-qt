@@ -295,6 +295,152 @@ class TestNotificationOverlayBodySizing:
         assert overlay.height() <= _MAX_HEIGHT
 
 
+class TestNotificationOverlayBodyScroll:
+    """Body content past the maximum-growth cap scrolls inside the overlay's
+    text area rather than clipping at the overlay edge — the second-half
+    fidelity gap from the 2026-05-02 #28 gripe."""
+
+    def test_short_body_does_not_show_scroll_bar(self, qtbot):
+        """When the body fits inside the cap, the vertical scroll bar
+        stays hidden so the overlay looks like a plain banner."""
+        from PyQt6.QtCore import Qt
+
+        overlay = NotificationOverlay("Title", "short body")
+        qtbot.addWidget(overlay)
+        overlay.adjustSize()
+        overlay.show()
+        with contextlib.suppress(Exception):
+            qtbot.waitExposed(overlay, timeout=1000)
+        bar = overlay._body_scroll.verticalScrollBar()
+        # AsNeeded policy + content fits → bar is not visible. Use the
+        # policy as the authoritative check; visibility may not have
+        # propagated synchronously on every QPA backend.
+        assert (
+            overlay._body_scroll.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        # Belt-and-suspenders: when the inner label fits inside the
+        # viewport, the scroll bar should not be active.
+        assert bar.maximum() == 0
+
+    def test_pathological_body_makes_label_taller_than_viewport(self, qtbot):
+        """When the body cannot fit inside the cap, the inner label is
+        sized to its natural full height and the scroll area's viewport
+        is the smaller window onto it. Scroll bar becomes meaningful."""
+        pathological_body = "very long word " * 500
+        overlay = NotificationOverlay("Pathological body", pathological_body)
+        qtbot.addWidget(overlay)
+        overlay.adjustSize()
+        overlay.show()
+        with contextlib.suppress(Exception):
+            qtbot.waitExposed(overlay, timeout=1000)
+        viewport = overlay._body_scroll.viewport()
+        assert viewport is not None
+        assert overlay._body_label.height() > viewport.height()
+        # Maximum > 0 means the user can scroll.
+        assert overlay._body_scroll.verticalScrollBar().maximum() > 0
+
+    def test_scroll_position_starts_at_top(self, qtbot):
+        """The first word of the first line is what the user sees on
+        arrival — no auto-scroll-to-bottom or partway-through anchoring."""
+        pathological_body = "very long word " * 500
+        overlay = NotificationOverlay("Pathological body", pathological_body)
+        qtbot.addWidget(overlay)
+        overlay.adjustSize()
+        overlay.show()
+        with contextlib.suppress(Exception):
+            qtbot.waitExposed(overlay, timeout=1000)
+        assert overlay._body_scroll.verticalScrollBar().value() == 0
+
+    def test_body_click_on_scroll_area_still_dismisses(self, qtbot):
+        """Pre-wrap, body clicks on the bare QLabel cascaded up to the
+        overlay's mousePressEvent (the label has WA_TransparentForMouseEvents).
+        Post-wrap, the QScrollArea swallows those clicks; the overlay
+        re-emits them via _BodyScrollArea.body_clicked so dismissal still
+        fires when the user clicks the body."""
+        overlay = NotificationOverlay("t", "b")
+        with qtbot.waitSignal(overlay.dismissed, timeout=2000):
+            overlay._body_scroll.body_clicked.emit()
+        assert overlay._dismissing is True
+
+    def test_body_label_top_left_aligned(self, qtbot):
+        """Top-left alignment guarantees that short-body banners (where
+        the label is shorter than the viewport) place the first line at
+        the top of the visible area, not vertically centered."""
+        from PyQt6.QtCore import Qt
+
+        overlay = NotificationOverlay("t", "short")
+        qtbot.addWidget(overlay)
+        alignment = overlay._body_label.alignment()
+        assert bool(alignment & Qt.AlignmentFlag.AlignTop)
+        assert bool(alignment & Qt.AlignmentFlag.AlignLeft)
+
+
+class TestNotificationManagerDismissAllRace:
+    """Regression: ``dismiss_all`` on a stack of multiple banners must drive
+    every banner all the way through ``_finalize_dismiss``. Pre-fix, the
+    first banner's dismiss completion fired the manager's ``_on_dismissed``
+    → ``_reflow``, which called ``slide_to`` on still-dismissing siblings.
+    The new ``slide_to`` animations replaced the dismiss-animation
+    references on ``_slide_anim``; without a QObject parent on the
+    animation those references were the only thing keeping the dismiss
+    animations alive, so they were GC'd and ``_finalize_dismiss`` never
+    ran. The siblings stayed on screen indefinitely with
+    ``_dismissing=True`` blocking every close path. Reproducible with
+    mixed-height bodies via the manual harness scenario 8.
+    """
+
+    def test_dismiss_all_finishes_for_every_banner_with_mixed_heights(self, qtbot):
+        mgr = NotificationManager(max_visible=3)
+        b1 = mgr.show("short", "short body", timeout_ms=0)
+        b2 = mgr.show("medium", "medium body " * 30, timeout_ms=0)
+        b3 = mgr.show("long", "long body " * 200, timeout_ms=0)
+        assert b1 is not None and b2 is not None and b3 is not None
+        assert mgr.visible_count == 3
+
+        mgr.dismiss_all()
+        # All three dismiss animations must complete and finalize. Wait
+        # comfortably past the animation duration (240 ms) plus event-
+        # loop slack so the assertion fails clearly if any banner gets
+        # stranded mid-dismiss.
+        qtbot.waitUntil(lambda: mgr.visible_count == 0, timeout=3000)
+        assert mgr.visible_count == 0
+
+    def test_reflow_skips_dismissing_siblings(self, qtbot):
+        """Direct unit-level assertion that ``_reflow`` does not call
+        ``slide_to`` on banners whose ``_dismissing`` flag is set. Guards
+        against a future refactor that drops the survivor filter and
+        reintroduces the GC race even with parented animations."""
+        mgr = NotificationManager(max_visible=3)
+        first = NotificationOverlay("a", "first")
+        second = NotificationOverlay("b", "second")
+        qtbot.addWidget(first)
+        qtbot.addWidget(second)
+        mgr._visible.extend([first, second])
+
+        # Mark `first` as mid-dismiss and capture each banner's pre-reflow
+        # position; reflow must move neither.
+        first._dismissing = True
+        original_first_pos = first.pos()
+        original_second_pos = second.pos()
+
+        mgr._reflow()
+
+        # `first` is dismissing → reflow skipped it, no slide_to spawned.
+        # `second` is the only survivor; it gets slid to slot 0 (the
+        # top-right anchor), which differs from its current (0, 0)
+        # default position, so a slide_to animation is created.
+        assert first.pos() == original_first_pos
+        # `second` may have begun animating; we assert that its
+        # ``_slide_anim`` is now a fresh QPropertyAnimation pointed at
+        # slot 0, not whatever it had before.
+        slot_zero = mgr._slot_position(0, second.size())
+        # The animation may not have started painting yet at end-value;
+        # accept either the start or the eventual end of the animation.
+        assert second._slide_anim is not None
+        assert second._slide_anim.endValue() == slot_zero
+        del original_second_pos  # unused beyond capture-for-clarity
+
+
 @pytest.fixture(autouse=True)
 def _clean_manager_shutdown(qtbot):
     """Make sure no overlays leak between tests — `deleteLater` runs

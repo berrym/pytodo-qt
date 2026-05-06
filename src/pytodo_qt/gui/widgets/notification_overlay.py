@@ -34,10 +34,13 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import (
     QApplication,
+    QFrame,
     QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -49,9 +52,9 @@ _MAX_WIDTH = 420
 # Banners size to content within these bounds. _MIN_HEIGHT preserves the
 # visual baseline that short single-line bodies always landed at; _MAX_HEIGHT
 # caps growth so a pathologically long body can't take over the screen.
-# Bodies past the cap word-wrap to the available space and clip — the
-# next escalation if pathological inputs become real is a QScrollArea wrap,
-# but the cap covers realistic worst-case content (meeting reminder + notes).
+# Bodies past the cap are scrollable inside the body's QScrollArea wrap
+# rather than clipped — short and medium bodies render in a fully-expanded
+# banner with no scroll bar; only pathological lengths trigger one.
 _MIN_HEIGHT = 88
 _MAX_HEIGHT = 240
 _HORIZONTAL_MARGIN = 16
@@ -61,6 +64,70 @@ _CORNER_RADIUS = 10
 _ANIMATION_DURATION_MS = 240
 _DEFAULT_TIMEOUT_MS = 5000
 _MAX_VISIBLE_DEFAULT = 4
+
+
+class _BodyScrollArea(QScrollArea):
+    """QScrollArea that delegates ``sizeHint`` and ``heightForWidth`` to its
+    wrapped widget so the parent layout grows to fit body content naturally,
+    capped only by the overlay's overall ``_MAX_HEIGHT``. Past the cap, the
+    vertical scroll bar appears and the body scrolls inside the area rather
+    than clipping at the overlay edge.
+
+    Re-emits left mouse presses on the viewport as ``body_clicked`` so the
+    overlay's existing click-to-dismiss behavior survives the wrap — the
+    inner ``QLabel`` carries ``WA_TransparentForMouseEvents`` and clicks fall
+    through the viewport to this widget instead of bubbling to the overlay.
+    """
+
+    body_clicked = pyqtSignal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        viewport = self.viewport()
+        if viewport is not None:
+            viewport.setAutoFillBackground(False)
+        self.setStyleSheet("QScrollArea { background: transparent; border: 0; }")
+        sp = self.sizePolicy()
+        sp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+        sp.setVerticalPolicy(QSizePolicy.Policy.Preferred)
+        sp.setHeightForWidth(True)
+        self.setSizePolicy(sp)
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        widget = self.widget()
+        if widget is None:
+            return super().sizeHint()
+        return widget.sizeHint()
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        # Allow the layout to shrink the area below the inner widget's natural
+        # height so the overall overlay can hit ``_MAX_HEIGHT``; the scroll
+        # bar exposes the rest of the body once that happens.
+        return QSize(0, 0)
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802
+        widget = self.widget()
+        return widget is not None and widget.hasHeightForWidth()
+
+    def heightForWidth(self, a0: int) -> int:  # noqa: N802
+        widget = self.widget()
+        if widget is None or not widget.hasHeightForWidth():
+            return super().heightForWidth(a0)
+        # Reserve scroll-bar width unconditionally — over-allocates a few
+        # pixels of vertical space when no bar appears, which is preferable
+        # to under-allocating and clipping the last line.
+        bar = self.verticalScrollBar()
+        bar_width = bar.sizeHint().width() if bar is not None else 0
+        return widget.heightForWidth(max(0, a0 - bar_width))
+
+    def mousePressEvent(self, a0) -> None:  # noqa: N802
+        if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
+            self.body_clicked.emit()
+        super().mousePressEvent(a0)
 
 
 class NotificationOverlay(QWidget):
@@ -154,12 +221,17 @@ class NotificationOverlay(QWidget):
         title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
         body_label = QLabel(self._body)
-        body_label.setStyleSheet("color: palette(window-text);")
+        body_label.setStyleSheet("color: palette(window-text); background: transparent;")
         body_label.setWordWrap(True)
+        body_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         body_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
+        body_scroll = _BodyScrollArea(self)
+        body_scroll.setWidget(body_label)
+        body_scroll.body_clicked.connect(self._on_body_area_clicked)
+
         text_column.addWidget(title_label)
-        text_column.addWidget(body_label, 1)
+        text_column.addWidget(body_scroll, 1)
         outer.addLayout(text_column, 1)
 
         close_btn = QPushButton("\u2715", self)
@@ -179,6 +251,17 @@ class NotificationOverlay(QWidget):
         outer.addLayout(close_column)
 
         self._close_btn = close_btn
+        self._body_label = body_label
+        self._body_scroll = body_scroll
+
+    def _on_body_area_clicked(self) -> None:
+        # Body-click semantic preserved across the QScrollArea wrap: the
+        # scroll area swallows clicks that the bare QLabel previously let
+        # bubble up to the overlay's mousePressEvent. Re-emit and dismiss.
+        if self._dismissing:
+            return
+        self.body_clicked.emit()
+        self._start_dismiss()
 
     # ------------------------------------------------------------------
     # Painting
@@ -240,7 +323,13 @@ class NotificationOverlay(QWidget):
         start_x = target.x() + self.width() + 40
         self.move(start_x, target.y())
         self.show()
-        anim = QPropertyAnimation(self, b"pos")
+        # Parent the animation to ``self`` so it stays alive as long as the
+        # widget does. A bare-Python reference (no QObject parent) would be
+        # GC'd the moment ``self._slide_anim`` is reassigned by a follow-up
+        # ``slide_to`` or ``_start_dismiss``; the destructor calls ``stop()``
+        # and the previous animation's ``finished`` connection never fires.
+        # That race stranded multi-dismiss banners on screen pre-fix.
+        anim = QPropertyAnimation(self, b"pos", self)
         anim.setDuration(_ANIMATION_DURATION_MS)
         anim.setStartValue(self.pos())
         anim.setEndValue(target)
@@ -251,7 +340,7 @@ class NotificationOverlay(QWidget):
     def slide_to(self, target: QPoint) -> None:
         """Animate from current position to a new target (e.g. when a
         banner above is dismissed and this one moves up)."""
-        anim = QPropertyAnimation(self, b"pos")
+        anim = QPropertyAnimation(self, b"pos", self)
         anim.setDuration(_ANIMATION_DURATION_MS)
         anim.setStartValue(self.pos())
         anim.setEndValue(target)
@@ -266,7 +355,7 @@ class NotificationOverlay(QWidget):
         self._timeout_timer.stop()
         current = self.pos()
         off_screen = QPoint(current.x() + self.width() + 60, current.y())
-        anim = QPropertyAnimation(self, b"pos")
+        anim = QPropertyAnimation(self, b"pos", self)
         anim.setDuration(_ANIMATION_DURATION_MS)
         anim.setStartValue(current)
         anim.setEndValue(off_screen)
@@ -336,7 +425,12 @@ class NotificationManager:
         banner.dismissed.connect(lambda b=banner: self._on_dismissed(b))
         banner.adjustSize()
 
-        target = self._slot_position(len(self._visible), banner.size())
+        # Survivor count, not total visible count — the new banner
+        # belongs at the bottom of the non-dismissing stack so it
+        # doesn't position itself over (or below) a sibling that's
+        # currently sliding off-screen.
+        survivor_count = sum(1 for b in self._visible if not b._dismissing)
+        target = self._slot_position(survivor_count, banner.size())
         self._visible.append(banner)
         banner.slide_in(target)
         return banner
@@ -348,10 +442,23 @@ class NotificationManager:
         self._promote_queued()
 
     def _reflow(self) -> None:
-        for idx, banner in enumerate(self._visible):
-            target = self._slot_position(idx, banner.size())
+        # Skip dismissing siblings: a banner mid-dismiss has its
+        # ``_slide_anim`` set to its in-flight dismiss animation, with
+        # ``finished`` connected to ``_finalize_dismiss``. Calling
+        # ``slide_to`` here would overwrite that reference, drop the
+        # dismiss animation's last Python ref, and (with the widget-
+        # parented animation safety net in place to prevent GC) still
+        # cancel the slide-out by replacing it with a slide-back-to-slot
+        # animation. Either way the banner gets stranded with
+        # ``_dismissing=True`` and no further close is possible.
+        survivor_index = 0
+        for banner in self._visible:
+            if banner._dismissing:
+                continue
+            target = self._slot_position(survivor_index, banner.size())
             if banner.pos() != target:
                 banner.slide_to(target)
+            survivor_index += 1
 
     def _promote_queued(self) -> None:
         while self._queue and len(self._visible) < self._max_visible:
@@ -372,23 +479,30 @@ class NotificationManager:
         return screen.availableGeometry()
 
     def _slot_position(self, index: int, size: QSize) -> QPoint:
-        """Top-right corner position for a banner at the given stack index.
+        """Top-right corner position for a banner at the given survivor
+        index — the position counting only non-dismissing visible banners.
 
-        Walks through the actual heights of preceding visible banners
-        rather than assuming a uniform height — banners now size to
-        content between ``_MIN_HEIGHT`` and ``_MAX_HEIGHT`` so a flat
+        Walks through the actual heights of preceding non-dismissing
+        banners rather than assuming a uniform height: banners now size
+        to content between ``_MIN_HEIGHT`` and ``_MAX_HEIGHT`` so a flat
         ``index * height`` calculation would mis-stack mixed-size rows.
+        Dismissing siblings are skipped so a survivor below a banner
+        that just started sliding away collapses into the freed slot
+        immediately, instead of holding the gap until the dismissing
+        sibling finishes its animation and is removed from ``_visible``.
         """
         screen = self._primary_screen_geometry()
         x = screen.right() - size.width() - _HORIZONTAL_MARGIN
         y = screen.top() + _TOP_MARGIN
-        for i in range(min(index, len(self._visible))):
-            y += self._visible[i].height() + _STACK_SPACING
-        # Indices beyond _visible (only happens on a freshly-arrived banner
-        # that hasn't been appended yet) get the conservative min-height
-        # contribution per slot — _MAX_VISIBLE is small enough that the
+        survivors = [b for b in self._visible if not b._dismissing]
+        for i in range(min(index, len(survivors))):
+            y += survivors[i].height() + _STACK_SPACING
+        # Indices beyond the survivor count (only happens for a freshly-
+        # arrived banner that hasn't been appended yet, when every
+        # current sibling is mid-dismiss) get a conservative min-height
+        # contribution per slot. _MAX_VISIBLE is small enough that the
         # cumulative drift of a few _MIN_HEIGHT placeholders stays bounded.
-        for _ in range(max(0, index - len(self._visible))):
+        for _ in range(max(0, index - len(survivors))):
             y += _MIN_HEIGHT + _STACK_SPACING
         return QPoint(x, y)
 
