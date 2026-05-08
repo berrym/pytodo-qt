@@ -93,11 +93,29 @@ class AddTodoDialog(QDialog):
         # discoverable entry point for the common categories.
         layout.addWidget(self._build_quick_actions_row())
 
-        # Advanced toggle
-        self._advanced_toggle = QLabel(self.tr('<a href="#">Advanced ▶</a>'))
-        self._advanced_toggle.setTextFormat(Qt.TextFormat.RichText)
-        self._advanced_toggle.linkActivated.connect(self._on_toggle_advanced)
-        layout.addWidget(self._advanced_toggle)
+        # Advanced toggle. QToolButton with checkable=True + autoRaise gives
+        # a visually flat surface that still participates in the tab chain
+        # and reports its expanded/collapsed state via accessible state. The
+        # earlier QLabel-with-linkActivated implementation was visually
+        # identical but unreachable for keyboard-only users (#47): QLabel
+        # does not accept focus and HTML links inside it are not in the tab
+        # chain, so every Advanced field below sat behind an invisible
+        # mouse-only gate.
+        self._advanced_toggle = QToolButton()
+        self._advanced_toggle.setCheckable(True)
+        self._advanced_toggle.setAutoRaise(True)
+        self._advanced_toggle.setText(self.tr("Advanced ▶"))
+        self._advanced_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._advanced_toggle.setAccessibleName(self.tr("Advanced fields"))
+        self._advanced_toggle.setAccessibleDescription(
+            self.tr("Show or hide additional task fields")
+        )
+        self._advanced_toggle.toggled.connect(self._on_toggle_advanced)
+        toggle_row = QHBoxLayout()
+        toggle_row.setContentsMargins(0, 0, 0, 0)
+        toggle_row.addWidget(self._advanced_toggle)
+        toggle_row.addStretch()
+        layout.addLayout(toggle_row)
 
         # Advanced container (hidden by default, scrollable)
         self._advanced_scroll = QScrollArea()
@@ -397,14 +415,19 @@ class AddTodoDialog(QDialog):
         # Focus smart input
         self._smart_input.set_focus()
 
-    def _on_toggle_advanced(self) -> None:
-        """Toggle advanced fields visibility."""
-        self._advanced_shown = not self._advanced_shown
-        self._advanced_scroll.setVisible(self._advanced_shown)
-        arrow = "\u25bc" if self._advanced_shown else "\u25b6"
-        self._advanced_toggle.setText(self.tr(f'<a href="#">Advanced {arrow}</a>'))
+    def _on_toggle_advanced(self, checked: bool) -> None:
+        """Slot for the advanced toggle button's `toggled` signal.
+
+        Receives the new checked state directly from the button so the
+        button is the single source of truth for the open/closed state;
+        ``_advanced_shown`` mirrors it for the parse-sync guard below.
+        """
+        self._advanced_shown = checked
+        self._advanced_scroll.setVisible(checked)
+        arrow = "\u25bc" if checked else "\u25b6"
+        self._advanced_toggle.setText(self.tr("Advanced") + f" {arrow}")
         # Populate fields from current parse result when opening advanced
-        if self._advanced_shown:
+        if checked:
             result = self._smart_input.get_parse_result()
             if result:
                 # Temporarily bypass guard to populate fields once

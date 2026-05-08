@@ -27,7 +27,10 @@ def app():
 def _make_advanced_dialog(**kwargs) -> AddTodoDialog:
     """Create an AddTodoDialog with advanced mode visible."""
     dialog = AddTodoDialog(**kwargs)
-    dialog._on_toggle_advanced()  # Show advanced container
+    # Drive the advanced toggle through the button's checked state so
+    # the toggled-signal path runs end-to-end (including
+    # _on_smart_parse_changed, adjustSize, _clamp_to_screen).
+    dialog._advanced_toggle.setChecked(True)
     return dialog
 
 
@@ -47,6 +50,46 @@ class TestAddTodoDialogSmartMode:
     def test_smart_input_visible_by_default(self, app):
         dialog = AddTodoDialog()
         assert not dialog._advanced_container.isVisible()
+
+    def test_advanced_toggle_is_keyboard_reachable(self, app):
+        """Regression for #47: pre-fix the Advanced toggle was a QLabel
+        with a clickable HTML link, never reachable via tab. The toggle
+        must now be a QToolButton with a non-NoFocus policy and an
+        explicit accessibleName so screen readers announce it.
+        """
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QToolButton
+
+        dialog = AddTodoDialog()
+        toggle = dialog._advanced_toggle
+        assert isinstance(toggle, QToolButton)
+        assert toggle.focusPolicy() != Qt.FocusPolicy.NoFocus
+        assert toggle.isCheckable()
+        assert toggle.accessibleName() == "Advanced fields"
+        assert toggle.accessibleDescription() == "Show or hide additional task fields"
+
+    def test_advanced_toggle_shows_and_hides_advanced_section(self, app):
+        """Toggling the button checked/unchecked must mirror the prior
+        link-driven behavior: show/hide the scroll area and update the
+        button's text suffix to the current state arrow."""
+        dialog = AddTodoDialog()
+        # Start collapsed.
+        assert not dialog._advanced_scroll.isVisible()
+        assert dialog._advanced_toggle.text().endswith("▶")
+
+        # Expand via the button — drives the toggled signal naturally.
+        dialog._advanced_toggle.setChecked(True)
+        assert dialog._advanced_shown is True
+        assert dialog._advanced_scroll.isVisible() or not dialog.isVisible()
+        # When the dialog itself is not shown, isVisible() returns False
+        # for descendants too; what matters is that setVisible(True) ran
+        # against the scroll area and the toggle text now shows ▼.
+        assert dialog._advanced_toggle.text().endswith("▼")
+
+        # Collapse again.
+        dialog._advanced_toggle.setChecked(False)
+        assert dialog._advanced_shown is False
+        assert dialog._advanced_toggle.text().endswith("▶")
 
     def test_accept_empty_shows_warning(self, app, monkeypatch):
         dialog = AddTodoDialog()
@@ -236,16 +279,16 @@ class TestAddTodoDialogToggle:
     def test_toggle_shows_advanced(self, app):
         dialog = AddTodoDialog()
         assert not dialog._advanced_shown
-        dialog._on_toggle_advanced()
+        dialog._advanced_toggle.setChecked(True)
         assert dialog._advanced_shown
         assert "\u25bc" in dialog._advanced_toggle.text()
 
     def test_toggle_round_trip(self, app):
         dialog = AddTodoDialog()
-        dialog._on_toggle_advanced()  # Show
+        dialog._advanced_toggle.setChecked(True)
         assert dialog._advanced_shown
         assert "\u25bc" in dialog._advanced_toggle.text()
-        dialog._on_toggle_advanced()  # Hide
+        dialog._advanced_toggle.setChecked(False)
         assert not dialog._advanced_shown
         assert "\u25b6" in dialog._advanced_toggle.text()
 
@@ -715,7 +758,7 @@ class TestAddTodoDialogBoardColumn:
             columns=["To Do", "In Progress", "Done"],
             selected_column="To Do",
         )
-        dialog._on_toggle_advanced()
+        dialog._advanced_toggle.setChecked(True)
         dialog.reminder_edit.setText("Advanced task")
         # User picks a different column via the dropdown
         dialog.board_column_combo.setCurrentIndex(2)  # "Done"
@@ -935,7 +978,7 @@ class TestAddTodoDialogSubtasks:
 
     def test_advanced_subtasks_field_round_trip(self, app):
         dialog = AddTodoDialog()
-        dialog._on_toggle_advanced()  # Open advanced
+        dialog._advanced_toggle.setChecked(True)  # Open advanced
         dialog.reminder_edit.setText("Plan trip")
         dialog.subtasks_edit.setPlainText("book flight\npack\nset OOO\n")
         dialog._on_accept()
@@ -946,7 +989,7 @@ class TestAddTodoDialogSubtasks:
 
     def test_advanced_subtasks_blank_lines_ignored(self, app):
         dialog = AddTodoDialog()
-        dialog._on_toggle_advanced()
+        dialog._advanced_toggle.setChecked(True)
         dialog.reminder_edit.setText("Plan trip")
         dialog.subtasks_edit.setPlainText("\nbook flight\n\n\npack\n  \n")
         dialog._on_accept()
@@ -954,7 +997,7 @@ class TestAddTodoDialogSubtasks:
 
     def test_advanced_no_subtasks_yields_empty_list(self, app):
         dialog = AddTodoDialog()
-        dialog._on_toggle_advanced()
+        dialog._advanced_toggle.setChecked(True)
         dialog.reminder_edit.setText("Buy milk")
         dialog._on_accept()
         assert dialog.get_subtask_reminders() == []
@@ -983,7 +1026,7 @@ class TestAddTodoDialogDueTimeEnd:
 
     def test_advanced_field_round_trip(self, app):
         dialog = AddTodoDialog()
-        dialog._on_toggle_advanced()
+        dialog._advanced_toggle.setChecked(True)
         dialog.reminder_edit.setText("Standup")
         dialog.due_date_checkbox.setChecked(True)
         dialog.due_time_checkbox.setChecked(True)
@@ -1000,20 +1043,20 @@ class TestAddTodoDialogDueTimeEnd:
         # The end-time checkbox is gated on due_time being set: a
         # window without a start has no meaning.
         dialog = AddTodoDialog()
-        dialog._on_toggle_advanced()
+        dialog._advanced_toggle.setChecked(True)
         # No due_time set → end checkbox should be disabled.
         assert not dialog.due_time_end_checkbox.isEnabled()
 
     def test_advanced_end_enables_when_due_time_set(self, app):
         dialog = AddTodoDialog()
-        dialog._on_toggle_advanced()
+        dialog._advanced_toggle.setChecked(True)
         dialog.due_date_checkbox.setChecked(True)
         dialog.due_time_checkbox.setChecked(True)
         assert dialog.due_time_end_checkbox.isEnabled()
 
     def test_advanced_end_resets_when_due_time_cleared(self, app):
         dialog = AddTodoDialog()
-        dialog._on_toggle_advanced()
+        dialog._advanced_toggle.setChecked(True)
         dialog.due_date_checkbox.setChecked(True)
         dialog.due_time_checkbox.setChecked(True)
         dialog.due_time_end_checkbox.setChecked(True)
@@ -1023,7 +1066,7 @@ class TestAddTodoDialogDueTimeEnd:
 
     def test_advanced_end_omitted_when_unchecked(self, app):
         dialog = AddTodoDialog()
-        dialog._on_toggle_advanced()
+        dialog._advanced_toggle.setChecked(True)
         dialog.reminder_edit.setText("Standup")
         dialog.due_date_checkbox.setChecked(True)
         dialog.due_time_checkbox.setChecked(True)

@@ -469,9 +469,9 @@ def main(argv: list[str] | None = None) -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     dialog = AddTodoDialog(columns=["Backlog", "Today", "Done"])
     # Expand the Advanced section so every control is realized and
-    # findChildren picks them up. The dialog's `_on_toggle_advanced`
-    # mutates `_advanced_shown` and shows the scroll area.
-    dialog._on_toggle_advanced()
+    # findChildren picks them up. Driven through the toggle button's
+    # checked state so the regular toggled-signal path runs.
+    dialog._advanced_toggle.setChecked(True)
     # Ensure the layout has resolved before walking — without this,
     # findChildren still works (parent/child hierarchy is set at
     # construction) but visibility-based filtering can be off.
