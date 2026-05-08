@@ -1191,7 +1191,6 @@ class _TimelineTasksWidget(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        import pyqtgraph as pg
 
         self._items: list = []
         self._range_start: date = date.today() - timedelta(days=3)
@@ -1202,15 +1201,15 @@ class _TimelineTasksWidget(QWidget):
         self._active_elapsed: int = 0
         self._active_session_type: str = ""
 
-        # Persistent item references
-        self._span_bar: pg.BarGraphItem | None = None
-        self._overdue_bar: pg.BarGraphItem | None = None
-        self._est_bar: pg.BarGraphItem | None = None
-        self._pom_bar: pg.BarGraphItem | None = None
-        self._sw_bar: pg.BarGraphItem | None = None
-        self._overflow_bar: pg.BarGraphItem | None = None
-        self._event_bar: pg.BarGraphItem | None = None
-        self._today_line: pg.InfiniteLine | None = None
+        # Persistent item references (typed via Any since pyqtgraph is lazy)
+        self._span_bar = None
+        self._overdue_bar = None
+        self._est_bar = None
+        self._pom_bar = None
+        self._sw_bar = None
+        self._overflow_bar = None
+        self._event_bar = None
+        self._today_line = None
 
         # Base data arrays (N items)
         self._item_indices: dict[UUID, int] = {}
@@ -1224,27 +1223,19 @@ class _TimelineTasksWidget(QWidget):
 
         self._create_styles()
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(0)
 
-        self._plot = pg.PlotWidget()
-        self._plot.setBackground(self._colors.get("base", "#252526"))
-        self._plot.setMouseEnabled(x=True, y=False)
-        self._plot.showGrid(x=True, y=True, alpha=0.35)
-        self._plot.setMenuEnabled(False)
-        self._plot.getAxis("left").setWidth(160)
-        self._plot.getAxis("bottom").setHeight(30)
+        # Lazy PlotWidget — created on first _rebuild_plot(). Eager
+        # construction in __init__ exposed a pyqtgraph teardown race on
+        # Linux/Windows offscreen CI: the AxisItem queues a deferred
+        # boundingRect repaint that fires after pytest-qt destroys the
+        # widget, by which time the linked ViewBox has been deleted.
+        # Deferring construction means the PlotWidget never exists for
+        # off-screen QStackedWidget pages, sidestepping the race entirely.
+        self._plot = None
 
-        # Click and hover
-        scene = self._plot.scene()
-        assert scene is not None
-        scene.sigMouseClicked.connect(self._on_plot_clicked)  # type: ignore[attr-defined]
-        self._hover_proxy = pg.SignalProxy(
-            scene.sigMouseMoved,  # type: ignore[attr-defined]
-            rateLimit=30,
-            slot=self._on_mouse_moved,
-        )
         self._last_hover_row = -1
         self._tooltip_label = QLabel(self)
         self._tooltip_label.setWindowFlags(
@@ -1256,7 +1247,9 @@ class _TimelineTasksWidget(QWidget):
         )
         self._tooltip_label.hide()
 
-        layout.addWidget(self._plot)
+        # Plot slot; replaced with the real PlotWidget on first _rebuild_plot().
+        self._plot_placeholder = QWidget()
+        self._layout.addWidget(self._plot_placeholder, 1)
 
         # Legend
         self._legend_widget = QWidget()
@@ -1265,7 +1258,34 @@ class _TimelineTasksWidget(QWidget):
         legend_layout.setContentsMargins(160, 4, 10, 4)
         legend_layout.setSpacing(16)
         self._legend_labels: list[QLabel] = []
-        layout.addWidget(self._legend_widget)
+        self._layout.addWidget(self._legend_widget)
+
+    def _ensure_plot(self) -> None:
+        """First-use construction of the pg.PlotWidget. Replaces the
+        placeholder so layout stretching is preserved."""
+        if self._plot is not None:
+            return
+        import pyqtgraph as pg
+
+        self._plot = pg.PlotWidget()
+        self._plot.setBackground(self._colors.get("base", "#252526"))
+        self._plot.setMouseEnabled(x=True, y=False)
+        self._plot.showGrid(x=True, y=True, alpha=0.35)
+        self._plot.setMenuEnabled(False)
+        self._plot.getAxis("left").setWidth(160)
+        self._plot.getAxis("bottom").setHeight(30)
+
+        scene = self._plot.scene()
+        assert scene is not None
+        scene.sigMouseClicked.connect(self._on_plot_clicked)  # type: ignore[attr-defined]
+        self._hover_proxy = pg.SignalProxy(
+            scene.sigMouseMoved,  # type: ignore[attr-defined]
+            rateLimit=30,
+            slot=self._on_mouse_moved,
+        )
+
+        self._layout.replaceWidget(self._plot_placeholder, self._plot)
+        self._plot_placeholder.deleteLater()
 
     def _create_styles(self) -> None:
         from PyQt6.QtGui import QBrush, QGradient, QLinearGradient, QPen
@@ -1443,6 +1463,8 @@ class _TimelineTasksWidget(QWidget):
         import pyqtgraph as pg
 
         self._create_styles()
+        self._ensure_plot()
+        assert self._plot is not None  # _ensure_plot() guarantees this
         plot = self._plot
         plot.clear()
         plot.setBackground(self._colors.get("base", "#252526"))
@@ -1821,6 +1843,8 @@ class _TimelineTasksWidget(QWidget):
         return "<br>".join(parts)
 
     def _on_mouse_moved(self, event_args) -> None:
+        # Connected only inside _ensure_plot, so self._plot is realized.
+        assert self._plot is not None
         pos = event_args[0]
         plot_item = self._plot.plotItem
         assert plot_item is not None
@@ -1859,6 +1883,8 @@ class _TimelineTasksWidget(QWidget):
         self._last_hover_row = -1
 
     def _on_plot_clicked(self, event) -> None:
+        # Connected only inside _ensure_plot, so self._plot is realized.
+        assert self._plot is not None
         pos = event.scenePos()
         plot_item = self._plot.plotItem
         assert plot_item is not None
@@ -1895,17 +1921,16 @@ class _TimelineDailyWidget(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        import pyqtgraph as pg
 
         self._analytics = None
         self._current_date: date = date.today()
         self._active_elapsed: int = 0
         self._active_session_type: str = ""
 
-        # Persistent item references
-        self._pom_bar: pg.BarGraphItem | None = None
-        self._sw_bar: pg.BarGraphItem | None = None
-        self._trend_line: pg.PlotDataItem | None = None
+        # Persistent item references (typed via Any since pyqtgraph is lazy)
+        self._pom_bar = None
+        self._sw_bar = None
+        self._trend_line = None
         self._base_pom_mins = None
         self._base_sw_mins = None
         self._trend_x = None
@@ -1913,25 +1938,15 @@ class _TimelineDailyWidget(QWidget):
 
         self._create_styles()
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(0)
 
-        self._plot = pg.PlotWidget()
-        self._plot.setBackground(self._colors.get("base", "#252526"))
-        self._plot.setMouseEnabled(x=False, y=True)
-        self._plot.showGrid(x=False, y=True, alpha=0.25)
-        self._plot.setMenuEnabled(False)
-        self._plot.enableAutoRange(axis="y")
+        # Lazy PlotWidget — created on first rebuild(). See
+        # _TimelineTimingWidget for the full rationale (pyqtgraph
+        # AxisItem teardown race on offscreen CI).
+        self._plot = None
 
-        # Hover tooltip
-        scene = self._plot.scene()
-        assert scene is not None
-        self._hover_proxy = pg.SignalProxy(
-            scene.sigMouseMoved,  # type: ignore[attr-defined]
-            rateLimit=30,
-            slot=self._on_mouse_moved,
-        )
         self._last_hover_idx = -1
         self._tooltip_label = QLabel(self)
         self._tooltip_label.setWindowFlags(
@@ -1943,7 +1958,9 @@ class _TimelineDailyWidget(QWidget):
         )
         self._tooltip_label.hide()
 
-        layout.addWidget(self._plot)
+        # Plot slot; replaced with the real PlotWidget on first rebuild().
+        self._plot_placeholder = QWidget()
+        self._layout.addWidget(self._plot_placeholder, 1)
 
         # Legend (always visible)
         self._legend_widget = QWidget()
@@ -1952,10 +1969,37 @@ class _TimelineDailyWidget(QWidget):
         legend_layout.setContentsMargins(10, 4, 10, 4)
         legend_layout.setSpacing(16)
         self._legend_labels: list[QLabel] = []
-        layout.addWidget(self._legend_widget)
+        self._layout.addWidget(self._legend_widget)
+
+    def _ensure_plot(self) -> None:
+        """First-use construction of the pg.PlotWidget. Replaces the
+        placeholder so layout stretching is preserved."""
+        if self._plot is not None:
+            return
+        import pyqtgraph as pg
+
+        self._plot = pg.PlotWidget()
+        self._plot.setBackground(self._colors.get("base", "#252526"))
+        self._plot.setMouseEnabled(x=False, y=True)
+        self._plot.showGrid(x=False, y=True, alpha=0.25)
+        self._plot.setMenuEnabled(False)
+        self._plot.enableAutoRange(axis="y")
+
+        scene = self._plot.scene()
+        assert scene is not None
+        self._hover_proxy = pg.SignalProxy(
+            scene.sigMouseMoved,  # type: ignore[attr-defined]
+            rateLimit=30,
+            slot=self._on_mouse_moved,
+        )
+
+        self._layout.replaceWidget(self._plot_placeholder, self._plot)
+        self._plot_placeholder.deleteLater()
 
     def _on_mouse_moved(self, event_args) -> None:
         """Show tooltip for hovered day bar."""
+        # Connected only inside _ensure_plot, so self._plot is realized.
+        assert self._plot is not None
         pos = event_args[0]
         plot_item = self._plot.plotItem
         assert plot_item is not None
@@ -2121,6 +2165,8 @@ class _TimelineDailyWidget(QWidget):
         import pyqtgraph as pg
 
         self._create_styles()
+        self._ensure_plot()
+        assert self._plot is not None  # _ensure_plot() guarantees this
         plot = self._plot
         plot.clear()
         plot.setBackground(self._colors.get("base", "#252526"))
@@ -2279,6 +2325,9 @@ class _TimelineDailyWidget(QWidget):
     def _show_empty(self, message: str) -> None:
         import pyqtgraph as pg
 
+        # _show_empty is only called from rebuild() which has already
+        # ensured the plot exists; the assert documents the invariant.
+        assert self._plot is not None
         col_text = QColor(self._colors.get("completed_text", "#8c8c8c"))
         text = pg.TextItem(message, color=col_text, anchor=(0.5, 0.5))
         text.setPos(3.0, 5.0)
@@ -2299,7 +2348,6 @@ class _TimelineProductivityWidget(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        import pyqtgraph as pg
 
         self._analytics = None
         self._active_elapsed: int = 0
@@ -2312,24 +2360,15 @@ class _TimelineProductivityWidget(QWidget):
 
         self._create_styles()
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(0)
 
-        self._plot = pg.PlotWidget()
-        self._plot.setBackground(self._colors.get("base", "#252526"))
-        self._plot.setMouseEnabled(x=True, y=False)
-        self._plot.showGrid(x=True, y=False, alpha=0.2)
-        self._plot.setMenuEnabled(False)
+        # Lazy PlotWidget — created on first rebuild(). See
+        # _TimelineTimingWidget for the full rationale (pyqtgraph
+        # AxisItem teardown race on offscreen CI).
+        self._plot = None
 
-        # Hover tooltip
-        scene = self._plot.scene()
-        assert scene is not None
-        self._hover_proxy = pg.SignalProxy(
-            scene.sigMouseMoved,  # type: ignore[attr-defined]
-            rateLimit=30,
-            slot=self._on_mouse_moved,
-        )
         self._last_hover_idx = -1
         self._tooltip_label = QLabel(self)
         self._tooltip_label.setWindowFlags(
@@ -2341,7 +2380,9 @@ class _TimelineProductivityWidget(QWidget):
         )
         self._tooltip_label.hide()
 
-        layout.addWidget(self._plot)
+        # Plot slot; replaced with the real PlotWidget on first rebuild().
+        self._plot_placeholder = QWidget()
+        self._layout.addWidget(self._plot_placeholder, 1)
 
         self._legend_widget = QWidget()
         self._legend_widget.setFixedHeight(28)
@@ -2349,12 +2390,38 @@ class _TimelineProductivityWidget(QWidget):
         legend_layout.setContentsMargins(10, 4, 10, 4)
         legend_layout.setSpacing(16)
         self._legend_labels: list[QLabel] = []
-        layout.addWidget(self._legend_widget)
+        self._layout.addWidget(self._legend_widget)
+
+    def _ensure_plot(self) -> None:
+        """First-use construction of the pg.PlotWidget. Replaces the
+        placeholder so layout stretching is preserved."""
+        if self._plot is not None:
+            return
+        import pyqtgraph as pg
+
+        self._plot = pg.PlotWidget()
+        self._plot.setBackground(self._colors.get("base", "#252526"))
+        self._plot.setMouseEnabled(x=True, y=False)
+        self._plot.showGrid(x=True, y=False, alpha=0.2)
+        self._plot.setMenuEnabled(False)
+
+        scene = self._plot.scene()
+        assert scene is not None
+        self._hover_proxy = pg.SignalProxy(
+            scene.sigMouseMoved,  # type: ignore[attr-defined]
+            rateLimit=30,
+            slot=self._on_mouse_moved,
+        )
+
+        self._layout.replaceWidget(self._plot_placeholder, self._plot)
+        self._plot_placeholder.deleteLater()
 
     def _on_mouse_moved(self, event_args) -> None:
         """Show tooltip for hovered time block."""
         if self._base_blocks is None:
             return
+        # Connected only inside _ensure_plot, so self._plot is realized.
+        assert self._plot is not None
         pos = event_args[0]
         plot_item = self._plot.plotItem
         assert plot_item is not None
@@ -2528,12 +2595,16 @@ class _TimelineProductivityWidget(QWidget):
                 x0=[pom_mins], width=[sw_mins], brush=self._sw_brushes[bi]
             )
 
+        # _block_pom_bars is non-empty only after rebuild() ran _ensure_plot.
+        assert self._plot is not None
         self._plot.setXRange(0, max_minutes * 1.75, padding=0)  # type: ignore[call-arg]
 
     def rebuild(self) -> None:
         import pyqtgraph as pg
 
         self._create_styles()
+        self._ensure_plot()
+        assert self._plot is not None  # _ensure_plot() guarantees this
         plot = self._plot
         plot.clear()
         plot.setBackground(self._colors.get("base", "#252526"))
@@ -2650,6 +2721,9 @@ class _TimelineProductivityWidget(QWidget):
     def _show_empty(self, message: str) -> None:
         import pyqtgraph as pg
 
+        # _show_empty is only called from rebuild() which has already
+        # ensured the plot exists; the assert documents the invariant.
+        assert self._plot is not None
         col_text = QColor(self._colors.get("completed_text", "#8c8c8c"))
         text = pg.TextItem(message, color=col_text, anchor=(0.5, 0.5))
         text.setPos(5.0, 5.5)
@@ -2670,40 +2744,30 @@ class _TimelineAccuracyWidget(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        import pyqtgraph as pg
 
         self._analytics = None
         self._list_id: str | None = None
         self._active_item_id: UUID | None = None
         self._active_elapsed: int = 0
 
-        # Persistent item references
-        self._scatter: pg.ScatterPlotItem | None = None
-        self._ref_line: pg.InfiniteLine | None = None
+        # Persistent item references (typed via Any since pyqtgraph is lazy)
+        self._scatter = None
+        self._ref_line = None
         self._base_estimated = None
         self._base_actual = None
         self._base_brushes = None
 
         self._create_styles()
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(0)
 
-        self._plot = pg.PlotWidget()
-        self._plot.setBackground(self._colors.get("base", "#252526"))
-        self._plot.setMouseEnabled(x=True, y=True)
-        self._plot.showGrid(x=True, y=True, alpha=0.25)
-        self._plot.setMenuEnabled(False)
+        # Lazy PlotWidget — created on first rebuild(). See
+        # _TimelineTimingWidget for the full rationale (pyqtgraph
+        # AxisItem teardown race on offscreen CI).
+        self._plot = None
 
-        # Hover tooltip
-        scene = self._plot.scene()
-        assert scene is not None
-        self._hover_proxy = pg.SignalProxy(
-            scene.sigMouseMoved,  # type: ignore[attr-defined]
-            rateLimit=30,
-            slot=self._on_mouse_moved,
-        )
         self._last_hover_idx = -1
         self._tooltip_label = QLabel(self)
         self._tooltip_label.setWindowFlags(
@@ -2715,7 +2779,9 @@ class _TimelineAccuracyWidget(QWidget):
         )
         self._tooltip_label.hide()
 
-        layout.addWidget(self._plot)
+        # Plot slot; replaced with the real PlotWidget on first rebuild().
+        self._plot_placeholder = QWidget()
+        self._layout.addWidget(self._plot_placeholder, 1)
 
         self._legend_widget = QWidget()
         self._legend_widget.setFixedHeight(28)
@@ -2723,7 +2789,31 @@ class _TimelineAccuracyWidget(QWidget):
         legend_layout.setContentsMargins(10, 4, 10, 4)
         legend_layout.setSpacing(16)
         self._legend_labels: list[QLabel] = []
-        layout.addWidget(self._legend_widget)
+        self._layout.addWidget(self._legend_widget)
+
+    def _ensure_plot(self) -> None:
+        """First-use construction of the pg.PlotWidget. Replaces the
+        placeholder so layout stretching is preserved."""
+        if self._plot is not None:
+            return
+        import pyqtgraph as pg
+
+        self._plot = pg.PlotWidget()
+        self._plot.setBackground(self._colors.get("base", "#252526"))
+        self._plot.setMouseEnabled(x=True, y=True)
+        self._plot.showGrid(x=True, y=True, alpha=0.25)
+        self._plot.setMenuEnabled(False)
+
+        scene = self._plot.scene()
+        assert scene is not None
+        self._hover_proxy = pg.SignalProxy(
+            scene.sigMouseMoved,  # type: ignore[attr-defined]
+            rateLimit=30,
+            slot=self._on_mouse_moved,
+        )
+
+        self._layout.replaceWidget(self._plot_placeholder, self._plot)
+        self._plot_placeholder.deleteLater()
 
     def _on_mouse_moved(self, event_args) -> None:
         """Show tooltip for nearest scatter point."""
@@ -2735,6 +2825,8 @@ class _TimelineAccuracyWidget(QWidget):
             return
         import numpy as np
 
+        # Connected only inside _ensure_plot, so self._plot is realized.
+        assert self._plot is not None
         pos = event_args[0]
         plot_item = self._plot.plotItem
         assert plot_item is not None
@@ -2886,6 +2978,8 @@ class _TimelineAccuracyWidget(QWidget):
         import pyqtgraph as pg
 
         self._create_styles()
+        self._ensure_plot()
+        assert self._plot is not None  # _ensure_plot() guarantees this
         plot = self._plot
         plot.clear()
         plot.setBackground(self._colors.get("base", "#252526"))
@@ -2993,6 +3087,9 @@ class _TimelineAccuracyWidget(QWidget):
     def _show_empty(self, message: str) -> None:
         import pyqtgraph as pg
 
+        # _show_empty is only called from rebuild() which has already
+        # ensured the plot exists; the assert documents the invariant.
+        assert self._plot is not None
         col_text = QColor(self._colors.get("completed_text", "#8c8c8c"))
         text = pg.TextItem(message, color=col_text, anchor=(0.5, 0.5))
         text.setPos(50.0, 50.0)
