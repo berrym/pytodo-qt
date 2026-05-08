@@ -1,0 +1,109 @@
+AddTodo dialog accessibility audit — 2026-05-08T10:58:39
+Tracking: https://github.com/berrym/pytodo-qt/issues/22
+========================================================================
+
+Focusable widgets: 36
+Tab-chain length:  36
+Gaps reported:     44
+
+Gap classes (each maps to a follow-up issue):
+
+## decorative-glyph-in-name (4)
+
+  - QToolButton('Priority ▾'): QToolButton text 'Priority ▾' contains a decorative arrow glyph; set an explicit accessibleName without it
+  - QToolButton('Date ▾'): QToolButton text 'Date ▾' contains a decorative arrow glyph; set an explicit accessibleName without it
+  - QToolButton('Tag ▾'): QToolButton text 'Tag ▾' contains a decorative arrow glyph; set an explicit accessibleName without it
+  - QToolButton('Recurrence ▾'): QToolButton text 'Recurrence ▾' contains a decorative arrow glyph; set an explicit accessibleName without it
+
+## form-label-mnemonic (12)
+
+  - QLabel('Reminder:'): form-row label 'Reminder:' has no Alt+letter mnemonic
+  - QLabel('Priority:'): form-row label 'Priority:' has no Alt+letter mnemonic
+  - QLabel('Column:'): form-row label 'Column:' has no Alt+letter mnemonic
+  - QLabel('Time Block:'): form-row label 'Time Block:' has no Alt+letter mnemonic
+  - QLabel('Sessions:'): form-row label 'Sessions:' has no Alt+letter mnemonic
+  - QLabel('Session Length:'): form-row label 'Session Length:' has no Alt+letter mnemonic
+  - QLabel('Break:'): form-row label 'Break:' has no Alt+letter mnemonic
+  - QLabel('Long Break:'): form-row label 'Long Break:' has no Alt+letter mnemonic
+  - QLabel('Repeat:'): form-row label 'Repeat:' has no Alt+letter mnemonic
+  - QLabel('Ends:'): form-row label 'Ends:' has no Alt+letter mnemonic
+  - QLabel('Tags:'): form-row label 'Tags:' has no Alt+letter mnemonic
+  - QLabel('Subtasks:'): form-row label 'Subtasks:' has no Alt+letter mnemonic
+
+## groupbox-mnemonic (4)
+
+  - QGroupBox('Scheduling'): group title 'Scheduling' has no Alt+letter mnemonic (use & prefix)
+  - QGroupBox('Estimated Duration'): group title 'Estimated Duration' has no Alt+letter mnemonic (use & prefix)
+  - QGroupBox('Focus Session'): group title 'Focus Session' has no Alt+letter mnemonic (use & prefix)
+  - QGroupBox('Recurrence'): group title 'Recurrence' has no Alt+letter mnemonic (use & prefix)
+
+## keyboard-inaccessible-disclosure (1)
+
+  - QLabel('<a href="#">Advanced ▼</a>'): Advanced disclosure is a QLabel with linkActivated; not keyboard-reachable. Use a QPushButton / QToolButton with checkable=True or a QCommandLinkButton instead
+
+## missing-accessible-name (12)
+
+  - QTextEdit('e.g. Plan trip tomorrow at 3pm @errands p1: book flight, pack'): QTextEdit has no accessibleName, no buddy QLabel, and no QFormLayout row label
+  - QScrollArea@0x10f884af0: QScrollArea has no accessibleName, no buddy QLabel, and no QFormLayout row label
+  - QDateEdit('5/8/26'): QDateEdit has no accessibleName, no buddy QLabel, and no QFormLayout row label
+  - TimeComboBox('11:00'): TimeComboBox has no accessibleName, no buddy QLabel, and no QFormLayout row label
+  - QSpinBox('None'): QSpinBox has no accessibleName, no buddy QLabel, and no QFormLayout row label
+  - QComboBox('Minutes'): QComboBox has no accessibleName, no buddy QLabel, and no QFormLayout row label
+  - QSpinBox('1'): QSpinBox has no accessibleName, no buddy QLabel, and no QFormLayout row label
+  - QComboBox('Day(s)'): QComboBox has no accessibleName, no buddy QLabel, and no QFormLayout row label
+  - QDateEdit('8/8/26'): QDateEdit has no accessibleName, no buddy QLabel, and no QFormLayout row label
+  - QSpinBox('10'): QSpinBox has no accessibleName, no buddy QLabel, and no QFormLayout row label
+
+## missing-pair-description (2)
+
+  - QSpinBox('None'): Duration value and unit pair lacks accessibleDescription on at least one side; screen reader cannot tie the value to its unit
+  - QSpinBox('1'): Recurrence interval and type pair lacks accessibleDescription on at least one side; screen reader cannot tie the value to its unit
+
+## paired-row-ambiguous (9)
+
+  - QSpinBox('1'): QSpinBox shares row label 'Repeat:' with 1 other focusable sibling(s); screen reader will announce the same label for each
+  - QCheckBox('Repeat'): QCheckBox shares row label 'Repeat:' with 1 other focusable sibling(s); screen reader will announce the same label for each
+  - QComboBox('Day(s)'): QComboBox shares row label 'Repeat:' with 1 other focusable sibling(s); screen reader will announce the same label for each
+  - QRadioButton('Never'): QRadioButton shares row label 'Ends:' with 4 other focusable sibling(s); screen reader will announce the same label for each
+  - QRadioButton('On date'): QRadioButton shares row label 'Ends:' with 4 other focusable sibling(s); screen reader will announce the same label for each
+  - QDateEdit('8/8/26'): QDateEdit shares row label 'Ends:' with 4 other focusable sibling(s); screen reader will announce the same label for each
+  - QRadioButton('After'): QRadioButton shares row label 'Ends:' with 4 other focusable sibling(s); screen reader will announce the same label for each
+  - QSpinBox('10'): QSpinBox shares row label 'Ends:' with 4 other focusable sibling(s); screen reader will announce the same label for each
+
+Tab chain (in order):
+    1. QTextEdit('e.g. Plan trip tomorrow at 3pm @errands p1: book flight, pack')
+    2. QToolButton('Priority ▾')
+    3. QToolButton('Date ▾')
+    4. QToolButton('Tag ▾')
+    5. QToolButton('Recurrence ▾')
+    6. QScrollArea@0x10f884af0
+    7. QLineEdit('Enter reminder text...')
+    8. QComboBox('Normal')
+    9. QComboBox('Backlog')
+   10. QCheckBox('Set due date')
+   11. QDateEdit('5/8/26')
+   12. QCheckBox('Set due time')
+   13. TimeComboBox('11:00')
+   14. QCheckBox('Set end time')
+   15. TimeComboBox('11:00')
+   16. QComboBox('None')
+   17. QCheckBox('Set event date')
+   18. QDateEdit('5/8/26')
+   19. QSpinBox('None')
+   20. QComboBox('Minutes')
+   21. QSpinBox('None')
+   22. QSpinBox('Default')
+   23. QSpinBox('Default')
+   24. QSpinBox('Default')
+   25. QCheckBox('Repeat')
+   26. QSpinBox('1')
+   27. QComboBox('Day(s)')
+   28. QRadioButton('Never')
+   29. QRadioButton('On date')
+   30. QDateEdit('8/8/26')
+   31. QRadioButton('After')
+   32. QSpinBox('10')
+   33. QLineEdit('e.g. @work, @errands, @quick')
+   34. QPlainTextEdit('One subtask per line\ne.g.\nbook flight\npack')
+   35. QPushButton('OK')
+   36. QPushButton('Cancel')
