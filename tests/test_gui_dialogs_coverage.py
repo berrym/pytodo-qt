@@ -301,6 +301,59 @@ class TestAddTodoDialogToggle:
         assert item is not None
         assert item.reminder == "From advanced"
 
+    def test_default_due_date_and_time_apply_when_smart_input_silent(self, app):
+        """Empty-cell-launch path: when the dialog is constructed with
+        default_due_date / default_due_time and the user types only a
+        bare reminder (no date/time NLP), the resulting TodoItem inherits
+        the cell's date and hour. Smart-input parse still wins when the
+        user provides explicit date/time tokens (covered in the next test).
+        """
+        from datetime import time
+
+        dialog = AddTodoDialog(
+            default_due_date=date(2026, 5, 13),
+            default_due_time=time(14, 0),
+        )
+        dialog._smart_input.set_text("Bare reminder")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.reminder == "Bare reminder"
+        assert item.due_date == date(2026, 5, 13)
+        assert item.due_time == time(14, 0)
+
+    def test_default_due_time_overridden_by_smart_input_explicit_time(self, app):
+        """Smart-input parse wins over the cell defaults when the user
+        types an explicit time. Defaults are fallbacks, not overrides."""
+        from datetime import time
+
+        dialog = AddTodoDialog(
+            default_due_date=date(2026, 5, 13),
+            default_due_time=time(14, 0),
+        )
+        dialog._smart_input.set_text("Standup tomorrow at 9am")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        # Parser produced an explicit time; the cell default is ignored.
+        assert item.due_time == time(9, 0)
+
+    def test_default_due_date_pre_fills_advanced_fields_on_construction(self, app):
+        """The Advanced section's discrete fields show the cell defaults
+        when the dialog is constructed with them, so a user who opens
+        Advanced sees the pre-fill rather than blank fields."""
+        from datetime import time
+
+        dialog = AddTodoDialog(
+            default_due_date=date(2026, 5, 13),
+            default_due_time=time(14, 0),
+        )
+        assert dialog.due_date_checkbox.isChecked()
+        qd = dialog.due_date_edit.date()
+        assert (qd.year(), qd.month(), qd.day()) == (2026, 5, 13)
+        assert dialog.due_time_checkbox.isChecked()
+        assert dialog.due_time_edit.get_time() == time(14, 0)
+
 
 # ---------------------------------------------------------------------------
 # TestAddTodoDialog — Advanced mode (discrete fields)

@@ -5,7 +5,7 @@ Dialog for adding a new to-do item.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QDate, Qt
@@ -56,6 +56,8 @@ class AddTodoDialog(QDialog):
         known_tags: list[str] | None = None,
         columns: list[str] | None = None,
         selected_column: str | None = None,
+        default_due_date: date | None = None,
+        default_due_time: time | None = None,
     ):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Add Todo"))
@@ -68,11 +70,39 @@ class AddTodoDialog(QDialog):
         self._syncing = False
         self._columns: list[str] = list(columns) if columns else []
         self._selected_column: str | None = selected_column
+        # When the dialog is launched by clicking an empty calendar cell,
+        # the cell's date and (for hour-grid cells) hour are passed here as
+        # defaults. The smart-input parse-result still wins if the user
+        # types a date/time in the reminder text — these are fallbacks for
+        # the case where the user types a bare reminder.
+        self._default_due_date: date | None = default_due_date
+        self._default_due_time: time | None = default_due_time
         self._setup_ui()
+        self._apply_cell_launch_defaults()
         self._clamp_to_screen()
 
         if known_tags:
             self._smart_input.set_known_tags(known_tags)
+
+    def _apply_cell_launch_defaults(self) -> None:
+        """Push ``default_due_date`` / ``default_due_time`` into the discrete
+        Advanced fields so the Advanced section reflects the empty-cell
+        launch context if the user opens it. Idempotent and safe to call
+        before any user interaction."""
+        if self._default_due_date is not None:
+            self.due_date_checkbox.setChecked(True)
+            self.due_date_edit.setDate(
+                QDate(
+                    self._default_due_date.year,
+                    self._default_due_date.month,
+                    self._default_due_date.day,
+                )
+            )
+        # The due-time checkbox is gated on the due-date checkbox via
+        # _on_due_date_toggled — only enable Time when Date is set.
+        if self._default_due_time is not None and self._default_due_date is not None:
+            self.due_time_checkbox.setChecked(True)
+            self.due_time_edit.set_time(self._default_due_time)
 
     def _setup_ui(self) -> None:
         """Set up the dialog UI."""
@@ -802,6 +832,15 @@ class AddTodoDialog(QDialog):
             # Auto-set due date/time when recurrence is set without one
             due_date = result.due_date
             due_time = result.due_time
+            # Empty-cell-launch fallback: if the user typed a bare reminder
+            # (no date/time NLP) and the dialog was launched from an empty
+            # calendar cell, inherit that cell's date/hour. The smart-input
+            # parse result still wins when the user provided an explicit
+            # date or time in the reminder text.
+            if due_date is None and self._default_due_date is not None:
+                due_date = self._default_due_date
+            if due_time is None and self._default_due_time is not None:
+                due_time = self._default_due_time
             if result.recurrence_type is not None and due_date is None:
                 due_date = date.today()
             # Minutely recurrence needs a due_time — auto-set to now + interval

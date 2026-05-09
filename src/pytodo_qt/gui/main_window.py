@@ -887,6 +887,7 @@ class MainWindow(QMainWindow):
         self.calendar_view.edit_recurrence_requested.connect(self._on_edit_recurrence)
         self.calendar_view.focus_requested.connect(self._on_context_menu_focus)
         self.calendar_view.add_subtask_requested.connect(self._on_add_subtask)
+        self.calendar_view.add_task_at_requested.connect(self._on_add_todo_at_cell)
         self.calendar_view.item_selected.connect(lambda _: self._update_detail_panel())
         self.calendar_view.item_edit_requested.connect(self._on_calendar_edit_requested)
 
@@ -2279,6 +2280,58 @@ class MainWindow(QMainWindow):
         self._undo_stack.push(cmd)
 
         # Create child items from inline subtask syntax ("task: a, b, c")
+        for sub_text in dialog.get_subtask_reminders():
+            child = TodoItem(
+                reminder=sub_text,
+                priority=item.priority,
+                due_date=item.due_date,
+                due_time=item.due_time,
+                parent_id=item.id,
+                board_column=item.board_column,
+            )
+            sub_cmd = AddItemCommand(self, list_id, child)
+            self._undo_stack.push(sub_cmd)
+
+    def _on_add_todo_at_cell(self, cell_date, hour: int) -> None:
+        """Open AddTodoDialog with the calendar cell's date + hour pre-filled.
+
+        Triggered by the calendar view's empty-cell click affordance:
+        clicking an empty hour-grid cell launches the same Add-Todo flow
+        as the toolbar action, but with the cell's date set as the default
+        due date and the cell's hour set as the default due time. The
+        smart input still wins if the user types a date/time in the
+        reminder text — the cell context is a fallback for bare reminders.
+        """
+        from datetime import time as _time
+
+        if self._database.active_list is None:
+            # Same no-list guard as _on_add_todo. Defer to that handler
+            # which prompts the user to create or pick a list before
+            # falling through to the dialog.
+            self._on_add_todo()
+            return
+        known_tags = self._collect_known_tags()
+        active_list = self._database.active_list
+        cols = list(active_list.board_columns)
+        dialog = AddTodoDialog(
+            self,
+            known_tags=known_tags,
+            columns=cols,
+            default_due_date=cell_date,
+            default_due_time=_time(hour, 0),
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        item = dialog.get_item()
+        if item is None or self._database.active_list is None:
+            return
+        if not item.board_column and cols:
+            item.board_column = cols[0]
+        from .commands import AddItemCommand
+
+        list_id = self._database.active_list.id
+        cmd = AddItemCommand(self, list_id, item)
+        self._undo_stack.push(cmd)
         for sub_text in dialog.get_subtask_reminders():
             child = TodoItem(
                 reminder=sub_text,

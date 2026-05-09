@@ -4358,6 +4358,154 @@ class _WeekDelegate(QStyledItemDelegate):
         return QSize(100, 40)
 
 
+class _HoverAddCellButton(QWidget):
+    """Floating "+" button shown on hover over hour-grid calendar cells.
+
+    Click adds a task at the cell's date and hour (cell-hour, minute=0).
+    Universal affordance: appears whether the cell is empty or already
+    contains task bars. Lives as a child of the table viewport so Qt
+    routes events naturally — clicks on the button fire ``clicked``;
+    clicks outside the button bounds fall through to the table's
+    ``mousePressEvent`` and the existing task hit-test path.
+
+    Implemented as a custom-painted QWidget rather than QPushButton
+    because macOS's native aqua QPushButton style renders pill-shaped
+    backgrounds regardless of QSS ``border-radius``. A manually-painted
+    ellipse + "+" glyph gives a perfect circle on every platform with
+    no native-style interference.
+
+    Tooltip-stacking coordination: emits ``hover_started`` on enter so
+    the parent table view can immediately hide its persistent task
+    tooltip when the cursor crosses into the button. The button
+    captures all mouse events the moment the cursor enters its bounds,
+    so the table's mouseMoveEvent (which would otherwise hide the
+    tooltip via geometry check) stops firing. Without this signal the
+    persistent tooltip from the previous frame would remain visible
+    until the user moved the cursor off the button.
+    """
+
+    _SIZE = 32  # outer widget size; visible circle fills it exactly
+
+    clicked = pyqtSignal()
+    hover_started = pyqtSignal()
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self._cell_date: date | None = None
+        self._hour: int = -1
+        self._hovered = False
+        self._pressed = False
+        self.setFixedSize(self._SIZE, self._SIZE)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        # Theme-aware colors cached at construction.
+        from ...gui.styles.themes import get_colors
+
+        c = get_colors()
+        self._color_base = QColor(c.get("base", "#ffffff"))
+        self._color_highlight = QColor(c.get("highlight", "#1976d2"))
+        self._color_highlight_text = QColor(c.get("highlight_text", "#ffffff"))
+        # No animations — see commit message for the b8 lazy-PlotWidget /
+        # teardown-race story; the same family of segfaults applies to
+        # QPropertyAnimation on this widget's geometry/opacity. Snap
+        # show/hide and snap repositioning are teardown-safe.
+        self.hide()
+
+    def paintEvent(self, a0) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Inset by 1 px on each side so the 2 px border draws cleanly
+        # within the widget bounds (no clipping at the rect edges).
+        rect = self.rect().adjusted(1, 1, -1, -1)
+        if self._hovered or self._pressed:
+            fill_color = self._color_highlight
+            glyph_color = self._color_highlight_text
+        else:
+            fill_color = self._color_base
+            glyph_color = self._color_highlight
+        painter.setBrush(QBrush(fill_color))
+        painter.setPen(QPen(self._color_highlight, 2))
+        painter.drawEllipse(rect)
+        # "+" glyph: two perpendicular lines centered on the widget.
+        glyph_pen = QPen(glyph_color, 2.5)
+        painter.setPen(glyph_pen)
+        cx = rect.center().x()
+        cy = rect.center().y()
+        arm = self._SIZE // 4
+        painter.drawLine(cx - arm, cy, cx + arm, cy)
+        painter.drawLine(cx, cy - arm, cx, cy + arm)
+
+    def enterEvent(self, event) -> None:  # noqa: N802
+        self._hovered = True
+        self.update()
+        self.hover_started.emit()
+        super().enterEvent(event)
+
+    def leaveEvent(self, a0) -> None:  # noqa: N802
+        self._hovered = False
+        self._pressed = False
+        self.update()
+        super().leaveEvent(a0)
+
+    def mousePressEvent(self, a0) -> None:  # noqa: N802
+        if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
+            self._pressed = True
+            self.update()
+        super().mousePressEvent(a0)
+
+    def mouseReleaseEvent(self, a0) -> None:  # noqa: N802
+        was_pressed = self._pressed
+        self._pressed = False
+        self.update()
+        if (
+            a0 is not None
+            and a0.button() == Qt.MouseButton.LeftButton
+            and was_pressed
+            and self.rect().contains(a0.pos())
+        ):
+            self.clicked.emit()
+        super().mouseReleaseEvent(a0)
+
+    def show_at(self, target_top_left: QPoint, cell_date: date, hour: int) -> None:
+        """Position the button at ``target_top_left`` and ensure it is
+        visible. Snaps to the new position when moved between cells."""
+        self._cell_date = cell_date
+        self._hour = hour
+        self.setToolTip(self._format_tooltip(cell_date, hour))
+        if self.pos() != target_top_left:
+            self.move(target_top_left)
+        if not self.isVisible():
+            self.show()
+            self.raise_()
+
+    def hide_smoothly(self) -> None:
+        """Hide. Idempotent if already hidden."""
+        if self.isVisible():
+            self.hide()
+
+    def cell_date(self) -> date | None:
+        return self._cell_date
+
+    def cell_hour(self) -> int:
+        return self._hour
+
+    @staticmethod
+    def _format_tooltip(cell_date: date, hour: int) -> str:
+        # 12-hour clock with am/pm; calendar surface uses the same
+        # convention for hour-row labels.
+        if hour == 0:
+            time_str = "12am"
+        elif hour < 12:
+            time_str = f"{hour}am"
+        elif hour == 12:
+            time_str = "12pm"
+        else:
+            time_str = f"{hour - 12}pm"
+        return f"Add task on {cell_date.strftime('%a %b %d')} at {time_str}"
+
+
 class _WeekTableView(QTableView):
     """Week grid with day columns and hour rows."""
 
@@ -4370,6 +4518,10 @@ class _WeekTableView(QTableView):
     # where field_name is one of "due_time", "due_time_end", or
     # "estimated_minutes".
     task_resized = pyqtSignal(object, str, object)
+    # Click on an empty hour-grid cell — emits (cell_date, hour) so the
+    # main window can open AddTodoDialog with the cell's date + hour
+    # pre-filled. The hour value is the cell's hour-of-day (0-23).
+    add_task_at_requested = pyqtSignal(object, int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -4466,6 +4618,37 @@ class _WeekTableView(QTableView):
             "font-size: 11px; font-weight: bold; }"
         )
         self._resize_snap_label.hide()
+
+        # Floating "+" button shown on hover over hour-grid cells.
+        # Universal add-task affordance: works whether the cell is empty
+        # or already contains task bars. Lives as a child of the viewport
+        # so Qt routes events naturally — clicks on the button fire its
+        # `clicked`; clicks outside the button bounds fall through to
+        # mousePressEvent and the existing task hit-test path.
+        viewport_for_btn = self.viewport()
+        assert viewport_for_btn is not None
+        self._hover_add_btn = _HoverAddCellButton(viewport_for_btn)
+        self._hover_add_btn.clicked.connect(self._on_hover_add_clicked)
+        # Tooltip coordination: hide the persistent task tooltip the
+        # moment the cursor enters the "+" button. Complements the
+        # mouseMoveEvent geometry check (which only fires while the
+        # cursor is on the table viewport, not on the button).
+        self._hover_add_btn.hover_started.connect(self._hide_task_tooltip)
+
+    def _on_hover_add_clicked(self) -> None:
+        """Forward a "+" button click to the same signal the empty-cell
+        click flow uses, with the date/hour the button is currently
+        positioned for."""
+        cell_date = self._hover_add_btn.cell_date()
+        if cell_date is not None:
+            self.add_task_at_requested.emit(cell_date, self._hover_add_btn.cell_hour())
+
+    def _hide_task_tooltip(self) -> None:
+        """Hide the persistent task-bar tooltip. Called from the "+"
+        button's ``hover_started`` signal so two tooltips don't render
+        on top of each other when the cursor enters the button."""
+        self._tooltip_label.hide()
+        self._tooltip_item_id = None
 
     def _hit_test(self, pos):
         """Find what was clicked at `pos`.
@@ -4932,6 +5115,19 @@ class _WeekTableView(QTableView):
             return
         hit = self._hit_test(e.pos())
         if not hit:
+            # Empty hour-grid cell: launch AddTodo with the cell's date
+            # and hour pre-filled. Only fires for left-button presses on
+            # hour-grid cells (not the All Day row, which has its own
+            # add path via the dialog's date picker). The signal carries
+            # (date, hour) so the main window can construct the dialog
+            # with the right defaults.
+            if e.button() == Qt.MouseButton.LeftButton:
+                index = self.indexAt(e.pos())
+                if index.isValid():
+                    cell_date = index.data(_WEEK_DATE_ROLE)
+                    hour = index.data(_WEEK_HOUR_ROLE)
+                    if cell_date is not None and hour is not None and hour >= 0:
+                        self.add_task_at_requested.emit(cell_date, hour)
             return
         if hit[0] == "task":
             self.task_clicked.emit(hit[1].id)
@@ -5025,14 +5221,51 @@ class _WeekTableView(QTableView):
             # so the affordance reads cleanly.
             self._tooltip_label.hide()
             self._tooltip_item_id = None
+            self._hover_add_btn.hide_smoothly()
             return
-        if viewport is not None:
-            viewport.unsetCursor()
+        # Hover "+" affordance — universal add-task button for hour-grid
+        # cells regardless of whether the cell already contains bars.
+        # Positioned at the cell's center; slides between cells as the
+        # cursor moves so the affordance follows naturally without
+        # flickering. All-Day row, agenda row, and any non-hour-grid
+        # surface skip the button.
+        index = self.indexAt(e.pos())
+        cell_date = index.data(_WEEK_DATE_ROLE) if index.isValid() else None
+        hour = index.data(_WEEK_HOUR_ROLE) if index.isValid() else None
+        if cell_date is not None and hour is not None and hour >= 0:
+            rect = self.visualRect(index)
+            center = rect.center()
+            # Center the 36 px button on the cell center.
+            top_left = QPoint(
+                center.x() - self._hover_add_btn.width() // 2,
+                center.y() - self._hover_add_btn.height() // 2,
+            )
+            self._hover_add_btn.show_at(top_left, cell_date, hour)
+        else:
+            self._hover_add_btn.hide_smoothly()
         # Tooltip handling — uses a persistent QLabel instead of
         # QToolTip.showText() so viewport repaints from the now-timer
-        # don't dismiss it prematurely.
+        # don't dismiss it prematurely. When the cursor is within the
+        # "+" hover button's geometry, the button's own tooltip ("Add
+        # task on …") wins — we suppress the persistent task tooltip
+        # entirely to prevent two tooltips rendering on top of each
+        # other. Geometry check (rather than relying on the button's
+        # enterEvent) handles the case where the button appears under
+        # a stationary cursor: enterEvent doesn't fire when the widget
+        # moves under the cursor, only when the cursor moves into the
+        # widget's bounds.
+        cursor_on_add_btn = (
+            self._hover_add_btn.isVisible() and self._hover_add_btn.geometry().contains(e.pos())
+        )
         hit = self._hit_test(e.pos())
-        if hit and hit[0] == "task":
+        if cursor_on_add_btn:
+            self._tooltip_label.hide()
+            self._tooltip_item_id = None
+            if viewport is not None:
+                viewport.unsetCursor()
+        elif hit and hit[0] == "task":
+            if viewport is not None:
+                viewport.unsetCursor()
             item = hit[1]
             item_id = getattr(item, "id", None)
             if item_id != self._tooltip_item_id:
@@ -5045,6 +5278,8 @@ class _WeekTableView(QTableView):
         else:
             self._tooltip_label.hide()
             self._tooltip_item_id = None
+            if viewport is not None:
+                viewport.unsetCursor()
 
     @staticmethod
     def _build_bar_tooltip(item) -> str:
@@ -5073,6 +5308,7 @@ class _WeekTableView(QTableView):
     def leaveEvent(self, a0) -> None:  # noqa: N802
         self._tooltip_label.hide()
         self._tooltip_item_id = None
+        self._hover_add_btn.hide_smoothly()
         super().leaveEvent(a0)
 
     def mouseDoubleClickEvent(self, e) -> None:  # noqa: N802
@@ -5826,6 +6062,7 @@ class _PinnedWeekContainer(QWidget):
         on_task_right_clicked,
         on_task_dropped,
         on_more_clicked,
+        on_add_task_at_requested=None,
     ) -> None:
         """Wire both inner tables' signals to the same handlers.
 
@@ -5838,6 +6075,8 @@ class _PinnedWeekContainer(QWidget):
             table.task_right_clicked.connect(on_task_right_clicked)
             table.task_dropped.connect(on_task_dropped)
             table.more_clicked.connect(on_more_clicked)
+            if on_add_task_at_requested is not None:
+                table.add_task_at_requested.connect(on_add_task_at_requested)
 
 
 # ---------------------------------------------------------------------------
@@ -6316,6 +6555,9 @@ class CalendarViewWidget(QWidget):
     edit_tags_requested = pyqtSignal(object)
     focus_requested = pyqtSignal(object)
     add_subtask_requested = pyqtSignal(object)
+    # Click on an empty hour-grid cell — emits (cell_date, hour). The main
+    # window opens AddTodoDialog with the cell's date + hour pre-filled.
+    add_task_at_requested = pyqtSignal(object, int)
     item_selected = pyqtSignal(object)  # (item_id or None)
     item_edit_requested = pyqtSignal(object)  # (item_id) — open detail panel in edit mode
     toggle_requested = pyqtSignal()
@@ -6520,6 +6762,7 @@ class CalendarViewWidget(QWidget):
             self._on_task_right_clicked,
             self._on_week_task_dropped,
             self._on_more_clicked,
+            self._on_add_task_at_requested,
         )
         # Edge-drag-to-resize emits from the hour-grid only (the All Day
         # row has no bars to resize). Wire directly rather than threading
@@ -6541,6 +6784,7 @@ class CalendarViewWidget(QWidget):
             self._on_task_right_clicked,
             self._on_week_task_dropped,
             self._on_more_clicked,
+            self._on_add_task_at_requested,
         )
         self._week_container.hour_grid_table.task_resized.connect(self._on_task_resized)
         self._week_table = self._week_container.hour_grid_table
@@ -7355,6 +7599,11 @@ class CalendarViewWidget(QWidget):
     def _on_more_clicked(self, cell_date: date, items: list) -> None:
         """Show popover with all tasks for a date."""
         self._show_day_popover(cell_date, items)
+
+    def _on_add_task_at_requested(self, cell_date: date, hour: int) -> None:
+        """Forward an empty-cell click up to the main window so it can
+        open AddTodoDialog with the cell's date and hour pre-filled."""
+        self.add_task_at_requested.emit(cell_date, hour)
 
     def _show_day_popover(self, cell_date: date, items: list) -> None:
         """Display a floating panel listing all tasks for a specific date."""
