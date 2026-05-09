@@ -677,12 +677,18 @@ QToolButton:pressed {{
     background-color: {colors["highlight"]};
 }}
 
-/* Tooltips */
+/* Tooltips — square corners are the documented Qt-staff recommendation
+   for QToolTip on macOS (https://bugreports.qt.io/browse/QTBUG-2849).
+   Stylesheets paint pixels but cannot change the OS-level tool-window
+   shape; a `border-radius` here renders the rounded border but leaves
+   the rectangular OS frame visible at the corners as small white
+   triangles on macOS. The persistent QLabel-based tooltips in
+   calendar_view.py (_PersistentTooltipLabel) get rounded corners via
+   `setMask` instead. */
 QToolTip {{
     background-color: {colors["base"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
-    border-radius: 8px;
     padding: 4px;
 }}
 

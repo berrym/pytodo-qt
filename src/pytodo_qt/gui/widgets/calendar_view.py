@@ -4587,8 +4587,7 @@ class _WeekTableView(QTableView):
         )
         self._drag_preview_label.setStyleSheet(
             f"QLabel {{ background: {_overlay}; color: white; "
-            "border-radius: 6px; padding: 6px 10px; "
-            "font-size: 12px; font-weight: bold; }"
+            "padding: 6px 10px; font-size: 12px; font-weight: bold; }}"
         )
         self._drag_preview_label.hide()
 
@@ -4614,8 +4613,7 @@ class _WeekTableView(QTableView):
         )
         self._resize_snap_label.setStyleSheet(
             f"QLabel {{ background: {_overlay}; color: white; "
-            "border-radius: 6px; padding: 4px 8px; "
-            "font-size: 11px; font-weight: bold; }"
+            "padding: 4px 8px; font-size: 11px; font-weight: bold; }}"
         )
         self._resize_snap_label.hide()
 
