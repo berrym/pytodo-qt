@@ -6962,6 +6962,24 @@ class CalendarViewWidget(QWidget):
                         break
                     if item.recurrence_end_date is not None and next_due > item.recurrence_end_date:
                         break
+                    # `recurrence_end_count` parity with the model layer:
+                    # `cycle_completed_recurring` and `auto_advance_overdue_recurring`
+                    # both stop touching the template's due_date once
+                    # `recurrence_count >= recurrence_end_count`, so the
+                    # template stays pinned on its last real due_date
+                    # forever. Without this matching check here, the
+                    # projection loop kept emitting `_ProjectedItem`
+                    # proxies into every visible day past that pinned
+                    # date — phantom cells of a recurrence that has
+                    # officially ended. The phantoms rendered as
+                    # OVERDUE / FUTURE bars, shared the template's
+                    # `id`, and made the calendar look like the task
+                    # was still active when the model knew it wasn't.
+                    if (
+                        item.recurrence_end_count is not None
+                        and item.recurrence_count >= item.recurrence_end_count
+                    ):
+                        break
                     bucket = scheduled.setdefault(next_due, [])
                     # Wrap as _ProjectedItem so compute_bar_window sees
                     # the projected date as due_date and produces a fresh

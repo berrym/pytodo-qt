@@ -1590,6 +1590,173 @@ class TestRecurrenceProjection:
             f"as FUTURE, got {state}"
         )
 
+    def test_recurrence_end_count_stops_projection_emit(self, qtbot):
+        """Regression for #53: projections must stop being emitted once
+        ``recurrence_count >= recurrence_end_count``.
+
+        The model layer (``cycle_completed_recurring``, ``auto_advance_overdue_recurring``)
+        already refuses to advance the template's due_date past the
+        declared end-count. Pre-fix the projection loop in
+        ``_project_recurrences_into`` only checked ``recurrence_end_date``
+        and kept emitting ``_ProjectedItem`` proxies into every visible
+        day past the pinned due_date — phantom cells of a recurrence
+        that has officially ended. Reported live against database row
+        ``a97bae72-00b5-499a-93c7-81d86d9d37c3`` (10/10 completed,
+        complete=True, due_date pinned on 2026-05-04, every subsequent
+        day rendered phantom OVERDUE/FUTURE bars).
+        """
+        from datetime import datetime, time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+
+        today = date.today()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Daily standup")
+        item.due_date = today
+        item.due_time = time(14, 0)
+        item.estimated_minutes = 0
+        item.recurrence_type = "daily"
+        item.recurrence_interval = 1
+        item.recurrence_end_count = 10
+        item.recurrence_count = 10
+        item.complete = True
+        item.completed_at = int(datetime.combine(today, time(14, 30)).timestamp() * 1000)
+        lst.add_item(item)
+
+        cal.set_list(lst)
+
+        # Today's bucket holds the real (pinned) template; no other
+        # day in the visible week (or in any future day up to the
+        # PROJECTION_DAYS horizon) may contain a projection of it.
+        for offset in range(1, 43):
+            cell_date = today + timedelta(days=offset)
+            bucket = cal._week_model._items_by_date.get(cell_date, [])
+            assert not any(i.id == item.id for i in bucket), (
+                f"Phantom projection of an end-count-exhausted recurrence "
+                f"appeared in {cell_date} bucket (offset +{offset}). "
+                f"Template's recurrence_end_count={item.recurrence_end_count}, "
+                f"recurrence_count={item.recurrence_count} — projections "
+                f"must not be emitted past the declared end."
+            )
+
+    def test_recurrence_under_end_count_still_projects(self, qtbot):
+        """Counterpart to the above: a recurring task whose count has
+        NOT yet reached end_count must continue to project normally.
+        """
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+
+        today = date.today()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Daily standup")
+        item.due_date = today
+        item.due_time = time(14, 0)
+        item.estimated_minutes = 0
+        item.recurrence_type = "daily"
+        item.recurrence_interval = 1
+        item.recurrence_end_count = 10
+        item.recurrence_count = 4  # well under end
+        lst.add_item(item)
+
+        cal.set_list(lst)
+
+        tomorrow = today + timedelta(days=1)
+        bucket = cal._week_model._items_by_date.get(tomorrow, [])
+        assert any(i.id == item.id for i in bucket), (
+            "A recurring task with count well below end_count must still "
+            "project onto subsequent days"
+        )
+
+    def test_completed_template_projection_is_clickable_in_layout(self, qtbot):
+        """Regression for #53: after the real instance of a daily recurring
+        task is marked complete, projected occurrences in subsequent days
+        must remain in the bar-layout output so the hit-test can find them.
+
+        The painter and the hit-test both call _compute_cell_bar_layout,
+        so if a projection is missing from the layout it will both fail
+        to paint AND fail to be clickable. This test asserts the layout
+        path independently of pixel coordinates so the diagnosis is clean
+        whether the bug is in the layout (this assertion fails) or the
+        pixel-geometry hit-zone math (this assertion passes; a follow-up
+        test then narrows further).
+        """
+        from datetime import datetime, time
+
+        from pytodo_qt.core.models import create_todo_item, create_todo_list
+        from pytodo_qt.gui.widgets.calendar_view import (
+            CalendarViewWidget,
+            _compute_cell_bar_layout,
+        )
+
+        cal = CalendarViewWidget()
+        qtbot.addWidget(cal)
+
+        today = date.today()
+        lst = create_todo_list("Test")
+        item = create_todo_item("Daily standup")
+        item.due_date = today
+        # WORKBACK window: bar runs (due_time - estimated_minutes, due_time).
+        # 14:00 due + 60 min estimate → bar lives in the 13:00 hour cell
+        # (1pm row), matching the user's reported screenshot.
+        item.due_time = time(14, 0)
+        item.estimated_minutes = 60
+        item.recurrence_type = "daily"
+        item.recurrence_interval = 1
+        item.complete = True
+        item.completed_at = int(datetime.combine(today, time(14, 30)).timestamp() * 1000)
+        lst.add_item(item)
+
+        cal.set_list(lst)
+
+        # The next three projected days each must produce a bar-layout
+        # entry in the 1pm hour cell. Pre-fix, projections of a completed
+        # template are filtered out somewhere in the layout pipeline,
+        # leaving the cells visually painted (via a different code path)
+        # but click-dead because the layout's `starting` and `continuing`
+        # lists are empty for the projected items.
+        cell_minute_start = 13 * 60  # 13:00
+        cell_minute_end = 14 * 60  # 14:00
+        now = datetime.combine(today, time(12, 0))
+
+        for offset in (1, 2, 3):
+            cell_date = today + timedelta(days=offset)
+            column_items = cal._week_model._items_by_date.get(cell_date, [])
+            assert column_items, (
+                f"Day +{offset} ({cell_date}) bucket is empty — projection scheduling failed"
+            )
+            assert any(i.id == item.id for i in column_items), (
+                f"Day +{offset} ({cell_date}) bucket has no projection of the recurring item"
+            )
+
+            layout = _compute_cell_bar_layout(
+                column_items,
+                cell_date,
+                cell_minute_start,
+                cell_minute_end,
+                bar_left=10,
+                bar_width=200,
+                current_time=now,
+            )
+            slot_items = [slot[0] for slot in layout.starting] + [
+                slot[0] for slot in layout.continuing
+            ]
+            assert any(getattr(s, "id", None) == item.id for s in slot_items), (
+                f"Day +{offset} ({cell_date}): projection is in column_items "
+                f"but did NOT survive _compute_cell_bar_layout — paint and "
+                f"hit-test both lose it. starting={len(layout.starting)} "
+                f"continuing={len(layout.continuing)} "
+                f"overflow={len(layout.overflow_items)}"
+            )
+
     def test_overdue_today_does_not_leak_to_future_projections(self, qtbot):
         """A recurring task whose current occurrence is OVERDUE must still
         render future projections as FUTURE — the overdue state of today's
