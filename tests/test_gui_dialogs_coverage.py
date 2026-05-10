@@ -68,6 +68,63 @@ class TestAddTodoDialogSmartMode:
         assert toggle.accessibleName() == "Advanced fields"
         assert toggle.accessibleDescription() == "Show or hide additional task fields"
 
+    def test_accessible_names_on_unlabeled_fields(self, app):
+        """Regression for #51: twelve focusable widgets in the dialog have no
+        QFormLayout row label that Qt's accessibility bridge surfaces, so
+        screen readers used to announce them as bare control types. Each
+        must carry an explicit accessibleName.
+        """
+        dialog = _make_advanced_dialog()
+        # Smart input QTextEdit
+        smart_text = dialog._smart_input._text_edit
+        assert (
+            smart_text.accessibleName()
+            == "Smart task input — type a task with optional date, time, tag, priority, or recurrence"
+        )
+        # Advanced scroll wrapper
+        assert dialog._advanced_scroll.accessibleName() == "Advanced fields"
+        # Scheduling group
+        assert dialog.due_date_edit.accessibleName() == "Due date"
+        assert dialog.due_time_edit.accessibleName() == "Due time start"
+        assert dialog.due_time_end_edit.accessibleName() == "Due time end"
+        assert dialog.time_block_combo.accessibleName() == "Time block"
+        assert dialog.event_date_edit.accessibleName() == "Event date"
+        # Estimated Duration pair
+        assert dialog.duration_value_spin.accessibleName() == "Duration value"
+        assert dialog.duration_unit_combo.accessibleName() == "Duration unit"
+        # Recurrence interval + type, end-date / end-count
+        assert dialog.interval_spin.accessibleName() == "Recurrence interval"
+        assert dialog.type_combo.accessibleName() == "Recurrence unit"
+        assert dialog.end_count_spin.accessibleName() == "End count"
+
+    def test_paired_row_disambiguation(self, app):
+        """Regression for #52 paired-row-ambiguous: every focusable control in
+        the Repeat row and the Ends row must carry a distinct accessibleName
+        so a screen reader can tell them apart instead of announcing the
+        shared QFormLayout row label for each."""
+        dialog = _make_advanced_dialog()
+        # Repeat row
+        assert dialog.recurrence_checkbox.accessibleName() == "Recurrence enabled"
+        assert dialog.interval_spin.accessibleName() == "Recurrence interval"
+        assert dialog.type_combo.accessibleName() == "Recurrence unit"
+        # Ends row
+        assert dialog.end_never_radio.accessibleName() == "Ends never"
+        assert dialog.end_date_radio.accessibleName() == "Ends on date"
+        assert dialog.end_date_edit.accessibleName() == "End date"
+        assert dialog.end_count_radio.accessibleName() == "Ends after count"
+        assert dialog.end_count_spin.accessibleName() == "End count"
+
+    def test_paired_value_unit_descriptions(self, app):
+        """Regression for #52 missing-pair-description: Duration value/unit
+        and Recurrence interval/type each need accessibleDescription on both
+        sides naming the partner so a screen reader can tie a value to its
+        unit."""
+        dialog = _make_advanced_dialog()
+        assert "unit selector to its right" in dialog.duration_value_spin.accessibleDescription()
+        assert "value selector to its left" in dialog.duration_unit_combo.accessibleDescription()
+        assert "unit selector to its right" in dialog.interval_spin.accessibleDescription()
+        assert "interval value to its left" in dialog.type_combo.accessibleDescription()
+
     def test_advanced_toggle_shows_and_hides_advanced_section(self, app):
         """Toggling the button checked/unchecked must mirror the prior
         link-driven behavior: show/hide the scroll area and update the

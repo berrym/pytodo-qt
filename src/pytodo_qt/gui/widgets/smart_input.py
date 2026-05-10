@@ -299,6 +299,11 @@ class SmartInputWidget(QWidget):
         self._text_edit.setAcceptRichText(False)
         self._text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._text_edit.setFixedHeight(32)
+        self._text_edit.setAccessibleName(
+            self.tr(
+                "Smart task input — type a task with optional date, time, tag, priority, or recurrence"
+            )
+        )
         self._text_edit.setPlaceholderText(
             self.tr("e.g. Plan trip tomorrow at 3pm @errands p1: book flight, pack")
         )

@@ -153,6 +153,7 @@ class AddTodoDialog(QDialog):
         self._advanced_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         self._advanced_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._advanced_scroll.setVisible(False)
+        self._advanced_scroll.setAccessibleName(self.tr("Advanced fields"))
 
         self._advanced_container = QWidget()
         self._advanced_scroll.setWidget(self._advanced_container)
@@ -204,6 +205,7 @@ class AddTodoDialog(QDialog):
         self.due_date_edit.setCalendarPopup(True)
         self.due_date_edit.setDate(QDate.currentDate())
         self.due_date_edit.setEnabled(False)
+        self.due_date_edit.setAccessibleName(self.tr("Due date"))
         due_date_layout.addWidget(self.due_date_checkbox)
         due_date_layout.addWidget(self.due_date_edit, 1)
         sched_form.addRow(self.tr("Due Date:"), due_date_layout)
@@ -215,6 +217,7 @@ class AddTodoDialog(QDialog):
         self.due_time_edit = TimeComboBox()
         self.due_time_edit.setEnabled(False)
         self.due_time_edit.default_to_next_hour()
+        self.due_time_edit.setAccessibleName(self.tr("Due time start"))
         due_time_layout.addWidget(self.due_time_checkbox)
         due_time_layout.addWidget(self.due_time_edit, 1)
         sched_form.addRow(self.tr("Due Time:"), due_time_layout)
@@ -231,11 +234,13 @@ class AddTodoDialog(QDialog):
         self.due_time_end_edit = TimeComboBox()
         self.due_time_end_edit.setEnabled(False)
         self.due_time_end_edit.default_to_next_hour()
+        self.due_time_end_edit.setAccessibleName(self.tr("Due time end"))
         due_time_end_layout.addWidget(self.due_time_end_checkbox)
         due_time_end_layout.addWidget(self.due_time_end_edit, 1)
         sched_form.addRow(self.tr("End Time:"), due_time_end_layout)
 
         self.time_block_combo = QComboBox()
+        self.time_block_combo.setAccessibleName(self.tr("Time block"))
         self.time_block_combo.addItem(self.tr("None"), "")
         for block_id, label in [
             ("early_morning", "Early Morning"),
@@ -262,6 +267,7 @@ class AddTodoDialog(QDialog):
         self.event_date_edit.setCalendarPopup(True)
         self.event_date_edit.setDate(QDate.currentDate())
         self.event_date_edit.setEnabled(False)
+        self.event_date_edit.setAccessibleName(self.tr("Event date"))
         event_date_layout.addWidget(self.event_date_checkbox)
         event_date_layout.addWidget(self.event_date_edit, 1)
         sched_form.addRow(self.tr("Event Date:"), event_date_layout)
@@ -277,9 +283,17 @@ class AddTodoDialog(QDialog):
         self.duration_value_spin.setRange(0, 9999)
         self.duration_value_spin.setValue(0)
         self.duration_value_spin.setSpecialValueText(self.tr("None"))
+        self.duration_value_spin.setAccessibleName(self.tr("Duration value"))
+        self.duration_value_spin.setAccessibleDescription(
+            self.tr("Duration value — paired with the unit selector to its right")
+        )
         dur_layout.addWidget(self.duration_value_spin, 1)
 
         self.duration_unit_combo = QComboBox()
+        self.duration_unit_combo.setAccessibleName(self.tr("Duration unit"))
+        self.duration_unit_combo.setAccessibleDescription(
+            self.tr("Duration unit — paired with the value selector to its left")
+        )
         self.duration_unit_combo.addItem(self.tr("Minutes"), 1)
         self.duration_unit_combo.addItem(self.tr("Hours"), 60)
         self.duration_unit_combo.addItem(self.tr("Days"), 1440)
@@ -336,6 +350,7 @@ class AddTodoDialog(QDialog):
         rec_form = QFormLayout(rec_group)
 
         self.recurrence_checkbox = QCheckBox(self.tr("Repeat"))
+        self.recurrence_checkbox.setAccessibleName(self.tr("Recurrence enabled"))
         self.recurrence_checkbox.stateChanged.connect(self._on_recurrence_toggled)
 
         recurrence_layout = QHBoxLayout()
@@ -345,9 +360,17 @@ class AddTodoDialog(QDialog):
         self.interval_spin.setRange(1, 99)
         self.interval_spin.setValue(1)
         self.interval_spin.setEnabled(False)
+        self.interval_spin.setAccessibleName(self.tr("Recurrence interval"))
+        self.interval_spin.setAccessibleDescription(
+            self.tr("Recurrence interval — paired with the unit selector to its right")
+        )
         recurrence_layout.addWidget(self.interval_spin)
 
         self.type_combo = QComboBox()
+        self.type_combo.setAccessibleName(self.tr("Recurrence unit"))
+        self.type_combo.setAccessibleDescription(
+            self.tr("Recurrence unit — paired with the interval value to its left")
+        )
         self.type_combo.addItem(self.tr("Minute(s)"), "minutely")
         self.type_combo.addItem(self.tr("Day(s)"), "daily")
         self.type_combo.addItem(self.tr("Week(s)"), "weekly")
@@ -367,8 +390,11 @@ class AddTodoDialog(QDialog):
 
         self.end_never_radio = QRadioButton(self.tr("Never"))
         self.end_never_radio.setChecked(True)
+        self.end_never_radio.setAccessibleName(self.tr("Ends never"))
         self.end_date_radio = QRadioButton(self.tr("On date"))
+        self.end_date_radio.setAccessibleName(self.tr("Ends on date"))
         self.end_count_radio = QRadioButton(self.tr("After"))
+        self.end_count_radio.setAccessibleName(self.tr("Ends after count"))
 
         end_group = QButtonGroup(self)
         end_group.addButton(self.end_never_radio)
@@ -380,11 +406,13 @@ class AddTodoDialog(QDialog):
         self.end_date_edit.setCalendarPopup(True)
         self.end_date_edit.setDate(QDate.currentDate().addMonths(3))
         self.end_date_edit.setEnabled(False)
+        self.end_date_edit.setAccessibleName(self.tr("End date"))
 
         self.end_count_spin = QSpinBox()
         self.end_count_spin.setRange(1, 999)
         self.end_count_spin.setValue(10)
         self.end_count_spin.setEnabled(False)
+        self.end_count_spin.setAccessibleName(self.tr("End count"))
 
         end_layout = QHBoxLayout()
         end_layout.addWidget(self.end_never_radio)
