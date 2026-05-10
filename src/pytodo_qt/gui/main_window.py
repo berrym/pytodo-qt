@@ -816,6 +816,27 @@ class MainWindow(QMainWindow):
         self._detail_panel = TaskDetailPanel(self)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._detail_panel)
         self._detail_panel.hide()
+        # No-panel-width baseline for #55. Tracks the window width Qt
+        # would have if the detail panel were hidden, kept current via
+        # resizeEvent: when the dock is hidden, equal to the full
+        # window width; when the dock is shown, derived as window
+        # width minus dock width. The dock's visibilityChanged signal
+        # restores the window to this baseline on hide. Maintained
+        # only for normal (non-maximized, non-fullscreen) windows
+        # since explicit resize would un-maximize.
+        self._no_panel_width: int | None = None
+        # Suppression flag for resizeEvent baseline updates during the
+        # show transition. Qt fires resizeEvent for the auto-grow with
+        # dock.isVisible() still returning False (the visibility flag
+        # flips AFTER the layout pass), which would otherwise corrupt
+        # the baseline to the grown width. Set True by the explicit
+        # snapshot helper called before each show; cleared by
+        # visibilityChanged(True) when the transition is complete.
+        self._show_in_progress = False
+        # visibilityChanged covers every path that toggles the dock
+        # — toolbar action, keyboard shortcut, the dock's own close-X
+        # button, programmatic show() in _update_detail_panel.
+        self._detail_panel.visibilityChanged.connect(self._on_detail_panel_visibility_changed)
         self._connect_detail_panel_signals()
 
         detail_shortcut = QShortcut(QKeySequence("Ctrl+Shift+D"), self)
@@ -907,9 +928,8 @@ class MainWindow(QMainWindow):
         if item is None:
             return
         if not self._detail_panel.isVisible():
+            self._snapshot_no_panel_width_for_show()
             self._detail_panel.show()
-            if hasattr(self, "_detail_panel_action"):
-                self._detail_panel_action.setChecked(True)
         self._detail_panel.set_item(item, active_list)
         self._detail_panel.set_edit_mode(True)
 
@@ -1002,22 +1022,182 @@ class MainWindow(QMainWindow):
         self._set_view_mode(view_id)
 
     def _toggle_detail_panel(self) -> None:
-        """Toggle the task detail panel visibility (Ctrl+Shift+D)."""
-        visible = not self._detail_panel.isVisible()
-        self._detail_panel.setVisible(visible)
-        self._detail_btn.setChecked(visible)
-        if hasattr(self, "_detail_panel_action"):
-            self._detail_panel_action.setChecked(visible)
-        if visible:
+        """Toggle the task detail panel visibility (Ctrl+Shift+D).
+
+        ``visibilityChanged`` handles the toolbar / button checkbox sync
+        and the no-panel-width geometry restore on hide.
+        """
+        going_visible = not self._detail_panel.isVisible()
+        if going_visible:
+            self._snapshot_no_panel_width_for_show()
+        self._detail_panel.setVisible(going_visible)
+        if going_visible:
             self._update_detail_panel()
 
     def _on_detail_btn_toggled(self, checked: bool) -> None:
         """Handle the inline detail button toggle."""
+        if checked and not self._detail_panel.isVisible():
+            self._snapshot_no_panel_width_for_show()
         self._detail_panel.setVisible(checked)
-        if hasattr(self, "_detail_panel_action"):
-            self._detail_panel_action.setChecked(checked)
         if checked:
             self._update_detail_panel()
+
+    def _snapshot_no_panel_width_for_show(self) -> None:
+        """Capture the current window width as the no-panel baseline,
+        immediately before triggering ``dock.show()`` or
+        ``setVisible(True)``. Called from every path that opens the
+        detail panel.
+
+        Why explicit-snapshot rather than Qt event-driven: Qt fires
+        ``resizeEvent`` for the auto-grow with the dock's visibility
+        flag still False (the flag flips AFTER the layout pass). A
+        ``resizeEvent``-based baseline tracker would see ``dock.isVisible()
+        == False`` during the grow and overwrite the baseline with
+        the grown width — corruption that prevents the hide path from
+        restoring to the correct pre-show size. Snapshotting here, in
+        the user-driven code path that triggers the show, captures
+        the correct pre-grow width and sets ``_show_in_progress`` so
+        the corrupting ``resizeEvent`` updates are suppressed until
+        ``visibilityChanged(True)`` clears the flag.
+        """
+        if self._detail_panel.isVisible():
+            return  # Already shown — preserve existing baseline.
+        if self.isMaximized() or self.isFullScreen():
+            return  # Outer geometry stays under OS / WM control.
+        self._no_panel_width = self.width()
+        self._show_in_progress = True
+
+    def _schedule_no_panel_width_restore(self) -> None:
+        """Defer the outer-window shrink one event-loop tick.
+
+        Two Qt mechanisms work against an in-handler resize and both
+        need addressing:
+
+        1. ``QMainWindow``'s internal layout queues a ``LayoutRequest``
+           event when the dock hides; the layout cache and effective
+           ``minimumSizeHint`` don't update synchronously inside
+           ``visibilityChanged(False)``. Deferring via
+           ``QTimer.singleShot(0, ...)`` lets that event process first.
+
+        2. When QMainWindow grows to accommodate a docked widget, it
+           sets an explicit ``minimumSize`` that locks the grown
+           width as a hard floor — Qt does NOT relax this when the
+           dock hides. ``QWidget.resize`` is documented to silently
+           clamp to ``minimumSize``, so even after the LayoutRequest
+           processes, the resize is clipped to the stuck minimum.
+           Resetting via ``setMinimumSize(0, 0)`` reverts to layout-
+           driven minimum tracking: the effective minimum comes from
+           ``minimumSizeHint()`` which (a) is smaller now that the
+           dock is hidden so the resize below succeeds, and (b)
+           dynamically grows again when the dock is re-shown so
+           QMainWindow's auto-grow re-engages. Snapshotting the
+           current ``minimumSizeHint()`` as the explicit floor (a
+           prior iteration of this fix) shrank the window correctly
+           but stuck the explicit floor at the no-dock hint —
+           re-showing the dock then found ``current_width >=
+           explicit_min`` and squeezed the dock into the existing
+           window instead of growing.
+
+        Reference: https://forum.qt.io/topic/8512 (deferral pattern);
+        Qt 6 QWidget docs on minimumSize / resize-clamping
+        (https://doc.qt.io/qt-6/qwidget.html#size-prop).
+        """
+        from PyQt6.QtCore import QTimer
+
+        if self._no_panel_width is None:
+            return
+        target_w = self._no_panel_width
+        target_h = self.height()
+
+        def _do_resize():
+            # Reset the explicit minimumSize Qt stuck on the window
+            # when the dock grew it. (0, 0) reverts to layout-driven
+            # tracking so the effective minimum follows the dock's
+            # current visibility — small now (allowing this resize),
+            # large again on re-show (allowing auto-grow).
+            self.setMinimumSize(0, 0)
+            self.resize(target_w, target_h)
+
+        QTimer.singleShot(0, _do_resize)
+
+    def resizeEvent(self, a0) -> None:  # noqa: N802
+        """Forward to QMainWindow + update no-panel-width baseline."""
+        super().resizeEvent(a0)
+        self._track_no_panel_width(a0)
+
+    def _track_no_panel_width(self, a0) -> None:
+        """Update ``_no_panel_width`` to reflect the current window state.
+
+        Skipped while ``_show_in_progress`` is True — Qt fires the
+        auto-grow ``resizeEvent`` with the dock's visibility flag
+        still False, which would overwrite the baseline snapshotted
+        by ``_snapshot_no_panel_width_for_show`` with the grown
+        width. The flag is cleared in
+        ``_on_detail_panel_visibility_changed`` once the show
+        transition completes.
+
+        Outside of the show transition, the math is:
+
+          - Dock hidden: baseline = full window width (direct measure).
+          - Dock shown:  baseline = window width − dock width
+                         (derived; honors user resizes of the window
+                         while the panel is open).
+
+        Extracted from ``resizeEvent`` so tests can exercise the math
+        against a mock window without invoking the QMainWindow
+        superclass call.
+        """
+        if a0 is None or not self.isVisible():
+            return
+        if self.isMaximized() or self.isFullScreen():
+            return
+        if not hasattr(self, "_detail_panel"):
+            # resizeEvent can fire during construction before the dock
+            # is built; ignore until __init__ finishes wiring it up.
+            return
+        if getattr(self, "_show_in_progress", False):
+            # Don't overwrite the snapshot taken before show() during
+            # the auto-grow transition.
+            return
+        if self._detail_panel.isVisible():
+            derived = a0.size().width() - self._detail_panel.width()
+            if derived > 0:
+                self._no_panel_width = derived
+        else:
+            self._no_panel_width = a0.size().width()
+
+    def _on_detail_panel_visibility_changed(self, visible: bool) -> None:
+        """React to any visibility change of the detail panel.
+
+        Closes #55. Hooks ``QDockWidget.visibilityChanged`` so every
+        path that toggles the dock — toolbar, keyboard shortcut, the
+        dock's own close-X button, programmatic ``show()`` from
+        ``_update_detail_panel``, anything else — runs through a
+        single handler. Restores the outer window width to the
+        no-panel baseline on hide so the window returns to its
+        no-panel size; syncs the toolbar action and inline button
+        checked state on both transitions.
+
+        Maximized / fullscreen windows skip the resize so the OS /
+        window manager retains control of outer geometry; explicit
+        ``resize`` would un-maximize.
+        """
+        if visible:
+            # Show transition complete; allow resizeEvent to track
+            # user-driven resizes from this point on.
+            self._show_in_progress = False
+        else:
+            is_max_or_full = self.isMaximized() or self.isFullScreen()
+            if not is_max_or_full and self._no_panel_width is not None:
+                self._schedule_no_panel_width_restore()
+        # Sync toolbar checkbox state with the dock's actual
+        # visibility. Idempotent — setChecked only emits toggled
+        # when the state actually changes, so this won't recurse
+        # through _on_detail_btn_toggled.
+        if hasattr(self, "_detail_panel_action"):
+            self._detail_panel_action.setChecked(visible)
+        if hasattr(self, "_detail_btn"):
+            self._detail_btn.setChecked(visible)
 
     def _update_detail_panel(self) -> None:
         """Update the detail panel with the currently selected task.
