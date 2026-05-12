@@ -167,14 +167,14 @@ class AddTodoDialog(QDialog):
 
         self.reminder_edit = QLineEdit()
         self.reminder_edit.setPlaceholderText(self.tr("Enter reminder text..."))
-        top_form.addRow(self.tr("Reminder:"), self.reminder_edit)
+        top_form.addRow(self.tr("Re&minder:"), self.reminder_edit)
 
         self.priority_combo = QComboBox()
         self.priority_combo.addItem(self.tr("High"), 1)
         self.priority_combo.addItem(self.tr("Normal"), 2)
         self.priority_combo.addItem(self.tr("Low"), 3)
         self.priority_combo.setCurrentIndex(1)
-        top_form.addRow(self.tr("Priority:"), self.priority_combo)
+        top_form.addRow(self.tr("&Priority:"), self.priority_combo)
 
         # Kanban board column. Populated from the caller's list of
         # columns; pre-selected to `selected_column` when provided (the
@@ -190,12 +190,12 @@ class AddTodoDialog(QDialog):
                 self.board_column_combo.setCurrentIndex(self._columns.index(self._selected_column))
             else:
                 self.board_column_combo.setCurrentIndex(0)
-            top_form.addRow(self.tr("Column:"), self.board_column_combo)
+            top_form.addRow(self.tr("Co&lumn:"), self.board_column_combo)
 
         adv_layout.addLayout(top_form)
 
         # --- Scheduling group ---
-        sched_group = QGroupBox(self.tr("Scheduling"))
+        sched_group = QGroupBox(self.tr("Schedulin&g"))
         sched_form = QFormLayout(sched_group)
 
         due_date_layout = QHBoxLayout()
@@ -258,7 +258,7 @@ class AddTodoDialog(QDialog):
             ("midnight", "Midnight"),
         ]:
             self.time_block_combo.addItem(self.tr(label), block_id)
-        sched_form.addRow(self.tr("Time Block:"), self.time_block_combo)
+        sched_form.addRow(self.tr("&Time Block:"), self.time_block_combo)
 
         event_date_layout = QHBoxLayout()
         self.event_date_checkbox = QCheckBox(self.tr("Set event date"))
@@ -275,7 +275,7 @@ class AddTodoDialog(QDialog):
         adv_layout.addWidget(sched_group)
 
         # --- Estimated Duration group ---
-        dur_group = QGroupBox(self.tr("Estimated Duration"))
+        dur_group = QGroupBox(self.tr("Estimated &Duration"))
         dur_form = QFormLayout(dur_group)
 
         dur_layout = QHBoxLayout()
@@ -313,40 +313,40 @@ class AddTodoDialog(QDialog):
         adv_layout.addWidget(dur_group)
 
         # --- Focus Session group ---
-        focus_group = QGroupBox(self.tr("Focus Session"))
+        focus_group = QGroupBox(self.tr("&Focus Session"))
         focus_form = QFormLayout(focus_group)
 
         self.estimated_pomodoros_spin = QSpinBox()
         self.estimated_pomodoros_spin.setRange(0, 99)
         self.estimated_pomodoros_spin.setValue(0)
         self.estimated_pomodoros_spin.setSpecialValueText(self.tr("None"))
-        focus_form.addRow(self.tr("Sessions:"), self.estimated_pomodoros_spin)
+        focus_form.addRow(self.tr("&Sessions:"), self.estimated_pomodoros_spin)
 
         self.task_work_duration_spin = QSpinBox()
         self.task_work_duration_spin.setRange(0, 120)
         self.task_work_duration_spin.setValue(0)
         self.task_work_duration_spin.setSuffix(self.tr(" min"))
         self.task_work_duration_spin.setSpecialValueText(self.tr("Default"))
-        focus_form.addRow(self.tr("Session Length:"), self.task_work_duration_spin)
+        focus_form.addRow(self.tr("Session Lengt&h:"), self.task_work_duration_spin)
 
         self.task_break_duration_spin = QSpinBox()
         self.task_break_duration_spin.setRange(0, 30)
         self.task_break_duration_spin.setValue(0)
         self.task_break_duration_spin.setSuffix(self.tr(" min"))
         self.task_break_duration_spin.setSpecialValueText(self.tr("Default"))
-        focus_form.addRow(self.tr("Break:"), self.task_break_duration_spin)
+        focus_form.addRow(self.tr("&Break:"), self.task_break_duration_spin)
 
         self.task_long_break_spin = QSpinBox()
         self.task_long_break_spin.setRange(0, 60)
         self.task_long_break_spin.setValue(0)
         self.task_long_break_spin.setSuffix(self.tr(" min"))
         self.task_long_break_spin.setSpecialValueText(self.tr("Default"))
-        focus_form.addRow(self.tr("Long Break:"), self.task_long_break_spin)
+        focus_form.addRow(self.tr("Long Brea&k:"), self.task_long_break_spin)
 
         adv_layout.addWidget(focus_group)
 
         # --- Recurrence group ---
-        rec_group = QGroupBox(self.tr("Recurrence"))
+        rec_group = QGroupBox(self.tr("Recurre&nce"))
         rec_form = QFormLayout(rec_group)
 
         self.recurrence_checkbox = QCheckBox(self.tr("Repeat"))
@@ -386,7 +386,7 @@ class AddTodoDialog(QDialog):
         recurrence_row_layout.addWidget(self.recurrence_checkbox)
         recurrence_row_layout.addLayout(recurrence_layout)
         recurrence_row_layout.addStretch()
-        rec_form.addRow(self.tr("Repeat:"), recurrence_row)
+        rec_form.addRow(self.tr("&Repeat:"), recurrence_row)
 
         self.end_never_radio = QRadioButton(self.tr("Never"))
         self.end_never_radio.setChecked(True)
@@ -426,7 +426,7 @@ class AddTodoDialog(QDialog):
         self.end_widget = QWidget()
         self.end_widget.setLayout(end_layout)
         self.end_widget.setEnabled(False)
-        rec_form.addRow(self.tr("Ends:"), self.end_widget)
+        rec_form.addRow(self.tr("&Ends:"), self.end_widget)
 
         adv_layout.addWidget(rec_group)
 
@@ -435,7 +435,7 @@ class AddTodoDialog(QDialog):
         self.tags_edit = QLineEdit()
         self.tags_edit.setPlaceholderText(self.tr("e.g. @work, @errands, @quick"))
         self.tags_edit.setToolTip(self.tr("Comma-separated tags (@ prefix added automatically)"))
-        tags_form.addRow(self.tr("Tags:"), self.tags_edit)
+        tags_form.addRow(self.tr("T&ags:"), self.tags_edit)
         adv_layout.addLayout(tags_form)
 
         # --- Subtasks (standalone) ---
@@ -455,7 +455,7 @@ class AddTodoDialog(QDialog):
         # users can still enter many lines and scroll.
         fm = self.subtasks_edit.fontMetrics()
         self.subtasks_edit.setFixedHeight(int(fm.lineSpacing() * 4 + 12))
-        subtasks_form.addRow(self.tr("Subtasks:"), self.subtasks_edit)
+        subtasks_form.addRow(self.tr("S&ubtasks:"), self.subtasks_edit)
         adv_layout.addLayout(subtasks_form)
 
         adv_layout.addStretch()

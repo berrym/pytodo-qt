@@ -114,6 +114,49 @@ class TestAddTodoDialogSmartMode:
         assert dialog.end_count_radio.accessibleName() == "Ends after count"
         assert dialog.end_count_spin.accessibleName() == "End count"
 
+    def test_form_label_and_groupbox_mnemonics(self, app):
+        """Regression for #48 + #49: every form-row label that has a buddy
+        widget and every QGroupBox title in the dialog must carry an Alt+
+        letter mnemonic (& prefix), and all mnemonic letters must be unique
+        across the dialog so Alt+letter shortcuts don't collide. The O / C
+        letters are reserved by the Ok / Cancel buttons of the standard
+        QDialogButtonBox and must not be reused as mnemonics."""
+        from PyQt6.QtWidgets import QLabel
+
+        dialog = _make_advanced_dialog()
+
+        def _mnemonic_letter(text: str) -> str | None:
+            idx = text.find("&")
+            if idx < 0 or idx + 1 >= len(text):
+                return None
+            return text[idx + 1].lower()
+
+        mnemonics: list[tuple[str, str]] = []
+
+        # Every QLabel that QFormLayout has wired as a buddy of an
+        # interactive widget is in scope.
+        for lbl in dialog.findChildren(QLabel):
+            if lbl.buddy() is None:
+                continue
+            letter = _mnemonic_letter(lbl.text())
+            assert letter is not None, f"form-row label {lbl.text()!r} has no Alt+letter mnemonic"
+            mnemonics.append((lbl.text(), letter))
+
+        # Every QGroupBox in scope.
+        for gb in dialog.findChildren(QGroupBox):
+            letter = _mnemonic_letter(gb.title())
+            assert letter is not None, f"group title {gb.title()!r} has no Alt+letter mnemonic"
+            mnemonics.append((gb.title(), letter))
+
+        # Uniqueness — every Alt+letter binding must address exactly one target.
+        letters = [m[1] for m in mnemonics]
+        duplicates = {letter for letter in letters if letters.count(letter) > 1}
+        assert not duplicates, f"duplicate mnemonic letters: {duplicates} across {mnemonics}"
+
+        # Reserved by QDialogButtonBox Ok / Cancel.
+        assert "o" not in letters, "mnemonic 'o' collides with default OK button"
+        assert "c" not in letters, "mnemonic 'c' collides with default Cancel button"
+
     def test_paired_value_unit_descriptions(self, app):
         """Regression for #52 missing-pair-description: Duration value/unit
         and Recurrence interval/type each need accessibleDescription on both
@@ -656,7 +699,9 @@ class TestAddTodoDialogAdvancedMode:
         """Advanced section uses QGroupBox for logical grouping."""
         dialog = _make_advanced_dialog()
         groups = dialog._advanced_container.findChildren(QGroupBox)
-        group_titles = {g.title() for g in groups}
+        # Strip Alt+letter mnemonics (#49) for the membership check so the
+        # assertion stays robust to mnemonic-letter reassignment.
+        group_titles = {g.title().replace("&", "") for g in groups}
         assert "Scheduling" in group_titles
         assert "Estimated Duration" in group_titles
         assert "Focus Session" in group_titles
