@@ -33,10 +33,38 @@ class WeeklyChartWidget(QWidget):
 
     Uses gradient brushes, 1px pen outlines, persistent items.
     Static chart — no real-time updates needed.
+
+    PlotWidget construction is deferred until first showEvent. Eager
+    construction in __init__ can hit a pg.AxisItem boundingRect
+    teardown race when the widget is created and destroyed without
+    ever being shown (pytest-qt teardown path), which surfaced on
+    Windows 3.11 CI. Deferring until show means a never-shown
+    instance never instantiates pg.PlotWidget and leaves no
+    deferred events behind.
     """
 
     def __init__(self, day_counts: list[tuple[str, int]], parent: QWidget | None = None):
         super().__init__(parent)
+        self._day_counts = day_counts
+        self._built = False
+
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+
+        # Placeholder so the surrounding dialog layout reserves space
+        # before first show. Swapped for the real PlotWidget on the
+        # first showEvent.
+        self._plot_placeholder = QWidget()
+        self._plot_placeholder.setFixedHeight(len(day_counts) * 32 + 20)
+        self._layout.addWidget(self._plot_placeholder)
+
+    def showEvent(self, a0):  # type: ignore[override]
+        super().showEvent(a0)
+        if not self._built:
+            self._build_chart()
+            self._built = True
+
+    def _build_chart(self) -> None:
         import numpy as np
         import pyqtgraph as pg
         from PyQt6.QtGui import QBrush, QGradient, QLinearGradient, QPen
@@ -56,20 +84,16 @@ class WeeklyChartWidget(QWidget):
         col_text = QColor(c.get("text", "#e0e0e0"))
         col_border = QColor(c.get("border", "#3c3c3c"))
 
-        # --- Layout ---
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-
         plot = pg.PlotWidget()
         plot.setBackground(c.get("base", "#252526"))
         plot.setMouseEnabled(x=False, y=False)
         plot.setMenuEnabled(False)
         plot.showGrid(x=True, y=False, alpha=0.2)
-        plot.setFixedHeight(len(day_counts) * 32 + 20)
+        plot.setFixedHeight(len(self._day_counts) * 32 + 20)
 
-        labels = [label for label, _ in day_counts]
-        counts = np.array([count for _, count in day_counts], dtype=float)
-        n = len(day_counts)
+        labels = [label for label, _ in self._day_counts]
+        counts = np.array([count for _, count in self._day_counts], dtype=float)
+        n = len(self._day_counts)
         y_pos = np.arange(n - 1, -1, -1, dtype=float)
 
         # --- Persistent bar item ---
@@ -105,7 +129,8 @@ class WeeklyChartWidget(QWidget):
         plot.setXRange(0, max(max_count * 1.2, 1), padding=0)  # type: ignore[call-arg]
         plot.setYRange(-0.5, n - 0.5, padding=0.05)  # type: ignore[call-arg]
 
-        layout.addWidget(plot)
+        self._layout.replaceWidget(self._plot_placeholder, plot)
+        self._plot_placeholder.deleteLater()
 
 
 def _format_duration(seconds: int) -> str:
