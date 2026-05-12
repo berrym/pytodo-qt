@@ -441,18 +441,12 @@ def main():
     asyncio.set_event_loop(loop)
 
     # Load bundled fonts (always register for emoji fallback)
-    from .gui.styles.themes import apply_bundled_font, load_bundled_fonts
+    from .gui.styles.themes import apply_font_setting, load_bundled_fonts
 
     load_bundled_fonts()
 
-    # Apply font based on config
-    font_setting = config.appearance.font
-    if font_setting == "bundled":
-        apply_bundled_font(app)
-    elif font_setting not in ("system", "bundled"):
-        from PyQt6.QtGui import QFont
-
-        app.setFont(QFont(font_setting, 10))
+    # Apply font based on config (system / bundled / custom family)
+    apply_font_setting(app, config.appearance.font)
 
     # Apply theme
     from .gui.styles import apply_current_theme, get_current_theme
