@@ -281,6 +281,41 @@ def apply_bundled_font(app: QApplication) -> None:
     logger.log.info("Applied bundled font: Noto Sans %dpt", DEFAULT_FONT_SIZE)
 
 
+def apply_font_setting(app: QApplication, setting: str) -> None:
+    """Apply a `config.appearance.font` value to the running QApplication.
+
+    Handles every supported setting in one place so the boot path
+    (`__main__`) and the Settings dialog Apply/OK path share an
+    implementation. `app.setFont()` propagates the new font to every
+    widget that uses `QFont()`-no-args inheritance; widgets that hold
+    a cached QFont (todo_table fonts, status-bar timer) refresh on
+    next instantiation, which is what the "Restart for full effect"
+    hint in the Settings dialog refers to.
+    """
+    if setting == "bundled":
+        apply_bundled_font(app)
+        return
+    if setting == "system":
+        # Explicitly resolve the platform's general UI font family via
+        # QFontDatabase.systemFont() rather than `QFont()`, which would
+        # return whatever was last set on QApplication — including a
+        # previous Noto Sans application. That trap made the "System
+        # default" choice no-op after any prior "Bundled" application.
+        # Pin the point size to DEFAULT_FONT_SIZE so toggling between
+        # "system" and "bundled" only changes letterforms, not metrics
+        # (button heights and form-row spacing are tuned for 10 pt).
+        # Emoji fallback is independent — addApplicationEmojiFontFamily
+        # inside load_bundled_fonts handles emoji code-point fallback.
+        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
+        font.setPointSize(DEFAULT_FONT_SIZE)
+        app.setFont(font)
+        logger.log.info("Applied system font: %s %dpt", font.family(), DEFAULT_FONT_SIZE)
+        return
+    font = QFont(setting, DEFAULT_FONT_SIZE)
+    app.setFont(font)
+    logger.log.info("Applied custom font: %s %dpt", setting, DEFAULT_FONT_SIZE)
+
+
 def _get_mono_families() -> list[str]:
     """Get monospace font families, prepending bundled font when loaded."""
     if _bundled_fonts_loaded:

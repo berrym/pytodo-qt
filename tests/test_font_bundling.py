@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from PyQt6.QtGui import QFontDatabase
+from PyQt6.QtWidgets import QApplication
 
 from pytodo_qt.core.config import AppConfig, AppearanceConfig
 from pytodo_qt.gui.styles.themes import (
@@ -11,6 +12,7 @@ from pytodo_qt.gui.styles.themes import (
     _BUNDLED_TEXT_FONTS,
     _FONTS_DIR,
     DEFAULT_FONT_SIZE,
+    apply_font_setting,
     load_bundled_fonts,
     make_font,
 )
@@ -77,9 +79,9 @@ class TestLoadBundledFonts:
 class TestAppearanceConfigFont:
     """Test font config defaults and serialization."""
 
-    def test_default_is_bundled(self) -> None:
+    def test_default_is_system(self) -> None:
         config = AppearanceConfig()
-        assert config.font == "bundled"
+        assert config.font == "system"
 
     def test_config_font_toml_roundtrip(self) -> None:
         config = AppConfig()
@@ -95,7 +97,54 @@ class TestAppearanceConfigFont:
     def test_config_from_dict_default_font(self) -> None:
         data = {"appearance": {}}
         config = AppConfig.from_dict(data)
+        assert config.appearance.font == "system"
+
+    def test_config_from_dict_preserves_legacy_bundled(self) -> None:
+        # Existing users who saved font = "bundled" before the default
+        # flipped to "system" keep their choice. Only the fallback for
+        # absent keys changes.
+        data = {"appearance": {"font": "bundled"}}
+        config = AppConfig.from_dict(data)
         assert config.appearance.font == "bundled"
+
+
+# ---------------------------------------------------------------------------
+# TestApplyFontSetting
+# ---------------------------------------------------------------------------
+
+
+class TestApplyFontSetting:
+    """Test apply_font_setting routes all three branches correctly."""
+
+    def test_apply_system_sets_default_size(self, qtbot) -> None:
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        apply_font_setting(app, "system")
+        assert app.font().pointSize() == DEFAULT_FONT_SIZE
+
+    def test_apply_bundled_sets_noto_sans(self, qtbot) -> None:
+        load_bundled_fonts()
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        apply_font_setting(app, "bundled")
+        assert app.font().family() == "Noto Sans"
+
+    def test_apply_custom_sets_family(self, qtbot) -> None:
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        apply_font_setting(app, "Courier")
+        assert app.font().family() == "Courier"
+
+    def test_apply_system_does_not_force_emoji_as_primary(self, qtbot) -> None:
+        # The "system" branch must not place an emoji family in the
+        # primary slot; emoji fallback is handled separately by
+        # addApplicationEmojiFontFamily inside load_bundled_fonts.
+        load_bundled_fonts()
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        apply_font_setting(app, "system")
+        family = app.font().family().lower()
+        assert "emoji" not in family
 
 
 # ---------------------------------------------------------------------------
