@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFontDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -30,12 +31,7 @@ from PyQt6.QtWidgets import (
 from ...core.config import get_config, get_config_manager
 from ...core.logger import Logger
 from ...crypto import get_or_create_identity
-from ..styles.themes import (
-    MONO_FONT_FAMILIES,
-    apply_current_theme,
-    apply_font_setting,
-    get_colors,
-)
+from ..styles.themes import MONO_FONT_FAMILIES, apply_current_theme, get_colors
 
 if TYPE_CHECKING:
     pass
@@ -394,30 +390,13 @@ class SettingsDialog(QDialog):
         font_layout = QFormLayout(font_group)
 
         self.font_combo = QComboBox()
-        self.font_combo.addItem(self.tr("System default"), "system")
-        self.font_combo.addItem(self.tr("Noto Sans (bundled)"), "bundled")
-        # Separator-style empty item, disabled. Index 2 is non-selectable
-        # so it visually divides the canonical choices from the system
-        # font list while keeping itemData stable for save/load.
-        self.font_combo.insertSeparator(2)
-        # Populate with system-available text fonts. QFontDatabase
-        # returns families alphabetically; filter out monospace-only
-        # families (the body-text combo isn't where monospace selection
-        # happens — that's hardcoded for fingerprint / PIN / timer).
-        from PyQt6.QtGui import QFontDatabase
-
-        for family in QFontDatabase.families():
-            if QFontDatabase.isFixedPitch(family):
-                continue
-            self.font_combo.addItem(family, family)
+        self.font_combo.addItem(self.tr("Noto Sans (Bundled)"), "bundled")
+        self.font_combo.addItem(self.tr("System Default"), "system")
+        self.font_combo.addItem(self.tr("Custom..."), "custom")
+        self.font_combo.currentIndexChanged.connect(self._on_font_changed)
         font_layout.addRow(self.tr("Font:"), self.font_combo)
 
-        font_hint = QLabel(
-            self.tr("Some surfaces (timer digits, table rows) refresh on next app restart.")
-        )
-        font_hint.setStyleSheet("color: palette(placeholderText); font-size: 11px;")
-        font_hint.setWordWrap(True)
-        font_layout.addRow("", font_hint)
+        self._custom_font_family = ""
 
         layout.addWidget(font_group)
 
@@ -784,13 +763,16 @@ class SettingsDialog(QDialog):
         # Font
         font_setting = config.appearance.font
         self.font_combo.blockSignals(True)
-        idx = self.font_combo.findData(font_setting)
-        if idx >= 0:
-            self.font_combo.setCurrentIndex(idx)
-        else:
-            # Saved custom family that's no longer installed — fall back
-            # to "System default" and let the user re-pick on next save.
+        if font_setting == "bundled":
             self.font_combo.setCurrentIndex(0)
+        elif font_setting == "system":
+            self.font_combo.setCurrentIndex(1)
+        else:
+            # Custom font family — update the "Custom..." item
+            self._custom_font_family = font_setting
+            self.font_combo.setItemText(2, f"Custom: {font_setting}")
+            self.font_combo.setItemData(2, font_setting)
+            self.font_combo.setCurrentIndex(2)
         self.font_combo.blockSignals(False)
 
         # Behavior
@@ -892,9 +874,7 @@ class SettingsDialog(QDialog):
         new_theme = self.theme_combo.currentData()
         config.appearance.theme = new_theme
         config.appearance.time_format = self.time_format_combo.currentData()
-        old_font = config.appearance.font
-        new_font = self.font_combo.currentData()
-        config.appearance.font = new_font
+        config.appearance.font = self.font_combo.currentData()
         config.appearance.close_to_tray = self.close_to_tray_check.isChecked()
 
         # Pomodoro
@@ -945,17 +925,6 @@ class SettingsDialog(QDialog):
         # Apply theme if changed
         if old_theme != new_theme:
             apply_current_theme()
-
-        # Apply font if changed. QApplication.setFont() propagates to
-        # every widget using QFont()-no-args inheritance; cached-QFont
-        # holdouts (todo_table rows, status-bar timer) refresh on next
-        # restart, which is what the hint label in the Font group says.
-        if old_font != new_font:
-            from PyQt6.QtWidgets import QApplication
-
-            qapp = QApplication.instance()
-            if isinstance(qapp, QApplication):
-                apply_font_setting(qapp, new_font)
 
         logger.log.info("Settings saved")
         return True
@@ -1009,6 +978,28 @@ class SettingsDialog(QDialog):
                 True, port=self._config.web.port, pin=web_server.pairing_pin
             )
         logger.log.info("Revoked %d device(s) from settings", count)
+
+    def _on_font_changed(self, index: int) -> None:
+        """Handle font combo box change."""
+        value = self.font_combo.itemData(index)
+        if value == "custom":
+            font, ok = QFontDialog.getFont(self)
+            if ok:
+                family = font.family()
+                self._custom_font_family = family
+                # Replace the "Custom..." item text with the chosen family
+                self.font_combo.setItemText(index, f"Custom: {family}")
+                self.font_combo.setItemData(index, family)
+            else:
+                # User cancelled — revert to previous selection
+                self.font_combo.blockSignals(True)
+                # Find the current config value
+                current = self._config.appearance.font
+                for i in range(self.font_combo.count()):
+                    if self.font_combo.itemData(i) == current:
+                        self.font_combo.setCurrentIndex(i)
+                        break
+                self.font_combo.blockSignals(False)
 
     def _on_theme_changed(self, index: int) -> None:
         """Handle theme combo box change - apply immediately."""
