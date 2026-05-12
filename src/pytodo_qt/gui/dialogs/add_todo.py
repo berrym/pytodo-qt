@@ -743,6 +743,10 @@ class AddTodoDialog(QDialog):
     def _make_trigger_button(self, label: str, menu: QMenu) -> QToolButton:
         btn = QToolButton()
         btn.setText(f"{label} \u25be")  # trailing small down arrow
+        # accessibleName carries the bare label so screen readers don't
+        # literally announce the U+25BE BLACK DOWN-POINTING SMALL TRIANGLE
+        # glyph that decorates the visible text for sighted users (#50).
+        btn.setAccessibleName(label)
         btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         btn.setMenu(menu)
         btn.setStyleSheet(

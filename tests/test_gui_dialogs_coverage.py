@@ -157,6 +157,22 @@ class TestAddTodoDialogSmartMode:
         assert "o" not in letters, "mnemonic 'o' collides with default OK button"
         assert "c" not in letters, "mnemonic 'c' collides with default Cancel button"
 
+    def test_quick_action_buttons_strip_arrow_from_accessible_name(self, app):
+        """Regression for #50: the Priority / Date / Tag / Recurrence quick-
+        action QToolButtons append a U+25BE arrow glyph to their visible
+        text. Screen readers announce that codepoint literally unless an
+        explicit accessibleName scrubbed of the glyph is set."""
+        dialog = AddTodoDialog()
+        for btn, expected in (
+            (dialog._priority_btn, "Priority"),
+            (dialog._date_btn, "Date"),
+            (dialog._tag_btn, "Tag"),
+            (dialog._recur_btn, "Recurrence"),
+        ):
+            assert btn.accessibleName() == expected
+            assert "▾" not in btn.accessibleName()
+            assert "▾" in btn.text()  # visible text still decorated
+
     def test_paired_value_unit_descriptions(self, app):
         """Regression for #52 missing-pair-description: Duration value/unit
         and Recurrence interval/type each need accessibleDescription on both
