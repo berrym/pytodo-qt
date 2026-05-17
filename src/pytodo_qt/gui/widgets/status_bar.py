@@ -5,10 +5,11 @@ Enhanced status bar widget.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QEvent, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QRect, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QFontDatabase, QPainter, QPen
 from PyQt6.QtWidgets import (
     QFrame,
@@ -115,6 +116,132 @@ class DailyGoalRingWidget(QWidget):
         painter.end()
 
 
+class _PomodoroAttentionOverlay(QWidget):
+    """Transparent halo painted around the status-bar focus-session
+    section to draw the eye when a pomodoro/stopwatch session starts.
+
+    A new user can easily miss that the bottom-of-window timer is
+    live and clickable. On session start this pulses three times
+    (the attention burst) then settles into a faint steady ring (a
+    passive "active here" cue) for the rest of the session, fading
+    out when the session ends.
+
+    Driven by a single QTimer parented to this widget with manual
+    paint — no QGraphicsEffect, no QPropertyAnimation. That is the
+    teardown-safe pattern established for floating/overlay widgets
+    in this codebase; QGraphicsEffect/QPropertyAnimation destabilise
+    pytest-qt teardown. The timer runs only during the pulse burst
+    and the fade-out; the steady phase is a static paint with the
+    timer stopped. Mouse-transparent so clicks fall through to the
+    timer labels beneath.
+    """
+
+    _GLOW_MARGIN = 9  # px the halo extends beyond the timer region
+    _TICK_MS = 16  # ~60 fps
+    _PULSE_MS = 560  # one pulse hump
+    _PULSE_COUNT = 3
+    _FADE_OUT_MS = 260
+    _STEADY = 0.40  # resting intensity after the burst
+    _PEAK = 1.10  # pulse-crest intensity
+    # (outward spread px, alpha fraction) — outer rings fainter, the
+    # ring nearest the text the brightest. Stroked outlines only, so
+    # the timer digits in the centre are never washed out.
+    _RING_LAYERS = ((8, 0.12), (5, 0.24), (3, 0.42), (1, 0.62))
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._color = QColor("#1976d2")
+        self._intensity = 0.0
+        self._phase = "idle"  # idle | pulse | steady | fade
+        self._elapsed = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(self._TICK_MS)
+        self._timer.timeout.connect(self._on_tick)
+        self.hide()
+
+    def start_attention(self, color: str) -> None:
+        """Begin the pulse burst, then settle to the steady accent."""
+        self._color = QColor(color)
+        self._phase = "pulse"
+        self._elapsed = 0
+        self._intensity = self._STEADY
+        if not self.isVisible():
+            self.show()
+        self.raise_()
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def set_color(self, color: str) -> None:
+        """Recolor without re-triggering the burst (e.g. work->break)."""
+        new = QColor(color)
+        if new != self._color:
+            self._color = new
+            if self._phase in ("steady", "pulse"):
+                self.update()
+
+    def end_session(self) -> None:
+        """Fade the halo out, then hide. Idempotent — a no-op if the
+        overlay is already idle or already fading."""
+        if self._phase in ("idle", "fade"):
+            return
+        self._phase = "fade"
+        self._elapsed = 0
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def _on_tick(self) -> None:
+        self._elapsed += self._TICK_MS
+        if self._phase == "pulse":
+            total = self._PULSE_MS * self._PULSE_COUNT
+            if self._elapsed >= total:
+                self._phase = "steady"
+                self._intensity = self._STEADY
+                self._timer.stop()  # steady is a static paint
+            else:
+                local = (self._elapsed % self._PULSE_MS) / self._PULSE_MS
+                hump = math.sin(math.pi * local)
+                self._intensity = self._STEADY + (self._PEAK - self._STEADY) * hump
+        elif self._phase == "fade":
+            frac = min(1.0, self._elapsed / self._FADE_OUT_MS)
+            self._intensity = self._STEADY * (1.0 - frac)
+            if frac >= 1.0:
+                self._phase = "idle"
+                self._intensity = 0.0
+                self._timer.stop()
+                self.hide()
+                return
+        self.update()
+
+    def paintEvent(self, a0) -> None:  # noqa: N802
+        if self._intensity <= 0.0 or self._phase == "idle":
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        # Inner frame = the original timer region (overlay inset by the
+        # glow margin). Rings are stroked outward from it so the centre
+        # stays clear and the digits remain readable.
+        m = self._GLOW_MARGIN
+        inner = QRectF(self.rect().adjusted(m, m, -m, -m))
+        radius = inner.height() / 2.0
+        for spread, alpha_frac in self._RING_LAYERS:
+            color = QColor(self._color)
+            color.setAlphaF(max(0.0, min(1.0, self._intensity * alpha_frac)))
+            painter.setPen(QPen(color, 2))
+            r = inner.adjusted(-spread, -spread, spread, spread)
+            painter.drawRoundedRect(r, radius + spread, radius + spread)
+        painter.end()
+
+    def hideEvent(self, a0) -> None:  # noqa: N802
+        # Teardown safety: never run the timer into widget destruction.
+        self._timer.stop()
+        self._phase = "idle"
+        super().hideEvent(a0)
+
+
 class StatusBarWidget(QStatusBar):
     """Enhanced status bar with progress and statistics.
 
@@ -129,6 +256,9 @@ class StatusBarWidget(QStatusBar):
         super().__init__(parent)
         # Disable QStatusBar's built-in size grip -- we manage layout ourselves
         self.setSizeGripEnabled(True)
+        # Set before any widget so resizeEvent (which Qt can fire during
+        # construction) short-circuits before the overlay attrs exist.
+        self._prev_pomodoro_state = "idle"
 
         # Build all widgets
         self.progress_bar = QProgressBar()
@@ -218,6 +348,13 @@ class StatusBarWidget(QStatusBar):
 
         self.addPermanentWidget(container, 1)
 
+        # Attention halo around the focus-session region. Child of the
+        # container (so it shares the labels' coordinate space) but not
+        # in the layout — manually positioned over the timer's icon +
+        # label. Mouse-transparent; clicks fall through to the labels.
+        self._pomodoro_container = container
+        self._pomodoro_attention = _PomodoroAttentionOverlay(container)
+
         # Initialize
         self.update_stats(0, 0, 0, 0, 0)
         self.update_pomodoro_display("idle")
@@ -234,6 +371,14 @@ class StatusBarWidget(QStatusBar):
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         sep.setFixedWidth(10)
         return sep
+
+    def resizeEvent(self, a0) -> None:  # noqa: N802
+        # Keep the attention halo aligned with the timer region when the
+        # window width changes during a live session. Deferred so the
+        # status-bar layout settles before geometry is read.
+        super().resizeEvent(a0)
+        if self._prev_pomodoro_state != "idle":
+            QTimer.singleShot(0, self._reposition_pomodoro_attention)
 
     def eventFilter(self, a0, a1) -> bool:  # noqa: N802
         """Detect clicks on the pomodoro and web status labels."""
@@ -362,6 +507,9 @@ class StatusBarWidget(QStatusBar):
             self._pomodoro_icon_label.setVisible(False)
             self.pomodoro_label.setVisible(False)
             self._pomodoro_separator.setVisible(False)
+            if self._prev_pomodoro_state != "idle":
+                self._pomodoro_attention.end_session()
+                self._prev_pomodoro_state = "idle"
             return
 
         colors = get_colors()
@@ -391,6 +539,43 @@ class StatusBarWidget(QStatusBar):
         self._pomodoro_icon_label.setVisible(True)
         self.pomodoro_label.setVisible(True)
         self._pomodoro_separator.setVisible(True)
+
+        # Attention halo. Session start (idle -> active) triggers the
+        # pulse burst; a state change within a live session (e.g.
+        # work -> break) just recolors the steady accent without
+        # re-bursting. The halo tracks the session *type*, not the
+        # paused sub-state: pausing a stopwatch keeps the stopwatch
+        # blue rather than flipping to the shared amber paused color
+        # (the label text still uses state_color).
+        attention_color = (
+            colors["focus_timer_stopwatch_running"] if state == "stopwatch_paused" else state_color
+        )
+        if self._prev_pomodoro_state == "idle":
+            # Labels were just made visible; their geometry isn't final
+            # until the layout pass runs, so position on the next loop.
+            QTimer.singleShot(0, self._reposition_pomodoro_attention)
+            self._pomodoro_attention.start_attention(attention_color)
+        elif state != self._prev_pomodoro_state:
+            self._pomodoro_attention.set_color(attention_color)
+        self._prev_pomodoro_state = state
+
+    def _reposition_pomodoro_attention(self) -> None:
+        """Position the attention halo over the union of the timer's
+        icon + label, inflated by the halo margin. No-op while the
+        timer is hidden."""
+        if not self.pomodoro_label.isVisible():
+            return
+        region = self._pomodoro_icon_label.geometry().united(self.pomodoro_label.geometry())
+        m = _PomodoroAttentionOverlay._GLOW_MARGIN
+        self._pomodoro_attention.setGeometry(
+            QRect(
+                region.x() - m,
+                region.y() - m,
+                region.width() + 2 * m,
+                region.height() + 2 * m,
+            )
+        )
+        self._pomodoro_attention.raise_()
 
     def _set_pomodoro_icon(self, state_name: str) -> None:
         """Set the pomodoro icon emoji for the given state."""
