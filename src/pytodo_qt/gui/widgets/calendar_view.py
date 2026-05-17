@@ -29,8 +29,10 @@ from PyQt6.QtCore import (
     QMimeData,
     QModelIndex,
     QPoint,
+    QPointF,
     QRect,
     Qt,
+    QTimer,
     pyqtSignal,
 )
 from PyQt6.QtGui import QBrush, QColor, QDrag, QFont, QFontMetrics, QPainter, QPen, QPixmap
@@ -4384,7 +4386,18 @@ class _HoverAddCellButton(QWidget):
     until the user moved the cursor off the button.
     """
 
-    _SIZE = 32  # outer widget size; visible circle fills it exactly
+    _CIRCLE = 32  # visible circle diameter (unchanged across the polish)
+    _SHADOW_MARGIN = 6  # transparent ring around the circle for the shadow
+    _SIZE = _CIRCLE + 2 * _SHADOW_MARGIN  # outer widget size
+
+    # Animation timing. Driven by a single QTimer (no QPropertyAnimation,
+    # no QGraphicsEffect) — the issue #57 diagnostic notes record that
+    # both destabilized pytest-qt teardown. A bare QTimer parented to
+    # self, stopped in hideEvent, is the teardown-safe pattern.
+    _TICK_MS = 16  # ~60 fps
+    _FADE_IN_MS = 200
+    _FADE_OUT_MS = 150
+    _SLIDE_MS = 200
 
     clicked = pyqtSignal()
     hover_started = pyqtSignal()
@@ -4407,18 +4420,42 @@ class _HoverAddCellButton(QWidget):
         self._color_base = QColor(c.get("base", "#ffffff"))
         self._color_highlight = QColor(c.get("highlight", "#1976d2"))
         self._color_highlight_text = QColor(c.get("highlight_text", "#ffffff"))
-        # No animations — see commit message for the b8 lazy-PlotWidget /
-        # teardown-race story; the same family of segfaults applies to
-        # QPropertyAnimation on this widget's geometry/opacity. Snap
-        # show/hide and snap repositioning are teardown-safe.
+
+        # Animation state, all driven by _anim_timer.
+        self._opacity = 0.0
+        self._fade_target = 0.0
+        self._slide_active = False
+        self._slide_from = QPointF()
+        self._slide_to = QPoint()
+        self._slide_t = 0.0
+        self._anim_timer = QTimer(self)
+        self._anim_timer.setInterval(self._TICK_MS)
+        self._anim_timer.timeout.connect(self._on_anim_tick)
         self.hide()
+
+    def _circle_rect(self):
+        """The visible circle's rect, inset from the widget bounds by
+        the shadow margin (+1 px so the 2 px border draws cleanly)."""
+        m = self._SHADOW_MARGIN
+        return self.rect().adjusted(m + 1, m + 1, -(m + 1), -(m + 1))
 
     def paintEvent(self, a0) -> None:  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # Inset by 1 px on each side so the 2 px border draws cleanly
-        # within the widget bounds (no clipping at the rect edges).
-        rect = self.rect().adjusted(1, 1, -1, -1)
+        painter.setOpacity(max(0.0, min(1.0, self._opacity)))
+        circle = self._circle_rect()
+
+        # Drop shadow: concentric ellipses offset 2 px down, expanding
+        # outward with decreasing alpha. Painted before the circle so
+        # the circle sits on top. No QGraphicsDropShadowEffect — manual
+        # paint keeps the single-QGraphicsEffect slot free and removes
+        # the teardown-ownership concern (#57).
+        painter.setPen(Qt.PenStyle.NoPen)
+        for spread, alpha in ((5, 14), (3, 26), (1, 40)):
+            shadow = QColor(0, 0, 0, alpha)
+            painter.setBrush(QBrush(shadow))
+            painter.drawEllipse(circle.adjusted(-spread, -spread + 2, spread, spread + 2))
+
         if self._hovered or self._pressed:
             fill_color = self._color_highlight
             glyph_color = self._color_highlight_text
@@ -4427,13 +4464,13 @@ class _HoverAddCellButton(QWidget):
             glyph_color = self._color_highlight
         painter.setBrush(QBrush(fill_color))
         painter.setPen(QPen(self._color_highlight, 2))
-        painter.drawEllipse(rect)
-        # "+" glyph: two perpendicular lines centered on the widget.
+        painter.drawEllipse(circle)
+        # "+" glyph: two perpendicular lines centered on the circle.
         glyph_pen = QPen(glyph_color, 2.5)
         painter.setPen(glyph_pen)
-        cx = rect.center().x()
-        cy = rect.center().y()
-        arm = self._SIZE // 4
+        cx = circle.center().x()
+        cy = circle.center().y()
+        arm = self._CIRCLE // 4
         painter.drawLine(cx - arm, cy, cx + arm, cy)
         painter.drawLine(cx, cy - arm, cx, cy + arm)
 
@@ -4463,27 +4500,96 @@ class _HoverAddCellButton(QWidget):
             a0 is not None
             and a0.button() == Qt.MouseButton.LeftButton
             and was_pressed
-            and self.rect().contains(a0.pos())
+            and self._circle_rect().contains(a0.pos())
         ):
             self.clicked.emit()
         super().mouseReleaseEvent(a0)
 
     def show_at(self, target_top_left: QPoint, cell_date: date, hour: int) -> None:
-        """Position the button at ``target_top_left`` and ensure it is
-        visible. Snaps to the new position when moved between cells."""
+        """Position the button at ``target_top_left`` and fade it in.
+
+        First appearance snaps to the target and fades opacity 0→1.
+        Moving between cells while already visible slides the button to
+        the new position (OutCubic) instead of snapping, so the
+        affordance follows the cursor without flicker.
+        """
         self._cell_date = cell_date
         self._hour = hour
         self.setToolTip(self._format_tooltip(cell_date, hour))
-        if self.pos() != target_top_left:
-            self.move(target_top_left)
+
         if not self.isVisible():
+            # First appearance: snap into place, then fade in.
+            self._slide_active = False
+            self.move(target_top_left)
+            self._opacity = 0.0
             self.show()
             self.raise_()
+        else:
+            # Already visible. Re-arm the slide only when the target
+            # cell actually changes — repeated mouseMove events within
+            # the same cell pass the same target and must not restart
+            # the easing curve every frame. The current target is the
+            # in-flight slide destination, or the resting position.
+            current_target = self._slide_to if self._slide_active else self.pos()
+            if target_top_left != current_target:
+                self._slide_from = QPointF(self.pos())
+                self._slide_to = target_top_left
+                self._slide_t = 0.0
+                self._slide_active = True
+
+        self._fade_target = 1.0
+        if not self._anim_timer.isActive():
+            self._anim_timer.start()
 
     def hide_smoothly(self) -> None:
-        """Hide. Idempotent if already hidden."""
-        if self.isVisible():
-            self.hide()
+        """Fade out, then hide once fully transparent. Idempotent."""
+        if not self.isVisible():
+            return
+        self._fade_target = 0.0
+        if not self._anim_timer.isActive():
+            self._anim_timer.start()
+
+    def _on_anim_tick(self) -> None:
+        """Single driver for fade and slide. Advances opacity toward
+        its target and, if a slide is active, the position toward its
+        target. Stops itself once everything has settled."""
+        # Opacity.
+        if self._opacity != self._fade_target:
+            if self._fade_target > self._opacity:
+                self._opacity = min(
+                    self._fade_target, self._opacity + self._TICK_MS / self._FADE_IN_MS
+                )
+            else:
+                self._opacity = max(
+                    self._fade_target, self._opacity - self._TICK_MS / self._FADE_OUT_MS
+                )
+
+        # Slide (OutCubic ease).
+        if self._slide_active:
+            self._slide_t = min(1.0, self._slide_t + self._TICK_MS / self._SLIDE_MS)
+            eased = 1.0 - (1.0 - self._slide_t) ** 3
+            x = self._slide_from.x() + (self._slide_to.x() - self._slide_from.x()) * eased
+            y = self._slide_from.y() + (self._slide_to.y() - self._slide_from.y()) * eased
+            self.move(round(x), round(y))
+            if self._slide_t >= 1.0:
+                self._slide_active = False
+
+        self.update()
+
+        settled = self._opacity == self._fade_target and not self._slide_active
+        if settled:
+            self._anim_timer.stop()
+            if self._fade_target == 0.0:
+                self.hide()
+
+    def hideEvent(self, a0) -> None:  # noqa: N802
+        # Teardown safety: never leave the timer running into widget
+        # destruction. The button always hides before the parent
+        # viewport is torn down in normal flow; this guarantees it for
+        # the pytest-qt rapid construct/destruct cycle too (#57).
+        self._anim_timer.stop()
+        self._slide_active = False
+        super().hideEvent(a0)
 
     def cell_date(self) -> date | None:
         return self._cell_date
@@ -4632,6 +4738,21 @@ class _WeekTableView(QTableView):
         # mouseMoveEvent geometry check (which only fires while the
         # cursor is on the table viewport, not on the button).
         self._hover_add_btn.hover_started.connect(self._hide_task_tooltip)
+        # Hide the "+" on scroll — once the viewport scrolls, the
+        # button's position is stale relative to the new cell layout.
+        # Bound method (not a lambda) as the receiver so Qt drops the
+        # connection automatically when the button is destroyed; a
+        # lambda would hold the button across teardown and fire hide()
+        # on a deleted widget during the next test's construction
+        # (#57 diagnostic notes). QueuedConnection so the slot runs
+        # via the event loop rather than synchronously inside the
+        # scrollbar's valueChanged emission.
+        for _bar in (self.verticalScrollBar(), self.horizontalScrollBar()):
+            if _bar is not None:
+                _bar.valueChanged.connect(
+                    self._hover_add_btn.hide_smoothly,
+                    Qt.ConnectionType.QueuedConnection,  # type: ignore[call-arg]
+                )
 
     def _on_hover_add_clicked(self) -> None:
         """Forward a "+" button click to the same signal the empty-cell
