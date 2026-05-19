@@ -393,7 +393,7 @@ jobs:
 
       - name: Upload release asset
         if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             ${{ env.ASSET_PATH }}
@@ -403,7 +403,7 @@ jobs:
 
       - name: Upload AppImage release asset (Linux)
         if: github.event_name == 'release' && runner.os == 'Linux'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             ${{ env.APPIMAGE_PATH }}
@@ -413,7 +413,7 @@ jobs:
 
       - name: Upload installer release asset (Windows)
         if: github.event_name == 'release' && runner.os == 'Windows'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             ${{ env.INSTALLER_PATH }}
