@@ -985,10 +985,10 @@ class TestAsyncClientConnect:
     async def test_connect_timeout_sets_error_flag(self):
         """connect sets connection error flag on timeout."""
         client = _make_client()
-        with patch(
-            "asyncio.wait_for",
-            side_effect=TimeoutError(),
-        ):
+        # Drive the real asyncio.wait_for: the awaited open_connection raises
+        # TimeoutError, exercising the production timeout wrapper rather than
+        # stubbing wait_for (which orphans the open_connection coroutine).
+        with patch("asyncio.open_connection", new=AsyncMock(side_effect=TimeoutError())):
             result = await client.connect("host", 5364)
         assert result is False
         assert client.had_connection_error() is True
@@ -1403,8 +1403,9 @@ class TestAsyncClientSendRecv:
 
         client._connection = ConnectionState(reader=mock_reader, writer=MagicMock())
 
-        with patch("asyncio.wait_for", side_effect=TimeoutError()):
-            result = await client._recv_message_raw()
+        # Inject the timeout on the awaited read so the real asyncio.wait_for
+        # wrapper and the production `except TimeoutError` path are exercised.
+        result = await client._recv_message_raw()
         assert result is None
 
     @pytest.mark.asyncio
@@ -1412,15 +1413,12 @@ class TestAsyncClientSendRecv:
         """_recv_message_raw returns None on IncompleteReadError."""
         client = _make_client()
         mock_reader = AsyncMock()
+        mock_reader.readexactly = AsyncMock(side_effect=asyncio.IncompleteReadError(b"partial", 10))
         from pytodo_qt.net.client import ConnectionState
 
         client._connection = ConnectionState(reader=mock_reader, writer=MagicMock())
 
-        with patch(
-            "asyncio.wait_for",
-            side_effect=asyncio.IncompleteReadError(b"partial", 10),
-        ):
-            result = await client._recv_message_raw()
+        result = await client._recv_message_raw()
         assert result is None
 
     @pytest.mark.asyncio
@@ -1428,12 +1426,12 @@ class TestAsyncClientSendRecv:
         """_recv_message_raw returns None on generic exception."""
         client = _make_client()
         mock_reader = AsyncMock()
+        mock_reader.readexactly = AsyncMock(side_effect=RuntimeError("read error"))
         from pytodo_qt.net.client import ConnectionState
 
         client._connection = ConnectionState(reader=mock_reader, writer=MagicMock())
 
-        with patch("asyncio.wait_for", side_effect=RuntimeError("read error")):
-            result = await client._recv_message_raw()
+        result = await client._recv_message_raw()
         assert result is None
 
     @pytest.mark.asyncio
@@ -1441,17 +1439,18 @@ class TestAsyncClientSendRecv:
         """_recv_message returns None on timeout when authenticated."""
         client = _make_client()
         mock_cipher = MagicMock()
+        mock_reader = AsyncMock()
+        mock_reader.readexactly = AsyncMock(side_effect=TimeoutError())
         from pytodo_qt.net.client import ConnectionState
 
         client._connection = ConnectionState(
-            reader=AsyncMock(),
+            reader=mock_reader,
             writer=MagicMock(),
             is_authenticated=True,
             decrypt_cipher=mock_cipher,
         )
 
-        with patch("asyncio.wait_for", side_effect=TimeoutError()):
-            result = await client._recv_message()
+        result = await client._recv_message()
         assert result is None
 
     @pytest.mark.asyncio
@@ -1459,39 +1458,46 @@ class TestAsyncClientSendRecv:
         """_recv_message returns None on IncompleteReadError when authenticated."""
         client = _make_client()
         mock_cipher = MagicMock()
+        mock_reader = AsyncMock()
+        mock_reader.readexactly = AsyncMock(side_effect=asyncio.IncompleteReadError(b"", 10))
         from pytodo_qt.net.client import ConnectionState
 
         client._connection = ConnectionState(
-            reader=AsyncMock(),
+            reader=mock_reader,
             writer=MagicMock(),
             is_authenticated=True,
             decrypt_cipher=mock_cipher,
         )
 
-        with patch(
-            "asyncio.wait_for",
-            side_effect=asyncio.IncompleteReadError(b"", 10),
-        ):
-            result = await client._recv_message()
+        result = await client._recv_message()
         assert result is None
 
     @pytest.mark.asyncio
     async def test_recv_message_encrypted_decrypt_error(self):
-        """_recv_message returns None on decryption error."""
+        """_recv_message returns None when decryption raises."""
         client = _make_client()
         mock_cipher = MagicMock()
+        mock_cipher.decrypt_bytes.side_effect = RuntimeError("decrypt fail")
         from pytodo_qt.net.client import ConnectionState
+        from pytodo_qt.net.protocol import MessageHeader, MessageType
+
+        # Feed a valid header + ciphertext so the read path fully succeeds and
+        # the failure originates in decrypt_bytes — the path this test names.
+        encrypted = b"ciphertext-bytes"
+        header = MessageHeader(length=len(encrypted), msg_type=MessageType.PING, flags=0)
+        mock_reader = AsyncMock()
+        mock_reader.readexactly = AsyncMock(side_effect=[header.pack(), encrypted])
 
         client._connection = ConnectionState(
-            reader=AsyncMock(),
+            reader=mock_reader,
             writer=MagicMock(),
             is_authenticated=True,
             decrypt_cipher=mock_cipher,
         )
 
-        with patch("asyncio.wait_for", side_effect=RuntimeError("decrypt fail")):
-            result = await client._recv_message()
+        result = await client._recv_message()
         assert result is None
+        mock_cipher.decrypt_bytes.assert_called_once_with(encrypted)
 
     @pytest.mark.asyncio
     async def test_recv_message_not_connected(self):
