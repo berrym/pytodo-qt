@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -46,6 +46,12 @@ logger = Logger(__name__)
 
 class SettingsDialog(QDialog):
     """Unified settings dialog with tabbed interface."""
+
+    # Emitted whenever the active theme is (re)applied from this dialog —
+    # live combo preview, Apply/OK save, or cancel-revert. The main window
+    # connects this to refresh theme-dependent chrome it owns (the system
+    # tray icon, which the dialog has no handle on).
+    theme_applied = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -945,6 +951,7 @@ class SettingsDialog(QDialog):
         # Apply theme if changed
         if old_theme != new_theme:
             apply_current_theme()
+            self.theme_applied.emit()
 
         # Apply font if changed. QApplication.setFont() propagates to
         # every widget using QFont()-no-args inheritance; cached-QFont
@@ -1015,6 +1022,7 @@ class SettingsDialog(QDialog):
         new_theme = self.theme_combo.currentData()
         self._config.appearance.theme = new_theme
         apply_current_theme()
+        self.theme_applied.emit()
 
     def reject(self) -> None:
         """Handle cancel - revert theme if changed."""
@@ -1022,4 +1030,5 @@ class SettingsDialog(QDialog):
         if current_theme != self._original_theme:
             self._config.appearance.theme = self._original_theme
             apply_current_theme()
+            self.theme_applied.emit()
         super().reject()

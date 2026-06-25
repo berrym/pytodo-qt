@@ -63,7 +63,7 @@ from .dialogs import (
     SyncDialog,
 )
 from .styles import apply_current_theme
-from .styles.themes import Theme, get_system_theme
+from .styles.themes import Theme, get_current_theme
 from .widgets import (
     KanbanBoardWidget,
     ListSelectorWidget,
@@ -1486,16 +1486,7 @@ class MainWindow(QMainWindow):
             logger.log.warning("Failed to initialize DesktopNotifier: %s", exc)
 
         # Use simple monochrome tray icon
-        if sys.platform == "darwin":
-            # Mark as template image for macOS menu bar (adapts to dark/light mode)
-            icon = self._get_icon("tray.svg")
-            icon.setIsMask(True)
-        else:
-            # Pick icon color based on system theme so it's visible on dark panels
-            theme = get_system_theme()
-            icon_name = "tray-light.svg" if theme == Theme.DARK else "tray.svg"
-            icon = self._get_icon(icon_name)
-        self.tray_icon.setIcon(icon)
+        self._update_tray_icon_for_theme()
 
         self._tray_menu = QMenu()
         self._tray_menu.addAction(self.tr("Show"), self.show)
@@ -1513,6 +1504,34 @@ class MainWindow(QMainWindow):
 
         if not self.tray_icon.isVisible():
             logger.log.warning("System tray icon failed to show")
+
+    def _update_tray_icon_for_theme(self) -> None:
+        """Pick the tray icon variant that matches the active theme.
+
+        The variant must be re-evaluated whenever the theme changes — at
+        startup it was correct but stayed frozen, so a dark/light switch
+        (OS day/night auto-switch or a manual switch in Settings) left a
+        dark-on-dark or light-on-light tray icon. Keyed off the app's
+        effective theme via ``get_current_theme()`` so it tracks both the
+        ``system`` (follow-OS) case and an explicit Light/Dark override.
+
+        macOS uses a template image (``setIsMask``) that the menu bar
+        recolors itself, so the variant choice only matters off-darwin.
+        """
+        if self.tray_icon is None:
+            return
+
+        if sys.platform == "darwin":
+            # Mark as template image for macOS menu bar (adapts to dark/light mode)
+            icon = self._get_icon("tray.svg")
+            icon.setIsMask(True)
+        else:
+            # Pick icon color based on the active theme so it's visible on
+            # the panel, and so it flips when the theme flips.
+            theme = get_current_theme()
+            icon_name = "tray-light.svg" if theme == Theme.DARK else "tray.svg"
+            icon = self._get_icon(icon_name)
+        self.tray_icon.setIcon(icon)
 
     def _setup_notification_overlay(self) -> None:
         """Instantiate the in-app notification overlay manager.
@@ -4537,6 +4556,9 @@ class MainWindow(QMainWindow):
     def _on_settings(self) -> None:
         """Handle settings action."""
         dialog = SettingsDialog(self)
+        # Keep the tray icon in step with live theme preview, Apply, OK, and
+        # cancel-revert while the modal dialog runs its own event loop.
+        dialog.theme_applied.connect(self._update_tray_icon_for_theme)
         if dialog.exec() == SettingsDialog.DialogCode.Accepted:
             # Re-fetch config — reload() in SettingsDialog creates a new object
             self._config = get_config()
@@ -4557,9 +4579,10 @@ class MainWindow(QMainWindow):
             self._refresh_ui()
 
     def _on_system_theme_changed(self) -> None:
-        """Handle system dark/light mode change (macOS auto-switch)."""
+        """Handle OS dark/light mode change while following the system theme."""
         if self._config.appearance.theme == "system":
             apply_current_theme()
+            self._update_tray_icon_for_theme()
             self._refresh_ui()
 
     def _on_focus_stats(self) -> None:

@@ -109,6 +109,29 @@ class TestSettingsDialogFormConsistency:
         dlg.deleteLater()
 
 
+class TestThemeAppliedSignal:
+    """The dialog announces every live theme application so the main
+    window can refresh theme-dependent chrome it owns (the system tray
+    icon). Regression for the frozen-tray-icon bug."""
+
+    def test_live_theme_switch_emits_theme_applied(self, app):
+        dlg = SettingsDialog()
+        fired: list[bool] = []
+        dlg.theme_applied.connect(lambda: fired.append(True))
+        combo = dlg.theme_combo
+        original = combo.currentData()
+        target = next(i for i in range(combo.count()) if combo.itemData(i) != original)
+        # currentIndexChanged -> _on_theme_changed -> apply + emit
+        combo.setCurrentIndex(target)
+        assert fired, "theme_applied must fire on a live theme switch"
+        # Restore the original theme so the shared QApplication palette
+        # does not leak into later tests.
+        combo.setCurrentIndex(
+            next(i for i in range(combo.count()) if combo.itemData(i) == original)
+        )
+        dlg.deleteLater()
+
+
 class TestNoLiteralMonospaceFontFamily:
     """Regression guard: no Python source file should use the CSS
     generic "monospace" as a QSS font-family value or as a QFont
