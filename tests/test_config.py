@@ -134,6 +134,33 @@ class TestAppConfig:
         assert config.database.remember_last_view is True
         assert config.database.view_mode == "board"
 
+    def test_start_minimized_to_tray_round_trip(self):
+        """TOML serialize/deserialize preserves the start-in-tray setting."""
+        config = AppConfig()
+        assert config.appearance.start_minimized_to_tray is False  # default off
+        config.appearance.start_minimized_to_tray = True
+
+        toml_str = config.to_toml()
+        assert "start_minimized_to_tray = true" in toml_str
+
+        import tomllib
+
+        data = tomllib.loads(toml_str)
+        round_tripped = AppConfig.from_dict(data)
+        assert round_tripped.appearance.start_minimized_to_tray is True
+
+    def test_from_dict_missing_start_minimized_to_tray_defaults_false(self):
+        """Older config.toml files without the field load with it off."""
+        data = {
+            "appearance": {
+                "theme": "dark",
+                # start_minimized_to_tray intentionally absent
+            },
+        }
+        config = AppConfig.from_dict(data)
+        assert config.appearance.start_minimized_to_tray is False
+        assert config.appearance.theme == "dark"
+
     def test_sort_tiers_helper(self):
         """Test sort_tiers() returns list of (dimension, reverse) tuples."""
         config = DatabaseConfig(

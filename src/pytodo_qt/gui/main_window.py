@@ -221,8 +221,8 @@ class MainWindow(QMainWindow):
         self._overdue_timer.timeout.connect(self._check_timed_overdue)
         self._overdue_timer.start(60_000)
 
-        # Show window
-        self.show()
+        # Show window (or start hidden in the tray / minimized per preference)
+        self._apply_startup_visibility()
         logger.log.info("Main window created")
 
         # Request OS notification permission once (macOS shows a system prompt
@@ -1491,6 +1491,12 @@ class MainWindow(QMainWindow):
         self._tray_menu = QMenu()
         self._tray_menu.addAction(self.tr("Show"), self.show)
         self._tray_menu.addAction(self.tr("Hide"), self.hide)
+        self._tray_menu.addSeparator()
+        self._start_in_tray_action = QAction(self.tr("Start minimized to tray"), self)
+        self._start_in_tray_action.setCheckable(True)
+        self._start_in_tray_action.setChecked(self._config.appearance.start_minimized_to_tray)
+        self._start_in_tray_action.toggled.connect(self._on_start_in_tray_toggled)
+        self._tray_menu.addAction(self._start_in_tray_action)
         self._tray_menu.addSeparator()
         self._tray_menu.addAction(self.tr("Quit"), self._quit_application)
 
@@ -4562,6 +4568,13 @@ class MainWindow(QMainWindow):
         if dialog.exec() == SettingsDialog.DialogCode.Accepted:
             # Re-fetch config — reload() in SettingsDialog creates a new object
             self._config = get_config()
+            # Keep the tray-menu toggle in step with the dialog's checkbox.
+            if self.tray_icon is not None:
+                self._start_in_tray_action.blockSignals(True)
+                self._start_in_tray_action.setChecked(
+                    self._config.appearance.start_minimized_to_tray
+                )
+                self._start_in_tray_action.blockSignals(False)
             self._auto_scheduler.update_config(
                 delay_seconds=self._config.discovery.auto_sync_delay,
                 interval_minutes=self._config.discovery.auto_sync_interval,
@@ -4675,6 +4688,37 @@ class MainWindow(QMainWindow):
             from PyQt6.QtGui import QCursor
 
             self._tray_menu.popup(QCursor.pos())
+
+    def _apply_startup_visibility(self) -> None:
+        """Show the window on launch, or start hidden per preference.
+
+        When ``start_minimized_to_tray`` is set we keep the window hidden so
+        the app lives in the system tray from launch. If the platform has no
+        usable tray (``_setup_tray_icon`` left ``tray_icon`` None, or it failed
+        to show), we fall back to a minimized window so the user can still get
+        to it from the taskbar rather than launching to nothing.
+        """
+        if self._config.appearance.start_minimized_to_tray:
+            if self.tray_icon is not None and self.tray_icon.isVisible():
+                logger.log.info("Starting minimized to system tray")
+                return
+            logger.log.info("No system tray available; starting minimized")
+            self.showMinimized()
+            return
+
+        self.show()
+
+    def _on_start_in_tray_toggled(self, checked: bool) -> None:
+        """Persist the 'start minimized to tray' toggle from the tray menu."""
+        # Operate on the live config-manager object: self._config can drift
+        # from it after the settings dialog reloads the manager from disk, so
+        # writing through self._config alone risks saving a stale snapshot.
+        config = get_config()
+        if config.appearance.start_minimized_to_tray == checked:
+            return
+        config.appearance.start_minimized_to_tray = checked
+        self._config = config
+        self._config_manager.save()
 
     def _quit_application(self) -> None:
         """Fully quit the application (bypasses close-to-tray)."""

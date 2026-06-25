@@ -444,6 +444,14 @@ class SettingsDialog(QDialog):
         behavior_layout = QFormLayout(behavior_group)
         self.close_to_tray_check = QCheckBox(self.tr("Minimize to system tray when closed"))
         behavior_layout.addRow(self.close_to_tray_check)
+        self.start_minimized_to_tray_check = QCheckBox(self.tr("Start minimized to system tray"))
+        self.start_minimized_to_tray_check.setToolTip(
+            self.tr(
+                "Launch hidden in the system tray. If no tray is available, "
+                "the window starts minimized instead."
+            )
+        )
+        behavior_layout.addRow(self.start_minimized_to_tray_check)
         layout.addWidget(behavior_group)
 
         # Preview note
@@ -801,6 +809,7 @@ class SettingsDialog(QDialog):
 
         # Behavior
         self.close_to_tray_check.setChecked(config.appearance.close_to_tray)
+        self.start_minimized_to_tray_check.setChecked(config.appearance.start_minimized_to_tray)
 
         # Pomodoro
         self.work_duration_spin.setValue(config.pomodoro.work_duration)
@@ -902,6 +911,7 @@ class SettingsDialog(QDialog):
         new_font = self.font_combo.currentData()
         config.appearance.font = new_font
         config.appearance.close_to_tray = self.close_to_tray_check.isChecked()
+        config.appearance.start_minimized_to_tray = self.start_minimized_to_tray_check.isChecked()
 
         # Pomodoro
         config.pomodoro.work_duration = self.work_duration_spin.value()

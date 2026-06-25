@@ -202,6 +202,7 @@ class AppearanceConfig:
     theme: str = "system"  # light, dark, system
     time_format: str = "system"  # system, 12h, 24h
     close_to_tray: bool = True
+    start_minimized_to_tray: bool = False  # hide to tray on launch (or minimize if no tray)
     font: str = "system"  # "system", "bundled", or custom family name
 
 
@@ -269,6 +270,9 @@ class AppConfig:
         lines.append(f'theme = "{self.appearance.theme}"')
         lines.append(f'time_format = "{self.appearance.time_format}"')
         lines.append(f"close_to_tray = {str(self.appearance.close_to_tray).lower()}")
+        lines.append(
+            f"start_minimized_to_tray = {str(self.appearance.start_minimized_to_tray).lower()}"
+        )
         lines.append(f'font = "{self.appearance.font}"')
         lines.append("")
 
@@ -384,6 +388,7 @@ class AppConfig:
                 theme=app.get("theme", "system"),
                 time_format=app.get("time_format", "system"),
                 close_to_tray=app.get("close_to_tray", True),
+                start_minimized_to_tray=app.get("start_minimized_to_tray", False),
                 font=app.get("font", "system"),
             )
 
