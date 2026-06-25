@@ -93,7 +93,7 @@ dev = [
     "pytest-asyncio>=0.21",
     "pytest-cov>=4.0",
     "ruff>=0.15",
-    "basedpyright>=1.18",
+    "basedpyright>=1.39.8",
 ]
 
 [project.urls]
@@ -109,7 +109,7 @@ dev = [
     "pytest-asyncio>=0.21",
     "pytest-cov>=4.0",
     "ruff>=0.15",
-    "basedpyright>=1.18",
+    "basedpyright>=1.39.8",
 ]
 
 [tool.coverage.run]

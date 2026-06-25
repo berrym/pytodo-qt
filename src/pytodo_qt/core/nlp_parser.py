@@ -1180,11 +1180,12 @@ def _resolve_day_name(name: str, today: date) -> date:
     """Resolve a day name to the next occurrence (never today)."""
     import calendar as _cal
 
+    # Index by position: calendar.day_name / day_abbr are locale-aware
+    # sequences that support indexing but not iteration in the type stubs.
     day_map = {}
-    for i, d in enumerate(_cal.day_name):
-        day_map[d.lower()] = i
-    for i, d in enumerate(_cal.day_abbr):
-        day_map[d.lower()] = i
+    for i in range(7):
+        day_map[_cal.day_name[i].lower()] = i
+        day_map[_cal.day_abbr[i].lower()] = i
 
     target = day_map.get(name.lower())
     if target is None:
@@ -1259,11 +1260,12 @@ def _extract_dates_and_times(
     due_time_end: time | None = None
     skip_dateparser = False
 
+    # Index by position: calendar.day_name / day_abbr are locale-aware
+    # sequences that support indexing but not iteration in the type stubs.
     day_names = {}
-    for i, d in enumerate(_cal.day_name):
-        day_names[d.lower()] = i
-    for i, d in enumerate(_cal.day_abbr):
-        day_names[d.lower()] = i
+    for i in range(7):
+        day_names[_cal.day_name[i].lower()] = i
+        day_names[_cal.day_abbr[i].lower()] = i
 
     month_names = {}
     for i in range(1, 13):
