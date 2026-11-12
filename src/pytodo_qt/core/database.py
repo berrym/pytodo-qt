@@ -8,6 +8,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -325,6 +326,7 @@ class DatabaseStorage:
         self._migrate_schema_18_to_19()
         self._migrate_schema_to_21()
         self._migrate_schema_to_22()
+        self._migrate_schema_to_23()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -681,6 +683,49 @@ class DatabaseStorage:
 
         self.set_schema_version(22)
         logger.log.info("Migrated schema -> 22: added notification_log table")
+
+    # A part of the day named in a task ("this afternoon") used to be
+    # stored as the time block plus a stand-in clock time. These are the
+    # (block, time) pairs that produced.
+    _STAND_IN_TIMES = (
+        ("morning", "09:00:00"),
+        ("early_morning", "09:00:00"),
+        ("afternoon", "14:00:00"),
+        ("evening", "18:00:00"),
+        ("evening", "20:00:00"),
+    )
+
+    def _migrate_schema_to_23(self) -> None:
+        """Migrate schema to version 23 (time blocks carry no stand-in time).
+
+        Removes the stand-in clock time from open items that have a time
+        block, so they are placed and reminded by the block rather than
+        as a deadline at an hour nobody chose. Completed and deleted
+        items keep what they had. An item with an end time is an event
+        with a real start and is left alone.
+
+        updated_at is set so the change wins on the next sync instead of
+        being overwritten by a peer's copy that still has the time.
+        """
+        current_version = self.get_schema_version()
+        if current_version >= 23:
+            return
+
+        now_ms = int(datetime.now().timestamp() * 1000)
+        changed = 0
+        for block, stand_in in self._STAND_IN_TIMES:
+            cursor = self.connection.execute(
+                "UPDATE items SET due_time = NULL, updated_at = ? "
+                "WHERE due_time_block = ? AND due_time = ? AND due_time_end IS NULL "
+                "AND complete = 0 AND deleted = 0",
+                (now_ms, block, stand_in),
+            )
+            changed += cursor.rowcount
+
+        self.set_schema_version(23)
+        logger.log.info(
+            "Migrated schema -> 23: removed the stand-in time from %d time-block items", changed
+        )
 
     def get_schema_version(self) -> int:
         """Get current schema version."""

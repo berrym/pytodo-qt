@@ -223,8 +223,14 @@ class TestValues:
         d = load_intents("en")
         assert d["time_of_day"]["noon"] == time(12, 0)
         assert d["time_of_day"]["midnight"] == time(0, 0)
-        assert d["time_of_day"]["morning"] == time(9, 0)
         assert d["time_of_day"]["eod"] == time(17, 0)
+
+    def test_parts_of_day_carry_no_clock_time(self) -> None:
+        d = load_intents("en")
+        for word in ("morning", "afternoon", "evening", "tonight"):
+            assert word not in d["time_of_day"]
+            assert word in d["time_block_words"]
+        assert list(d["time_of_day_phrases"]) == ["end of day"]
 
     def test_recurrence_values(self) -> None:
         d = load_intents("en")

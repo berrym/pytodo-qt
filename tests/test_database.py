@@ -1,6 +1,7 @@
 """Tests for SQLite database storage layer."""
 
 import tempfile
+from datetime import date, time
 from pathlib import Path
 from uuid import uuid4
 
@@ -274,6 +275,129 @@ class TestSchemaMigrationToV22:
             try:
                 cols = [row[1] for row in storage.connection.execute("PRAGMA table_info(items)")]
                 assert "notified_at" in cols
+            finally:
+                storage.close()
+
+
+class TestSchemaMigrationToV23:
+    """v23 removes the stand-in clock time that a part of the day used to
+    be stored with, from open items that have a time block."""
+
+    STAMP = 1700000000000
+
+    def _migrate(self, db_path: Path, items: dict[str, TodoItem]) -> dict[str, TodoItem]:
+        """Store the items at v22, reopen to migrate, and return them reloaded."""
+        storage = DatabaseStorage(db_path)
+        storage.open()
+        lst = TodoList(name="Errands")
+        storage.save_list(lst)
+        for item in items.values():
+            storage.save_item(lst.id, item)
+        storage.connection.execute("UPDATE items SET updated_at = ?", (self.STAMP,))
+        storage.set_schema_version(22)
+        storage.close()
+
+        storage = DatabaseStorage(db_path)
+        storage.open()
+        try:
+            assert storage.get_schema_version() == SCHEMA_VERSION
+            assert SCHEMA_VERSION >= 23
+            reloaded = {}
+            for name, item in items.items():
+                found = storage.get_item(item.id)
+                assert found is not None
+                reloaded[name] = found
+            return reloaded
+        finally:
+            storage.close()
+
+    def test_stand_in_times_are_removed_from_open_block_items(self):
+        day = date(2026, 4, 10)
+        items = {
+            "morning": TodoItem(
+                reminder="a", due_date=day, due_time=time(9, 0), due_time_block="morning"
+            ),
+            "first thing": TodoItem(
+                reminder="b", due_date=day, due_time=time(9, 0), due_time_block="early_morning"
+            ),
+            "afternoon": TodoItem(
+                reminder="c", due_date=day, due_time=time(14, 0), due_time_block="afternoon"
+            ),
+            "evening": TodoItem(
+                reminder="d", due_date=day, due_time=time(18, 0), due_time_block="evening"
+            ),
+            "tonight": TodoItem(
+                reminder="e", due_date=day, due_time=time(20, 0), due_time_block="evening"
+            ),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            reloaded = self._migrate(Path(tmpdir) / "test.db", items)
+
+        for name, item in reloaded.items():
+            assert item.due_time is None, name
+            assert item.due_time_block == items[name].due_time_block, name
+            assert item.due_date == day, name
+            # Stamped as edited, so the change wins on the next sync.
+            assert item.updated_at > self.STAMP, name
+
+    def test_other_items_are_left_alone(self):
+        day = date(2026, 4, 10)
+        done = TodoItem(
+            reminder="done", due_date=day, due_time=time(14, 0), due_time_block="afternoon"
+        )
+        done.complete = True
+        gone = TodoItem(
+            reminder="gone", due_date=day, due_time=time(14, 0), due_time_block="afternoon"
+        )
+        gone.deleted = True
+        items = {
+            "completed": done,
+            "deleted": gone,
+            "chosen time": TodoItem(
+                reminder="x", due_date=day, due_time=time(15, 30), due_time_block="afternoon"
+            ),
+            "event": TodoItem(
+                reminder="y",
+                due_date=day,
+                due_time=time(14, 0),
+                due_time_end=time(15, 0),
+                due_time_block="afternoon",
+            ),
+            "no block": TodoItem(reminder="z", due_date=day, due_time=time(14, 0)),
+            "block only": TodoItem(reminder="w", due_date=day, due_time_block="late_afternoon"),
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            reloaded = self._migrate(Path(tmpdir) / "test.db", items)
+
+        for name, item in reloaded.items():
+            assert item.due_time == items[name].due_time, name
+            assert item.due_time_block == items[name].due_time_block, name
+            assert item.updated_at == self.STAMP, name
+
+    def test_migration_runs_once(self):
+        """An item given 14:00 and the afternoon block after the migration
+        chose that time, and keeps it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            lst = TodoList(name="Errands")
+            storage.save_list(lst)
+            item = TodoItem(
+                reminder="Call",
+                due_date=date(2026, 4, 10),
+                due_time=time(14, 0),
+                due_time_block="afternoon",
+            )
+            storage.save_item(lst.id, item)
+            storage.close()
+
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            try:
+                found = storage.get_item(item.id)
+                assert found is not None
+                assert found.due_time == time(14, 0)
             finally:
                 storage.close()
 

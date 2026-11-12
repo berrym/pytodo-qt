@@ -190,15 +190,18 @@ class TestTimeParsing:
 
     def test_morning(self) -> None:
         r = parse("run tomorrow morning", today=TODAY)
-        assert r.due_time == time(9, 0)
+        assert r.due_time_block == "morning"
+        assert r.due_time is None
 
     def test_afternoon(self) -> None:
         r = parse("meet Tuesday afternoon", today=TODAY)
-        assert r.due_time == time(14, 0)
+        assert r.due_time_block == "afternoon"
+        assert r.due_time is None
 
     def test_evening(self) -> None:
         r = parse("dinner Friday evening", today=TODAY)
-        assert r.due_time == time(18, 0)
+        assert r.due_time_block == "evening"
+        assert r.due_time is None
 
     def test_eod(self) -> None:
         r = parse("submit eod", today=TODAY)
@@ -842,19 +845,27 @@ class TestVoiceTimePhrases:
 
     def test_tonight(self) -> None:
         r = parse("Take out trash tonight", today=TODAY)
-        assert r.due_time == time(20, 0)
+        assert r.due_time_block == "evening"
+        assert r.due_time is None
+        assert r.due_date == TODAY
 
     def test_this_morning(self) -> None:
         r = parse("Review emails this morning", today=TODAY)
-        assert r.due_time == time(9, 0)
+        assert r.due_time_block == "morning"
+        assert r.due_time is None
+        assert r.due_date == TODAY
 
     def test_this_afternoon(self) -> None:
         r = parse("Pick up groceries this afternoon", today=TODAY)
-        assert r.due_time == time(14, 0)
+        assert r.due_time_block == "afternoon"
+        assert r.due_time is None
+        assert r.due_date == TODAY
 
     def test_this_evening(self) -> None:
         r = parse("Cook dinner this evening", today=TODAY)
-        assert r.due_time == time(18, 0)
+        assert r.due_time_block == "evening"
+        assert r.due_time is None
+        assert r.due_date == TODAY
 
     def test_before_5(self) -> None:
         r = parse("Submit form before 5 PM", today=TODAY)
@@ -1015,14 +1026,16 @@ class TestVoiceDictationIntegration:
 
     def test_pick_up_groceries_this_afternoon(self) -> None:
         r = parse("Pick up groceries this afternoon", today=TODAY)
-        assert "Pick up groceries" in r.reminder
-        assert r.due_time == time(14, 0)
+        assert r.reminder == "Pick up groceries"
+        assert r.due_time_block == "afternoon"
+        assert r.due_time is None
 
     def test_call_dentist_tomorrow_morning(self) -> None:
         r = parse("Call dentist tomorrow morning", today=TODAY)
-        assert "Call dentist" in r.reminder
+        assert r.reminder == "Call dentist"
         assert r.due_date == date(2026, 3, 12)
-        assert r.due_time == time(9, 0)
+        assert r.due_time_block == "morning"
+        assert r.due_time is None
 
     def test_submit_report_end_of_week_important(self) -> None:
         r = parse("Submit report by end of week important", today=TODAY)
@@ -2105,12 +2118,51 @@ class TestPartOfDayPhrasing:
         assert r.due_time_block == "late_afternoon"
         assert r.due_date == TODAY
 
-    def test_narrowing_drops_the_stand_in_time(self) -> None:
-        # "this afternoon" alone carries 14:00; a narrowed block carries
-        # no clock time, as when "late afternoon" is said directly.
-        assert parse("walk this afternoon", today=TODAY).due_time == time(14, 0)
-        assert parse("walk late this afternoon", today=TODAY).due_time is None
-        assert parse("walk late afternoon", today=TODAY).due_time is None
+    def test_a_part_of_day_carries_no_clock_time(self) -> None:
+        for text in (
+            "walk this afternoon",
+            "walk afternoon",
+            "walk in the morning",
+            "walk tonight",
+            "walk late this afternoon",
+            "walk late afternoon",
+        ):
+            r = parse(text, today=TODAY)
+            assert r.due_time is None, text
+            assert r.due_time_block is not None, text
+
+    def test_a_named_moment_keeps_its_clock_time(self) -> None:
+        assert parse("walk at noon", today=TODAY).due_time == time(12, 0)
+        assert parse("submit end of day", today=TODAY).due_time == time(17, 0)
+
+    def test_explicit_time_with_a_part_of_day(self) -> None:
+        r = parse("walk this afternoon at 3", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time == time(15, 0)
+        assert r.due_time_block == "afternoon"
+        assert r.due_date == TODAY
+
+    def test_part_of_day_after_the_time_says_am_or_pm(self) -> None:
+        assert parse("walk at 7 this evening", today=TODAY).due_time == time(19, 0)
+        assert parse("walk at 9 tonight", today=TODAY).due_time == time(21, 0)
+        assert parse("call at 11 this morning", today=TODAY).due_time == time(11, 0)
+        assert parse("walk late night at 2", today=TODAY).due_time == time(2, 0)
+
+    def test_part_of_day_before_the_time_says_am_or_pm(self) -> None:
+        assert parse("walk tonight at 9", today=TODAY).due_time == time(21, 0)
+        assert parse("walk morning at 9", today=TODAY).due_time == time(9, 0)
+
+    def test_second_part_of_day_word_is_consumed(self) -> None:
+        r = parse("walk first thing tomorrow morning", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "early_morning"
+        assert r.due_date == date(2026, 3, 12)
+
+    def test_tonight_is_today(self) -> None:
+        r = parse("dinner with sam tonight", today=TODAY)
+        assert r.reminder == "dinner with sam"
+        assert r.due_time_block == "evening"
+        assert r.due_date == TODAY
 
     def test_later_is_consumed_without_narrowing(self) -> None:
         r = parse("call back later this afternoon", today=TODAY)
@@ -2262,10 +2314,10 @@ class TestBlockDateInference:
     def test_this_means_today_even_after_the_block(self) -> None:
         assert self._parse("walk this late afternoon", 20).due_date == TODAY
 
-    def test_stand_in_time_decides_when_present(self) -> None:
-        # "afternoon" alone still carries 14:00: today before it, tomorrow after.
-        assert self._parse("walk in the afternoon", 13).due_date == TODAY
-        assert self._parse("walk in the afternoon", 15).due_date == date(2026, 3, 12)
+    def test_plain_block_follows_the_block_window(self) -> None:
+        # Afternoon is 12:00-17:00.
+        assert self._parse("walk in the afternoon", 16).due_date == TODAY
+        assert self._parse("walk in the afternoon", 17).due_date == date(2026, 3, 12)
 
     def test_explicit_time_with_a_block_decides(self) -> None:
         assert self._parse("call mom late afternoon at 4pm", 15).due_date == TODAY

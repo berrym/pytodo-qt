@@ -827,7 +827,16 @@ def _format_time_window(
     due_time_block: str | None,
     time_format: str,
 ) -> str:
-    """Format a time window for display: specific time, range, or named block."""
+    """Format a time window for display: specific time, range, or named block.
+
+    A clock time takes precedence over a named block, as it does for
+    reminders and on the calendar: the block is shown only for an item
+    with no time of its own.
+    """
+    if due_time and due_time_end:
+        return f" {_format_time(due_time, time_format)}-{_format_time(due_time_end, time_format)}"
+    if due_time:
+        return f" {_format_time(due_time, time_format)}"
     if due_time_block:
         # Named block with resolved range from config
         from .config import get_config
@@ -845,10 +854,6 @@ def _format_time_window(
         start_t = _format_time(time(start // 60 % 24, start % 60), time_format)
         end_t = _format_time(time(end // 60 % 24, end % 60), time_format)
         return f" ({block_label}, {start_t}-{end_t})"
-    if due_time and due_time_end:
-        return f" {_format_time(due_time, time_format)}-{_format_time(due_time_end, time_format)}"
-    if due_time:
-        return f" {_format_time(due_time, time_format)}"
     return ""
 
 

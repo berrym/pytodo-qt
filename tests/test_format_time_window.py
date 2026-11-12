@@ -151,13 +151,18 @@ class TestTimeBlockRanges:
 
 
 class TestPrecedence:
-    def test_block_takes_precedence_over_specific_time(self):
-        """When block is set, it wins over specific time."""
+    def test_specific_time_takes_precedence_over_block(self):
+        """A clock time is shown in place of the block, as it is used in
+        place of the block for reminders and on the calendar."""
         result = _format_time_window(time(9, 0), None, "morning", "24h")
-        assert "Morning" in result
+        assert result == " 09:00"
 
-    def test_block_takes_precedence_over_range(self):
+    def test_range_takes_precedence_over_block(self):
         result = _format_time_window(time(9, 0), time(11, 0), "morning", "24h")
+        assert result == " 09:00-11:00"
+
+    def test_block_is_shown_when_there_is_no_time(self):
+        result = _format_time_window(None, None, "morning", "24h")
         assert "Morning" in result
 
     def test_range_takes_precedence_over_single_time(self):

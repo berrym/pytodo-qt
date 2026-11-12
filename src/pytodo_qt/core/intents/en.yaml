@@ -149,15 +149,15 @@ time_estimate_units:
 
 # ---------------------------------------------------------------------------
 # Time of day — keyword to HH:MM
+#
+# Only words that name a moment. A part of the day ("morning",
+# "afternoon", "evening", "tonight") is a time block, listed under
+# time_block_words, and carries no clock time.
 # ---------------------------------------------------------------------------
 
 time_of_day:
   noon: 12:00
   midnight: 00:00
-  morning: 09:00
-  afternoon: 14:00
-  evening: 18:00
-  tonight: 20:00
   eod: 17:00
   dawn: 06:00
   sunrise: 06:30
@@ -169,9 +169,6 @@ time_of_day:
 
 time_of_day_phrases:
   "end of day": 17:00
-  "this morning": 09:00
-  "this afternoon": 14:00
-  "this evening": 18:00
 
 # ---------------------------------------------------------------------------
 # Tags — voice dictation prefixes

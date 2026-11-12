@@ -1730,8 +1730,13 @@ def _extract_dates_and_times(
     tod = intents["time_of_day"]
     tod_phrases = intents["time_of_day_phrases"]
     time_block_words = intents.get("time_block_words", {})
-    _today_implying_phrases = {"this morning", "this afternoon", "this evening"}
     _today_implying_words = {"tonight"}
+    # Meal words set the block but stay in the reminder (they're meaningful content).
+    _meal_words = {"breakfast", "lunch", "dinner", "supper", "lunchtime"}
+    # Single words that name a part of the day: "morning", "tonight".
+    part_of_day_words = {
+        word for word in time_block_words if " " not in word and word not in _meal_words
+    }
     due_time_block: str | None = None
     # The text the time block was read from, and whether that text also
     # set a stand-in clock time (as "afternoon" does, but "late
@@ -1770,8 +1775,6 @@ def _extract_dates_and_times(
             phrase = " ".join(t.text for t in phrase_tokens)
             if phrase in tod_phrases:
                 _set_time(tod_phrases[phrase], start, end)
-                if phrase in _today_implying_phrases and due_date is None:
-                    due_date = today
                 # Derive time_block from tod_phrase (e.g., "this afternoon" → "afternoon")
                 if due_time_block is None:
                     last_word = phrase_tokens[-1].text
@@ -1800,18 +1803,17 @@ def _extract_dates_and_times(
     for j, tok in enumerate(tokens):
         if not tracker.is_free(tok.start, tok.end):
             continue
+        # A word followed by a time-introducing word + potential time
+        # ("morning at 9", "tonight at 9") only says whether that time is
+        # AM or PM.
+        if (
+            (tok.text in tod or tok.text in part_of_day_words)
+            and j + 2 < len(tokens)
+            and tokens[j + 1].text in ("at", "by", "before", "after", "between", "from")
+        ):
+            _skipped_tod_context = tok.text
+            continue
         if tok.text in tod:
-            # Skip single-word time_of_day if followed by a time-introducing word + potential time
-            if j + 2 < len(tokens) and tokens[j + 1].text in (
-                "at",
-                "by",
-                "before",
-                "after",
-                "between",
-                "from",
-            ):
-                _skipped_tod_context = tok.text
-                continue
             # Don't override a time already set by Phase 1 relative expressions
             if due_time is not None:
                 continue
@@ -1825,13 +1827,9 @@ def _extract_dates_and_times(
                 due_time_block = time_block_words[tok.text]
                 block_span = (word_start, tok.end)
                 block_set_time = True
-            if tok.text in _today_implying_words and due_date is None:
-                due_date = today
 
-    # --- Phase 2b: Time block words not in time_of_day (night, breakfast, dinner, etc.) ---
-    # Meal words set the block but stay in the reminder (they're meaningful content).
+    # --- Phase 2b: Time block words (morning, tonight, night, breakfast, dinner, etc.) ---
     # Explicit time words (night, evening) take precedence over meal words (dinner, lunch).
-    _meal_words = {"breakfast", "lunch", "dinner", "supper", "lunchtime"}
     if due_time_block is None:
         _meal_fallback: str | None = None
         for window_size in (2, 1):
@@ -1882,7 +1880,12 @@ def _extract_dates_and_times(
 
         i = next(idx for idx, tok in enumerate(tokens) if tok.start >= phrase_start) - 1
         consumed_start = phrase_start
-        pins_today = False
+        # "tonight" is today by itself.
+        pins_today = any(
+            tok.text in _today_implying_words
+            for tok in tokens
+            if phrase_start <= tok.start < phrase_end
+        )
         date_between = False
         if i >= 0 and tokens[i].text in today_words and _token_free(i):
             pins_today = True
@@ -1942,6 +1945,30 @@ def _extract_dates_and_times(
                 )
             if pins_today and due_date is None:
                 due_date = today
+
+    # --- Phase 2d: what the block implies for the rest of the text ---
+    if due_time_block is not None:
+        # A second part-of-day word repeats the block already read:
+        # "first thing in the morning", "first thing tomorrow morning".
+        for j, tok in enumerate(tokens):
+            if tok.text in part_of_day_words and _token_free(j):
+                lead_in = _lead_in_length(j - 1) if j > 0 else 0
+                tracker.reserve(
+                    EntitySpan(
+                        tokens[j - lead_in].start,
+                        tok.end,
+                        EntityKind.TIME_BLOCK,
+                        due_time_block.replace("_", " ").title(),
+                    )
+                )
+        # The block says whether a bare clock time is AM or PM, wherever
+        # the time stands: "at 7 this evening". Late night is the small
+        # hours.
+        if _skipped_tod_context is None:
+            if due_time_block.endswith("morning") or due_time_block == "late_night":
+                _skipped_tod_context = "morning"
+            elif due_time_block.endswith(("afternoon", "evening", "night")):
+                _skipped_tod_context = "evening"
 
     # --- Time ranges (between X and Y, from X to Y, X-Y) ---
     _range_closers_between = {"and"}
