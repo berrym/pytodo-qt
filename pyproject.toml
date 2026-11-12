@@ -92,7 +92,7 @@ dev = [
     "pytest-qt>=4.2",
     "pytest-asyncio>=0.21",
     "pytest-cov>=4.0",
-    "ruff>=0.15",
+    "ruff>=0.17.4",
     "basedpyright>=1.39.8",
 ]
 
@@ -108,7 +108,7 @@ dev = [
     "pytest-qt>=4.2",
     "pytest-asyncio>=0.21",
     "pytest-cov>=4.0",
-    "ruff>=0.15",
+    "ruff>=0.17.4",
     "basedpyright>=1.39.8",
 ]
 

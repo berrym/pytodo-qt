@@ -3232,12 +3232,11 @@ class MainWindow(QMainWindow):
 
                 cmd = SetFieldCommand(self, active_list.id, item_id, "event_date", new_date)
                 self._undo_stack.push(cmd)
-        elif result == 2:
-            if item.event_date is not None:
-                from .commands import SetFieldCommand
+        elif result == 2 and item.event_date is not None:
+            from .commands import SetFieldCommand
 
-                cmd = SetFieldCommand(self, active_list.id, item_id, "event_date", None)
-                self._undo_stack.push(cmd)
+            cmd = SetFieldCommand(self, active_list.id, item_id, "event_date", None)
+            self._undo_stack.push(cmd)
 
     def _is_any_timer_active(self) -> bool:
         """Check if either pomodoro or stopwatch is active."""
