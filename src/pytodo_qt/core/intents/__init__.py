@@ -108,7 +108,18 @@ def load_intents(lang: str = "en") -> dict[str, Any]:
     result["part_of_day_lead_ins"] = [str(p).split() for p in raw.get("part_of_day_lead_ins", [])]
     result["time_of_day_lead_ins"] = [str(p).split() for p in raw.get("time_of_day_lead_ins", [])]
 
-    # --- Advance reminder ---
+    # --- Amounts, relative dates, advance reminder ---
+    amounts = raw.get("amounts") or {}
+    result["amounts"] = {
+        "articles": _word_set(amounts.get("articles")),
+        "partitives": _word_set(amounts.get("partitives")),
+    }
+    relative = raw.get("relative_date") or {}
+    result["relative_date"] = {
+        "directions": _int_map(relative.get("directions")),
+        "units": _int_map(relative.get("units")),
+        "month_units": _word_set(relative.get("month_units")),
+    }
     result["advance_reminder"] = _build_advance_reminder(raw.get("advance_reminder") or {})
 
     # --- Scalars ---
@@ -157,6 +168,14 @@ def _word_lists(phrases: Any) -> list[list[str]]:
     return sorted((words for words in split if words), key=len, reverse=True)
 
 
+def _word_set(words: Any) -> set[str]:
+    return {str(word).lower() for word in words or []}
+
+
+def _int_map(mapping: Any) -> dict[str, int]:
+    return {str(key).lower(): int(value) for key, value in (mapping or {}).items()}
+
+
 def _build_advance_reminder(section: dict[str, Any]) -> dict[str, Any]:
     """Convert the advance-reminder vocabulary to word lists and a unit map.
 
@@ -169,9 +188,7 @@ def _build_advance_reminder(section: dict[str, Any]) -> dict[str, Any]:
         "cadence_once": _word_lists(section.get("cadence_once")),
         "cadence_daily": _word_lists(section.get("cadence_daily")),
         "cadence_from": _word_lists(section.get("cadence_from")),
-        "units": {str(k).lower(): int(v) for k, v in (section.get("units") or {}).items()},
-        "articles": {str(word).lower() for word in section.get("articles") or []},
-        "partitives": {str(word).lower() for word in section.get("partitives") or []},
+        "units": _int_map(section.get("units")),
         "closers": _word_lists(section.get("closers")),
         "closer_tails": _word_lists(section.get("closer_tails")),
         "notice_openers": _word_lists(section.get("notice_openers")),

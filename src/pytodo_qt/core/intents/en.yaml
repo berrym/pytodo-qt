@@ -502,6 +502,43 @@ time_of_day_lead_ins:
   - for
 
 # ---------------------------------------------------------------------------
+# Amounts — a count and a unit, as in "3 days", "a week", "the day",
+# "a couple of days". Used by advance reminders and relative dates, each
+# with its own units.
+# ---------------------------------------------------------------------------
+
+amounts:
+  # "the day before" is one day.
+  articles:
+    - a
+    - the
+  # "a couple of days" skips the "of".
+  partitives:
+    - of
+
+# ---------------------------------------------------------------------------
+# Relative dates — an amount directly before one of the direction words
+# and a date moves the date: "3 days before friday" is the Tuesday,
+# "a week after dec 1" is Dec 8, "a month before dec 25" is Nov 25.
+# ---------------------------------------------------------------------------
+
+relative_date:
+  # Which way the date moves.
+  directions:
+    before: -1
+    after: 1
+  # Days per unit.
+  units:
+    day: 1
+    days: 1
+    week: 7
+    weeks: 7
+  # Counted as calendar months, not as a number of days.
+  month_units:
+    - month
+    - months
+
+# ---------------------------------------------------------------------------
 # Advance reminder — a mention in the daily summary on the days before a
 # task is due: "remind me 3 days before", "remind me daily from a week
 # before", "with 3 days notice".
@@ -542,18 +579,14 @@ advance_reminder:
     - "starting from"
     - starting
     - from
-  # Days per unit.
+  # Days per unit. A reminder counts in days, so a month is 30 of them.
   units:
     day: 1
     days: 1
     week: 7
     weeks: 7
-  # "the day before" is one day; "a couple of days" skips the "of".
-  articles:
-    - a
-    - the
-  partitives:
-    - of
+    month: 30
+    months: 30
   closers:
     - "ahead of time"
     - "in advance"

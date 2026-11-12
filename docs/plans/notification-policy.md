@@ -157,8 +157,8 @@ so the two are not offered separately, and Off stores `0` and `none`.
   task that has a due date. A change is one undo step. Add Todo only creates
   tasks, so this is where an existing task is given a reminder.
 - Smart input: a phrase typed with the task sets both fields.
-  - Once: a trigger (`remind me`, `remind`, `reminder`), an amount in days
-    or weeks, and a closer (`before`, `beforehand`, `ahead`, `ahead of
+  - Once: a trigger (`remind me`, `remind`, `reminder`), an amount in days,
+    weeks or months (a month counts as 30 days), and a closer (`before`, `beforehand`, `ahead`, `ahead of
     time`, `in advance`, `early`): "remind me 3 days before", "remind me a
     week before", "remind me the day before".
   - Every day until due: `daily`, `every day` or `each day` after the

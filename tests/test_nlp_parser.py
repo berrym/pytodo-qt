@@ -2473,6 +2473,10 @@ class TestDigitsDoNotCombine:
         r = parse("read twenty 5 minutes", today=TODAY)
         assert r.estimated_minutes == 5
 
+    def test_a_digit_and_a_word_do_not_combine(self) -> None:
+        r = parse("read 20 five minutes", today=TODAY)
+        assert r.estimated_minutes == 5
+
 
 # ---------------------------------------------------------------------------
 # TestTimeRangeEnds
@@ -2659,3 +2663,116 @@ class TestClausePunctuation:
 
     def test_text_without_entities_is_returned_as_typed(self) -> None:
         assert parse("milk, eggs; bread.", today=TODAY).reminder == "milk, eggs; bread."
+
+
+# ---------------------------------------------------------------------------
+# TestRelativeDates
+# ---------------------------------------------------------------------------
+
+
+class TestRelativeDates:
+    """An amount before "before" or "after" and a date moves the date.
+
+    TODAY is Wednesday 2026-03-11, so "friday" is 2026-03-13.
+    """
+
+    def test_days_before_a_date(self) -> None:
+        r = parse("send invoice 3 days before mar 20", today=TODAY)
+        assert r.due_date == date(2026, 3, 17)
+        assert r.reminder == "send invoice"
+
+    def test_days_after_a_date(self) -> None:
+        r = parse("send invoice 3 days after mar 20", today=TODAY)
+        assert r.due_date == date(2026, 3, 23)
+        assert r.reminder == "send invoice"
+
+    def test_the_day_before_a_weekday(self) -> None:
+        r = parse("send invoice the day before friday", today=TODAY)
+        assert r.due_date == date(2026, 3, 12)
+        assert r.reminder == "send invoice"
+
+    def test_days_after_a_weekday(self) -> None:
+        r = parse("send invoice 3 days after friday", today=TODAY)
+        assert r.due_date == date(2026, 3, 16)
+
+    def test_weeks(self) -> None:
+        r = parse("send cards 2 weeks before dec 25", today=TODAY)
+        assert r.due_date == date(2026, 12, 11)
+
+    def test_a_week_after(self) -> None:
+        r = parse("follow up a week after dec 1", today=TODAY)
+        assert r.due_date == date(2026, 12, 8)
+
+    def test_number_words(self) -> None:
+        r = parse("send cards two weeks before dec 25", today=TODAY)
+        assert r.due_date == date(2026, 12, 11)
+
+    def test_a_month_is_a_calendar_month(self) -> None:
+        r = parse("book venue a month before dec 25", today=TODAY)
+        assert r.due_date == date(2026, 11, 25)
+
+    def test_months_after_keep_to_the_end_of_a_shorter_month(self) -> None:
+        r = parse("review 1 month after jan 31", today=TODAY)
+        assert r.due_date == date(2027, 2, 28)
+
+    def test_no_estimate_is_set(self) -> None:
+        r = parse("send invoice 3 days before mar 20", today=TODAY)
+        assert r.estimated_minutes is None
+        assert [s.kind for s in r.spans] == [EntityKind.DATE]
+
+    def test_span_covers_the_amount_and_the_date(self) -> None:
+        text = "send invoice 3 days before mar 20"
+        r = parse(text, today=TODAY)
+        (span,) = r.spans
+        assert text[span.start : span.end] == "3 days before mar 20"
+        assert span.display == "Mar 17, 2026"
+
+    def test_another_estimate_in_the_text_is_kept(self) -> None:
+        r = parse("send invoice 3 days before mar 20 2 hours", today=TODAY)
+        assert r.due_date == date(2026, 3, 17)
+        assert r.estimated_minutes == 120
+        assert r.reminder == "send invoice"
+
+    def test_time_beside_it(self) -> None:
+        r = parse("send invoice 3 days before mar 20 at 3pm", today=TODAY)
+        assert r.due_date == date(2026, 3, 17)
+        assert r.due_time == time(15, 0)
+
+    def test_weekday_a_few_days_back_into_the_past_means_the_one_after(self) -> None:
+        # Friday is in two days; three days before it was yesterday.
+        r = parse("send invoice 3 days before friday", today=TODAY)
+        assert r.due_date == date(2026, 3, 17)
+
+    def test_weekday_a_week_or_more_back_is_left_as_written(self) -> None:
+        r = parse("send invoice two weeks before friday", today=TODAY)
+        assert r.due_date == date(2026, 2, 27)
+
+    def test_written_date_in_the_past_is_left_as_written(self) -> None:
+        r = parse("send invoice 3 days before mar 13", today=TODAY)
+        assert r.due_date == date(2026, 3, 10)
+
+    def test_before_without_an_amount_is_the_date_itself(self) -> None:
+        r = parse("send invoice before friday", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+        assert r.reminder == "send invoice"
+
+    def test_hours_before_a_date_are_an_estimate(self) -> None:
+        r = parse("prep 2 hours before friday", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+        assert r.estimated_minutes == 120
+
+    def test_amount_not_next_to_the_direction_is_an_estimate(self) -> None:
+        r = parse("study 3 days friday", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+        assert r.estimated_minutes == 3 * 24 * 60
+
+    def test_reminder_phrase_is_not_a_relative_date(self) -> None:
+        r = parse("send invoice remind me 3 days before friday", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+        assert (r.remind_before_days, r.reminder_cadence) == (3, "once")
+
+    def test_relative_date_and_a_reminder_together(self) -> None:
+        r = parse("send invoice 3 days before mar 20 remind me the day before", today=TODAY)
+        assert r.due_date == date(2026, 3, 17)
+        assert (r.remind_before_days, r.reminder_cadence) == (1, "once")
+        assert r.reminder == "send invoice"

@@ -52,6 +52,8 @@ class TestOnce:
             ("remind me three days before", 3),
             ("remind me a week before", 7),
             ("remind me two weeks before", 14),
+            ("remind me a month before", 30),
+            ("remind me 2 months before", 60),
             ("remind me the day before", 1),
             ("remind me a day before", 1),
             ("remind me a couple of days before", 2),
@@ -183,6 +185,10 @@ class TestDayCount:
 
     def test_weeks_beyond_the_most_are_limited(self) -> None:
         r = run("submit report friday remind me 20 weeks before")
+        assert reminder_of(r) == (ADVANCE_DAYS_RANGE[1], "once")
+
+    def test_months_beyond_the_most_are_limited(self) -> None:
+        r = run("submit report friday remind me 4 months before")
         assert reminder_of(r) == (ADVANCE_DAYS_RANGE[1], "once")
 
     def test_zero_days_is_not_a_reminder(self) -> None:

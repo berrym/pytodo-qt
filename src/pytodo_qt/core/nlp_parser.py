@@ -432,16 +432,17 @@ def _phrase_length_at(
     return 0
 
 
-def _advance_amount(tokens: list[_Token], idx: int) -> tuple[int, int] | None:
-    """Read a number of days at *idx*: "3 days", "a week", "the day",
-    "a couple of days", "two-week".
+def _count_and_unit(
+    tokens: list[_Token], idx: int, unit_words: set[str] | dict[str, int]
+) -> tuple[int, str, int] | None:
+    """Read an amount at *idx*: "3 days", "a week", "the day", "a couple
+    of days", "two-week".
 
-    Returns (days, index after the amount), or None when the tokens at
-    *idx* are not a whole number of days or weeks.
+    Returns (count, unit word, index after the amount), or None when the
+    tokens at *idx* are not a whole number of one of *unit_words*.
     """
     intents = _get_intents()
-    vocab = intents["advance_reminder"]
-    units: dict[str, int] = vocab["units"]
+    amounts = intents["amounts"]
     couple_few: dict[str, int] = intents["couple_few"]
     n = len(tokens)
     if idx >= n:
@@ -451,20 +452,19 @@ def _advance_amount(tokens: list[_Token], idx: int) -> tuple[int, int] | None:
     head, hyphen, tail = _plain_word(tokens[idx]).partition("-")
     if hyphen:
         count = _token_to_number(head)
-        per_unit = units.get(tail)
-        if count is None or per_unit is None or count < 1:
+        if count is None or count < 1 or tail not in unit_words:
             return None
-        return count * per_unit, idx + 1
+        return count, tail, idx + 1
 
     pos = idx
     count = None
-    if tokens[pos].text in vocab["articles"] and pos + 1 < n:
+    if tokens[pos].text in amounts["articles"] and pos + 1 < n:
         following = tokens[pos + 1]
         if following.text in couple_few:
             # "a couple", "a few"
             count = couple_few[following.text]
             pos += 2
-        elif _plain_word(following) in units:
+        elif _plain_word(following) in unit_words:
             # "the day", "a week"
             count = 1
             pos += 1
@@ -474,16 +474,29 @@ def _advance_amount(tokens: list[_Token], idx: int) -> tuple[int, int] | None:
             return None
         count = int(value)
         pos = last + 1
-    if pos < n and tokens[pos - 1].text in couple_few and tokens[pos].text in vocab["partitives"]:
+    if pos < n and tokens[pos - 1].text in couple_few and tokens[pos].text in amounts["partitives"]:
         # "a couple of days"
         pos += 1
 
     if pos >= n or count < 1:
         return None
-    per_unit = units.get(_plain_word(tokens[pos]))
-    if per_unit is None:
+    unit = _plain_word(tokens[pos])
+    if unit not in unit_words:
         return None
-    return count * per_unit, pos + 1
+    return count, unit, pos + 1
+
+
+def _advance_amount(tokens: list[_Token], idx: int) -> tuple[int, int] | None:
+    """Read a number of days at *idx* for an advance reminder.
+
+    Returns (days, index after the amount), or None.
+    """
+    units: dict[str, int] = _get_intents()["advance_reminder"]["units"]
+    amount = _count_and_unit(tokens, idx, units)
+    if amount is None:
+        return None
+    count, unit, after = amount
+    return count * units[unit], after
 
 
 def _advance_phrase_at(tokens: list[_Token], idx: int) -> tuple[int, int, str] | None:
@@ -3042,6 +3055,115 @@ def _next_occurrence_date(
 
 
 # ---------------------------------------------------------------------------
+# Relative dates
+# ---------------------------------------------------------------------------
+
+# How far back from the direction word an amount can start: "a couple of
+# days" is four tokens.
+_MAX_AMOUNT_TOKENS = 5
+
+
+def _apply_date_offset(
+    text: str, tokens: list[_Token], tracker: _SpanTracker, due_date: date | None, today: date
+) -> tuple[date | None, bool]:
+    """Move the due date by an amount written before it: "3 days before
+    friday" is the Tuesday, "a month after dec 1" is Jan 1.
+
+    The date step reads "before friday" as Friday, and the estimate step
+    before it reads "3 days" as a duration. This runs after both: it
+    joins the amount to the date span, moves the date, and gives up the
+    estimate the amount was taken for.
+
+    Returns the due date and whether an estimate was given up, in which
+    case the caller looks for another.
+    """
+    date_span = next((s for s in tracker.spans if s.kind is EntityKind.DATE), None)
+    if due_date is None or date_span is None:
+        return due_date, False
+    vocab = _get_intents()["relative_date"]
+    directions: dict[str, int] = vocab["directions"]
+    units: dict[str, int] = vocab["units"]
+    month_units: set[str] = vocab["month_units"]
+
+    first = next((i for i, tok in enumerate(tokens) if tok.start == date_span.start), None)
+    if first is None:
+        return due_date, False
+    # The direction word is the date's own prefix, or stands free before it.
+    if tokens[first].text in directions:
+        direction_idx = first
+    elif (
+        first > 0
+        and tokens[first - 1].text in directions
+        and tracker.is_free(tokens[first - 1].start, tokens[first - 1].end)
+    ):
+        direction_idx = first - 1
+    else:
+        return due_date, False
+
+    # The longest amount that ends at the direction word.
+    amount: tuple[int, str, int] | None = None
+    amount_idx = direction_idx
+    for start in range(max(direction_idx - _MAX_AMOUNT_TOKENS, 0), direction_idx):
+        found = _count_and_unit(tokens, start, set(units) | month_units)
+        if found is not None and found[2] == direction_idx:
+            amount, amount_idx = found, start
+            break
+    if amount is None:
+        return due_date, False
+
+    # The amount's words are free, or were taken as an estimate of
+    # exactly those words.
+    amount_start = tokens[amount_idx].start
+    amount_end = tokens[direction_idx - 1].end
+    estimate = next(
+        (
+            s
+            for s in tracker.spans
+            if s.kind is EntityKind.ESTIMATE and s.start < amount_end and s.end > amount_start
+        ),
+        None,
+    )
+    if estimate is not None:
+        if estimate.start < amount_start or estimate.end > amount_end:
+            return due_date, False
+        tracker.release(estimate.start, estimate.end)
+    if not tracker.is_free(amount_start, amount_end):
+        if estimate is not None:
+            tracker.reserve(estimate)
+        return due_date, False
+
+    count, unit, _after = amount
+    sign = directions[tokens[direction_idx].text]
+
+    def moved(base: date) -> date:
+        if unit in month_units:
+            return _add_months(base, sign * count)
+        return base + timedelta(days=sign * count * units[unit])
+
+    result = moved(due_date)
+    # A weekday name means its next occurrence. When counting back a few
+    # days from that lands in the past, the occurrence after it is
+    # meant: on a Thursday, "3 days before friday" is next week's
+    # Tuesday. A week or more back is left as written.
+    named = [tok for tok in tokens[direction_idx + 1 :] if tok.end <= date_span.end]
+    within_a_week = unit not in month_units and count * units[unit] < 7
+    if within_a_week and len(named) == 1 and _is_day_name(named[0].text) and result < today:
+        result = moved(due_date + timedelta(days=7))
+
+    tracker.release(date_span.start, date_span.end)
+    tracker.reserve(
+        EntitySpan(amount_start, date_span.end, EntityKind.DATE, result.strftime("%b %d, %Y"))
+    )
+    return result, estimate is not None
+
+
+def _is_day_name(word: str) -> bool:
+    import calendar as _cal
+
+    return any(word in (_cal.day_name[i].lower(), _cal.day_abbr[i].lower()) for i in range(7))
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -3115,6 +3237,13 @@ def parse(
     due_time_end = dt_result.due_time_end
     due_time_block = dt_result.due_time_block
     event_date = dt_result.event_date
+
+    # An amount written before the date moves it ("3 days before
+    # friday"). If the amount had been taken as an estimate, look for
+    # another.
+    due_date, estimate_given_up = _apply_date_offset(text, tokens, tracker, due_date, today)
+    if estimate_given_up:
+        estimated_minutes = _extract_estimated_minutes(tokens, tracker)
 
     # Apply recurrence time hint (e.g., "every morning" → 9:00)
     if rec_time is not None and due_time is None:
