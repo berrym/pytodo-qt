@@ -24,6 +24,7 @@ from ..core.logger import Logger
 from ..core.meeting_link import detect_meeting_link
 from ..core.models import TodoList, _format_time
 from ..core.notification_policy import (
+    ComingUp,
     Evaluation,
     Kind,
     PolicySettings,
@@ -40,6 +41,8 @@ logger = Logger(__name__)
 _MAX_LINES = 5
 # Missed items named inline in the daily summary.
 _MAX_SUMMARY_MISSED = 3
+# Advance reminders named inline in the daily summary.
+_MAX_SUMMARY_COMING_UP = 3
 # Log entries older than this are deleted. Nothing looks further back
 # than the current day, so the margin only bounds the table's size.
 _LOG_RETENTION = timedelta(days=30)
@@ -175,7 +178,20 @@ class TaskNotifier(QObject):
             if hidden > 0:
                 shown.append(self.tr("+{count} more").format(count=hidden))
             lines.append(self.tr("Earlier today: {items}").format(items=", ".join(shown)))
+        if summary.coming_up:
+            shown = [self._coming_up(item) for item in summary.coming_up[:_MAX_SUMMARY_COMING_UP]]
+            hidden = len(summary.coming_up) - len(shown)
+            if hidden > 0:
+                shown.append(self.tr("+{count} more").format(count=hidden))
+            lines.append(self.tr("Coming up: {items}").format(items=", ".join(shown)))
         return self.tr("Today"), "\n".join(lines)
+
+    def _coming_up(self, item: ComingUp) -> str:
+        """An advance reminder as it reads within the summary's line."""
+        title = self._title(item.title)
+        if item.days_until == 1:
+            return self.tr("{title} tomorrow").format(title=title)
+        return self.tr("{title} in {days} days").format(title=title, days=item.days_until)
 
     def format_missed(self, missed: tuple[TimedItem, ...]) -> tuple[str, str]:
         """Return (title, body) for reminders whose moment passed while

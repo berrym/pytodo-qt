@@ -963,6 +963,9 @@ class MainWindow(QMainWindow):
         self._detail_panel.item_due_date_changed.connect(self._on_item_due_date_changed)
         self._detail_panel.item_due_time_changed.connect(self._on_item_due_time_changed)
         self._detail_panel.item_due_time_end_changed.connect(self._on_item_due_time_end_changed)
+        self._detail_panel.item_advance_reminder_changed.connect(
+            self._on_item_advance_reminder_changed
+        )
         self._detail_panel.toggle_requested.connect(self._on_toggle_todo)
         self._detail_panel.edit_tags_requested.connect(self._on_edit_tags_for_item)
         self._detail_panel.edit_requested.connect(self._on_detail_panel_edit)
@@ -1017,6 +1020,36 @@ class MainWindow(QMainWindow):
         if item is None:
             return
         self._detail_panel.set_item(item, active_list)
+
+    def _on_item_advance_reminder_changed(self, item_id: object, days: int, cadence: str) -> None:
+        """Store a task's advance reminder as one undoable step.
+
+        The reminder is two fields, a day count and a cadence, that only
+        mean something together.
+        """
+        from uuid import UUID as _UUID
+
+        from .commands import SetFieldCommand
+
+        if not isinstance(item_id, _UUID):
+            return
+        active_list = self._database.active_list
+        if active_list is None:
+            return
+        item = active_list.get_item(item_id)
+        if item is None:
+            return
+        changes = [
+            (name, value)
+            for name, value in (("remind_before_days", days), ("reminder_cadence", cadence))
+            if getattr(item, name) != value
+        ]
+        if not changes:
+            return
+        self._undo_stack.beginMacro(self.tr("Set advance reminder"))
+        for name, value in changes:
+            self._undo_stack.push(SetFieldCommand(self, active_list.id, item_id, name, value))
+        self._undo_stack.endMacro()
 
     def _on_detail_panel_edit(self, item_id: object, field_name: str, value: object) -> None:
         """Handle generic field edits from the detail panel (estimated_minutes, etc.)."""

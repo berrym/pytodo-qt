@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.models import TodoItem, TodoList, format_duration
+from .advance_reminder import AdvanceReminderEditor
 
 _W = TypeVar("_W", bound=QWidget)
 
@@ -57,6 +58,8 @@ class TaskDetailPanel(QDockWidget):
     item_due_date_changed = pyqtSignal(object, object)
     item_due_time_changed = pyqtSignal(object, object)
     item_due_time_end_changed = pyqtSignal(object, object)
+    # (item_id, remind_before_days, reminder_cadence)
+    item_advance_reminder_changed = pyqtSignal(object, int, str)
     toggle_requested = pyqtSignal()
     edit_tags_requested = pyqtSignal(object)
     # Subtask CRUD: emitted so MainWindow can route each action through
@@ -359,6 +362,28 @@ class TaskDetailPanel(QDockWidget):
         form.addRow(self.tr("Time block:"), self._time_block_value)
         form.addRow(self.tr("Event date:"), self._event_date_value)
 
+        # Not among the tracked editables: it is live only in edit mode
+        # *and* with a due date, which _update_advance_editor_enabled
+        # works out. Stacked, since the panel is a narrow column.
+        self._advance_editor = AdvanceReminderEditor(stacked=True, hide_days_when_off=True)
+        self._advance_editor.setToolTip(
+            self.tr("Mentions the task in the daily summary on the days before it is due.")
+        )
+        self._advance_editor.changed.connect(self._on_advance_reminder_changed)
+        form.addRow(self.tr("Remind ahead:"), self._advance_editor)
+
+    def _update_advance_editor_enabled(self) -> None:
+        """An advance reminder counts back from the due date; without
+        one there is nothing to set."""
+        has_due_date = self._item is not None and self._item.due_date is not None
+        self._advance_editor.setEnabled(self._edit_mode and has_due_date)
+
+    def _on_advance_reminder_changed(self, days: int, cadence: str) -> None:
+        if self._populating or not self._edit_mode:
+            return
+        if self._item is not None:
+            self.item_advance_reminder_changed.emit(self._item.id, days, cadence)
+
     def _on_due_date_changed(self, qdate: QDate) -> None:
         if self._populating or not self._edit_mode:
             return
@@ -641,6 +666,7 @@ class TaskDetailPanel(QDockWidget):
                 )
             else:
                 w.setEnabled(enabled)
+        self._update_advance_editor_enabled()
         # Stylesheet swap: view mode hides borders/buttons for clean look
         style = self._EDIT_MODE_STYLE if enabled else self._VIEW_MODE_STYLE
         self._detail_widget.setStyleSheet(style)
@@ -806,6 +832,9 @@ class TaskDetailPanel(QDockWidget):
             self._event_date_value.setText(item.event_date.strftime("%a, %b %d %Y"))
         else:
             self._event_date_value.setText("\u2014")
+
+        self._advance_editor.set_value(item.remind_before_days, item.reminder_cadence)
+        self._update_advance_editor_enabled()
 
         # Estimates
         self._est_minutes_spin.setValue(item.estimated_minutes)

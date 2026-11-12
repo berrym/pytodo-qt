@@ -123,15 +123,42 @@ nothing when a timed commitment is actually approaching.
 
 ### Advance deadline reminders
 
-`remind_before_days` and `reminder_cadence` become functional:
+`remind_before_days` and `reminder_cadence` become functional. The window of
+an advance reminder runs from `due_date − N` through the day before the due
+date, in logical days; on the due date the item is counted as due today.
 
-- `once` — a line in the daily summary on the day `due_date − N`.
-- `daily_until_due` — a line in each daily summary from `due_date − N`
-  through the day before the due date.
-- `none` or `remind_before_days == 0` — no advance reminder.
+- `once` — a mention in the first daily summary delivered inside the window.
+  That is the summary of `due_date − N` when one is delivered that day. When
+  none is (the app was not running, or the summary was held until the day
+  ended), the next summary inside the window carries it, so the one reminder
+  asked for is not lost. It is recorded in the fired record under the kind
+  `advance` with the due date as the occurrence, when the summary carrying it
+  is delivered; rescheduling the item re-arms it.
+- `daily_until_due` — a mention in each daily summary inside the window.
+  Nothing is recorded: the summary is already once per day.
+- `none`, an unknown cadence, or `remind_before_days < 1` — no advance
+  reminder.
 
-Advance reminders never produce their own banner. An advance line on its own
-is enough to produce a summary on a day that would otherwise have none.
+Advance reminders never produce their own banner, and so none appear while
+the daily summary is switched off. An advance line on its own is enough to
+produce a summary on a day that would otherwise have none.
+
+The summary names them on one line, soonest first, at most three and then a
+remainder count: `Coming up: Passport renewal tomorrow, Tax return in 3 days`.
+
+Both fields are set through one control, "Remind ahead": a choice of Off,
+Once, or Every day until due, with a day count from 1 to 90 that applies
+unless the choice is Off. A day count with the cadence `none` has no meaning,
+so the two are not offered separately, and Off stores `0` and `none`.
+
+- Add Todo: a row in the Scheduling group, disabled until a due date is set.
+  A note under it says so when the daily summary is switched off.
+- Detail panel: a row in the Schedule section, editable in edit mode on a
+  task that has a due date. A change is one undo step. Add Todo only creates
+  tasks, so this is where an existing task is given a reminder.
+- Not included: phrases such as "remind me 3 days before" in the smart
+  input, and a control in the web interface. The web API already carries
+  both fields.
 
 ### Catch-up
 
@@ -391,6 +418,11 @@ The policy module is covered by fixed-clock unit tests, including:
 - Minutely recurrence: no lead reminder; due-now per occurrence.
 - A recurring timed item still produces its due-now alert in the tick where
   it is auto-advanced.
+- Advance reminders: the window's first and last day, `once` given once and
+  made up by a later summary when the first day's was not delivered, a held
+  summary not using it up, `daily_until_due` on every day of the window,
+  rescheduling re-arming, private lists and completed items left out, and
+  the cap on the summary line.
 - Config round-trip, loading of pre-existing `[notifications]` sections, and
   values of the wrong kind.
 - Schema v21 → v22 migration, including that `items.notified_at` survives
@@ -407,7 +439,7 @@ banner text, coalesced layout, and the regrouped Notifications tab.
 2. Quiet hours and focus-session hold.
 3. Configuration keys, migration of existing keys, and the regrouped
    Notifications tab.
-4. Advance deadline reminders, with controls for `remind_before_days` and
+4. Advance deadline reminders, with a control for `remind_before_days` and
    `reminder_cadence` in the AddTodo dialog and the detail panel.
 5. Evening preview.
 

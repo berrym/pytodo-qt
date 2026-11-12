@@ -37,6 +37,7 @@ from ...core.config import get_config
 from ...core.logger import Logger
 from ...core.models import TodoItem
 from ...core.nlp_parser import EntityKind, ParseResult, replace_or_append_category
+from ..widgets.advance_reminder import AdvanceReminderEditor
 from ..widgets.smart_input import SmartInputWidget
 from ..widgets.time_combo import TimeComboBox
 
@@ -272,6 +273,33 @@ class AddTodoDialog(QDialog):
         event_date_layout.addWidget(self.event_date_checkbox)
         event_date_layout.addWidget(self.event_date_edit, 1)
         sched_form.addRow(self.tr("Event Date:"), event_date_layout)
+
+        # Advance reminder — a line in the daily summary on the days
+        # before the due date. Meaningless without a due date, so the
+        # row follows the due-date checkbox.
+        self.advance_reminder_editor = AdvanceReminderEditor()
+        self.advance_reminder_editor.setEnabled(False)
+        self.advance_reminder_editor.setToolTip(
+            self.tr("Mentions the task in the daily summary on the days before it is due.")
+        )
+        self._advance_reminder_label = QLabel(self.tr("Rem&ind ahead:"))
+        self._advance_reminder_label.setBuddy(self.advance_reminder_editor.cadence_combo)
+        self._advance_reminder_label.setEnabled(False)
+        sched_form.addRow(self._advance_reminder_label, self.advance_reminder_editor)
+        # Advance reminders have no notification of their own.
+        self._advance_reminder_note = QLabel(
+            self.tr("The daily summary is off in Preferences, so this will not be shown.")
+        )
+        self._advance_reminder_note.setWordWrap(True)
+        self._advance_reminder_note.setStyleSheet(
+            "color: palette(placeholderText); font-style: italic;"
+        )
+        sched_form.addRow("", self._advance_reminder_note)
+        notifications = get_config().notifications
+        sched_form.setRowVisible(
+            self._advance_reminder_note,
+            not (notifications.enabled and notifications.summary_enabled),
+        )
 
         adv_layout.addWidget(sched_group)
 
@@ -654,6 +682,8 @@ class AddTodoDialog(QDialog):
         enabled = state == Qt.CheckState.Checked.value
         self.due_date_edit.setEnabled(enabled)
         self.due_time_checkbox.setEnabled(enabled)
+        self.advance_reminder_editor.setEnabled(enabled)
+        self._advance_reminder_label.setEnabled(enabled)
         # Recurrence is always available — auto-sets today if no date
         if not enabled:
             self.due_time_checkbox.setChecked(False)
@@ -998,6 +1028,12 @@ class AddTodoDialog(QDialog):
                 qd = self.event_date_edit.date()
                 event_date = date(qd.year(), qd.month(), qd.day())
 
+            # An advance reminder counts back from the due date, so it
+            # is kept only when the due date was set here.
+            remind_before_days, reminder_cadence = 0, "none"
+            if self.due_date_checkbox.isChecked():
+                remind_before_days, reminder_cadence = self.advance_reminder_editor.value()
+
             self._item = TodoItem(
                 reminder=reminder,
                 priority=priority,
@@ -1006,6 +1042,8 @@ class AddTodoDialog(QDialog):
                 due_time_end=due_time_end,
                 due_time_block=time_block,
                 event_date=event_date,
+                remind_before_days=remind_before_days,
+                reminder_cadence=reminder_cadence,
                 tags=tags,
                 recurrence_type=recurrence_type,
                 recurrence_interval=recurrence_interval,

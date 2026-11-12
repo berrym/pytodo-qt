@@ -15,6 +15,9 @@ Notification kinds:
   when its start arrives.
 - **Daily summary** — once per logical day: how many items are due
   today, how many are overdue, and the next item with a time.
+- **Advance reminder** — a line in the daily summary on the days
+  leading up to an item's due date, for items that ask for one. It is
+  never a notification of its own.
 - **Missed items** — reminders whose moment passed while nothing was
   evaluating (app closed, machine asleep). They are reported once,
   inside the daily summary when it fires in the same evaluation and on
@@ -67,6 +70,7 @@ class Kind(Enum):
     LEAD = "lead"
     DUE_NOW = "due_now"
     SUMMARY = "summary"
+    ADVANCE = "advance"
 
 
 class DueNowMode(Enum):
@@ -138,6 +142,26 @@ class TimedItem:
     block: str | None
 
 
+class AdvanceCadence(Enum):
+    """How often an item's advance reminder appears. The values are the
+    ones stored in ``TodoItem.reminder_cadence``."""
+
+    NONE = "none"
+    ONCE = "once"
+    DAILY_UNTIL_DUE = "daily_until_due"
+
+
+@dataclass(frozen=True)
+class ComingUp:
+    """An item whose due date is near enough for its advance reminder."""
+
+    item_id: UUID
+    title: str
+    due_date: date
+    days_until: int
+    """Whole logical days from the summary's day to the due date; 1 is tomorrow."""
+
+
 @dataclass(frozen=True)
 class Summary:
     """The once-per-day overview."""
@@ -150,6 +174,8 @@ class Summary:
     """The earliest item still ahead in the day, if any has a time."""
     missed: tuple[TimedItem, ...]
     """Reminders from earlier in the day that were never delivered."""
+    coming_up: tuple[ComingUp, ...] = ()
+    """Advance reminders: items due on a later day, soonest first."""
 
 
 @dataclass(frozen=True)
@@ -256,6 +282,27 @@ def anchor_for(item: TodoItem, time_blocks: TimeBlockConfig) -> tuple[datetime, 
     return None
 
 
+def advance_reminder_for(item: TodoItem, day: date) -> ComingUp | None:
+    """Return the advance reminder an item calls for on a given day.
+
+    An item asks for one with ``remind_before_days`` of at least 1 and a
+    cadence of once or daily-until-due. The reminder applies from that
+    many days before the due date through the day before it; on the due
+    date itself the item is counted as due today instead.
+    """
+    if item.due_date is None or item.remind_before_days < 1:
+        return None
+    if item.reminder_cadence not in (
+        AdvanceCadence.ONCE.value,
+        AdvanceCadence.DAILY_UNTIL_DUE.value,
+    ):
+        return None
+    days_until = (item.due_date - day).days
+    if not 1 <= days_until <= item.remind_before_days:
+        return None
+    return ComingUp(item.id, item.reminder, item.due_date, days_until)
+
+
 def _to_ms(moment: datetime) -> int:
     return int(moment.timestamp() * 1000)
 
@@ -305,6 +352,8 @@ def evaluate(
     reminders: list[Reminder] = []
     missed: list[TimedItem] = []
     held: list[TimedItem] = []
+    coming_up: list[ComingUp] = []
+    advance_keys: list[FiredKey] = []
     newly_fired: list[FiredKey] = []
     due_today = 0
     overdue = 0
@@ -316,6 +365,19 @@ def evaluate(
             due_today += 1
         elif item.due_date < day:
             overdue += 1
+        else:
+            advance = advance_reminder_for(item, day)
+            if advance is not None:
+                # "Once" means the first summary in the window, which is
+                # not necessarily the window's first day: the summary may
+                # not have been given then. The key carries the due
+                # date, so a rescheduled item is reminded again.
+                advance_key = FiredKey(str(item.id), Kind.ADVANCE.value, item.due_date.isoformat())
+                once = item.reminder_cadence == AdvanceCadence.ONCE.value
+                if not (once and advance_key in fired):
+                    coming_up.append(advance)
+                    if once:
+                        advance_keys.append(advance_key)
 
         anchored = anchor_for(item, time_blocks)
         if anchored is None:
@@ -397,6 +459,7 @@ def evaluate(
     reminders.sort(key=lambda r: (r.at, r.title))
     missed.sort(key=lambda m: (m.at, m.title))
     held.sort(key=lambda h: (h.at, h.title))
+    coming_up.sort(key=lambda c: (c.due_date, c.title))
 
     summary: Summary | None = None
     held_summary = False
@@ -416,12 +479,17 @@ def evaluate(
             summary_at += timedelta(days=1)
         if now >= summary_at:
             if digests_held:
-                held_summary = bool(due_today or overdue or held)
+                held_summary = bool(due_today or overdue or held or coming_up)
             else:
                 newly_fired.append(summary_key)
-                if due_today or overdue or missed:
-                    summary = Summary(day, due_today, overdue, next_up, tuple(missed))
+                if due_today or overdue or missed or coming_up:
+                    summary = Summary(
+                        day, due_today, overdue, next_up, tuple(missed), tuple(coming_up)
+                    )
                     missed = []
+                    # Recorded only now that the summary carrying them
+                    # is given; a held summary leaves them unrecorded.
+                    newly_fired.extend(advance_keys)
 
     return Evaluation(
         reminders=tuple(reminders),

@@ -63,6 +63,7 @@ from pytodo_qt.core.config import TimeBlockConfig  # noqa: E402
 from pytodo_qt.core.database import DatabaseStorage  # noqa: E402
 from pytodo_qt.core.models import TodoItem, TodoList  # noqa: E402
 from pytodo_qt.core.notification_policy import (  # noqa: E402
+    ComingUp,
     Evaluation,
     Kind,
     PolicySettings,
@@ -114,6 +115,11 @@ the log shows what is held. Sleep until 07:00: only the medication missed at
 <li><b>Timed reminders pass through quiet hours.</b> Sleep until 22:55, press
 <i>+10 min</i>: the flight reminder appears at 23:00. With <i>Silence timed
 reminders</i> ticked it is held instead.</li>
+<li><b>Advance reminders.</b> Press <i>+10 min</i>: today's summary ends with
+"Coming up: Book dentist in 2 days". Sleep until 09:00 three times: the next
+day reads "Book dentist tomorrow, File tax return in 2 days", the day after
+has no such line (the dentist is due, the tax return was mentioned once), and
+neither has the last day.</li>
 </ol>"""
 
 
@@ -189,7 +195,9 @@ class HoldSimulation(QGroupBox):
         tasks = QLabel(
             "<b>Sample tasks</b> — yesterday: Renew passport. Today: Pay rent (no time), "
             "Submit expense report 09:30, Team standup 10:00–10:15, Check in for flight "
-            "23:15. Tomorrow: Take medication 06:30.<br>"
+            "23:15. Tomorrow: Take medication 06:30. In 2 days: Book dentist "
+            "(remind every day, from 3 days ahead). In 3 days: File tax return "
+            "(remind once, 2 days ahead).<br>"
             "<b>Settings</b> — summary 09:00, reminders 15 min ahead, quiet hours "
             "22:00–07:00."
         )
@@ -224,6 +232,9 @@ class HoldSimulation(QGroupBox):
             task("Team standup", 0, due_time=time(10), due_time_end=time(10, 15)),
             task("Check in for flight", 0, due_time=time(23, 15)),
             task("Take medication", 1, due_time=time(6, 30)),
+            # Advance reminders: one mention, and one every day.
+            task("File tax return", 3, remind_before_days=2, reminder_cadence="once"),
+            task("Book dentist", 2, remind_before_days=3, reminder_cadence="daily_until_due"),
         ]
         return TodoList(name="Sample", items={item.id: item for item in items})
 
@@ -292,6 +303,10 @@ class HoldSimulation(QGroupBox):
     def shut_down(self) -> None:
         self._storage.close()
         self._scratch.cleanup()
+
+
+def _coming(title: str, days: int) -> ComingUp:
+    return ComingUp(uuid4(), title, TODAY + timedelta(days=days), days)
 
 
 class Harness(QMainWindow):
@@ -434,6 +449,36 @@ class Harness(QMainWindow):
             (
                 "Daily summary — only overdue",
                 lambda: self._show(*n.format_summary(Summary(TODAY, 0, 3, None, ()))),
+            ),
+            (
+                "Daily summary — with advance reminders",
+                lambda: self._show(
+                    *n.format_summary(
+                        Summary(
+                            TODAY,
+                            4,
+                            1,
+                            _timed("Submit expense report", _at(9, 30)),
+                            (),
+                            (_coming("Passport renewal", 1), _coming("Tax return", 3)),
+                        )
+                    )
+                ),
+            ),
+            (
+                "Daily summary — only advance reminders, more than fit (5)",
+                lambda: self._show(
+                    *n.format_summary(
+                        Summary(
+                            TODAY,
+                            0,
+                            0,
+                            None,
+                            (),
+                            tuple(_coming(f"Task number {i}", i) for i in range(1, 6)),
+                        )
+                    )
+                ),
             ),
             (
                 "Daily summary — late launch, with missed items",

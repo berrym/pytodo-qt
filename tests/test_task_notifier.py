@@ -15,6 +15,7 @@ from pytodo_qt.core.config import TimeBlockConfig
 from pytodo_qt.core.database import DatabaseStorage
 from pytodo_qt.core.models import TodoItem, TodoList
 from pytodo_qt.core.notification_policy import (
+    ComingUp,
     Kind,
     PolicySettings,
     Reminder,
@@ -446,3 +447,68 @@ class TestMissedText:
         lines = body.split("\n")
         assert len(lines) == 6
         assert lines[-1] == "+2 more"
+
+
+def coming(title: str, days: int) -> ComingUp:
+    return ComingUp(uuid4(), title, DAY + timedelta(days=days), days)
+
+
+class TestComingUpText:
+    def _body(self, harness, *items: ComingUp, due_today: int = 0) -> str:
+        summary = Summary(DAY, due_today, 0, None, (), tuple(items))
+        return harness.notifier.format_summary(summary)[1]
+
+    def test_tomorrow(self, harness):
+        assert self._body(harness, coming("Passport", 1)) == "Coming up: Passport tomorrow"
+
+    def test_in_some_days(self, harness):
+        assert self._body(harness, coming("Tax return", 3)) == "Coming up: Tax return in 3 days"
+
+    def test_several_on_one_line(self, harness):
+        body = self._body(harness, coming("Passport", 1), coming("Tax return", 3))
+        assert body == "Coming up: Passport tomorrow, Tax return in 3 days"
+
+    def test_names_at_most_three(self, harness):
+        items = [coming(f"Task {n}", n) for n in range(1, 6)]
+        body = self._body(harness, *items)
+        assert body == "Coming up: Task 1 tomorrow, Task 2 in 2 days, Task 3 in 3 days, +2 more"
+
+    def test_follows_the_other_lines(self, harness):
+        body = self._body(harness, coming("Passport", 1), due_today=2)
+        assert body.splitlines() == ["2 due today", "Coming up: Passport tomorrow"]
+
+    def test_meeting_link_is_dropped_from_the_title(self, harness):
+        body = self._body(harness, coming("Review https://meet.google.com/abc-defg-hij", 2))
+        assert body == "Coming up: Review in 2 days"
+
+    def test_summary_without_any_has_no_such_line(self, harness):
+        assert "Coming up" not in self._body(harness, due_today=1)
+
+
+class TestAdvanceReminderDelivery:
+    def test_delivered_in_the_summary_and_recorded(self, harness):
+        harness.settings = PolicySettings()
+        item = harness.add(
+            make_item(
+                "Tax return",
+                due_date=DAY + timedelta(days=3),
+                remind_before_days=3,
+                reminder_cadence="once",
+            )
+        )
+        assert harness.tick(at(9)) == [("Today", "Coming up: Tax return in 3 days")]
+        due = (DAY + timedelta(days=3)).isoformat()
+        assert (str(item.id), "advance", due) in harness.storage.get_fired_notifications()
+
+    def test_once_is_not_repeated_the_next_day(self, harness):
+        harness.settings = PolicySettings()
+        harness.add(
+            make_item(
+                "Tax return",
+                due_date=DAY + timedelta(days=3),
+                remind_before_days=3,
+                reminder_cadence="once",
+            )
+        )
+        harness.tick(at(9))
+        assert harness.tick(at(9, 0, DAY + timedelta(days=1))) == []

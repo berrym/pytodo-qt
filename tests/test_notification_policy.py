@@ -15,11 +15,13 @@ from pytodo_qt.core.config import TimeBlockConfig
 from pytodo_qt.core.models import TodoItem, TodoList
 from pytodo_qt.core.notification_policy import (
     STALE_AFTER,
+    ComingUp,
     DueNowMode,
     Evaluation,
     FiredKey,
     Kind,
     PolicySettings,
+    advance_reminder_for,
     anchor_for,
     evaluate,
     in_quiet_hours,
@@ -1082,6 +1084,226 @@ class TestFocusHold:
         result = session.tick(at(9, 0, tomorrow))
         assert result.summary is not None
         assert result.summary.overdue == 1
+
+
+# ---------------------------------------------------------------------------
+# Advance reminders
+# ---------------------------------------------------------------------------
+
+
+def ahead(title: str, days_from_now: int, remind: int, cadence: str = "once", **fields) -> TodoItem:
+    """An item due ``days_from_now`` days after DAY with an advance reminder."""
+    return make_item(
+        title,
+        due_date=DAY + timedelta(days=days_from_now),
+        remind_before_days=remind,
+        reminder_cadence=cadence,
+        **fields,
+    )
+
+
+def coming_up_titles(result: Evaluation) -> list[str]:
+    return [] if result.summary is None else [c.title for c in result.summary.coming_up]
+
+
+class TestAdvanceReminderFor:
+    def test_inside_the_window(self):
+        item = ahead("Tax return", 3, remind=3)
+        assert advance_reminder_for(item, DAY) == ComingUp(
+            item.id, "Tax return", DAY + timedelta(days=3), 3
+        )
+
+    def test_before_the_window(self):
+        assert advance_reminder_for(ahead("Tax return", 4, remind=3), DAY) is None
+
+    def test_the_day_before_is_the_last_day(self):
+        reminder = advance_reminder_for(ahead("Tax return", 1, remind=3), DAY)
+        assert reminder is not None
+        assert reminder.days_until == 1
+
+    def test_not_on_the_due_date_itself(self):
+        assert advance_reminder_for(ahead("Tax return", 0, remind=3), DAY) is None
+
+    def test_not_once_overdue(self):
+        assert advance_reminder_for(ahead("Tax return", -1, remind=3), DAY) is None
+
+    @pytest.mark.parametrize("cadence", ["none", "", "weekly"])
+    def test_cadence_that_asks_for_nothing(self, cadence):
+        assert advance_reminder_for(ahead("Tax return", 2, remind=3, cadence=cadence), DAY) is None
+
+    @pytest.mark.parametrize("days", [0, -2])
+    def test_no_day_count(self, days):
+        assert advance_reminder_for(ahead("Tax return", 2, remind=days), DAY) is None
+
+    def test_no_due_date(self):
+        item = make_item(remind_before_days=3, reminder_cadence="once")
+        assert advance_reminder_for(item, DAY) is None
+
+
+class TestAdvanceReminders:
+    SUMMARY = PolicySettings()
+
+    def test_appears_in_the_summary(self):
+        result = run([ahead("Tax return", 3, remind=3)], at(9), settings=self.SUMMARY)
+        assert result.summary is not None
+        assert [(c.title, c.days_until) for c in result.summary.coming_up] == [("Tax return", 3)]
+
+    def test_alone_is_enough_for_a_summary(self):
+        result = run([ahead("Tax return", 3, remind=3)], at(9), settings=self.SUMMARY)
+        assert result.summary is not None
+        assert (result.summary.due_today, result.summary.overdue) == (0, 0)
+        assert result.summary.next_up is None
+
+    def test_is_not_counted_as_due_today_or_overdue(self):
+        items = [make_item(due_date=DAY), ahead("Tax return", 2, remind=3)]
+        result = run(items, at(9), settings=self.SUMMARY)
+        assert result.summary is not None
+        assert (result.summary.due_today, result.summary.overdue) == (1, 0)
+
+    def test_produces_no_notification_of_its_own(self):
+        """Outside the summary there is nothing: no reminder, nothing missed."""
+        session = Session([ahead("Tax return", 3, remind=3)], self.SUMMARY)
+        session.tick(at(9))
+        later = session.tick(at(12))
+        assert not later.has_notifications
+
+    def test_nothing_before_the_summary_time(self):
+        result = run([ahead("Tax return", 3, remind=3)], at(8, 59), settings=self.SUMMARY)
+        assert not result.has_notifications
+
+    def test_nothing_with_the_summary_off(self):
+        result = run([ahead("Tax return", 3, remind=3)], at(9), settings=NO_SUMMARY)
+        assert not result.has_notifications
+        assert result.fired == ()
+
+    def test_sorted_soonest_first(self):
+        items = [
+            ahead("Later", 5, remind=7, cadence="daily_until_due"),
+            ahead("Sooner", 2, remind=7, cadence="daily_until_due"),
+            ahead("Also sooner", 2, remind=7, cadence="daily_until_due"),
+        ]
+        result = run(items, at(9), settings=self.SUMMARY)
+        assert coming_up_titles(result) == ["Also sooner", "Sooner", "Later"]
+
+    def test_timed_item_is_reminded_ahead_like_any_other(self):
+        item = ahead("Flight", 2, remind=2, due_time=time(6))
+        assert coming_up_titles(run([item], at(9), settings=self.SUMMARY)) == ["Flight"]
+
+    def test_completed_item_is_left_out(self):
+        item = ahead("Tax return", 2, remind=3, complete=True)
+        assert run([item], at(9), settings=self.SUMMARY).summary is None
+
+    def test_private_list_is_left_out(self):
+        private = make_list(ahead("Secret", 2, remind=3), private=True)
+        assert run([private], at(9), settings=self.SUMMARY).summary is None
+
+    def test_follows_the_logical_day(self):
+        """At 02:00 with a 04:00 day start it is still the day before,
+        so an item due on DAY is one day off, not due today."""
+        settings = PolicySettings(day_start_hour=4, quiet_hours_enabled=False)
+        item = make_item("Tax return", due_date=DAY, remind_before_days=1, reminder_cadence="once")
+        result = run([item], at(2), settings=settings)
+        assert result.summary is not None
+        assert [(c.title, c.days_until) for c in result.summary.coming_up] == [("Tax return", 1)]
+
+
+class TestAdvanceReminderOnce:
+    SUMMARY = PolicySettings()
+
+    def _days(self, session: Session, count: int) -> list[list[str]]:
+        """Titles in each day's 09:00 summary over ``count`` days from DAY."""
+        return [
+            coming_up_titles(session.tick(at(9, 0, DAY + timedelta(days=offset))))
+            for offset in range(count)
+        ]
+
+    def test_given_once_on_the_first_day_of_the_window(self):
+        session = Session([ahead("Tax return", 5, remind=3)], self.SUMMARY)
+        assert self._days(session, 6) == [[], [], ["Tax return"], [], [], []]
+
+    def test_records_that_it_was_given(self):
+        item = ahead("Tax return", 3, remind=3)
+        result = run([item], at(9), settings=self.SUMMARY)
+        due = (DAY + timedelta(days=3)).isoformat()
+        assert FiredKey(str(item.id), Kind.ADVANCE.value, due) in result.fired
+
+    def test_a_missed_first_day_is_made_up_on_the_next_summary(self):
+        """Nothing ran on the first day of the window; the reminder is
+        given by the next summary instead of being lost."""
+        session = Session([ahead("Tax return", 5, remind=3)], self.SUMMARY)
+        assert coming_up_titles(session.tick(at(9, 0, DAY + timedelta(days=3)))) == ["Tax return"]
+        assert coming_up_titles(session.tick(at(9, 0, DAY + timedelta(days=4)))) == []
+
+    def test_days_until_is_as_of_the_summary_that_gives_it(self):
+        session = Session([ahead("Tax return", 5, remind=3)], self.SUMMARY)
+        result = session.tick(at(9, 0, DAY + timedelta(days=4)))
+        assert result.summary is not None
+        assert result.summary.coming_up[0].days_until == 1
+
+    def test_not_given_once_the_due_date_has_arrived(self):
+        session = Session([ahead("Tax return", 2, remind=1)], self.SUMMARY)
+        result = session.tick(at(9, 0, DAY + timedelta(days=2)))
+        assert result.summary is not None
+        assert result.summary.coming_up == ()
+        assert result.summary.due_today == 1
+
+    def test_rescheduling_re_arms(self):
+        item = ahead("Tax return", 2, remind=3)
+        session = Session([item], self.SUMMARY)
+        assert coming_up_titles(session.tick(at(9))) == ["Tax return"]
+        item.due_date = DAY + timedelta(days=4)
+        assert coming_up_titles(session.tick(at(9, 0, DAY + timedelta(days=1)))) == ["Tax return"]
+
+    def test_held_summary_does_not_use_up_the_reminder(self):
+        session = Session([ahead("Tax return", 2, remind=3)], self.SUMMARY)
+        held = session.tick(at(9), focus_active=True)
+        assert held.summary is None
+        assert held.fired == ()
+        assert held.held_summary
+        assert coming_up_titles(session.tick(at(9, 30))) == ["Tax return"]
+
+    def test_summary_held_past_the_end_of_the_day_leaves_it_for_the_next(self):
+        settings = PolicySettings(quiet_hours_enabled=False)
+        session = Session([ahead("Tax return", 3, remind=3)], settings)
+        session.tick(at(9), focus_active=True)
+        session.tick(at(23, 59), focus_active=True)
+        tomorrow = DAY + timedelta(days=1)
+        assert coming_up_titles(session.tick(at(9, 0, tomorrow))) == ["Tax return"]
+
+    def test_already_given_leaves_nothing_to_hold(self):
+        session = Session([ahead("Tax return", 3, remind=3)], self.SUMMARY)
+        session.tick(at(9))
+        tomorrow = DAY + timedelta(days=1)
+        assert not session.tick(at(9, 0, tomorrow), focus_active=True).held_summary
+
+
+class TestAdvanceReminderDaily:
+    SUMMARY = PolicySettings()
+
+    def test_given_every_day_through_the_day_before(self):
+        session = Session([ahead("Passport", 4, remind=3, cadence="daily_until_due")], self.SUMMARY)
+        seen = []
+        for offset in range(6):
+            result = session.tick(at(9, 0, DAY + timedelta(days=offset)))
+            seen.append(
+                [] if result.summary is None else [c.days_until for c in result.summary.coming_up]
+            )
+        # Days 0-5: outside the window, then 3, 2 and 1 days ahead, the
+        # due date itself, and the day after.
+        assert seen == [[], [3], [2], [1], [], []]
+
+    def test_records_nothing_of_its_own(self):
+        item = ahead("Passport", 2, remind=3, cadence="daily_until_due")
+        result = run([item], at(9), settings=self.SUMMARY)
+        assert [key.kind for key in result.fired] == [Kind.SUMMARY.value]
+
+    def test_once_and_daily_side_by_side(self):
+        once = ahead("Once", 3, remind=3)
+        daily = ahead("Daily", 3, remind=3, cadence="daily_until_due")
+        session = Session([once, daily], self.SUMMARY)
+        assert coming_up_titles(session.tick(at(9))) == ["Daily", "Once"]
+        tomorrow = DAY + timedelta(days=1)
+        assert coming_up_titles(session.tick(at(9, 0, tomorrow))) == ["Daily"]
 
 
 class TestEvaluationShape:
