@@ -51,7 +51,6 @@ jobs:
 
       - name: Type check with basedpyright
         run: uv run --no-sync basedpyright src/
-        continue-on-error: true  # warnings for missing stubs
 
   test:
     runs-on: ${{ matrix.os }}
