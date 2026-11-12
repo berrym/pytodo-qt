@@ -2472,3 +2472,96 @@ class TestDigitsDoNotCombine:
     def test_a_word_and_a_digit_do_not_combine(self) -> None:
         r = parse("read twenty 5 minutes", today=TODAY)
         assert r.estimated_minutes == 5
+
+
+# ---------------------------------------------------------------------------
+# TestTimeRangeEnds
+# ---------------------------------------------------------------------------
+
+
+class TestTimeRangeEnds:
+    """Either end of a range may carry its own am/pm or be a 24-hour time."""
+
+    @staticmethod
+    def _range(text: str) -> tuple[time | None, time | None, str]:
+        r = parse(text, today=TODAY)
+        return r.due_time, r.due_time_end, r.reminder
+
+    def test_am_pm_on_both_ends(self) -> None:
+        assert self._range("standup 9am to 10am") == (time(9, 0), time(10, 0), "standup")
+
+    def test_pm_on_both_ends(self) -> None:
+        assert self._range("review 2pm to 4pm") == (time(14, 0), time(16, 0), "review")
+
+    def test_across_noon(self) -> None:
+        assert self._range("workshop 11am to 1pm") == (time(11, 0), time(13, 0), "workshop")
+
+    def test_minutes_on_both_ends(self) -> None:
+        assert self._range("standup 9:30am to 10:15am") == (time(9, 30), time(10, 15), "standup")
+
+    def test_separate_am_pm_on_both_ends(self) -> None:
+        assert self._range("standup 9 am to 10 am") == (time(9, 0), time(10, 0), "standup")
+
+    def test_dotted_am_pm_on_both_ends(self) -> None:
+        assert self._range("standup 9 a.m. to 10 a.m.") == (time(9, 0), time(10, 0), "standup")
+
+    def test_from_to_with_attached_am_pm(self) -> None:
+        assert self._range("review from 2pm to 4pm") == (time(14, 0), time(16, 0), "review")
+
+    def test_between_and_with_attached_am_pm(self) -> None:
+        assert self._range("review between 2pm and 4pm") == (time(14, 0), time(16, 0), "review")
+
+    def test_am_pm_on_the_end_only(self) -> None:
+        assert self._range("review 2 to 4pm") == (time(14, 0), time(16, 0), "review")
+
+    def test_start_takes_the_half_that_runs_forward(self) -> None:
+        assert self._range("brunch 10 to 2pm") == (time(10, 0), time(14, 0), "brunch")
+
+    def test_am_pm_on_the_start_only(self) -> None:
+        assert self._range("standup 9am to 11") == (time(9, 0), time(11, 0), "standup")
+
+    def test_end_takes_the_half_that_runs_forward(self) -> None:
+        assert self._range("workshop 11am to 1") == (time(11, 0), time(13, 0), "workshop")
+
+    def test_dash_with_am_pm_on_the_end(self) -> None:
+        assert self._range("review 2-4pm") == (time(14, 0), time(16, 0), "review")
+
+    def test_dash_with_am_pm_on_both_ends(self) -> None:
+        assert self._range("standup 9am-10am") == (time(9, 0), time(10, 0), "standup")
+
+    def test_dash_with_minutes(self) -> None:
+        assert self._range("standup 9:30-10:15") == (time(9, 30), time(10, 15), "standup")
+
+    def test_dash_with_24_hour_times(self) -> None:
+        assert self._range("review 14:00-15:00") == (time(14, 0), time(15, 0), "review")
+
+    def test_en_dash(self) -> None:
+        assert self._range("review 2–4pm") == (time(14, 0), time(16, 0), "review")
+
+    def test_dash_with_separate_am_pm_still_works(self) -> None:
+        assert self._range("review 2-4 pm") == (time(14, 0), time(16, 0), "review")
+
+    def test_at_before_a_range_goes_with_it(self) -> None:
+        assert self._range("standup at 9am to 10am") == (time(9, 0), time(10, 0), "standup")
+        assert self._range("review at 2-4pm") == (time(14, 0), time(16, 0), "review")
+
+    def test_range_chip_text(self) -> None:
+        r = parse("standup 9am to 10am", today=TODAY)
+        (span,) = [s for s in r.spans if s.kind is EntityKind.TIME]
+        assert span.display == "9:00 AM–10:00 AM"
+
+    def test_a_time_then_to_and_a_verb_is_not_a_range(self) -> None:
+        r = parse("call at 3pm to discuss budget", today=TODAY)
+        assert r.due_time == time(15, 0)
+        assert r.due_time_end is None
+        assert r.reminder == "call to discuss budget"
+
+    def test_numbers_out_of_clock_range_are_not_a_range(self) -> None:
+        r = parse("read pages 10-15", today=TODAY)
+        assert r.due_time is None
+        assert r.due_time_end is None
+
+    def test_a_date_with_hyphens_is_not_a_range(self) -> None:
+        r = parse("meeting 2026-11-20", today=TODAY)
+        assert r.due_date == date(2026, 11, 20)
+        assert r.due_time is None

@@ -2295,6 +2295,72 @@ def _extract_dates_and_times(
                 sh_adj += 12
         return sh_adj, eh_adj
 
+    _ampm_suffixes = (("a.m.", "am"), ("p.m.", "pm"), ("am", "am"), ("pm", "pm"))
+
+    def _clock_text(text: str) -> tuple[int, int, str | None] | None:
+        """Read one end of a range written as a single word: "2", "4pm",
+        "9:30", "9:30am", "14:00". Returns (hour as written, minute,
+        am/pm or None).
+        """
+        ampm: str | None = None
+        for suffix, half in _ampm_suffixes:
+            if text.endswith(suffix) and len(text) > len(suffix):
+                ampm = half
+                text = text[: -len(suffix)]
+                break
+        hour_text, colon, minute_text = text.partition(":")
+        if not hour_text.isdigit() or (colon and not minute_text.isdigit()):
+            return None
+        hour, minute = int(hour_text), int(minute_text) if colon else 0
+        if minute > 59:
+            return None
+        # A 24-hour time needs the colon and no am/pm: "14:00".
+        if colon and ampm is None:
+            return (hour, minute, None) if hour <= 23 else None
+        return (hour, minute, ampm) if 1 <= hour <= 12 else None
+
+    def _range_end(idx: int) -> tuple[int, int, str | None, int] | None:
+        """Read one end of a range at a token index, with its own am/pm
+        when it has one: "3", "six thirty", "9am", "9:30 am".
+
+        Returns (hour as written, minute, am/pm or None, last index
+        consumed).
+        """
+        if idx >= len(tokens):
+            return None
+        attached = _clock_text(tokens[idx].text)
+        if attached is not None and attached[2] is not None:
+            return attached[0], attached[1], attached[2], idx
+        hour, minute, last = _range_hour(idx)
+        if hour is None or minute is None:
+            return None
+        ampm, ampm_end = _check_ampm_at(last + 1)
+        return hour, minute, ampm, ampm_end if ampm else last
+
+    def _resolve_range(sh: int, s_ampm: str | None, eh: int, e_ampm: str | None) -> tuple[int, int]:
+        """Turn the hours of a range, as written, into 24-hour hours.
+
+        An end without am/pm takes it from the other end, adjusted so
+        that the range runs forward: "10 to 2pm" is 10 AM to 2 PM, and
+        "11am to 1" is 11 AM to 1 PM.
+        """
+        if s_ampm is not None and e_ampm is not None:
+            return _apply_range_ampm(sh, s_ampm), _apply_range_ampm(eh, e_ampm)
+        if s_ampm is None:
+            return _adjust_range_pair(sh, eh, e_ampm)
+        start = _apply_range_ampm(sh, s_ampm)
+        end = _apply_range_ampm(eh, s_ampm)
+        if end <= start:
+            end = _apply_range_ampm(eh, "pm" if s_ampm == "am" else "am")
+        return start, end
+
+    def _with_lead_in(idx: int) -> int:
+        """Character offset a range starting at token idx begins at,
+        taking in an "at" directly before it."""
+        if idx > 0 and tokens[idx - 1].text == "at" and _token_free(idx - 1):
+            return tokens[idx - 1].start
+        return tokens[idx].start
+
     def _set_time_range(t_start: time, t_end: time, span_start: int, span_end: int) -> None:
         nonlocal due_time, due_time_end
         if tracker.is_free(span_start, span_end):
@@ -2314,44 +2380,53 @@ def _extract_dates_and_times(
         # Opener patterns: "between X and Y [am/pm]", "from X to/through/till Y [am/pm]"
         if tok.text in ("between", "from"):
             closers = _range_closers_between if tok.text == "between" else _range_closers_from
-            sh, sm, se = _range_hour(j + 1)
-            if sh is None:
+            first = _range_end(j + 1)
+            if first is None:
                 continue
+            sh, sm, s_ampm, se = first
             ci = se + 1
             if ci >= len(tokens) or tokens[ci].text not in closers:
                 continue
-            eh, em, ee = _range_hour(ci + 1)
-            if eh is None or em is None or sm is None:
+            second = _range_end(ci + 1)
+            if second is None:
                 continue
-            ampm, ampm_end = _check_ampm_at(ee + 1)
-            span_end_pos = tokens[ampm_end].end if ampm else tokens[ee].end
-            sh_adj, eh_adj = _adjust_range_pair(sh, eh, ampm)
-            _set_time_range(time(sh_adj, sm), time(eh_adj, em), tok.start, span_end_pos)
+            eh, em, e_ampm, ee = second
+            sh_adj, eh_adj = _resolve_range(sh, s_ampm, eh, e_ampm)
+            _set_time_range(time(sh_adj, sm), time(eh_adj, em), tok.start, tokens[ee].end)
             continue
 
-        # Dash pattern: "2-4" [am/pm]
-        if "-" in tok.text and not tok.text.startswith("-") and not tok.text.endswith("-"):
-            parts = tok.text.split("-")
-            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                sh, eh = int(parts[0]), int(parts[1])
-                if 1 <= sh <= 12 and 1 <= eh <= 12:
-                    ampm, ampm_end = _check_ampm_at(j + 1)
-                    span_end_pos = tokens[ampm_end].end if ampm else tok.end
-                    sh_adj, eh_adj = _adjust_range_pair(sh, eh, ampm)
-                    _set_time_range(time(sh_adj, 0), time(eh_adj, 0), tok.start, span_end_pos)
-                    continue
+        # Dash pattern in one word: "2-4" [am/pm], "2-4pm", "9am-10am",
+        # "9:30-10:15", "14:00-15:00". An en dash is read as a hyphen.
+        dashed = tok.text.replace("\u2013", "-")
+        if "-" in dashed:
+            parts = dashed.split("-")
+            first_text = _clock_text(parts[0]) if len(parts) == 2 else None
+            second_text = _clock_text(parts[1]) if len(parts) == 2 else None
+            if first_text is not None and second_text is not None:
+                sh, sm, s_ampm = first_text
+                eh, em, e_ampm = second_text
+                span_end_pos = tok.end
+                if e_ampm is None:
+                    e_ampm, ampm_end = _check_ampm_at(j + 1)
+                    if e_ampm:
+                        span_end_pos = tokens[ampm_end].end
+                sh_adj, eh_adj = _resolve_range(sh, s_ampm, eh, e_ampm)
+                _set_time_range(time(sh_adj, sm), time(eh_adj, em), _with_lead_in(j), span_end_pos)
+                continue
 
-        # Bare connector: "3 to 5", "six till eight pm"
-        sh, sm, se = _range_hour(j)
-        if sh is not None and sm is not None and se + 1 < len(tokens):
+        # Bare connector: "3 to 5", "six till eight pm", "9am to 10am"
+        first = _range_end(j)
+        if first is not None and first[3] + 1 < len(tokens):
+            sh, sm, s_ampm, se = first
             ci = se + 1
             if tokens[ci].text in _range_closers_from:
-                eh, em, ee = _range_hour(ci + 1)
-                if eh is not None and em is not None:
-                    ampm, ampm_end = _check_ampm_at(ee + 1)
-                    span_end_pos = tokens[ampm_end].end if ampm else tokens[ee].end
-                    sh_adj, eh_adj = _adjust_range_pair(sh, eh, ampm)
-                    _set_time_range(time(sh_adj, sm), time(eh_adj, em), tok.start, span_end_pos)
+                second = _range_end(ci + 1)
+                if second is not None:
+                    eh, em, e_ampm, ee = second
+                    sh_adj, eh_adj = _resolve_range(sh, s_ampm, eh, e_ampm)
+                    _set_time_range(
+                        time(sh_adj, sm), time(eh_adj, em), _with_lead_in(j), tokens[ee].end
+                    )
                     continue
 
     # --- "now" / "right now" (after ranges so "from now to X" works) ---
