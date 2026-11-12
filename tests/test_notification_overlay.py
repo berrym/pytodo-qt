@@ -94,6 +94,42 @@ class TestNotificationOverlayLogo:
             )
 
 
+class TestNotificationOverlayTitle:
+    """A title wider than the banner ends with an ellipsis instead of
+    being cut at the edge."""
+
+    LONG = "A very long task title that goes on and on well past the width of any banner"
+
+    def test_short_title_is_shown_whole(self, qtbot):
+        overlay = NotificationOverlay("Call mum", "Due at 15:00")
+        qtbot.addWidget(overlay)
+        overlay.show()
+        assert overlay._title_label.displayed_text() == "Call mum"
+
+    def test_long_title_ends_with_an_ellipsis(self, qtbot):
+        overlay = NotificationOverlay(self.LONG, "Due at 15:00")
+        qtbot.addWidget(overlay)
+        overlay.show()
+        shown = overlay._title_label.displayed_text()
+        assert shown.endswith("\u2026")
+        assert self.LONG.startswith(shown[:-1])
+
+    def test_long_title_does_not_widen_the_banner_past_its_maximum(self, qtbot):
+        overlay = NotificationOverlay(self.LONG, "Due at 15:00")
+        qtbot.addWidget(overlay)
+        overlay.show()
+        assert overlay.width() <= overlay.maximumWidth()
+        assert overlay._logo_label.geometry().right() < overlay._close_btn.geometry().left()
+
+    def test_banner_grows_before_the_title_is_shortened(self, qtbot):
+        # A title that fits within the maximum width is shown whole.
+        title = "Submit the quarterly expense report"
+        overlay = NotificationOverlay(title, "Due at 15:00")
+        qtbot.addWidget(overlay)
+        overlay.show()
+        assert overlay._title_label.displayed_text() == title
+
+
 class TestNotificationOverlayDismissal:
     """Dismissal path via close-glyph click and auto-dismiss timer."""
 

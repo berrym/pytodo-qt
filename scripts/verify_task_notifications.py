@@ -150,6 +150,20 @@ class Harness(QMainWindow):
                 ),
             ),
             (
+                "Lead reminder — title too long for the banner",
+                lambda: self._show(
+                    *reminders(
+                        (
+                            _lead(
+                                "Send the signed lease renewal and the deposit receipt "
+                                "to the property manager",
+                                soon,
+                            ),
+                        )
+                    )
+                ),
+            ),
+            (
                 "Lead reminder — time block (late afternoon)",
                 lambda: self._show(
                     *reminders((_lead("Water the plants", _at(14, 30), block="late_afternoon"),))

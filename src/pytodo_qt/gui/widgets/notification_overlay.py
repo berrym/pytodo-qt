@@ -32,7 +32,16 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPainterPath, QPen
+from PyQt6.QtGui import (
+    QColor,
+    QFont,
+    QGuiApplication,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPalette,
+    QPen,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
@@ -136,6 +145,40 @@ class _BodyScrollArea(QScrollArea):
         super().mousePressEvent(a0)
 
 
+class _ElidedLabel(QLabel):
+    """A single-line label that ends its text with an ellipsis when the
+    text is wider than the label.
+
+    A plain QLabel cuts an over-long line at the widget's edge, mid-letter.
+    The size hint is still that of the full text, so the banner grows to
+    its maximum width before any text is dropped; the minimum width is
+    zero, so the layout can then narrow the label to what is left.
+    """
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self._full_text = text
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(0, super().minimumSizeHint().height())
+
+    def displayed_text(self) -> str:
+        """The text as drawn at the label's current width."""
+        return self.fontMetrics().elidedText(
+            self._full_text, Qt.TextElideMode.ElideRight, self.width()
+        )
+
+    def paintEvent(self, a0) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setPen(self.palette().color(QPalette.ColorRole.WindowText))
+        painter.drawText(
+            self.rect(),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            self.displayed_text(),
+        )
+        painter.end()
+
+
 class NotificationOverlay(QWidget):
     """Frameless banner window for a single notification.
 
@@ -217,7 +260,7 @@ class NotificationOverlay(QWidget):
         text_column.setContentsMargins(0, 0, 0, 0)
         text_column.setSpacing(3)
 
-        title_label = QLabel(self._title)
+        title_label = _ElidedLabel(self._title)
         title_font = QFont()
         title_font.setBold(True)
         title_font.setPointSize(title_font.pointSize() + 1)
@@ -274,6 +317,7 @@ class NotificationOverlay(QWidget):
         outer.addLayout(close_column)
 
         self._close_btn = close_btn
+        self._title_label = title_label
         self._logo_label = logo_label
         self._body_label = body_label
         self._body_scroll = body_scroll
