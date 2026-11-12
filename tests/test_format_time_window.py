@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from datetime import time
 
+import pytest
+
 from pytodo_qt.core.models import _format_time_window
 
 
@@ -88,6 +90,64 @@ class TestTimeBlocks:
     def test_unknown_block_falls_back_to_label(self):
         result = _format_time_window(None, None, "unknown_block", "24h")
         assert "Unknown Block" in result
+
+
+class TestTimeBlockRanges:
+    """Named blocks display the range the configuration resolves them to,
+    through the same resolver reminders use."""
+
+    @pytest.fixture(autouse=True)
+    def _default_blocks(self, monkeypatch):
+        from pytodo_qt.core import config as config_module
+
+        monkeypatch.setattr(config_module, "get_config", config_module.AppConfig)
+
+    def test_parent_block(self):
+        assert _format_time_window(None, None, "evening", "24h") == " (Evening, 17:00-21:00)"
+
+    def test_early_half(self):
+        assert _format_time_window(None, None, "early_morning", "24h") == (
+            " (Early Morning, 06:00-09:00)"
+        )
+
+    def test_odd_length_range_splits_on_the_half_hour(self):
+        assert _format_time_window(None, None, "late_afternoon", "24h") == (
+            " (Late Afternoon, 14:30-17:00)"
+        )
+        assert _format_time_window(None, None, "early_afternoon", "24h") == (
+            " (Early Afternoon, 12:00-14:30)"
+        )
+
+    def test_night_wraps_past_midnight(self):
+        assert _format_time_window(None, None, "night", "24h") == " (Night, 21:00-06:00)"
+
+    def test_late_night_starts_after_midnight(self):
+        """The midpoint of 21:00-06:00 is 01:30, not the 13:00 an
+        hour-of-day average gives."""
+        assert _format_time_window(None, None, "late_night", "24h") == (
+            " (Late Night, 01:30-06:00)"
+        )
+
+    def test_fixed_bands_show_their_range(self):
+        assert _format_time_window(None, None, "noon", "24h") == " (Noon, 11:30-12:30)"
+        assert _format_time_window(None, None, "midnight", "24h") == " (Midnight, 23:30-00:30)"
+
+    def test_twelve_hour_format(self):
+        assert _format_time_window(None, None, "late_night", "12h") == (
+            " (Late Night, 1:30 AM-6:00 AM)"
+        )
+
+    def test_unknown_block_shows_only_its_label(self):
+        assert _format_time_window(None, None, "teatime", "24h") == " (Teatime)"
+
+    def test_unreadable_configuration_shows_only_the_label(self, monkeypatch):
+        from pytodo_qt.core import config as config_module
+
+        def broken():
+            raise OSError("config unreadable")
+
+        monkeypatch.setattr(config_module, "get_config", broken)
+        assert _format_time_window(None, None, "evening", "24h") == " (Evening)"
 
 
 class TestPrecedence:

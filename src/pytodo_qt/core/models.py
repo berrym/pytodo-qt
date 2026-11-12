@@ -834,30 +834,17 @@ def _format_time_window(
 
         block_label = due_time_block.replace("_", " ").title()
         try:
-            tb = get_config().time_blocks
-            block_ranges = {
-                "morning": (tb.morning_start, tb.morning_end),
-                "afternoon": (tb.afternoon_start, tb.afternoon_end),
-                "evening": (tb.evening_start, tb.evening_end),
-                "night": (tb.night_start, tb.night_end),
-            }
-            # Derive early/late from parent
-            parent = due_time_block.removeprefix("early_").removeprefix("late_")
-            if parent in block_ranges:
-                start_h, end_h = block_ranges[parent]
-                if due_time_block.startswith("early_"):
-                    end_h = (start_h + end_h) // 2
-                elif due_time_block.startswith("late_"):
-                    start_h = (start_h + end_h) // 2
-            elif due_time_block in block_ranges:
-                start_h, end_h = block_ranges[due_time_block]
-            else:
-                return f" ({block_label})"
-            start_t = _format_time(time(start_h, 0), time_format)
-            end_t = _format_time(time(end_h % 24, 0), time_format)
-            return f" ({block_label}, {start_t}-{end_t})"
+            block_range = get_config().time_blocks.block_range(due_time_block)
         except Exception:
+            block_range = None
+        if block_range is None:
             return f" ({block_label})"
+        # Offsets are minutes from the midnight starting the block's day
+        # and run past 1440 for a block that crosses midnight.
+        start, end = block_range
+        start_t = _format_time(time(start // 60 % 24, start % 60), time_format)
+        end_t = _format_time(time(end // 60 % 24, end % 60), time_format)
+        return f" ({block_label}, {start_t}-{end_t})"
     if due_time and due_time_end:
         return f" {_format_time(due_time, time_format)}-{_format_time(due_time_end, time_format)}"
     if due_time:
