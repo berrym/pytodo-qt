@@ -2897,7 +2897,7 @@ class MainWindow(QMainWindow):
 
         due_time = self._clamp_drop_due_time_forward(item, due_date, due_time)
 
-        from .commands import EditDueDateCommand, EditDueTimeCommand
+        from .commands import EditDueDateCommand, EditDueTimeCommand, SetFieldCommand
 
         self._undo_stack.beginMacro("Set due date and time")
         cmd_date = EditDueDateCommand(
@@ -2906,6 +2906,13 @@ class MainWindow(QMainWindow):
         self._undo_stack.push(cmd_date)
         cmd_time = EditDueTimeCommand(self, active_list.id, item_id, item.due_time, due_time)
         self._undo_stack.push(cmd_time)
+        if due_time is not None and item.due_time_block:
+            # Dropped onto an hour: the task now has a chosen time, which
+            # replaces its time block. A drop onto the All Day row passes
+            # no time and moves the task to that day's block instead.
+            self._undo_stack.push(
+                SetFieldCommand(self, active_list.id, item_id, "due_time_block", None)
+            )
         self._undo_stack.endMacro()
 
     def _clamp_drop_due_time_forward(self, item, due_date, due_time):

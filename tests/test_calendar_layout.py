@@ -28,6 +28,7 @@ from pytodo_qt.core.calendar_layout import (
     compute_bar_state,
     compute_bar_window,
 )
+from pytodo_qt.core.config import TimeBlockConfig
 from pytodo_qt.core.models import TodoItem
 
 
@@ -1268,3 +1269,130 @@ class TestRecurringMidnightRollbackExempt:
                 f"Recurring task should not produce a marker on its due_date; "
                 f"got marker with label={seg.marker_label}"
             )
+
+
+# ===========================================================================
+# Q1: compute_bar_window — BLOCK rule (named time block, no clock time)
+# ===========================================================================
+
+
+class TestComputeBarWindowBlock:
+    """A named time block with no clock time → BLOCK: the bar covers the
+    block's own window. A block is a stretch of the day to do the task
+    in, not a deadline."""
+
+    DAY = date(2026, 4, 10)
+    BLOCKS = TimeBlockConfig()  # morning 6-12, afternoon 12-17, evening 17-21, night 21-06
+
+    def _window(self, **fields) -> BarWindow:
+        item = _make_item(due_date=self.DAY, **fields)
+        window = compute_bar_window(item, default_work_minutes=25, time_blocks=self.BLOCKS)
+        assert window is not None
+        return window
+
+    def test_block_covers_its_whole_window(self):
+        window = self._window(due_time_block="afternoon")
+        assert window.kind == WindowKind.BLOCK
+        assert window.origin == datetime(2026, 4, 10, 12, 0)
+        assert window.end == datetime(2026, 4, 10, 17, 0)
+
+    def test_half_block(self):
+        window = self._window(due_time_block="late_afternoon")
+        assert window.kind == WindowKind.BLOCK
+        assert window.origin == datetime(2026, 4, 10, 14, 30)
+        assert window.end == datetime(2026, 4, 10, 17, 0)
+
+    def test_block_crossing_midnight_ends_the_next_day(self):
+        window = self._window(due_time_block="night")
+        assert window.origin == datetime(2026, 4, 10, 21, 0)
+        assert window.end == datetime(2026, 4, 11, 6, 0)
+
+    def test_late_night_starts_the_next_day(self):
+        window = self._window(due_time_block="late_night")
+        assert window.origin == datetime(2026, 4, 11, 1, 30)
+        assert window.end == datetime(2026, 4, 11, 6, 0)
+
+    def test_configured_boundaries_are_used(self):
+        item = _make_item(due_date=self.DAY, due_time_block="evening")
+        window = compute_bar_window(
+            item, 25, time_blocks=TimeBlockConfig(evening_start=18, evening_end=22)
+        )
+        assert window is not None
+        assert window.origin == datetime(2026, 4, 10, 18, 0)
+        assert window.end == datetime(2026, 4, 10, 22, 0)
+
+    def test_boundaries_default_to_config(self):
+        item = _make_item(due_date=self.DAY, due_time_block="afternoon")
+        window = compute_bar_window(item)
+        assert window is not None
+        assert window.kind == WindowKind.BLOCK
+
+    def test_clock_time_takes_precedence_over_the_block(self):
+        window = self._window(
+            due_time=time(16, 0), due_time_block="afternoon", estimated_minutes=30
+        )
+        assert window.kind == WindowKind.WORKBACK
+        assert window.end == datetime(2026, 4, 10, 16, 0)
+
+    def test_event_range_takes_precedence_over_the_block(self):
+        window = self._window(
+            due_time=time(14, 0), due_time_end=time(15, 0), due_time_block="afternoon"
+        )
+        assert window.kind == WindowKind.EVENT
+
+    def test_unknown_block_is_all_day(self):
+        window = self._window(due_time_block="teatime")
+        assert window.kind == WindowKind.ALL_DAY
+
+    def test_no_block_is_all_day(self):
+        assert self._window().kind == WindowKind.ALL_DAY
+
+    def test_block_without_a_date_has_no_window(self):
+        item = _make_item(due_time_block="afternoon")
+        assert compute_bar_window(item, 25, time_blocks=self.BLOCKS) is None
+
+    def test_block_is_drawn_in_the_hour_grid(self):
+        item = _make_item(due_date=self.DAY, due_time_block="afternoon")
+        window = compute_bar_window(item, 25, time_blocks=self.BLOCKS)
+        assert window is not None
+        segments = compute_bar_segments(item, window, self.DAY, datetime(2026, 4, 10, 9, 0))
+        assert len(segments) == 1
+        seg = segments[0]
+        assert not seg.is_all_day
+        assert not seg.is_marker
+        assert (seg.start_minute, seg.end_minute) == (12 * 60, 17 * 60)
+        assert seg.state == BarState.FUTURE
+
+    def test_block_crossing_midnight_is_drawn_on_both_days(self):
+        item = _make_item(due_date=self.DAY, due_time_block="night")
+        window = compute_bar_window(item, 25, time_blocks=self.BLOCKS)
+        assert window is not None
+        now = datetime(2026, 4, 10, 9, 0)
+        first = compute_bar_segments(item, window, self.DAY, now)[0]
+        second = compute_bar_segments(item, window, self.DAY + timedelta(days=1), now)[0]
+        assert (first.start_minute, first.end_minute) == (21 * 60, 1440)
+        assert first.clipped_bottom
+        assert (second.start_minute, second.end_minute) == (0, 6 * 60)
+        assert second.clipped_top
+
+    def test_state_follows_the_block_window(self):
+        item = _make_item(due_date=self.DAY, due_time_block="afternoon")
+        window = compute_bar_window(item, 25, time_blocks=self.BLOCKS)
+        assert window is not None
+
+        def state_at(hour: int, minute: int = 0) -> BarState:
+            return compute_bar_state(item, window, datetime(2026, 4, 10, hour, minute))
+
+        assert state_at(11, 59) == BarState.FUTURE
+        assert state_at(12) == BarState.IN_WORK_WINDOW
+        assert state_at(16, 50) == BarState.DUE_NOW
+        assert state_at(17) == BarState.OVERDUE_ACTIVE
+
+    def test_unfinished_block_leaves_an_overdue_marker_the_next_day(self):
+        item = _make_item(due_date=self.DAY, due_time_block="afternoon")
+        window = compute_bar_window(item, 25, time_blocks=self.BLOCKS)
+        assert window is not None
+        next_day = self.DAY + timedelta(days=1)
+        segments = compute_bar_segments(item, window, next_day, datetime(2026, 4, 11, 9, 0))
+        assert len(segments) == 1
+        assert segments[0].is_marker

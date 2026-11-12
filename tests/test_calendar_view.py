@@ -4505,6 +4505,37 @@ class TestAgendaRow:
         labels = row.findChildren(QLabel)
         assert any("9:30" in lbl.text() for lbl in labels)
 
+    def test_block_item_shows_its_block(self, qtbot) -> None:
+        from PyQt6.QtWidgets import QLabel
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaRow
+
+        item = create_todo_item("Walk")
+        item.due_time_block = "late_afternoon"
+        row = _AgendaRow(item, "12h", _agenda_test_colors())
+        qtbot.addWidget(row)
+        texts = [lbl.text() for lbl in row.findChildren(QLabel)]
+        assert "Late Afternoon" in texts
+        assert "All Day" not in texts
+
+    def test_clock_time_is_shown_in_place_of_the_block(self, qtbot) -> None:
+        from datetime import time as time_type
+
+        from PyQt6.QtWidgets import QLabel
+
+        from pytodo_qt.core.models import create_todo_item
+        from pytodo_qt.gui.widgets.calendar_view import _AgendaRow
+
+        item = create_todo_item("Call")
+        item.due_time = time_type(16, 0)
+        item.due_time_block = "late_afternoon"
+        row = _AgendaRow(item, "24h", _agenda_test_colors())
+        qtbot.addWidget(row)
+        texts = [lbl.text() for lbl in row.findChildren(QLabel)]
+        assert "16:00" in texts
+        assert "Late Afternoon" not in texts
+
     def test_all_day_item_shows_all_day(self, qtbot) -> None:
         from pytodo_qt.core.models import create_todo_item
         from pytodo_qt.gui.widgets.calendar_view import _AgendaRow
@@ -5460,3 +5491,37 @@ class TestResizeDrag:
         )
         view.mouseReleaseEvent(release)
         assert received == []
+
+
+class TestBlockItemsLeaveTheAllDayRow:
+    """An item with a time block and no clock time is drawn across its
+    block in the hour grid, so it does not also sit in the All Day row."""
+
+    def _all_day(self, items: list) -> list:
+        from datetime import date as _date
+
+        from pytodo_qt.gui.widgets.calendar_view import _WeekModel
+
+        return _WeekModel._all_day_items(None, items, _date.today())  # type: ignore[arg-type]
+
+    def _item(self, **fields):
+        from datetime import date as _date
+
+        from pytodo_qt.core.models import create_todo_item
+
+        item = create_todo_item("Walk")
+        item.due_date = _date.today()
+        for name, value in fields.items():
+            setattr(item, name, value)
+        return item
+
+    def test_block_item_is_not_all_day(self) -> None:
+        assert self._all_day([self._item(due_time_block="afternoon")]) == []
+
+    def test_date_only_item_is_all_day(self) -> None:
+        item = self._item()
+        assert self._all_day([item]) == [item]
+
+    def test_unknown_block_falls_back_to_all_day(self) -> None:
+        item = self._item(due_time_block="teatime")
+        assert self._all_day([item]) == [item]

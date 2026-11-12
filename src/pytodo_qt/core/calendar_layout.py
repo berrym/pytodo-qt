@@ -12,7 +12,7 @@ arises during rendering, the answer lives here.
 
 Key types:
     BarState     — lifecycle state enum (8 states)
-    WindowKind   — origin-rule classification (4 kinds, one per Q1 rule)
+    WindowKind   — origin-rule classification (one kind per Q1 rule)
     BarWindow    — (origin, end, kind) for an item
     BarSegment   — drawable slice of a bar for one viewing day
 
@@ -33,6 +33,7 @@ from uuid import UUID
 from .models import format_duration
 
 if TYPE_CHECKING:
+    from .config import TimeBlockConfig
     from .models import TodoItem
 
 
@@ -70,7 +71,8 @@ class WindowKind(Enum):
     EVENT = "event"  # due_time + due_time_end → event range
     WORKBACK = "workback"  # due_time + estimated_minutes → work-back from deadline
     DEADLINE_FROM_CREATED = "deadline_from_created"  # due_time only → from created_at
-    ALL_DAY = "all_day"  # due_date only, no due_time → All Day row
+    BLOCK = "block"  # named time block, no due_time → the block's own window
+    ALL_DAY = "all_day"  # due_date only, no due_time or block → All Day row
 
 
 # Threshold for the DUE_NOW state. Refinable per spec Q5; locked at 15
@@ -94,7 +96,7 @@ DEADLINE_DEFAULT_DURATION = timedelta(hours=1)
 
 
 class BarWindow(NamedTuple):
-    """The temporal window a task occupies, computed via Q1's four rules.
+    """The temporal window a task occupies, computed via Q1's rules.
 
     For ALL_DAY items, origin is the start of due_date (00:00 local) and
     end is the start of the next day (00:00 local of the day after).
@@ -293,8 +295,26 @@ def clamp_drop_due_time_forward(
     return time(new_due.hour, new_due.minute)
 
 
-def compute_bar_window(item: TodoItem, default_work_minutes: int | None = None) -> BarWindow | None:
-    """Compute the bar window for an item per Q1's four rules.
+def get_time_blocks() -> TimeBlockConfig:
+    """Read the user's time block boundaries from config.
+
+    Returns the default boundaries if config can't be loaded for any
+    reason.
+    """
+    from .config import TimeBlockConfig, get_config
+
+    try:
+        return get_config().time_blocks
+    except Exception:
+        return TimeBlockConfig()
+
+
+def compute_bar_window(
+    item: TodoItem,
+    default_work_minutes: int | None = None,
+    time_blocks: TimeBlockConfig | None = None,
+) -> BarWindow | None:
+    """Compute the bar window for an item per Q1's rules.
 
     When `default_work_minutes` is None (the typical case from runtime
     callers), reads the user's current pomodoro work duration default
@@ -308,11 +328,16 @@ def compute_bar_window(item: TodoItem, default_work_minutes: int | None = None) 
     falls through to the next applicable rule. Sanitization happens here,
     at the layout layer, not by mutating the model.
 
-    The four rules in order:
+    The rules in order:
         EVENT                  due_time AND due_time_end
         WORKBACK               due_time AND estimated_minutes > 0
         DEADLINE_FROM_CREATED  due_time only (no estimate, no end)
-        ALL_DAY                due_date only (no due_time)
+        BLOCK                  named time block, no due_time
+        ALL_DAY                due_date only (no due_time, no block)
+
+    A clock time takes precedence over a named block: an item with both
+    is placed by its time. `time_blocks` gives the block boundaries;
+    when None they are read from config, like `default_work_minutes`.
     """
     if item.due_date is None:
         return None
@@ -366,7 +391,24 @@ def compute_bar_window(item: TodoItem, default_work_minutes: int | None = None) 
         # so the item still shows up somewhere honest (the All Day row of
         # its due date).
 
-    # Rule 4: ALL_DAY — due_date with no usable time anchor
+    # Rule 4: BLOCK — a named time block and no clock time. The window is
+    # the block itself: a block is a stretch of the day to do the task
+    # in, not a deadline, so the bar covers all of it. A block that
+    # crosses midnight ends on the following day.
+    block = getattr(item, "due_time_block", None)
+    if item.due_time is None and block:
+        if time_blocks is None:
+            time_blocks = get_time_blocks()
+        block_range = time_blocks.block_range(block)
+        if block_range is not None:
+            midnight = datetime.combine(base_date, time(0, 0, 0))
+            return BarWindow(
+                origin=midnight + timedelta(minutes=block_range[0]),
+                end=midnight + timedelta(minutes=block_range[1]),
+                kind=WindowKind.BLOCK,
+            )
+
+    # Rule 5: ALL_DAY — due_date with no usable time anchor
     origin = datetime.combine(base_date, time(0, 0, 0))
     end = datetime.combine(base_date + timedelta(days=1), time(0, 0, 0))
     return BarWindow(origin=origin, end=end, kind=WindowKind.ALL_DAY)

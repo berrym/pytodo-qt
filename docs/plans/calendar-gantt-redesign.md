@@ -22,14 +22,17 @@ The seven questions below define the rendering model. Q1 and Q2 are **load-beari
 
 ### Q1: Origin Definition (LOCKED, load-bearing)
 
-Each task in the day/week grid has exactly one origin, determined by which fields are set on the `TodoItem`. The four rules are exhaustive and mutually exclusive:
+Each task in the day/week grid has exactly one origin, determined by which fields are set on the `TodoItem`. The rules are exhaustive and mutually exclusive:
 
 | Case | Fields Set | Origin | End | Rendered Where |
 |------|------------|--------|-----|----------------|
 | **Event** | `due_time` AND `due_time_end` | `due_time` | `due_time_end` | Hour grid |
 | **Deadline with estimate** | `due_time` AND `estimated_minutes` | `due_time − estimated_minutes` | `due_time` | Hour grid |
 | **Deadline only** | `due_time` (no `estimated_minutes`, no `due_time_end`) | `created_at` | `due_time` | Hour grid |
+| **Time block** | `due_time_block` (no `due_time`) | start of the block | end of the block | Hour grid |
 | **No due_time** | `due_date` only or no temporal anchor | n/a | n/a | All Day row (or unscheduled sidebar) |
+
+**Time block (added 2026-11-12, #58):** an item with a named time block and no clock time occupies the block's own window, taken from the configured block boundaries — "afternoon" is a bar from 12:00 to 17:00 with the defaults, and a block that crosses midnight continues on the following day. A block is a stretch of the day to do the task in, not a deadline, so the bar covers all of it and has no draggable edge. A clock time takes precedence: an item with both a time and a block is placed by its time, under the first three rules. A block name that cannot be resolved falls through to the All Day row. Dropping a block item onto an hour gives it that time and clears the block; dropping it onto the All Day row of another day moves it to that day's block.
 
 **Sanitization:** If any rule produces an end before its origin (negative duration), the task is treated as if the end fields were unset and falls through to the next applicable rule. Sanitization happens at the rendering layer, not by mutating the model.
 

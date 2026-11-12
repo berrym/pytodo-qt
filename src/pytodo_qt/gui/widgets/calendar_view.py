@@ -3632,7 +3632,7 @@ class _WeekModel(QAbstractTableModel):
         back to the All Day row so it's still visible.
 
         Classification:
-            - due_time is None         → all-day by definition
+            - no due_time, no block    → all-day by definition
             - Q1 window is ALL_DAY     → sanitization fallthrough
             - Q1 window is other but
               no hour-grid segment
@@ -3649,8 +3649,9 @@ class _WeekModel(QAbstractTableModel):
         now = datetime.now()
         out: list = []
         for item in items:
-            # Fast path: no due_time → traditional all-day
-            if item.due_time is None:
+            # Fast path: no due_time and no time block → traditional
+            # all-day. A block-only item has a window in the hour grid.
+            if item.due_time is None and not getattr(item, "due_time_block", None):
                 out.append(item)
                 continue
             window = compute_bar_window(item)
@@ -5006,6 +5007,7 @@ class _WeekTableView(QTableView):
                 not seg.clipped_top
                 and abs(click_y - seg_top_y) <= self._EDGE_HIT_PIXELS
                 and window.kind != WindowKind.DEADLINE_FROM_CREATED
+                and window.kind != WindowKind.BLOCK
                 and window.kind != WindowKind.ALL_DAY
             ):
                 return {
@@ -5018,11 +5020,13 @@ class _WeekTableView(QTableView):
                 }
 
             # Bottom edge — only when the segment's true end is in this
-            # cell. Draggable for every kind that renders in the hour
-            # grid (EVENT, WORKBACK, DEADLINE_FROM_CREATED).
+            # cell. Draggable for EVENT, WORKBACK and
+            # DEADLINE_FROM_CREATED. A BLOCK bar has no draggable edge:
+            # its extent is the block's configured boundaries.
             if (
                 not seg.clipped_bottom
                 and abs(click_y - seg_bot_y) <= self._EDGE_HIT_PIXELS
+                and window.kind != WindowKind.BLOCK
                 and window.kind != WindowKind.ALL_DAY
             ):
                 return {
@@ -6240,14 +6244,17 @@ class _AgendaRow(QFrame):
         # because muted-gray fails WCAG against the dark-theme cell
         # background; the time column carries functional information
         # and must remain legible in either theme.
-        if item.due_time is None:
+        if item.due_time is None and item.due_time_block:
+            time_text = item.due_time_block.replace("_", " ").title()
+        elif item.due_time is None:
             time_text = self.tr("All Day")
         elif time_format == "24h":
             time_text = item.due_time.strftime("%H:%M")
         else:
             time_text = item.due_time.strftime("%I:%M %p").lstrip("0")
         time_label = QLabel(time_text)
-        time_label.setFixedWidth(80)
+        # Wide enough for the longest block name, "Early Afternoon".
+        time_label.setFixedWidth(96)
         time_label.setStyleSheet(f"color: {colors['text']}; font-size: 11px; border: none;")
         layout.addWidget(time_label)
 
@@ -6466,12 +6473,22 @@ class _AgendaView(QWidget):
             if item.due_date is not None:
                 by_day[item.due_date].append(item)
 
-        # Sort each day: all-day items (no due_time) first, then timed
-        # items in chronological order within the day.
-        from datetime import time as _time
+        # Sort each day: all-day items first, then timed and time-block
+        # items in chronological order, a block counting from its start.
+        from ...core.calendar_layout import get_time_blocks
+
+        time_blocks = get_time_blocks()
+
+        def _agenda_order(it: TodoItem) -> tuple[bool, int]:
+            if it.due_time is not None:
+                return (True, it.due_time.hour * 60 + it.due_time.minute)
+            block_range = time_blocks.block_range(it.due_time_block) if it.due_time_block else None
+            if block_range is not None:
+                return (True, block_range[0])
+            return (False, 0)
 
         for d in by_day:
-            by_day[d].sort(key=lambda it: (it.due_time is not None, it.due_time or _time(0, 0)))
+            by_day[d].sort(key=_agenda_order)
 
         # Render the forward-looking range.
         end = self._current_date + timedelta(days=self.DEFAULT_DAYS)
