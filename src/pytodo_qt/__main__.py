@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .core.instance_lock import InstanceLock
+    from .gui.main_window import MainWindow
 
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
@@ -150,6 +151,32 @@ def _setup_activation_handler(window: object) -> None:
     # Store references to prevent GC
     window._activation_notifier = notifier  # type: ignore[union-attr]
     window._activation_sockets = (sig_read, sig_write)  # type: ignore[union-attr]
+
+
+def _dispose_before_exit(app: QApplication, window: MainWindow) -> None:
+    """Destroy the main window before the interpreter starts to exit.
+
+    At interpreter exit PyQt deletes every QObject that Python still
+    owns while walking sip's table of wrappers
+    (``pyqt6_cleanup_qobjects`` calling ``sipVisitWrappers``). sip
+    replaces that table when a wrapper is added to a nearly full one
+    (``reorganiseMap``), and the walk goes on reading the freed one.
+    Python code that runs during the walk — an event filter, a
+    reimplemented event handler — wraps its arguments, so a window
+    still alive at that point can crash the process after everything
+    has been saved.
+
+    Removing the application-wide event filter and destroying the
+    window here, once the event loop has ended, leaves that walk no
+    window to tear down and no application code to call.
+    """
+    from PyQt6 import sip
+
+    from .gui.styles.themes import remove_dropdown_configurator
+
+    remove_dropdown_configurator(app)
+    if not sip.isdeleted(window):
+        sip.delete(window)
 
 
 def _signal_existing_instance(pid: int) -> bool:
@@ -458,7 +485,7 @@ def main():
     logger.log.info("Starting pytodo-qt v%s", settings.__version__)
     from .gui.main_window import MainWindow
 
-    _window = MainWindow()  # noqa: F841 - window must stay alive for event loop
+    _window = MainWindow()
 
     # Set up SIGUSR1 handler so a second instance can activate this one
     if sys.platform != "win32":
@@ -466,7 +493,9 @@ def main():
 
     # Run application with async event loop
     with loop:
-        sys.exit(loop.run_forever())
+        exit_code = loop.run_forever()
+        _dispose_before_exit(app, _window)
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

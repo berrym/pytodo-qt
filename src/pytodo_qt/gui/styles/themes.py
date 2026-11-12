@@ -880,6 +880,18 @@ def apply_theme(app: QApplication, theme: Theme | None = None) -> None:
     logger.log.debug("Applied theme: %s", theme.value)
 
 
+def remove_dropdown_configurator(app: QApplication) -> None:
+    """Uninstall the application-wide dropdown event filter.
+
+    Called once the event loop has ended, so that no Python event filter
+    is left to run while the application's objects are destroyed.
+    """
+    global _dropdown_configurator
+    if _dropdown_configurator is not None:
+        app.removeEventFilter(_dropdown_configurator)
+        _dropdown_configurator = None
+
+
 def apply_current_theme() -> None:
     """Apply the current theme from config."""
     app = QApplication.instance()
