@@ -2437,3 +2437,38 @@ class TestBlockDateInference:
         r = self._parse("walk every day at 9am", 12)
         assert r.due_date == TODAY
         assert not r.due_date_inferred
+
+
+# ---------------------------------------------------------------------------
+# TestDigitsDoNotCombine
+# ---------------------------------------------------------------------------
+
+
+class TestDigitsDoNotCombine:
+    """Number words combine ("forty five"); digits side by side do not."""
+
+    def test_date_then_duration(self) -> None:
+        r = parse("tax return nov 20 3 days", today=TODAY)
+        assert r.due_date == date(2026, 11, 20)
+        assert r.estimated_minutes == 3 * 24 * 60
+        assert r.reminder == "tax return"
+
+    def test_date_then_hours(self) -> None:
+        r = parse("meeting dec 31 2 hours", today=TODAY)
+        assert r.due_date == date(2026, 12, 31)
+        assert r.estimated_minutes == 120
+        assert r.reminder == "meeting"
+
+    def test_two_digit_tokens_are_two_numbers(self) -> None:
+        r = parse("run 30 5 minutes", today=TODAY)
+        assert r.estimated_minutes == 5
+        assert r.reminder == "run 30"
+
+    def test_number_words_still_combine(self) -> None:
+        r = parse("read forty five minutes", today=TODAY)
+        assert r.estimated_minutes == 45
+        assert r.reminder == "read"
+
+    def test_a_word_and_a_digit_do_not_combine(self) -> None:
+        r = parse("read twenty 5 minutes", today=TODAY)
+        assert r.estimated_minutes == 5

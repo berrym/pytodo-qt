@@ -289,10 +289,13 @@ def _tokens_to_number(tokens: list[_Token], start: int) -> tuple[int | float | N
                 return total + addon, idx + 2
         return total, idx
 
-    # Two-word composition: tens + ones ("forty five" → 45, "twenty one" → 21)
-    if idx + 1 < n and first >= 20:
-        second = _token_to_number(tokens[idx + 1].text)
-        if second is not None and 1 <= second <= 9:
+    # Two-word composition: tens + ones ("forty five" → 45, "twenty one" → 21).
+    # Words only: digits side by side are two numbers, as in "nov 20 3 days",
+    # a date and a duration.
+    if idx + 1 < n and first >= 20 and not tokens[idx].text.isdigit():
+        following = tokens[idx + 1].text
+        second = _token_to_number(following)
+        if second is not None and 1 <= second <= 9 and not following.isdigit():
             return first + second, idx + 1
 
     return first, idx
