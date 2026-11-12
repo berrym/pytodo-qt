@@ -179,6 +179,7 @@ class MainWindow(QMainWindow):
         self._setup_toolbar()
         self._setup_central_widget()
         self._setup_status_bar()
+        self._setup_os_notifier()
         self._setup_tray_icon()
         self._setup_notification_overlay()
 
@@ -1471,15 +1472,13 @@ class MainWindow(QMainWindow):
         self.status_bar_widget.web_connect_clicked.connect(self._on_web_connect)
         self.setStatusBar(self.status_bar_widget)
 
-    def _setup_tray_icon(self) -> None:
-        """Set up the system tray icon."""
-        if not QSystemTrayIcon.isSystemTrayAvailable():
-            logger.log.warning("System tray is not available on this platform")
-            self.tray_icon = None
-            return
+    def _setup_os_notifier(self) -> None:
+        """Create the notifier for the desktop's native notifications.
 
-        self.tray_icon = QSystemTrayIcon(self)
-
+        Independent of the system tray: a desktop without a tray still
+        has a notification service, and every notification path reads
+        ``self._notifier`` whether or not a tray icon exists.
+        """
         # Cross-platform system notifications via desktop-notifier. On macOS this
         # uses UNUserNotificationCenter with an explicit authorization request,
         # which Qt's QSystemTrayIcon.showMessage fails to do — that omission is
@@ -1504,6 +1503,15 @@ class MainWindow(QMainWindow):
             )
         except Exception as exc:
             logger.log.warning("Failed to initialize DesktopNotifier: %s", exc)
+
+    def _setup_tray_icon(self) -> None:
+        """Set up the system tray icon."""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            logger.log.warning("System tray is not available on this platform")
+            self.tray_icon = None
+            return
+
+        self.tray_icon = QSystemTrayIcon(self)
 
         # Use simple monochrome tray icon
         self._update_tray_icon_for_theme()

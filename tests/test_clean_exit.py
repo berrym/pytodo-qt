@@ -17,43 +17,6 @@ application code runs while the walk is in progress.
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-import pytest
-
-_PROBE = Path(__file__).parent / "exit_probe.py"
-_TIMEOUT_SECONDS = 180
-
-
-@pytest.fixture(scope="module")
-def exit_report(tmp_path_factory: pytest.TempPathFactory) -> tuple[int, dict, str]:
-    """Launch and quit the application once; return (exit code, report, stderr)."""
-    root = tmp_path_factory.mktemp("clean_exit")
-    report_path = root / "report.json"
-    env = dict(os.environ)
-    env.update(
-        XDG_CONFIG_HOME=str(root / "config"),
-        XDG_DATA_HOME=str(root / "data"),
-        XDG_STATE_HOME=str(root / "state"),
-        QT_QPA_PLATFORM="offscreen",
-        # No secrets are read from or written to the real system keyring.
-        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
-    )
-    result = subprocess.run(
-        [sys.executable, str(_PROBE), str(report_path)],
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=_TIMEOUT_SECONDS,
-        check=False,
-    )
-    report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
-    return result.returncode, report, result.stderr[-4000:]
-
 
 def test_process_exits_with_status_zero(exit_report: tuple[int, dict, str]) -> None:
     code, _report, stderr = exit_report

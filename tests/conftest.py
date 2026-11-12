@@ -1,9 +1,16 @@
 """Pytest configuration and fixtures."""
 
+import json
+import os
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
+
+_EXIT_PROBE = Path(__file__).parent / "exit_probe.py"
+_EXIT_PROBE_TIMEOUT_SECONDS = 180
 
 
 def _install_pyqtgraph_axisitem_teardown_guard() -> None:
@@ -66,6 +73,38 @@ def _flush_qt_events_before_teardown(qtbot):
     app = QApplication.instance()
     if app is not None:
         app.processEvents()
+
+
+@pytest.fixture(scope="session")
+def exit_report(tmp_path_factory: pytest.TempPathFactory) -> tuple[int, dict, str]:
+    """Launch and quit the real application once per test session.
+
+    Returns (exit code, the probe's report, the tail of stderr). The
+    launch is offscreen, which has no system tray, and reads and writes
+    nothing outside a scratch directory. See ``exit_probe.py`` for the
+    report's fields.
+    """
+    root = tmp_path_factory.mktemp("app_launch")
+    report_path = root / "report.json"
+    env = dict(os.environ)
+    env.update(
+        XDG_CONFIG_HOME=str(root / "config"),
+        XDG_DATA_HOME=str(root / "data"),
+        XDG_STATE_HOME=str(root / "state"),
+        QT_QPA_PLATFORM="offscreen",
+        # No secrets are read from or written to the real system keyring.
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+    )
+    result = subprocess.run(
+        [sys.executable, str(_EXIT_PROBE), str(report_path)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=_EXIT_PROBE_TIMEOUT_SECONDS,
+        check=False,
+    )
+    report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
+    return result.returncode, report, result.stderr[-4000:]
 
 
 @pytest.fixture

@@ -1,6 +1,7 @@
 """Launch the application, quit it, and report what interpreter exit finds.
 
-Run as a script by ``tests/test_clean_exit.py``; it is not a test module.
+Run as a script by the ``exit_report`` fixture in ``tests/conftest.py``;
+it is not a test module.
 
     python tests/exit_probe.py REPORT_PATH
 
@@ -23,6 +24,10 @@ The report is JSON:
   dropdown event filter was still installed at that point.
 - ``app_calls_during_cleanup`` — application functions called while the
   cleanup ran, as ``file:line name`` strings.
+- ``system_tray_available`` — whether the platform offered a system
+  tray when the main window was constructed.
+- ``os_notifier_set_up`` — whether the main window had its
+  desktop-notifier attribute once constructed.
 """
 
 from __future__ import annotations
@@ -54,6 +59,7 @@ atexit.register(_after_cleanup)
 
 from PyQt6 import sip  # noqa: E402
 from PyQt6.QtCore import QTimer  # noqa: E402 — registers PyQt's exit cleanup
+from PyQt6.QtWidgets import QSystemTrayIcon  # noqa: E402
 
 import pytodo_qt  # noqa: E402
 import pytodo_qt.gui.main_window as main_window_module  # noqa: E402
@@ -88,6 +94,8 @@ _original_init = main_window_module.MainWindow.__init__
 def _init_then_quit(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
     _original_init(self, *args, **kwargs)
     _windows.append(self)
+    _report["system_tray_available"] = QSystemTrayIcon.isSystemTrayAvailable()
+    _report["os_notifier_set_up"] = hasattr(self, "_notifier")
     QTimer.singleShot(_QUIT_AFTER_MS, self._quit_application)
 
 
