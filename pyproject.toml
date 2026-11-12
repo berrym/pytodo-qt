@@ -111,6 +111,14 @@ dev = [
     "ruff>=0.17.4",
     "basedpyright>=1.39.8",
 ]
+# Tools the release workflow uses to freeze and package the app. Kept in
+# a group so they are pinned in uv.lock alongside the runtime
+# dependencies the frozen binary ships.
+build = [
+    "pyinstaller>=6.0",
+    "pillow>=10.0; sys_platform == 'darwin'",
+    "dmgbuild>=1.6; sys_platform == 'darwin'",
+]
 
 [tool.coverage.run]
 source = ["src/pytodo_qt"]
