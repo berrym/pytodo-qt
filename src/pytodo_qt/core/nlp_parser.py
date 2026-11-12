@@ -70,6 +70,10 @@ class ParseResult:
 
     reminder: str
     due_date: date | None = None
+    # True when the text gave no date and due_date is the next occurrence
+    # of the time or time block it did give. A caller with a date of its
+    # own (a calendar cell) can prefer that.
+    due_date_inferred: bool = False
     due_time: time | None = None
     due_time_end: time | None = None  # End of ad-hoc time range
     due_time_block: str | None = None  # Canonical named time block
@@ -1747,13 +1751,18 @@ def _extract_dates_and_times(
     lead_ins: list[list[str]] = sorted(
         intents.get("part_of_day_lead_ins", []), key=len, reverse=True
     )
+    # A word that names a moment also takes the prepositions a numeric
+    # time takes: "by noon", "before lunch".
+    moment_lead_ins: list[list[str]] = sorted(
+        [*lead_ins, *intents.get("time_of_day_lead_ins", [])], key=len, reverse=True
+    )
 
     def _token_free(idx: int) -> bool:
         return tracker.is_free(tokens[idx].start, tokens[idx].end)
 
-    def _lead_in_length(idx: int) -> int:
+    def _lead_in_length(idx: int, phrases: list[list[str]] = lead_ins) -> int:
         """Number of tokens of a lead-in ("in the", "at") ending at idx."""
-        for words in lead_ins:
+        for words in phrases:
             first = idx - len(words) + 1
             if first < 0:
                 continue
@@ -1774,6 +1783,10 @@ def _extract_dates_and_times(
                 continue
             phrase = " ".join(t.text for t in phrase_tokens)
             if phrase in tod_phrases:
+                # A lead-in directly before the phrase goes with it: "by
+                # end of day".
+                lead_in = _lead_in_length(j - 1, moment_lead_ins) if j > 0 else 0
+                start = tokens[j - lead_in].start
                 _set_time(tod_phrases[phrase], start, end)
                 # Derive time_block from tod_phrase (e.g., "this afternoon" → "afternoon")
                 if due_time_block is None:
@@ -1817,9 +1830,9 @@ def _extract_dates_and_times(
             # Don't override a time already set by Phase 1 relative expressions
             if due_time is not None:
                 continue
-            # A lead-in directly before the word goes with it: "in the
-            # morning", "at noon".
-            lead_in = _lead_in_length(j - 1) if j > 0 else 0
+            # A lead-in directly before the word goes with it: "at noon",
+            # "by noon", "before lunch".
+            lead_in = _lead_in_length(j - 1, moment_lead_ins) if j > 0 else 0
             word_start = tokens[j - lead_in].start
             _set_time(tod[tok.text], word_start, tok.end)
             # Set time_block from single-word matches (morning, evening, tonight, etc.)
@@ -2666,18 +2679,20 @@ def _extract_fillers(text: str, tracker: _SpanTracker) -> None:
                 search_start = idx + 1
 
 
-def _next_block_date(
-    block: str, due_time: time | None, now: _datetime, time_blocks: TimeBlockConfig | None
+def _next_occurrence_date(
+    block: str | None, due_time: time | None, now: _datetime, time_blocks: TimeBlockConfig | None
 ) -> date:
-    """Return the date for a time block that was named without one.
+    """Return the date for a clock time or time block given without one.
 
-    Today while the block is still to come or under way, tomorrow once
-    it has ended. When a clock time accompanies the block, that time
-    decides instead: today until it has passed.
+    A clock time means today until it has passed and tomorrow after. A
+    time block alone means today while the block is still to come or
+    under way, tomorrow once it has ended.
     """
     today = now.date()
     if due_time is not None:
         return today if now < _datetime.combine(today, due_time) else today + timedelta(days=1)
+    if block is None:
+        return today
     if time_blocks is None:
         from .config import get_config
 
@@ -2705,10 +2720,10 @@ def parse(
     Args:
         text: Raw user input, e.g. "Buy groceries tomorrow at 3pm @errands"
         today: Override for today's date (for testing). Defaults to date.today().
-        now: The current moment, used to date a time block named without
-            a date. Defaults to the current time, or to the start of
-            ``today`` when only ``today`` is given, so that a caller
-            fixing the date gets that date back.
+        now: The current moment, used to date a clock time or time block
+            given without a date. Defaults to the current time, or to
+            the start of ``today`` when only ``today`` is given, so that
+            a caller fixing the date gets that date back.
         time_blocks: Time block boundaries. Defaults to the configured ones.
 
     Returns:
@@ -2762,9 +2777,13 @@ def parse(
     if rec_type is not None and due_date is None:
         due_date = today
 
-    # A time block named without a date means its next occurrence.
-    if due_time_block is not None and due_date is None:
-        due_date = _next_block_date(due_time_block, due_time, now, time_blocks)
+    # A clock time or time block given without a date means its next
+    # occurrence. Without a date the item would appear in no date-based
+    # view and get no reminder.
+    due_date_inferred = False
+    if due_date is None and (due_time is not None or due_time_block is not None):
+        due_date = _next_occurrence_date(due_time_block, due_time, now, time_blocks)
+        due_date_inferred = True
 
     # 8. Conditions (after all other extraction so span boundaries are settled)
     conditions = _extract_conditions(tokens, tracker)
@@ -2790,6 +2809,7 @@ def parse(
     return ParseResult(
         reminder=reminder,
         due_date=due_date,
+        due_date_inferred=due_date_inferred,
         due_time=due_time,
         due_time_end=due_time_end,
         due_time_block=due_time_block,

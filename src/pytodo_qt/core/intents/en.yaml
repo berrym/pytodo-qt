@@ -490,6 +490,17 @@ part_of_day_lead_ins:
   - "during the"
   - at
 
+# Prepositions directly before a word that names a moment ("by noon",
+# "before lunch", "around midnight", "for lunch"). They are consumed with it, as
+# they already are before a numeric time ("by 3pm").
+time_of_day_lead_ins:
+  - at
+  - by
+  - before
+  - after
+  - around
+  - for
+
 # ---------------------------------------------------------------------------
 # Filler / connective phrases — multi-word fragments of natural speech
 # that carry no task content and should not appear in the reminder.

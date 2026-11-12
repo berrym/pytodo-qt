@@ -106,6 +106,7 @@ def load_intents(lang: str = "en") -> dict[str, Any]:
     }
     result["part_of_day_today_words"] = set(raw.get("part_of_day_today_words", []))
     result["part_of_day_lead_ins"] = [str(p).split() for p in raw.get("part_of_day_lead_ins", [])]
+    result["time_of_day_lead_ins"] = [str(p).split() for p in raw.get("time_of_day_lead_ins", [])]
 
     # --- Scalars ---
     result["fuzzy_threshold"] = int(raw["fuzzy_threshold"])

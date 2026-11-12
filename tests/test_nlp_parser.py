@@ -214,8 +214,10 @@ class TestTimeParsing:
     def test_time_without_date_still_captured(self) -> None:
         r = parse("meeting at 3pm", today=TODAY)
         assert r.due_time == time(15, 0)
-        # No date inferred from time alone
-        assert r.due_date is None
+        # A time alone means its next occurrence; the date is marked as
+        # inferred rather than written.
+        assert r.due_date == TODAY
+        assert r.due_date_inferred
 
     def test_at_the_office_not_matched(self) -> None:
         r = parse("meeting at the office", today=TODAY)
@@ -2279,6 +2281,76 @@ class TestPartOfDayPhrasing:
 
 
 # ---------------------------------------------------------------------------
+# TestMomentPrepositions
+# ---------------------------------------------------------------------------
+
+
+class TestMomentPrepositions:
+    """A preposition directly before a word that names a moment is
+    consumed with it, as it is before a numeric time."""
+
+    def test_by_noon(self) -> None:
+        r = parse("finish report by noon", today=TODAY)
+        assert r.reminder == "finish report"
+        assert r.due_time == time(12, 0)
+
+    def test_before_noon(self) -> None:
+        r = parse("walk before noon", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time == time(12, 0)
+
+    def test_around_noon(self) -> None:
+        assert parse("walk around noon", today=TODAY).reminder == "walk"
+
+    def test_before_lunch(self) -> None:
+        r = parse("walk before lunch", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time == time(12, 0)
+
+    def test_after_lunch(self) -> None:
+        assert parse("walk after lunch", today=TODAY).reminder == "walk"
+
+    def test_for_lunch(self) -> None:
+        r = parse("meet sam for lunch", today=TODAY)
+        assert r.reminder == "meet sam"
+        assert r.due_time == time(12, 0)
+
+    def test_by_midnight(self) -> None:
+        r = parse("submit by midnight", today=TODAY)
+        assert r.reminder == "submit"
+        assert r.due_time == time(0, 0)
+
+    def test_by_eod(self) -> None:
+        r = parse("send invoice by eod", today=TODAY)
+        assert r.reminder == "send invoice"
+        assert r.due_time == time(17, 0)
+
+    def test_by_end_of_day(self) -> None:
+        r = parse("send invoice by end of day", today=TODAY)
+        assert r.reminder == "send invoice"
+        assert r.due_time == time(17, 0)
+
+    def test_one_span_covers_preposition_and_word(self) -> None:
+        text = "finish report by noon"
+        r = parse(text, today=TODAY)
+        times = [text[s.start : s.end] for s in r.spans if s.kind == EntityKind.TIME]
+        assert times == ["by noon"]
+
+    def test_condition_after_the_moment_is_kept(self) -> None:
+        r = parse("walk before noon if sunny", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.conditions == [{"type": "if", "expression": "sunny"}]
+
+    def test_meal_that_is_not_a_moment_keeps_its_phrase(self) -> None:
+        # "dinner" names no clock time; the phrase is task content.
+        r = parse("walk before dinner", today=TODAY)
+        assert r.reminder == "walk before dinner"
+
+    def test_preposition_before_other_words_is_left_alone(self) -> None:
+        assert parse("call mom after work", today=TODAY).reminder == "call mom after work"
+
+
+# ---------------------------------------------------------------------------
 # TestBlockDateInference
 # ---------------------------------------------------------------------------
 
@@ -2326,6 +2398,42 @@ class TestBlockDateInference:
     def test_fixed_today_without_now_gives_that_date(self) -> None:
         assert parse("walk late afternoon", today=TODAY).due_date == TODAY
 
-    def test_no_block_no_inferred_date(self) -> None:
-        assert self._parse("walk", 9).due_date is None
-        assert self._parse("walk at 3pm", 9).due_date is None
+    def test_nothing_to_date_means_no_date(self) -> None:
+        r = self._parse("walk", 9)
+        assert r.due_date is None
+        assert not r.due_date_inferred
+
+    def test_clock_time_still_to_come_is_today(self) -> None:
+        r = self._parse("walk at 3pm", 9)
+        assert r.due_date == TODAY
+        assert r.due_date_inferred
+
+    def test_clock_time_that_has_passed_is_tomorrow(self) -> None:
+        assert self._parse("walk at 3pm", 15).due_date == date(2026, 3, 12)
+        assert self._parse("walk at 3pm", 18).due_date == date(2026, 3, 12)
+
+    def test_time_range_follows_its_start(self) -> None:
+        assert self._parse("walk between 2 and 4", 13).due_date == TODAY
+        assert self._parse("walk between 2 and 4", 15).due_date == date(2026, 3, 12)
+
+    def test_midnight_is_the_end_of_today(self) -> None:
+        # 00:00 today has always passed, so "by midnight" is 00:00 tomorrow.
+        r = self._parse("submit by midnight", 15)
+        assert r.due_time == time(0, 0)
+        assert r.due_date == date(2026, 3, 12)
+
+    def test_written_date_is_not_marked_inferred(self) -> None:
+        r = self._parse("walk tomorrow at 3pm", 9)
+        assert r.due_date == date(2026, 3, 12)
+        assert not r.due_date_inferred
+
+    def test_this_is_a_written_date(self) -> None:
+        assert not self._parse("walk this afternoon", 9).due_date_inferred
+
+    def test_block_alone_is_marked_inferred(self) -> None:
+        assert self._parse("walk late afternoon", 9).due_date_inferred
+
+    def test_recurrence_date_is_not_marked_inferred(self) -> None:
+        r = self._parse("walk every day at 9am", 12)
+        assert r.due_date == TODAY
+        assert not r.due_date_inferred

@@ -454,6 +454,55 @@ class TestAddTodoDialogToggle:
         # Parser produced an explicit time; the cell default is ignored.
         assert item.due_time == time(9, 0)
 
+    def test_cell_date_wins_over_a_date_inferred_from_a_time(self, app):
+        """Launched from a calendar cell, "call at 9am" means 9am on the
+        cell's day, not the next 9am from now."""
+        from datetime import time
+
+        dialog = AddTodoDialog(
+            default_due_date=date(2030, 5, 13),
+            default_due_time=time(14, 0),
+        )
+        dialog._smart_input.set_text("Call at 9am")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_date == date(2030, 5, 13)
+        assert item.due_time == time(9, 0)
+
+    def test_cell_date_wins_over_a_date_inferred_from_a_block(self, app):
+        """A time block typed in a cell launch lands on the cell's day,
+        and stands in place of the cell's hour."""
+        from datetime import time
+
+        dialog = AddTodoDialog(
+            default_due_date=date(2030, 5, 13),
+            default_due_time=time(14, 0),
+        )
+        dialog._smart_input.set_text("Walk late afternoon")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_date == date(2030, 5, 13)
+        assert item.due_time_block == "late_afternoon"
+        assert item.due_time is None
+
+    def test_written_date_wins_over_the_cell_date(self, app):
+        dialog = AddTodoDialog(default_due_date=date(2030, 5, 13))
+        dialog._smart_input.set_text("Walk tomorrow late afternoon")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_date == date.today() + timedelta(days=1)
+
+    def test_time_without_a_date_gets_one(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("Call at 9am")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_date in (date.today(), date.today() + timedelta(days=1))
+
     def test_default_due_date_pre_fills_advanced_fields_on_construction(self, app):
         """The Advanced section's discrete fields show the cell defaults
         when the dialog is constructed with them, so a user who opens

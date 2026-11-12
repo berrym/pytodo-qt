@@ -522,6 +522,16 @@ class AddTodoDialog(QDialog):
         cy = max(avail.top(), min(cy, avail.bottom() - h))
         self.move(cx, cy)
 
+    def _date_for(self, result: ParseResult) -> date | None:
+        """The due date for a parse result: the date written in the text,
+        else the date of the calendar cell the dialog was launched from,
+        else the date the parser inferred for a time or time block."""
+        if result.due_date is not None and not result.due_date_inferred:
+            return result.due_date
+        if self._default_due_date is not None:
+            return self._default_due_date
+        return result.due_date
+
     def _on_smart_parse_changed(self, result: ParseResult) -> None:
         """Sync smart input parse result to discrete fields.
 
@@ -543,10 +553,11 @@ class AddTodoDialog(QDialog):
                 self.priority_combo.setCurrentIndex(1)  # Normal
 
             # Due date
-            if result.due_date is not None:
+            synced_date = self._date_for(result)
+            if synced_date is not None:
                 self.due_date_checkbox.setChecked(True)
                 self.due_date_edit.setDate(
-                    QDate(result.due_date.year, result.due_date.month, result.due_date.day)
+                    QDate(synced_date.year, synced_date.month, synced_date.day)
                 )
             else:
                 self.due_date_checkbox.setChecked(False)
@@ -865,14 +876,19 @@ class AddTodoDialog(QDialog):
             # Auto-set due date/time when recurrence is set without one
             due_date = result.due_date
             due_time = result.due_time
-            # Empty-cell-launch fallback: if the user typed a bare reminder
-            # (no date/time NLP) and the dialog was launched from an empty
-            # calendar cell, inherit that cell's date/hour. The smart-input
-            # parse result still wins when the user provided an explicit
-            # date or time in the reminder text.
-            if due_date is None and self._default_due_date is not None:
-                due_date = self._default_due_date
-            if due_time is None and self._default_due_time is not None:
+            # Empty-cell-launch fallback: if the dialog was launched from
+            # an empty calendar cell, inherit that cell's date/hour for
+            # whatever the reminder text did not say. A date or time
+            # written in the text wins. A date the parser only inferred,
+            # from a time or time block given without one, does not: the
+            # cell says which day was meant. A time block in the text
+            # stands in place of the cell's hour.
+            due_date = self._date_for(result)
+            if (
+                due_time is None
+                and self._default_due_time is not None
+                and not result.due_time_block
+            ):
                 due_time = self._default_due_time
             if result.recurrence_type is not None and due_date is None:
                 due_date = date.today()
