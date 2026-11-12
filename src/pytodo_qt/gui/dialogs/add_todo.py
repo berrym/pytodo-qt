@@ -6,7 +6,7 @@ Dialog for adding a new to-do item.
 from __future__ import annotations
 
 from datetime import date, datetime, time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtGui import QAction
@@ -70,6 +70,17 @@ class AddTodoDialog(QDialog):
         self._subtask_reminders: list[str] = []
         self._advanced_shown = False
         self._syncing = False
+        # What the discrete fields were last set to from the input line,
+        # by field. While Advanced is open a field follows the line only
+        # when its entry here changes, so one set by hand is left alone
+        # until the line says something new about it.
+        self._parsed_values: dict[str, Any] = {}
+        # True once the due date has been changed in the Advanced
+        # section itself. Such a date gives way only to a date written
+        # in the line, not to one inferred from a time or to none. It
+        # is read only while Advanced is open, and opening it starts
+        # with every field set from the line, which clears it.
+        self._due_date_set_by_hand = False
         self._columns: list[str] = list(columns) if columns else []
         self._selected_column: str | None = selected_column
         # When the dialog is launched by clicking an empty calendar cell,
@@ -83,7 +94,7 @@ class AddTodoDialog(QDialog):
         self._apply_cell_launch_defaults()
         self._clamp_to_screen()
 
-        self._smart_input.set_due_date_supplied(default_due_date is not None)
+        self._update_due_date_supplied()
         if known_tags:
             self._smart_input.set_known_tags(known_tags)
 
@@ -209,6 +220,7 @@ class AddTodoDialog(QDialog):
         self.due_date_edit.setDate(QDate.currentDate())
         self.due_date_edit.setEnabled(False)
         self.due_date_edit.setAccessibleName(self.tr("Due date"))
+        self.due_date_edit.dateChanged.connect(self._on_due_date_edited)
         due_date_layout.addWidget(self.due_date_checkbox)
         due_date_layout.addWidget(self.due_date_edit, 1)
         sched_form.addRow(self.tr("Due Date:"), due_date_layout)
@@ -508,20 +520,17 @@ class AddTodoDialog(QDialog):
 
         Receives the new checked state directly from the button so the
         button is the single source of truth for the open/closed state;
-        ``_advanced_shown`` mirrors it for the parse-sync guard below.
+        ``_advanced_shown`` mirrors it for the parse sync below.
         """
         self._advanced_shown = checked
         self._advanced_scroll.setVisible(checked)
         arrow = "\u25bc" if checked else "\u25b6"
         self._advanced_toggle.setText(self.tr("Advanced") + f" {arrow}")
-        # Populate fields from current parse result when opening advanced
+        # Opening shows every field as the input line has it. From then
+        # on only what the line changes is updated.
         if checked:
-            result = self._smart_input.get_parse_result()
-            if result:
-                # Temporarily bypass guard to populate fields once
-                self._advanced_shown = False
-                self._on_smart_parse_changed(result)
-                self._advanced_shown = True
+            self._sync_parsed_fields(self._smart_input.get_parse_result(), everything=True)
+        self._update_due_date_supplied()
         self.adjustSize()
         self._clamp_to_screen()
 
@@ -562,129 +571,200 @@ class AddTodoDialog(QDialog):
         return result.due_date
 
     def _on_smart_parse_changed(self, result: ParseResult) -> None:
-        """Sync smart input parse result to discrete fields.
+        """Sync the input line's parse result to the discrete fields.
 
-        When advanced mode is shown, the user is editing fields directly —
-        don't overwrite their edits with parsed values from the smart input.
+        With Advanced closed the fields mirror the line. With it open,
+        the fields are what the task is built from and may have been
+        set by hand, so only the fields the line has just changed are
+        updated.
         """
-        if self._syncing or self._advanced_shown:
+        self._sync_parsed_fields(result, everything=not self._advanced_shown)
+
+    def _parsed_field_values(self, result: ParseResult) -> dict[str, Any]:
+        """What each discrete field is set to for a parse result.
+
+        One entry per field, each complete in itself, so that two parse
+        results can be compared field by field.
+        """
+        recurrence = None
+        if result.recurrence_type is not None:
+            recurrence = (
+                result.recurrence_type,
+                result.recurrence_interval,
+                result.recurrence_end_date,
+                result.recurrence_end_count,
+            )
+        advance_reminder = (0, "none")
+        if result.remind_before_days:
+            advance_reminder = (result.remind_before_days, result.reminder_cadence)
+        return {
+            "reminder": result.reminder,
+            "priority": result.priority,
+            "due_date": self._date_for(result),
+            "advance_reminder": advance_reminder,
+            "due_time": result.due_time,
+            # Only meaningful alongside a due time.
+            "due_time_end": result.due_time_end if result.due_time is not None else None,
+            "tags": tuple(result.tags),
+            "subtasks": tuple(result.subtask_reminders),
+            "pomodoros": result.pomodoro_estimate or 0,
+            "estimate": result.estimated_minutes or 0,
+            "work_duration": result.work_duration or 0,
+            "time_block": result.due_time_block,
+            "event_date": result.event_date,
+            "recurrence": recurrence,
+        }
+
+    def _sync_parsed_fields(self, result: ParseResult, *, everything: bool) -> None:
+        """Set the discrete fields from a parse result.
+
+        ``everything`` sets them all. Otherwise only the fields whose
+        value differs from the previous parse result are set, which
+        leaves a field edited by hand as it is while the line is typed
+        into, and lets the line take it back by saying something new.
+        """
+        if self._syncing:
             return
+        values = self._parsed_field_values(result)
+        if everything:
+            changed = set(values)
+        else:
+            changed = {
+                name
+                for name, value in values.items()
+                if name not in self._parsed_values or self._parsed_values[name] != value
+            }
+            # A date set by hand is replaced by a date written in the
+            # line, not by one the parser inferred from a time, and not
+            # by the line ceasing to imply one.
+            written = result.due_date is not None and not result.due_date_inferred
+            if self._due_date_set_by_hand and not written:
+                changed.discard("due_date")
+        self._parsed_values = values
+
         self._syncing = True
         try:
-            self.reminder_edit.setText(result.reminder)
+            self._apply_parsed_fields(values, changed)
+        finally:
+            self._syncing = False
+        if "due_date" in changed:
+            self._due_date_set_by_hand = False
+        self._update_due_date_supplied()
 
-            # Priority
-            if result.priority is not None:
-                idx = self.priority_combo.findData(result.priority)
-                if idx >= 0:
-                    self.priority_combo.setCurrentIndex(idx)
-            else:
-                self.priority_combo.setCurrentIndex(1)  # Normal
+    def _apply_parsed_fields(self, values: dict[str, Any], changed: set[str]) -> None:
+        """Write the named fields of ``values`` into their widgets."""
+        if "reminder" in changed:
+            self.reminder_edit.setText(values["reminder"])
 
-            # Due date
-            synced_date = self._date_for(result)
-            if synced_date is not None:
+        if "priority" in changed:
+            idx = self.priority_combo.findData(values["priority"])
+            # No priority in the text, or one the combo lacks: Normal.
+            self.priority_combo.setCurrentIndex(idx if idx >= 0 else 1)
+
+        if "due_date" in changed:
+            due_date: date | None = values["due_date"]
+            if due_date is not None:
                 self.due_date_checkbox.setChecked(True)
-                self.due_date_edit.setDate(
-                    QDate(synced_date.year, synced_date.month, synced_date.day)
-                )
+                self.due_date_edit.setDate(QDate(due_date.year, due_date.month, due_date.day))
             else:
                 self.due_date_checkbox.setChecked(False)
 
-            # Advance reminder — kept only alongside a due date.
-            if synced_date is not None and result.remind_before_days:
-                self.advance_reminder_editor.set_value(
-                    result.remind_before_days, result.reminder_cadence
-                )
-            else:
-                self.advance_reminder_editor.set_value(0, "none")
+        # Shown whether or not there is a due date: the row is greyed
+        # without one, and the reminder is kept only alongside one.
+        if "advance_reminder" in changed:
+            self.advance_reminder_editor.set_value(*values["advance_reminder"])
 
-            # Due time
-            if result.due_time is not None:
+        if "due_time" in changed:
+            due_time: time | None = values["due_time"]
+            if due_time is not None:
                 self.due_time_checkbox.setChecked(True)
-                self.due_time_edit.set_time(result.due_time)
+                self.due_time_edit.set_time(due_time)
             else:
                 self.due_time_checkbox.setChecked(False)
 
-            # Due time end — only meaningful alongside Due Time.
-            if result.due_time_end is not None and result.due_time is not None:
+        if "due_time_end" in changed:
+            due_time_end: time | None = values["due_time_end"]
+            if due_time_end is not None:
                 self.due_time_end_checkbox.setChecked(True)
-                self.due_time_end_edit.set_time(result.due_time_end)
+                self.due_time_end_edit.set_time(due_time_end)
             else:
                 self.due_time_end_checkbox.setChecked(False)
 
-            # Tags
-            if result.tags:
-                self.tags_edit.setText(", ".join(result.tags))
-            else:
-                self.tags_edit.clear()
+        if "tags" in changed:
+            self.tags_edit.setText(", ".join(values["tags"]))
 
-            # Subtasks (one per line)
-            if result.subtask_reminders:
-                self.subtasks_edit.setPlainText("\n".join(result.subtask_reminders))
-            else:
-                self.subtasks_edit.clear()
+        # Subtasks, one per line.
+        if "subtasks" in changed:
+            self.subtasks_edit.setPlainText("\n".join(values["subtasks"]))
 
-            # Pomodoro
-            self.estimated_pomodoros_spin.setValue(result.pomodoro_estimate or 0)
+        if "pomodoros" in changed:
+            self.estimated_pomodoros_spin.setValue(values["pomodoros"])
 
-            # Estimated duration — convert minutes to natural scale
-            est = result.estimated_minutes or 0
-            self.estimated_minutes_spin.setValue(est)
-            if est > 0:
-                self._set_duration_from_minutes(est)
+        # Estimated duration — converted from minutes to a natural scale.
+        if "estimate" in changed:
+            minutes: int = values["estimate"]
+            self.estimated_minutes_spin.setValue(minutes)
+            if minutes > 0:
+                self._set_duration_from_minutes(minutes)
             else:
                 self.duration_value_spin.setValue(0)
                 self.duration_unit_combo.setCurrentIndex(0)
 
-            # Per-task session length
-            self.task_work_duration_spin.setValue(result.work_duration or 0)
+        # Per-task session length.
+        if "work_duration" in changed:
+            self.task_work_duration_spin.setValue(values["work_duration"])
 
-            # Time block
-            if result.due_time_block:
-                idx = self.time_block_combo.findData(result.due_time_block)
-                if idx >= 0:
-                    self.time_block_combo.setCurrentIndex(idx)
-            else:
-                self.time_block_combo.setCurrentIndex(0)
+        if "time_block" in changed:
+            idx = (
+                self.time_block_combo.findData(values["time_block"]) if values["time_block"] else 0
+            )
+            if idx >= 0:
+                self.time_block_combo.setCurrentIndex(idx)
 
-            # Event date
-            if result.event_date is not None:
+        if "event_date" in changed:
+            event_date: date | None = values["event_date"]
+            if event_date is not None:
                 self.event_date_checkbox.setChecked(True)
                 self.event_date_edit.setDate(
-                    QDate(result.event_date.year, result.event_date.month, result.event_date.day)
+                    QDate(event_date.year, event_date.month, event_date.day)
                 )
             else:
                 self.event_date_checkbox.setChecked(False)
 
-            # Recurrence
-            if result.recurrence_type is not None:
+        if "recurrence" in changed:
+            if values["recurrence"] is not None:
+                rec_type, interval, end_date, end_count = values["recurrence"]
                 self.recurrence_checkbox.setChecked(True)
-                self.interval_spin.setValue(result.recurrence_interval)
-                type_idx = self.type_combo.findData(result.recurrence_type)
+                self.interval_spin.setValue(interval)
+                type_idx = self.type_combo.findData(rec_type)
                 if type_idx >= 0:
                     self.type_combo.setCurrentIndex(type_idx)
-                if result.recurrence_end_date is not None:
+                if end_date is not None:
                     self.end_date_radio.setChecked(True)
-                    self.end_date_edit.setDate(
-                        QDate(
-                            result.recurrence_end_date.year,
-                            result.recurrence_end_date.month,
-                            result.recurrence_end_date.day,
-                        )
-                    )
+                    self.end_date_edit.setDate(QDate(end_date.year, end_date.month, end_date.day))
                     self.end_date_edit.setEnabled(True)
-                elif result.recurrence_end_count is not None:
+                elif end_count is not None:
                     self.end_count_radio.setChecked(True)
-                    self.end_count_spin.setValue(result.recurrence_end_count)
+                    self.end_count_spin.setValue(end_count)
                     self.end_count_spin.setEnabled(True)
                 else:
                     self.end_never_radio.setChecked(True)
             else:
                 self.recurrence_checkbox.setChecked(False)
 
-        finally:
-            self._syncing = False
+    def _update_due_date_supplied(self) -> None:
+        """Tell the input line whether a task with no date in its text
+        gets one anyway: from the calendar cell the dialog was opened
+        on, or from the due date ticked in the open Advanced section."""
+        self._smart_input.set_due_date_supplied(
+            self._default_due_date is not None
+            or (self._advanced_shown and self.due_date_checkbox.isChecked())
+        )
+
+    def _on_due_date_edited(self) -> None:
+        """Note a due date changed in the Advanced section itself."""
+        if not self._syncing:
+            self._due_date_set_by_hand = True
 
     def _on_due_date_toggled(self, state: int) -> None:
         """Handle due date checkbox toggle."""
@@ -693,6 +773,9 @@ class AddTodoDialog(QDialog):
         self.due_time_checkbox.setEnabled(enabled)
         self.advance_reminder_editor.setEnabled(enabled)
         self._advance_reminder_label.setEnabled(enabled)
+        if not self._syncing:
+            self._due_date_set_by_hand = True
+            self._update_due_date_supplied()
         # Recurrence is always available — auto-sets today if no date
         if not enabled:
             self.due_time_checkbox.setChecked(False)
@@ -901,9 +984,11 @@ class AddTodoDialog(QDialog):
 
     def _on_accept(self) -> None:
         """Handle OK button."""
+        # Take in anything typed within the input line's parse delay, so
+        # the fields below are as the line has them.
+        result = self._smart_input.get_parse_result()
         if not self._advanced_shown:
             # Build item from smart input parse result
-            result = self._smart_input.get_parse_result()
             reminder = result.reminder.strip()
             if not reminder:
                 QMessageBox.warning(

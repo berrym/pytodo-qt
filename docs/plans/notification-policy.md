@@ -172,7 +172,9 @@ so the two are not offered separately, and Off stores `0` and `none`.
     so its "daily" is not a recurrence and its "3 days" is not an estimate.
   - Without a due date the phrase is still removed from the title, its chip
     says a due date is needed, and nothing is stored. A date supplied by
-    the calendar cell the dialog was opened from counts as a due date.
+    the calendar cell the dialog was opened from, or ticked in the open
+    Advanced section, counts as a due date. The "Remind ahead" row shows
+    the typed reminder either way, greyed until there is a date.
   - The vocabulary is in the intent dictionary (`advance_reminder`).
 - Web interface: quick-add stores a reminder typed this way under the same
   rule, and `/api/parse` reports both fields. There is no control for an

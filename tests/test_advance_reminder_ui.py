@@ -22,6 +22,17 @@ from pytodo_qt.gui.widgets.advance_reminder import AdvanceReminderEditor
 from pytodo_qt.gui.widgets.detail_panel import TaskDetailPanel
 
 
+@pytest.fixture(autouse=True)
+def validation_warning_fails(monkeypatch):
+    """A validation warning fails the test. Left alone it is a modal
+    box, which would block the run instead."""
+
+    def fail(_parent, _title, text, *args, **kwargs):
+        raise AssertionError(f"validation warning: {text}")
+
+    monkeypatch.setattr("pytodo_qt.gui.dialogs.add_todo.QMessageBox.warning", fail)
+
+
 def choose(editor: AdvanceReminderEditor, cadence: str) -> None:
     """Pick a cadence the way a user does, by changing the combo."""
     editor.cadence_combo.setCurrentIndex(editor.cadence_combo.findData(cadence))
@@ -277,11 +288,43 @@ class TestAddTodoTyped:
         assert dialog.advance_reminder_editor.isEnabled()
         assert dialog.advance_reminder_editor.value() == (7, "once")
 
-    def test_opening_advanced_without_a_due_date_shows_off(self, qtbot):
+    def test_opening_advanced_without_a_due_date_shows_it_greyed(self, qtbot):
         dialog = typed_dialog(qtbot, "Call mom remind me 2 days before")
         dialog._advanced_toggle.setChecked(True)
-        assert dialog.advance_reminder_editor.value() == (0, "none")
+        assert dialog.advance_reminder_editor.value() == (2, "once")
         assert not dialog.advance_reminder_editor.isEnabled()
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert (item.remind_before_days, item.reminder_cadence) == (0, "none")
+
+    def test_due_date_ticked_in_advanced_keeps_the_typed_reminder(self, qtbot):
+        dialog = typed_dialog(qtbot, "Call mom remind me 2 days before")
+        dialog._advanced_toggle.setChecked(True)
+        dialog.due_date_checkbox.setChecked(True)
+        assert dialog.advance_reminder_editor.isEnabled()
+        assert chip_texts(dialog) == ["Remind 2 days before"]
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_date is not None
+        assert (item.remind_before_days, item.reminder_cadence) == (2, "once")
+
+    def test_chip_note_returns_when_the_due_date_is_unticked(self, qtbot):
+        dialog = typed_dialog(qtbot, "Call mom remind me 2 days before")
+        dialog._advanced_toggle.setChecked(True)
+        dialog.due_date_checkbox.setChecked(True)
+        dialog.due_date_checkbox.setChecked(False)
+        assert chip_texts(dialog) == ["Remind 2 days before (needs a due date)"]
+
+    def test_chip_note_returns_when_advanced_is_closed(self, qtbot):
+        # With Advanced closed the task is built from the line, which
+        # names no date.
+        dialog = typed_dialog(qtbot, "Call mom remind me 2 days before")
+        dialog._advanced_toggle.setChecked(True)
+        dialog.due_date_checkbox.setChecked(True)
+        dialog._advanced_toggle.setChecked(False)
+        assert chip_texts(dialog) == ["Remind 2 days before (needs a due date)"]
 
     def test_a_removed_phrase_clears_the_row(self, qtbot):
         dialog = typed_dialog(qtbot, "Tax return tomorrow remind me a week before")

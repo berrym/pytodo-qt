@@ -46,6 +46,27 @@ What to check with "Open Add Todo with Advanced open":
 - With --summary-off, a note under the row says the daily summary is
   off.
 
+Still with Advanced open, type in the line at the top. The fields below
+follow the line, and a field set by hand keeps its value until the line
+says something new about it:
+
+- "Tax return friday remind me 3 days before" — Title, "Set due date"
+  and "Remind ahead" fill in as the words are typed, and OK stores the
+  task. (Before, the fields stayed empty and OK asked for a reminder.)
+- Set Priority to High by hand, then add " @taxes" to the line — the
+  tag appears and Priority stays High.
+- Add " p3" to the line — Priority changes to Low: the line said
+  something new about it.
+- Clear the line and type "Dentist". Tick "Set due date" and pick a
+  date some weeks ahead by hand. Add " at 3pm" to the line — the time
+  is set and the date picked by hand stays.
+- Add " tomorrow" to the line — the date changes to tomorrow: a date
+  written in the line replaces one picked by hand.
+- Clear the line and type "Call mom remind me 2 days before" — "Remind
+  ahead" shows "Once", "2 days before", greyed, and the chip says a due
+  date is needed. Tick "Set due date": the row goes live and the chip
+  loses its note.
+
 What to check with "Open Add Todo for typing" (Advanced stays closed).
 Type each line, look at the highlight and the chips, then press OK and
 read the stored fields:

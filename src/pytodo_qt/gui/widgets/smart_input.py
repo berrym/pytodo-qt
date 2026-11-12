@@ -440,16 +440,7 @@ class SmartInputWidget(QWidget):
             return  # widget destroyed; nothing to do
         self._parse_result = parse(text)
 
-        # An advance reminder counts back from the due date, and the
-        # parser marks one without a date in the text as needing one.
-        # Where the date comes from elsewhere, it does not.
-        if self._due_date_supplied and self._parse_result.remind_before_days:
-            for span in self._parse_result.spans:
-                if span.kind is EntityKind.ADVANCE_REMINDER:
-                    span.display = advance_reminder_label(
-                        self._parse_result.remind_before_days,
-                        self._parse_result.reminder_cadence,
-                    )
+        self._label_advance_reminder()
 
         # Apply accepted state — user already confirmed these fuzzy matches
         for i, span in enumerate(self._parse_result.spans):
@@ -476,6 +467,17 @@ class SmartInputWidget(QWidget):
             return  # chip container was torn down mid-tick
 
         self.parse_changed.emit(self._parse_result)
+
+    def _label_advance_reminder(self) -> None:
+        """Say on an advance reminder whether it has a due date to count
+        back from: one in the text, or one supplied from elsewhere."""
+        result = self._parse_result
+        has_due_date = self._due_date_supplied or result.due_date is not None
+        for span in result.spans:
+            if span.kind is EntityKind.ADVANCE_REMINDER:
+                span.display = advance_reminder_label(
+                    result.remind_before_days, result.reminder_cadence, has_due_date=has_due_date
+                )
 
     def _update_chips(self) -> None:
         """Rebuild entity chips from current parse result."""
@@ -538,7 +540,12 @@ class SmartInputWidget(QWidget):
 
     def set_due_date_supplied(self, supplied: bool) -> None:
         """Say whether a task whose text names no date gets one anyway."""
+        if supplied == self._due_date_supplied:
+            return
         self._due_date_supplied = supplied
+        self._label_advance_reminder()
+        if any(s.kind is EntityKind.ADVANCE_REMINDER for s in self._parse_result.spans):
+            self._update_chips()
 
     def set_known_tags(self, tags: list[str]) -> None:
         """Set tags available for auto-completion."""
