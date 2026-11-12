@@ -10,6 +10,7 @@ Stateful: detects existing paired devices and adapts the UI accordingly.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
@@ -343,9 +344,9 @@ class _DeviceRow(QFrame):
         self,
         device: PairedDevice,
         is_stale: bool,
-        on_forget: object,
-        on_reconnect: object | None = None,
-        on_rename: object | None = None,
+        on_forget: Callable[..., object],
+        on_reconnect: Callable[..., object] | None = None,
+        on_rename: Callable[..., object] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)

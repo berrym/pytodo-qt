@@ -534,7 +534,11 @@ class AnalyticsService:
             axis=1,
         )
         result["avg_session_minutes"] = result.apply(
-            lambda r: r["total_minutes"] / total[r.name] if total[r.name] > 0 else 0.0,
+            lambda r: (
+                r["total_minutes"] / cast(int, total[r.name])
+                if cast(int, total[r.name]) > 0
+                else 0.0
+            ),
             axis=1,
         )
 
