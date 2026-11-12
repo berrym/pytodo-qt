@@ -54,6 +54,46 @@ class TestNotificationOverlayConstruction:
         assert overlay._dismissing is False
 
 
+class TestNotificationOverlayLogo:
+    """Each banner shows the application's logo, so a banner floating
+    over other windows says which application it belongs to."""
+
+    def test_logo_is_shown(self, qtbot):
+        overlay = NotificationOverlay("t", "b")
+        qtbot.addWidget(overlay)
+        pixmap = overlay._logo_label.pixmap()
+        assert not pixmap.isNull()
+        assert overlay._logo_label.size() == QSize(36, 36)
+
+    def test_logo_sits_between_the_text_and_the_close_glyph(self, qtbot):
+        overlay = NotificationOverlay("Title", "Body text")
+        qtbot.addWidget(overlay)
+        overlay.show()
+        logo = overlay._logo_label.geometry()
+        assert overlay._body_scroll.geometry().right() < logo.left()
+        assert logo.right() < overlay._close_btn.geometry().left()
+
+    def test_logo_is_vertically_centred(self, qtbot):
+        overlay = NotificationOverlay("Title", "Body text")
+        qtbot.addWidget(overlay)
+        overlay.show()
+        logo = overlay._logo_label.geometry()
+        assert abs(logo.center().y() - overlay.rect().center().y()) <= 1
+
+    def test_click_on_the_logo_counts_as_a_body_click(self, qtbot):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtTest import QTest
+
+        overlay = NotificationOverlay("Title", "Body text")
+        overlay.show()
+        with qtbot.waitSignal(overlay.body_clicked, timeout=2000):
+            QTest.mouseClick(
+                overlay,
+                Qt.MouseButton.LeftButton,
+                pos=overlay._logo_label.geometry().center(),
+            )
+
+
 class TestNotificationOverlayDismissal:
     """Dismissal path via close-glyph click and auto-dismiss timer."""
 

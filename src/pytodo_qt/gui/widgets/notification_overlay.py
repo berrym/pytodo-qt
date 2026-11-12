@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from pathlib import Path
 
 from PyQt6.QtCore import (
     QEasingCurve,
@@ -31,7 +32,7 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPainterPath, QPen
+from PyQt6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import (
     QApplication,
     QFrame,
@@ -64,6 +65,11 @@ _CORNER_RADIUS = 10
 _ANIMATION_DURATION_MS = 240
 _DEFAULT_TIMEOUT_MS = 5000
 _MAX_VISIBLE_DEFAULT = 4
+# The application's logo, shown in each banner. A banner floats above
+# whatever is on screen, often with the main window hidden, so it has
+# to say which application it belongs to.
+_LOGO_SIZE = 36
+_LOGO_PATH = Path(__file__).parent.parent / "icons" / "pytodo-qt-256.png"
 
 
 class _BodyScrollArea(QScrollArea):
@@ -234,13 +240,30 @@ class NotificationOverlay(QWidget):
         text_column.addWidget(body_scroll, 1)
         outer.addLayout(text_column, 1)
 
+        logo_label = QLabel(self)
+        logo_label.setFixedSize(_LOGO_SIZE, _LOGO_SIZE)
+        logo_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        logo = QIcon(str(_LOGO_PATH)).pixmap(
+            QSize(_LOGO_SIZE, _LOGO_SIZE), self.devicePixelRatioF()
+        )
+        if logo.isNull():
+            logo_label.hide()
+        else:
+            logo_label.setPixmap(logo)
+            outer.addWidget(logo_label, 0, Qt.AlignmentFlag.AlignVCenter)
+
         close_btn = QPushButton("\u2715", self)
         close_btn.setFlat(True)
         close_btn.setFixedSize(22, 22)
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        # The application stylesheet gives every QPushButton a filled
+        # background, padding and a minimum width, and stylesheet sizes
+        # take precedence over setFixedSize. Reset them so the glyph
+        # stays a bare 22 px mark and the text keeps the banner's width.
         close_btn.setStyleSheet(
-            "QPushButton { border: none; color: palette(mid); font-size: 14px; }"
-            "QPushButton:hover { color: palette(window-text); }"
+            "QPushButton { border: none; background: transparent; padding: 0;"
+            " min-width: 22px; max-width: 22px; color: palette(mid); font-size: 14px; }"
+            "QPushButton:hover { background: transparent; color: palette(window-text); }"
         )
         close_btn.clicked.connect(self._start_dismiss)
 
@@ -251,6 +274,7 @@ class NotificationOverlay(QWidget):
         outer.addLayout(close_column)
 
         self._close_btn = close_btn
+        self._logo_label = logo_label
         self._body_label = body_label
         self._body_scroll = body_scroll
 
