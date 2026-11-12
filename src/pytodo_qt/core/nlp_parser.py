@@ -20,10 +20,13 @@ from dataclasses import dataclass, field
 from datetime import date, time, timedelta
 from datetime import datetime as _datetime
 from enum import Enum
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from .logger import Logger
 from .models import format_duration
+
+if TYPE_CHECKING:
+    from .config import TimeBlockConfig
 
 logger = Logger(__name__)
 
@@ -156,6 +159,17 @@ class _SpanTracker:
     def unreserve_kind(self, kind: EntityKind) -> None:
         """Remove all spans of a given kind (for last-match-wins)."""
         self._spans = [s for s in self._spans if s.kind != kind]
+
+    def release(self, start: int, end: int) -> None:
+        """Remove the span covering exactly [start, end), if there is one."""
+        self._spans = [s for s in self._spans if (s.start, s.end) != (start, end)]
+
+    def span_at(self, offset: int) -> EntitySpan | None:
+        """Return the reserved span containing a character offset, if any."""
+        for span in self._spans:
+            if span.start <= offset < span.end:
+                return span
+        return None
 
     @property
     def spans(self) -> list[EntitySpan]:
@@ -1719,6 +1733,31 @@ def _extract_dates_and_times(
     _today_implying_phrases = {"this morning", "this afternoon", "this evening"}
     _today_implying_words = {"tonight"}
     due_time_block: str | None = None
+    # The text the time block was read from, and whether that text also
+    # set a stand-in clock time (as "afternoon" does, but "late
+    # afternoon" does not).
+    block_span: tuple[int, int] | None = None
+    block_set_time = False
+
+    lead_ins: list[list[str]] = sorted(
+        intents.get("part_of_day_lead_ins", []), key=len, reverse=True
+    )
+
+    def _token_free(idx: int) -> bool:
+        return tracker.is_free(tokens[idx].start, tokens[idx].end)
+
+    def _lead_in_length(idx: int) -> int:
+        """Number of tokens of a lead-in ("in the", "at") ending at idx."""
+        for words in lead_ins:
+            first = idx - len(words) + 1
+            if first < 0:
+                continue
+            if all(
+                tokens[first + k].text == word and _token_free(first + k)
+                for k, word in enumerate(words)
+            ):
+                return len(words)
+        return 0
 
     # Multi-word time_of_day phrases first ("this morning", "this afternoon", etc.)
     for window_size in (3, 2):
@@ -1738,6 +1777,8 @@ def _extract_dates_and_times(
                     last_word = phrase_tokens[-1].text
                     if last_word in time_block_words:
                         due_time_block = time_block_words[last_word]
+                        block_span = (start, end)
+                        block_set_time = True
             # Multi-word time block phrases ("late afternoon", "early morning", "first thing")
             if phrase in time_block_words and due_time_block is None:
                 due_time_block = time_block_words[phrase]
@@ -1750,6 +1791,8 @@ def _extract_dates_and_times(
                         start, end, EntityKind.TIME_BLOCK, due_time_block.replace("_", " ").title()
                     )
                 )
+                block_span = (start, end)
+                block_set_time = False
 
     # Track whether Phase 2 skipped "morning"/"evening" for AM/PM context in Phase 3
     _skipped_tod_context: str | None = None
@@ -1772,10 +1815,16 @@ def _extract_dates_and_times(
             # Don't override a time already set by Phase 1 relative expressions
             if due_time is not None:
                 continue
-            _set_time(tod[tok.text], tok.start, tok.end)
+            # A lead-in directly before the word goes with it: "in the
+            # morning", "at noon".
+            lead_in = _lead_in_length(j - 1) if j > 0 else 0
+            word_start = tokens[j - lead_in].start
+            _set_time(tod[tok.text], word_start, tok.end)
             # Set time_block from single-word matches (morning, evening, tonight, etc.)
             if tok.text in time_block_words and due_time_block is None:
                 due_time_block = time_block_words[tok.text]
+                block_span = (word_start, tok.end)
+                block_set_time = True
             if tok.text in _today_implying_words and due_date is None:
                 due_date = today
 
@@ -1811,12 +1860,88 @@ def _extract_dates_and_times(
                                 block.replace("_", " ").title(),
                             )
                         )
+                        block_span = (start, end)
+                        block_set_time = False
                         break
             if due_time_block is not None:
                 break
         # Fall back to meal-derived block if no explicit time word found
         if due_time_block is None and _meal_fallback is not None:
             due_time_block = _meal_fallback
+
+    # --- Phase 2c: words around the part-of-day phrase ---
+    # "this late afternoon", "early this afternoon", "late tonight",
+    # "early tomorrow morning", "in the late evening", "late at night".
+    # Reading leftwards from the phrase: at most one of a today word, a
+    # lead-in or an already-recognized date, and then a modifier.
+    if due_time_block is not None and block_span is not None:
+        modifiers: dict[str, str] = intents.get("part_of_day_modifiers", {})
+        today_words: set[str] = intents.get("part_of_day_today_words", set())
+        valid_blocks = set(time_block_words.values())
+        phrase_start, phrase_end = block_span
+
+        i = next(idx for idx, tok in enumerate(tokens) if tok.start >= phrase_start) - 1
+        consumed_start = phrase_start
+        pins_today = False
+        date_between = False
+        if i >= 0 and tokens[i].text in today_words and _token_free(i):
+            pins_today = True
+            consumed_start = tokens[i].start
+            i -= 1
+        elif i >= 0 and (lead_in := _lead_in_length(i)):
+            i -= lead_in
+            consumed_start = tokens[i + 1].start
+        elif i >= 0 and not _token_free(i):
+            between = tracker.span_at(tokens[i].start)
+            if between is not None and between.kind is EntityKind.DATE:
+                while i >= 0 and tokens[i].start >= between.start:
+                    i -= 1
+                date_between = True
+            else:
+                i = -1
+
+        narrowed = due_time_block
+        modifier: _Token | None = None
+        if i >= 0 and _token_free(i) and tokens[i].text in modifiers:
+            prefix = modifiers[tokens[i].text]
+            if not prefix:
+                modifier = tokens[i]
+            elif f"{prefix}_{due_time_block}" in valid_blocks:
+                narrowed = f"{prefix}_{due_time_block}"
+                modifier = tokens[i]
+
+        if pins_today or modifier is not None or consumed_start != phrase_start:
+            tracker.release(phrase_start, phrase_end)
+            if narrowed != due_time_block and block_set_time:
+                # The stand-in time belongs to the whole block ("afternoon"
+                # is 14:00); a narrowed block has none, as with "late
+                # afternoon" said directly.
+                due_time = None
+                block_set_time = False
+            due_time_block = narrowed
+            title = due_time_block.replace("_", " ").title()
+            if block_set_time and due_time is not None:
+                kind = EntityKind.TIME
+                display = due_time.strftime("%I:%M %p").lstrip("0")
+            else:
+                kind = EntityKind.TIME_BLOCK
+                display = title
+            if modifier is not None and not date_between:
+                consumed_start = modifier.start
+            tracker.reserve(EntitySpan(consumed_start, phrase_end, kind, display))
+            if modifier is not None and date_between:
+                tracker.reserve(
+                    EntitySpan(
+                        modifier.start,
+                        modifier.end,
+                        EntityKind.TIME_BLOCK
+                        if kind is EntityKind.TIME_BLOCK
+                        else EntityKind.FILLER,
+                        title if kind is EntityKind.TIME_BLOCK else modifier.text,
+                    )
+                )
+            if pins_today and due_date is None:
+                due_date = today
 
     # --- Time ranges (between X and Y, from X to Y, X-Y) ---
     _range_closers_between = {"and"}
@@ -2514,12 +2639,37 @@ def _extract_fillers(text: str, tracker: _SpanTracker) -> None:
                 search_start = idx + 1
 
 
+def _next_block_date(
+    block: str, due_time: time | None, now: _datetime, time_blocks: TimeBlockConfig | None
+) -> date:
+    """Return the date for a time block that was named without one.
+
+    Today while the block is still to come or under way, tomorrow once
+    it has ended. When a clock time accompanies the block, that time
+    decides instead: today until it has passed.
+    """
+    today = now.date()
+    if due_time is not None:
+        return today if now < _datetime.combine(today, due_time) else today + timedelta(days=1)
+    if time_blocks is None:
+        from .config import get_config
+
+        time_blocks = get_config().time_blocks
+    return time_blocks.next_occurrence(block, now) or today
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 
-def parse(text: str, today: date | None = None) -> ParseResult:
+def parse(
+    text: str,
+    today: date | None = None,
+    *,
+    now: _datetime | None = None,
+    time_blocks: TimeBlockConfig | None = None,
+) -> ParseResult:
     """Parse a natural language task description into structured fields.
 
     Uses intent dictionaries + fuzzy matching + dateparser.
@@ -2528,12 +2678,19 @@ def parse(text: str, today: date | None = None) -> ParseResult:
     Args:
         text: Raw user input, e.g. "Buy groceries tomorrow at 3pm @errands"
         today: Override for today's date (for testing). Defaults to date.today().
+        now: The current moment, used to date a time block named without
+            a date. Defaults to the current time, or to the start of
+            ``today`` when only ``today`` is given, so that a caller
+            fixing the date gets that date back.
+        time_blocks: Time block boundaries. Defaults to the configured ones.
 
     Returns:
         ParseResult with extracted fields and remainder as the reminder.
     """
+    if now is None:
+        now = _datetime.now() if today is None else _datetime.combine(today, time.min)
     if today is None:
-        today = date.today()
+        today = now.date()
 
     text = _sanitize(text)
     if not text:
@@ -2577,6 +2734,10 @@ def parse(text: str, today: date | None = None) -> ParseResult:
     # Rule 4: Recurrence implies due date today
     if rec_type is not None and due_date is None:
         due_date = today
+
+    # A time block named without a date means its next occurrence.
+    if due_time_block is not None and due_date is None:
+        due_date = _next_block_date(due_time_block, due_time, now, time_blocks)
 
     # 8. Conditions (after all other extraction so span boundaries are settled)
     conditions = _extract_conditions(tokens, tracker)

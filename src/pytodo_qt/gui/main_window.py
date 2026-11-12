@@ -3183,8 +3183,30 @@ class MainWindow(QMainWindow):
             if new_block != item.due_time_block:
                 from .commands import SetFieldCommand
 
-                cmd = SetFieldCommand(self, active_list.id, item_id, "due_time_block", new_block)
-                self._undo_stack.push(cmd)
+                block_cmd = SetFieldCommand(
+                    self, active_list.id, item_id, "due_time_block", new_block
+                )
+                if new_block is not None and item.due_date is None:
+                    # A block on an item with no date means the block's
+                    # next occurrence; without a date the item would
+                    # appear in no date-based view and get no reminder.
+                    from datetime import date as _date
+                    from datetime import datetime as _datetime
+
+                    block_date = (
+                        self._config_manager.config.time_blocks.next_occurrence(
+                            new_block, _datetime.now()
+                        )
+                        or _date.today()
+                    )
+                    self._undo_stack.beginMacro("Set time block")
+                    self._undo_stack.push(block_cmd)
+                    self._undo_stack.push(
+                        SetFieldCommand(self, active_list.id, item_id, "due_date", block_date)
+                    )
+                    self._undo_stack.endMacro()
+                else:
+                    self._undo_stack.push(block_cmd)
 
     def _on_set_event_date(self, item_id: object) -> None:
         """Handle 'Set Event Date...' from context menu."""

@@ -5,7 +5,7 @@ Dialog for adding a new to-do item.
 
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QDate, Qt
@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ...core.config import get_config
 from ...core.logger import Logger
 from ...core.models import TodoItem
 from ...core.nlp_parser import EntityKind, ParseResult, replace_or_append_category
@@ -966,6 +967,14 @@ class AddTodoDialog(QDialog):
 
             # Time block
             time_block = self.time_block_combo.currentData() or None
+            # A block chosen without a date means the block's next
+            # occurrence; without a date the item would appear in no
+            # date-based view and get no reminder.
+            if time_block and due_date is None:
+                due_date = (
+                    get_config().time_blocks.next_occurrence(time_block, datetime.now())
+                    or date.today()
+                )
 
             # Event date
             event_date = None

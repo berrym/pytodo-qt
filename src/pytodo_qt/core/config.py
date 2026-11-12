@@ -8,6 +8,7 @@ from __future__ import annotations
 import socket
 import tomllib
 from dataclasses import dataclass, field
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -197,6 +198,20 @@ class TimeBlockConfig:
         elif half == "late_":
             start = start + span // 2
         return (start, end)
+
+    def next_occurrence(self, block: str, now: datetime) -> date | None:
+        """Return the date of the next occurrence of a named block.
+
+        That is today while today's block is still to come or under
+        way, and tomorrow once it has ended. Returns None for a block
+        that cannot be resolved.
+        """
+        block_range = self.block_range(block)
+        if block_range is None:
+            return None
+        today = now.date()
+        end = datetime.combine(today, time.min) + timedelta(minutes=block_range[1])
+        return today if now < end else today + timedelta(days=1)
 
     def block_for_hour(self, hour: int) -> str:
         """Return the canonical time block name for an hour of the day.

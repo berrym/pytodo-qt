@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
+
 from pytodo_qt.core.config import (
     AppConfig,
     NotificationConfig,
@@ -311,3 +313,49 @@ class TestNotificationConfigTomlRoundTrip:
         c = AppConfig.from_dict({})
         assert c.notifications.enabled is True
         assert c.notifications.upcoming_days == 3
+
+
+class TestNextOccurrence:
+    """next_occurrence dates a block named without a date: today while
+    the block is still to come or under way, tomorrow once it has ended."""
+
+    DAY = date(2026, 3, 11)
+
+    def _at(self, hour: int, minute: int = 0) -> datetime:
+        return datetime(2026, 3, 11, hour, minute)
+
+    def test_before_the_block(self):
+        assert TimeBlockConfig().next_occurrence("afternoon", self._at(9)) == self.DAY
+
+    def test_during_the_block(self):
+        assert TimeBlockConfig().next_occurrence("afternoon", self._at(16, 59)) == self.DAY
+
+    def test_at_the_end_of_the_block(self):
+        assert TimeBlockConfig().next_occurrence("afternoon", self._at(17)) == date(2026, 3, 12)
+
+    def test_after_the_block(self):
+        assert TimeBlockConfig().next_occurrence("morning", self._at(13)) == date(2026, 3, 12)
+
+    def test_half_block(self):
+        c = TimeBlockConfig()
+        # Early afternoon is 12:00-14:30.
+        assert c.next_occurrence("early_afternoon", self._at(14, 29)) == self.DAY
+        assert c.next_occurrence("early_afternoon", self._at(14, 30)) == date(2026, 3, 12)
+
+    def test_block_crossing_midnight_never_ends_today(self):
+        c = TimeBlockConfig()
+        assert c.next_occurrence("night", self._at(23, 59)) == self.DAY
+        assert c.next_occurrence("late_night", self._at(0, 30)) == self.DAY
+
+    def test_fixed_blocks(self):
+        c = TimeBlockConfig()
+        assert c.next_occurrence("noon", self._at(12, 29)) == self.DAY
+        assert c.next_occurrence("noon", self._at(12, 30)) == date(2026, 3, 12)
+
+    def test_custom_boundaries(self):
+        c = TimeBlockConfig(evening_start=18, evening_end=22)
+        assert c.next_occurrence("evening", self._at(21, 30)) == self.DAY
+        assert c.next_occurrence("evening", self._at(22)) == date(2026, 3, 12)
+
+    def test_unknown_block(self):
+        assert TimeBlockConfig().next_occurrence("teatime", self._at(9)) is None

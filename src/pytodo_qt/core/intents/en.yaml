@@ -165,6 +165,7 @@ time_of_day:
   sunset: 18:30
   lunchtime: 12:00
   lunch: 12:00
+  midday: 12:00
 
 time_of_day_phrases:
   "end of day": 17:00
@@ -450,12 +451,47 @@ time_block_words:
   "early evening": early_evening
   "late evening": late_evening
   "late night": late_night
+  "mid morning": morning
+  "mid-morning": morning
+  "mid afternoon": afternoon
+  "mid-afternoon": afternoon
+  "mid evening": evening
+  "mid-evening": evening
   "first thing": early_morning
   "end of day": evening
   breakfast: morning
   lunch: afternoon
   dinner: evening
   supper: evening
+
+# ---------------------------------------------------------------------------
+# Part-of-day phrasing — the words that surround a part-of-day word
+# ("early this afternoon", "in the late evening", "late tonight").
+#
+# part_of_day_modifiers: a word that narrows the block. The value is the
+# prefix of the canonical block name ("early" + "afternoon" →
+# early_afternoon); an empty value means the word is consumed without
+# narrowing ("later this afternoon" is still the afternoon).
+#
+# part_of_day_today_words: a word directly before the phrase that pins
+# it to today ("this late afternoon").
+#
+# part_of_day_lead_ins: connectives directly before the phrase that
+# carry no task content ("in the afternoon", "at night", "at noon").
+# ---------------------------------------------------------------------------
+
+part_of_day_modifiers:
+  early: early
+  late: late
+  later: ""
+
+part_of_day_today_words:
+  - this
+
+part_of_day_lead_ins:
+  - "in the"
+  - "during the"
+  - at
 
 # ---------------------------------------------------------------------------
 # Filler / connective phrases — multi-word fragments of natural speech

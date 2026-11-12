@@ -3,7 +3,7 @@
 Covers add_todo.py, add_list.py, and edit_recurrence.py.
 """
 
-from datetime import date, time
+from datetime import date, time, timedelta
 
 import pytest
 from PyQt6.QtCore import QDate
@@ -672,6 +672,48 @@ class TestAddTodoDialogAdvancedMode:
         item = dialog.get_item()
         assert item is not None
         assert item.due_time_block == "evening"
+
+    def test_time_block_without_a_date_gets_the_next_occurrence(self, app):
+        dialog = _make_advanced_dialog()
+        dialog.reminder_edit.setText("Evening task")
+        dialog.due_date_checkbox.setChecked(False)
+        dialog.time_block_combo.setCurrentIndex(dialog.time_block_combo.findData("evening"))
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_time_block == "evening"
+        assert item.due_date in (date.today(), date.today() + timedelta(days=1))
+
+    def test_time_block_keeps_a_chosen_date(self, app):
+        dialog = _make_advanced_dialog()
+        dialog.reminder_edit.setText("Evening task")
+        dialog.due_date_checkbox.setChecked(True)
+        dialog.due_date_edit.setDate(QDate(2030, 1, 15))
+        dialog.time_block_combo.setCurrentIndex(dialog.time_block_combo.findData("evening"))
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_date == date(2030, 1, 15)
+
+    def test_no_block_and_no_date_stays_dateless(self, app):
+        dialog = _make_advanced_dialog()
+        dialog.reminder_edit.setText("Someday")
+        dialog.due_date_checkbox.setChecked(False)
+        dialog.time_block_combo.setCurrentIndex(0)
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_date is None
+
+    def test_smart_input_block_without_a_date_gets_one(self, app):
+        dialog = AddTodoDialog()
+        dialog._smart_input.set_text("walk late afternoon")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.reminder == "walk"
+        assert item.due_time_block == "late_afternoon"
+        assert item.due_date in (date.today(), date.today() + timedelta(days=1))
 
     def test_time_block_none(self, app):
         dialog = _make_advanced_dialog()

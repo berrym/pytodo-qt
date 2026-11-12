@@ -6,8 +6,9 @@ All date-dependent tests use the ``today`` parameter for deterministic results.
 
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, datetime, time
 
+from pytodo_qt.core.config import TimeBlockConfig
 from pytodo_qt.core.nlp_parser import EntityKind, parse
 
 # Fixed "today" for all tests that need deterministic dates.
@@ -2063,3 +2064,216 @@ class TestSubtaskSpan:
         # Span starts at the colon and runs to end of text.
         assert text[span.start] == ":"
         assert span.end == len(text)
+
+
+# ---------------------------------------------------------------------------
+# TestPartOfDayPhrasing
+# ---------------------------------------------------------------------------
+
+
+class TestPartOfDayPhrasing:
+    """The words around a part-of-day word: "this", early/late in either
+    position, and connectives that carry no task content."""
+
+    def test_this_before_a_narrowed_block(self) -> None:
+        r = parse("walk this late afternoon", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "late_afternoon"
+        assert r.due_date == TODAY
+
+    def test_this_before_an_early_block(self) -> None:
+        r = parse("walk this early afternoon", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "early_afternoon"
+        assert r.due_date == TODAY
+
+    def test_this_night(self) -> None:
+        r = parse("walk this night", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "night"
+        assert r.due_date == TODAY
+
+    def test_early_before_this(self) -> None:
+        r = parse("walk early this afternoon", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "early_afternoon"
+        assert r.due_date == TODAY
+
+    def test_late_before_this(self) -> None:
+        r = parse("walk late this afternoon", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "late_afternoon"
+        assert r.due_date == TODAY
+
+    def test_narrowing_drops_the_stand_in_time(self) -> None:
+        # "this afternoon" alone carries 14:00; a narrowed block carries
+        # no clock time, as when "late afternoon" is said directly.
+        assert parse("walk this afternoon", today=TODAY).due_time == time(14, 0)
+        assert parse("walk late this afternoon", today=TODAY).due_time is None
+        assert parse("walk late afternoon", today=TODAY).due_time is None
+
+    def test_later_is_consumed_without_narrowing(self) -> None:
+        r = parse("call back later this afternoon", today=TODAY)
+        assert r.reminder == "call back"
+        assert r.due_time_block == "afternoon"
+        assert r.due_date == TODAY
+
+    def test_late_tonight(self) -> None:
+        r = parse("walk late tonight", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "late_evening"
+        assert r.due_date == TODAY
+
+    def test_early_tonight(self) -> None:
+        r = parse("walk early tonight", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "early_evening"
+
+    def test_modifier_before_a_date(self) -> None:
+        r = parse("walk early tomorrow morning", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "early_morning"
+        assert r.due_date == date(2026, 3, 12)
+        assert r.due_time is None
+
+    def test_modifier_before_a_day_name(self) -> None:
+        r = parse("walk late friday afternoon", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "late_afternoon"
+        assert r.due_date == date(2026, 3, 13)
+
+    def test_in_the_afternoon(self) -> None:
+        r = parse("walk in the afternoon", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "afternoon"
+
+    def test_in_the_late_afternoon(self) -> None:
+        r = parse("walk in the late afternoon", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "late_afternoon"
+
+    def test_during_the_evening(self) -> None:
+        r = parse("walk during the evening", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "evening"
+
+    def test_early_in_the_morning(self) -> None:
+        r = parse("walk early in the morning", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "early_morning"
+
+    def test_first_thing_in_the_morning(self) -> None:
+        r = parse("walk first thing in the morning", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "early_morning"
+
+    def test_at_night(self) -> None:
+        r = parse("walk at night", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "night"
+
+    def test_late_at_night(self) -> None:
+        r = parse("walk late at night", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "late_night"
+
+    def test_at_noon(self) -> None:
+        r = parse("walk at noon", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time == time(12, 0)
+
+    def test_midday(self) -> None:
+        r = parse("walk midday", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time == time(12, 0)
+
+    def test_mid_afternoon(self) -> None:
+        r = parse("walk mid afternoon", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "afternoon"
+
+    def test_hyphenated_mid_morning(self) -> None:
+        r = parse("walk mid-morning", today=TODAY)
+        assert r.reminder == "walk"
+        assert r.due_time_block == "morning"
+
+    def test_one_span_covers_a_contiguous_phrase(self) -> None:
+        text = "walk early this afternoon"
+        r = parse(text, today=TODAY)
+        blocks = [s for s in r.spans if s.kind == EntityKind.TIME_BLOCK]
+        assert [text[s.start : s.end] for s in blocks] == ["early this afternoon"]
+        assert blocks[0].display == "Early Afternoon"
+
+    def test_modifier_that_is_task_content_is_left_alone(self) -> None:
+        r = parse("pay late fee this afternoon", today=TODAY)
+        assert r.reminder == "pay late fee"
+        assert r.due_time_block == "afternoon"
+
+    def test_modifier_not_next_to_the_phrase_is_left_alone(self) -> None:
+        r = parse("early bird special tomorrow morning", today=TODAY)
+        assert r.reminder == "early bird special"
+        assert r.due_time_block == "morning"
+
+    def test_modifier_without_a_matching_block_is_left_alone(self) -> None:
+        # There is no "early night" block.
+        r = parse("walk early at night", today=TODAY)
+        assert r.reminder == "walk early"
+        assert r.due_time_block == "night"
+
+    def test_modifier_without_a_part_of_day_is_left_alone(self) -> None:
+        r = parse("be early tomorrow", today=TODAY)
+        assert r.reminder == "be early"
+        assert r.due_time_block is None
+
+
+# ---------------------------------------------------------------------------
+# TestBlockDateInference
+# ---------------------------------------------------------------------------
+
+
+class TestBlockDateInference:
+    """A time block named without a date means its next occurrence."""
+
+    BLOCKS = TimeBlockConfig()  # afternoon 12-17, late afternoon 14:30-17, night 21-06
+
+    def _parse(self, text: str, hour: int, minute: int = 0):
+        return parse(text, now=datetime.combine(TODAY, time(hour, minute)), time_blocks=self.BLOCKS)
+
+    def test_block_still_to_come_is_today(self) -> None:
+        r = self._parse("walk late afternoon", 9)
+        assert r.due_time_block == "late_afternoon"
+        assert r.due_date == TODAY
+
+    def test_block_under_way_is_today(self) -> None:
+        assert self._parse("walk late afternoon", 16).due_date == TODAY
+
+    def test_block_that_has_ended_is_tomorrow(self) -> None:
+        assert self._parse("walk late afternoon", 17).due_date == date(2026, 3, 12)
+        assert self._parse("walk late afternoon", 20).due_date == date(2026, 3, 12)
+
+    def test_block_crossing_midnight_is_today_all_day(self) -> None:
+        assert self._parse("walk at night", 23, 30).due_date == TODAY
+        assert self._parse("walk at night", 2).due_date == TODAY
+
+    def test_explicit_date_is_kept(self) -> None:
+        r = self._parse("walk friday late afternoon", 20)
+        assert r.due_date == date(2026, 3, 13)
+
+    def test_this_means_today_even_after_the_block(self) -> None:
+        assert self._parse("walk this late afternoon", 20).due_date == TODAY
+
+    def test_stand_in_time_decides_when_present(self) -> None:
+        # "afternoon" alone still carries 14:00: today before it, tomorrow after.
+        assert self._parse("walk in the afternoon", 13).due_date == TODAY
+        assert self._parse("walk in the afternoon", 15).due_date == date(2026, 3, 12)
+
+    def test_explicit_time_with_a_block_decides(self) -> None:
+        assert self._parse("call mom late afternoon at 4pm", 15).due_date == TODAY
+        assert self._parse("call mom late afternoon at 4pm", 16, 30).due_date == date(2026, 3, 12)
+
+    def test_fixed_today_without_now_gives_that_date(self) -> None:
+        assert parse("walk late afternoon", today=TODAY).due_date == TODAY
+
+    def test_no_block_no_inferred_date(self) -> None:
+        assert self._parse("walk", 9).due_date is None
+        assert self._parse("walk at 3pm", 9).due_date is None
