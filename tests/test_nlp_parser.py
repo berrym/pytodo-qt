@@ -2565,3 +2565,97 @@ class TestTimeRangeEnds:
         r = parse("meeting 2026-11-20", today=TODAY)
         assert r.due_date == date(2026, 11, 20)
         assert r.due_time is None
+
+
+# ---------------------------------------------------------------------------
+# TestClausePunctuation
+# ---------------------------------------------------------------------------
+
+
+class TestClausePunctuation:
+    """A comma, semicolon or sentence-ending full stop after a word does
+    not stop the word being recognised, and is not left behind alone."""
+
+    def test_comma_after_a_date(self) -> None:
+        r = parse("submit report friday, p1", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+        assert r.priority == 1
+        assert r.reminder == "submit report"
+
+    def test_comma_between_a_date_and_a_time(self) -> None:
+        r = parse("submit report friday, at 3pm", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+        assert r.due_time == time(15, 0)
+        assert r.reminder == "submit report"
+
+    def test_comma_after_a_time(self) -> None:
+        r = parse("dentist at 3pm, bring forms", today=TODAY)
+        assert r.due_time == time(15, 0)
+        assert r.reminder == "dentist, bring forms"
+
+    def test_comma_rejoins_the_word_before_it(self) -> None:
+        r = parse("submit report tomorrow, then rest", today=TODAY)
+        assert r.reminder == "submit report, then rest"
+
+    def test_semicolon_after_a_date(self) -> None:
+        r = parse("call mom friday; p1", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+        assert r.reminder == "call mom"
+
+    def test_full_stop_ending_the_text(self) -> None:
+        r = parse("call mom friday.", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+        assert r.reminder == "call mom"
+
+    def test_full_stop_between_sentences_is_kept(self) -> None:
+        r = parse("finish report friday. then rest", today=TODAY)
+        assert r.reminder == "finish report. then rest"
+
+    def test_date_first_leaves_no_leading_comma(self) -> None:
+        r = parse("friday, call mom", today=TODAY)
+        assert r.reminder == "call mom"
+
+    def test_two_commas_do_not_double_up(self) -> None:
+        r = parse("buy milk, friday, eggs", today=TODAY)
+        assert r.reminder == "buy milk, eggs"
+
+    def test_comma_in_the_title_is_untouched(self) -> None:
+        r = parse("buy milk, eggs friday", today=TODAY)
+        assert r.reminder == "buy milk, eggs"
+
+    def test_span_stops_before_the_comma(self) -> None:
+        text = "submit report friday, p1"
+        r = parse(text, today=TODAY)
+        (span,) = [s for s in r.spans if s.kind is EntityKind.DATE]
+        assert text[span.start : span.end] == "friday"
+
+    def test_dotted_am_pm_keeps_its_dots(self) -> None:
+        r = parse("dentist tomorrow at 3 p.m., bring forms", today=TODAY)
+        assert r.due_time == time(15, 0)
+        assert r.reminder == "dentist, bring forms"
+
+    def test_comma_inside_a_number_is_untouched(self) -> None:
+        r = parse("pay 1,000 to bob friday", today=TODAY)
+        assert r.reminder == "pay 1,000 to bob"
+
+    def test_full_stop_inside_a_word_is_untouched(self) -> None:
+        r = parse("review v2.5 friday", today=TODAY)
+        assert r.reminder == "review v2.5"
+
+    def test_date_with_a_comma_before_the_year(self) -> None:
+        r = parse("meeting nov 20, 2026 at 3pm", today=TODAY)
+        assert r.due_date == date(2026, 11, 20)
+        assert r.reminder == "meeting"
+
+    def test_exclamation_mark_still_sets_the_priority(self) -> None:
+        r = parse("call mom tomorrow!", today=TODAY)
+        assert r.priority == 1
+        assert r.due_date == date(2026, 3, 12)
+        assert r.reminder == "call mom"
+
+    def test_punctuation_alone_stays_in_the_title(self) -> None:
+        r = parse("wait ... friday", today=TODAY)
+        assert r.reminder == "wait ..."
+
+    def test_text_without_entities_is_returned_as_typed(self) -> None:
+        assert parse("milk, eggs; bread.", today=TODAY).reminder == "milk, eggs; bread."

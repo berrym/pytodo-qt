@@ -132,8 +132,32 @@ class _Token:
     end: int  # Character offset (exclusive)
 
 
+def _word_end(word: str) -> int:
+    """Length of *word* without the punctuation that closes a clause.
+
+    A trailing comma or semicolon, and a full stop ending a sentence,
+    are not part of the word: "friday," is "friday". A full stop is
+    kept when the word has another one inside ("a.m.", "p.m."), and a
+    word that is nothing but punctuation is left whole. "!" is not
+    removed; trailing exclamation marks set the priority.
+    """
+    end = len(word)
+    while end > 1 and word[end - 1] in ",;":
+        end -= 1
+    if end > 1 and word[end - 1] == "." and "." not in word[: end - 1]:
+        end -= 1
+        while end > 1 and word[end - 1] in ",;":
+            end -= 1
+    return end if any(ch.isalnum() for ch in word[:end]) else len(word)
+
+
 def _tokenize(text: str) -> list[_Token]:
-    """Split text on whitespace, preserving character spans."""
+    """Split text on whitespace, preserving character spans.
+
+    Clause-closing punctuation at the end of a word is left out of its
+    token (see ``_word_end``), so the word matches the vocabulary and a
+    span built from tokens stops before the punctuation.
+    """
     tokens: list[_Token] = []
     i = 0
     n = len(text)
@@ -148,7 +172,8 @@ def _tokenize(text: str) -> list[_Token]:
         while i < n and not text[i].isspace():
             i += 1
         word = text[start:i]
-        tokens.append(_Token(text=word.lower(), original=word, start=start, end=i))
+        word = word[: _word_end(word)]
+        tokens.append(_Token(text=word.lower(), original=word, start=start, end=start + len(word)))
     return tokens
 
 
@@ -2760,6 +2785,9 @@ def _parse_time_token(text: str) -> time | None:
 # ---------------------------------------------------------------------------
 
 
+_CLAUSE_PUNCTUATION = (",", ";", ".")
+
+
 def _build_reminder(text: str, spans: list[EntitySpan]) -> str:
     """Build reminder text from everything not claimed by entity spans."""
     if not spans:
@@ -2775,9 +2803,22 @@ def _build_reminder(text: str, spans: list[EntitySpan]) -> str:
     if pos < len(text):
         parts.append(text[pos:])
 
-    # Join, collapse whitespace, strip
-    raw = "".join(parts)
-    return " ".join(raw.split()).strip()
+    # Join and collapse whitespace. Punctuation that followed a claimed
+    # word is left standing alone ("submit report , then rest"). Between
+    # words it rejoins the word before it, unless that word already ends
+    # a clause; before the first word or after the last it is dropped.
+    pieces = "".join(parts).split()
+    while pieces and pieces[-1] in _CLAUSE_PUNCTUATION:
+        pieces.pop()
+    words: list[str] = []
+    for piece in pieces:
+        if piece in _CLAUSE_PUNCTUATION:
+            if words and words[-1][-1] not in _CLAUSE_PUNCTUATION:
+                words[-1] += piece
+            continue
+        words.append(piece)
+    # A comma or semicolon at the very end now separates nothing.
+    return " ".join(words).rstrip(",;").rstrip()
 
 
 # ---------------------------------------------------------------------------
