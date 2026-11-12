@@ -81,6 +81,11 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 
+# Kind recorded in the notification log for the once-per-day due/overdue
+# notification.
+_DAILY_NOTIFICATION_KIND = "daily"
+
+
 def _prefer_os_notification(*, notifier_available: bool, platform: str) -> bool:
     """Decide whether the OS-native notification path is preferred over
     the in-app overlay for the given runtime configuration.
@@ -2235,12 +2240,13 @@ class MainWindow(QMainWindow):
     def _check_due_notifications(self) -> None:
         """Send desktop notifications for due-today and overdue items.
 
-        Checks all lists for items that are due today or overdue,
-        and sends a system tray notification if the item hasn't been
-        notified today. Updates notified_at to prevent re-alerting.
+        Checks all lists for items that are due today or overdue, and
+        sends a notification for each item that has not been notified
+        today. What has fired is recorded in the device-local
+        notification log, so notifying leaves the items themselves —
+        and therefore sync — untouched.
         """
         from datetime import date as _date
-        from datetime import datetime as _datetime
 
         from ..core.models import is_due_today, is_overdue
 
@@ -2248,8 +2254,9 @@ class MainWindow(QMainWindow):
         if not notif_config.enabled or self.tray_icon is None:
             return
 
-        today = _date.today()
-        today_start_ms = int(_datetime(today.year, today.month, today.day).timestamp() * 1000)
+        today_iso = _date.today().isoformat()
+        fired = self._storage.get_fired_notifications()
+        newly_fired: list[UUID] = []
 
         overdue_items: list[str] = []
         due_today_items: list[str] = []
@@ -2261,16 +2268,14 @@ class MainWindow(QMainWindow):
                 if item.complete:
                     continue
                 # Skip if already notified today
-                if item.notified_at >= today_start_ms:
+                if (str(item.id), _DAILY_NOTIFICATION_KIND, today_iso) in fired:
                     continue
                 if notif_config.notify_overdue and is_overdue(item.due_date, item.due_time):
                     overdue_items.append(item.reminder)
-                    item.notified_at = int(_datetime.now().timestamp() * 1000)
-                    item.mark_updated()
+                    newly_fired.append(item.id)
                 elif notif_config.notify_due_today and is_due_today(item.due_date):
                     due_today_items.append(item.reminder)
-                    item.notified_at = int(_datetime.now().timestamp() * 1000)
-                    item.mark_updated()
+                    newly_fired.append(item.id)
 
         if not overdue_items and not due_today_items:
             return
@@ -2298,8 +2303,8 @@ class MainWindow(QMainWindow):
             self._notify(self.tr("PyTodo-Qt Reminders"), "\n".join(lines), timeout=10)
         )
 
-        # Save the notified_at updates
-        self._save_database()
+        for item_id in newly_fired:
+            self._storage.record_notification(item_id, _DAILY_NOTIFICATION_KIND, today_iso)
 
         # IP change detection
         from ..core.network import get_lan_ip as _get_current_ip

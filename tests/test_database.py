@@ -199,6 +199,187 @@ class TestSchemaMigrationV18ToV19:
             storage2.close()
 
 
+class TestSchemaMigrationToV22:
+    """v22 adds the device-local notification log and keeps items intact."""
+
+    def _make_v21_database(self, db_path: Path) -> tuple[str, str]:
+        """Create a current database, then rewind it to the v21 shape:
+        no notification_log table, version 21, one stored item."""
+        storage = DatabaseStorage(db_path)
+        storage.open()
+        lst = TodoList(name="Errands")
+        storage.save_list(lst)
+        item = TodoItem(reminder="Renew passport")
+        storage.save_item(lst.id, item)
+        storage.connection.execute("DROP TABLE notification_log")
+        storage.connection.execute("UPDATE items SET notified_at = 1700000000000")
+        storage.set_schema_version(21)
+        storage.close()
+        return str(item.id), str(lst.id)
+
+    def test_migration_creates_log_and_bumps_version(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            self._make_v21_database(db_path)
+
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            try:
+                assert storage.get_schema_version() == SCHEMA_VERSION
+                assert SCHEMA_VERSION >= 22
+                tables = {
+                    row[0]
+                    for row in storage.connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                assert "notification_log" in tables
+                assert storage.get_fired_notifications() == set()
+            finally:
+                storage.close()
+
+    def test_migration_keeps_items_and_the_notified_at_column(self):
+        """Builds through v0.3.11b8 share the database file and still name
+        notified_at when saving an item, so the column must survive."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            item_id, list_id = self._make_v21_database(db_path)
+
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            try:
+                cols = [row[1] for row in storage.connection.execute("PRAGMA table_info(items)")]
+                assert "notified_at" in cols
+                row = storage.connection.execute(
+                    "SELECT reminder, notified_at FROM items WHERE id = ?", (item_id,)
+                ).fetchone()
+                assert row["reminder"] == "Renew passport"
+                assert row["notified_at"] == 1700000000000
+                # An insert that names the column, as an older build's
+                # save does, still succeeds.
+                storage.connection.execute(
+                    "INSERT INTO items (id, list_id, reminder, notified_at, created_at, updated_at) "
+                    "VALUES (?, ?, 'From an older build', 5, 0, 0)",
+                    (str(uuid4()), list_id),
+                )
+            finally:
+                storage.close()
+
+    def test_fresh_database_has_the_notified_at_column(self):
+        """A database first created by this version must also be usable
+        by an older build pointed at the same file."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = DatabaseStorage(Path(tmpdir) / "test.db")
+            storage.open()
+            try:
+                cols = [row[1] for row in storage.connection.execute("PRAGMA table_info(items)")]
+                assert "notified_at" in cols
+            finally:
+                storage.close()
+
+
+class TestNotificationLog:
+    """The record of which notifications have fired."""
+
+    @pytest.fixture
+    def storage(self, tmp_path):
+        s = DatabaseStorage(tmp_path / "test.db")
+        s.open()
+        yield s
+        s.close()
+
+    def test_empty_by_default(self, storage):
+        assert storage.get_fired_notifications() == set()
+
+    def test_record_and_read_back(self, storage):
+        item_id = uuid4()
+        storage.record_notification(item_id, "lead", "2026-11-12T15:00")
+        assert storage.get_fired_notifications() == {(str(item_id), "lead", "2026-11-12T15:00")}
+
+    def test_notification_without_an_item_uses_empty_id(self, storage):
+        storage.record_notification(None, "summary", "2026-11-12")
+        assert storage.get_fired_notifications() == {("", "summary", "2026-11-12")}
+
+    def test_kinds_and_occurrences_are_distinct_keys(self, storage):
+        item_id = uuid4()
+        storage.record_notification(item_id, "lead", "2026-11-12T15:00")
+        storage.record_notification(item_id, "due_now", "2026-11-12T15:00")
+        storage.record_notification(item_id, "lead", "2026-11-13T15:00")
+        assert len(storage.get_fired_notifications()) == 3
+
+    def test_recording_twice_keeps_the_first_timestamp(self, storage):
+        item_id = uuid4()
+        storage.record_notification(item_id, "lead", "2026-11-12T15:00", fired_at=100)
+        storage.record_notification(item_id, "lead", "2026-11-12T15:00", fired_at=200)
+        rows = storage.connection.execute("SELECT fired_at FROM notification_log").fetchall()
+        assert [row["fired_at"] for row in rows] == [100]
+
+    def test_fired_at_defaults_to_now(self, storage):
+        storage.record_notification(uuid4(), "lead", "2026-11-12T15:00")
+        row = storage.connection.execute("SELECT fired_at FROM notification_log").fetchone()
+        assert row["fired_at"] > 1_700_000_000_000
+
+    def test_prune_removes_older_dates_and_datetimes(self, storage):
+        item_id = uuid4()
+        storage.record_notification(None, "summary", "2026-10-01")
+        storage.record_notification(item_id, "lead", "2026-10-01T09:00")
+        storage.record_notification(None, "summary", "2026-11-12")
+        storage.record_notification(item_id, "lead", "2026-11-12T09:00")
+
+        removed = storage.prune_notification_log("2026-10-15")
+
+        assert removed == 2
+        assert storage.get_fired_notifications() == {
+            ("", "summary", "2026-11-12"),
+            (str(item_id), "lead", "2026-11-12T09:00"),
+        }
+
+    def test_recording_does_not_touch_the_item(self, storage):
+        """Notifying must not look like an edit: the item row, and with
+        it the updated_at that drives sync, is left alone."""
+        lst = TodoList(name="Errands")
+        storage.save_list(lst)
+        item = TodoItem(reminder="Renew passport")
+        storage.save_item(lst.id, item)
+        before = dict(
+            storage.connection.execute(
+                "SELECT * FROM items WHERE id = ?", (str(item.id),)
+            ).fetchone()
+        )
+
+        storage.record_notification(item.id, "lead", "2026-11-12T15:00")
+
+        after = dict(
+            storage.connection.execute(
+                "SELECT * FROM items WHERE id = ?", (str(item.id),)
+            ).fetchone()
+        )
+        assert after == before
+
+    def test_clear_empties_the_log(self, storage):
+        storage.record_notification(None, "summary", "2026-11-12")
+        storage.clear()
+        assert storage.get_fired_notifications() == set()
+
+    def test_item_round_trip_without_notified_at(self, storage):
+        """TodoItem no longer carries notified_at; saving and loading an
+        item works with the column left at its default."""
+        lst = TodoList(name="Errands")
+        storage.save_list(lst)
+        item = TodoItem(reminder="Renew passport")
+        storage.save_item(lst.id, item)
+
+        loaded = storage.get_items_for_list(lst.id)
+        assert [i.reminder for i in loaded] == ["Renew passport"]
+        assert not hasattr(loaded[0], "notified_at")
+        assert "notified_at" not in loaded[0].to_dict()
+
+    def test_item_from_dict_ignores_notified_at_from_an_older_peer(self):
+        payload = TodoItem(reminder="From a peer").to_dict()
+        payload["notified_at"] = 1700000000000
+        assert TodoItem.from_dict(payload).reminder == "From a peer"
+
+
 class TestCompletedAtField:
     """Tests that completed_at round-trips through save_item / get_item."""
 

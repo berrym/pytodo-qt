@@ -1166,7 +1166,9 @@ class AnalyticsService:
 
         query = """
             SELECT
-                CASE WHEN notified_at > 0 THEN 1 ELSE 0 END as notified,
+                CASE WHEN EXISTS (
+                    SELECT 1 FROM notification_log n WHERE n.item_id = items.id
+                ) THEN 1 ELSE 0 END as notified,
                 complete
             FROM items
             WHERE deleted = 0 AND due_date IS NOT NULL

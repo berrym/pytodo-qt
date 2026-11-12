@@ -252,10 +252,15 @@ CREATE TABLE notification_log (
 - Sync exchanges items and lists over the protocol, not database files, so the
   table is local to the device by construction.
 - Rows whose occurrence is more than 30 days old are pruned.
-- `items.notified_at` is dropped in the same migration, removed from
-  `TodoItem`, and removed from the web API payload. Peers on older versions
-  ignore its absence (`from_dict` defaults it to 0), and its presence in their
-  payloads is ignored in turn.
+- `notified_at` is removed from `TodoItem` and from the web API payload.
+  Peers on older versions ignore its absence (`from_dict` defaults it to 0),
+  and its presence in their payloads is ignored in turn.
+- The `items.notified_at` column itself stays in the table for now. Builds
+  through v0.3.11b8 share the database file with a source checkout and name
+  the column when saving an item; dropping it would fail every save they
+  make. It is dropped in a later migration once those builds are retired. A
+  save from this version leaves the column at its default, so an older build
+  run afterward may repeat its once-per-day banner.
 - `AnalyticsService.notification_effectiveness` reads the log instead of
   `notified_at > 0`.
 
@@ -319,7 +324,8 @@ The policy module is covered by fixed-clock unit tests, including:
 - A recurring timed item still produces its due-now alert in the tick where
   it is auto-advanced.
 - Config round-trip and loading of pre-existing `[notifications]` sections.
-- Schema v21 → v22 migration.
+- Schema v21 → v22 migration, including that `items.notified_at` survives
+  it and that an insert naming the column still succeeds.
 
 Visual verification on macOS (overlay path) and Fedora KDE (OS path) covers
 banner text, coalesced layout, and the regrouped Notifications tab.

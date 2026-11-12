@@ -63,7 +63,6 @@ class TodoItem:
     event_date: date | None = None  # Target period for scheduling tasks (schema v18)
     remind_before_days: int = 0  # Pre-deadline reminder days (0 = disabled)
     reminder_cadence: str = "none"  # none/once/daily_until_due
-    notified_at: int = 0  # Last notification timestamp in ms (0 = never)
     conditions: list[dict[str, str]] | None = None  # Structured conditions (JSON)
     completed_at: int | None = None  # Completion timestamp in ms (schema v19, None = unknown)
 
@@ -142,7 +141,6 @@ class TodoItem:
             "event_date": self.event_date.isoformat() if self.event_date else None,
             "remind_before_days": self.remind_before_days,
             "reminder_cadence": self.reminder_cadence,
-            "notified_at": self.notified_at,
             "conditions": self.conditions,
             "completed_at": self.completed_at,
         }
@@ -193,7 +191,6 @@ class TodoItem:
             event_date=event_date,
             remind_before_days=data.get("remind_before_days", 0),
             reminder_cadence=data.get("reminder_cadence", "none"),
-            notified_at=data.get("notified_at", 0),
             conditions=data.get("conditions"),
             completed_at=data.get("completed_at"),
         )

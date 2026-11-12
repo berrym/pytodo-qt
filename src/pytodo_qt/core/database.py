@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS items (
     event_date TEXT,
     remind_before_days INTEGER NOT NULL DEFAULT 0,
     reminder_cadence TEXT NOT NULL DEFAULT 'none',
+    -- Unused. Builds through v0.3.11b8 still name this column when
+    -- saving an item, so it stays until they are no longer in use.
     notified_at INTEGER NOT NULL DEFAULT 0,
     conditions TEXT,
     completed_at INTEGER,
@@ -157,6 +159,21 @@ CREATE TABLE IF NOT EXISTS focus_sessions (
     completed INTEGER NOT NULL DEFAULT 1,
     session_type TEXT NOT NULL DEFAULT 'work',
     date TEXT NOT NULL
+)
+"""
+
+# Which notifications have already fired, keyed by item, kind and
+# occurrence. Local to this device: sync exchanges items and lists over
+# the protocol, never database tables, so each device keeps its own
+# record and notifying never touches synced data. item_id is the empty
+# string for notifications that are not about a single item.
+_CREATE_NOTIFICATION_LOG_TABLE = """
+CREATE TABLE IF NOT EXISTS notification_log (
+    item_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    occurrence TEXT NOT NULL,
+    fired_at INTEGER NOT NULL,
+    PRIMARY KEY (item_id, kind, occurrence)
 )
 """
 
@@ -276,6 +293,7 @@ class DatabaseStorage:
         conn.execute(_CREATE_LIST_SYNC_RULES_TABLE)
         conn.execute(_CREATE_PENDING_SYNCS_TABLE)
         conn.execute(_CREATE_FOCUS_SESSIONS_TABLE)
+        conn.execute(_CREATE_NOTIFICATION_LOG_TABLE)
 
         for index_sql in _CREATE_INDEXES:
             conn.execute(index_sql)
@@ -306,6 +324,7 @@ class DatabaseStorage:
         self._migrate_schema_17_to_18()
         self._migrate_schema_18_to_19()
         self._migrate_schema_to_21()
+        self._migrate_schema_to_22()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -647,6 +666,22 @@ class DatabaseStorage:
 
         self.set_schema_version(21)
 
+    def _migrate_schema_to_22(self) -> None:
+        """Migrate schema to version 22 (local notification log).
+
+        The notification_log table is created with the rest of the schema,
+        so there is no on-disk change to make here beyond the version.
+        items.notified_at is deliberately left in place: builds through
+        v0.3.11b8 share this database file and name the column when
+        saving an item, so dropping it would break every save they make.
+        """
+        current_version = self.get_schema_version()
+        if current_version >= 22:
+            return
+
+        self.set_schema_version(22)
+        logger.log.info("Migrated schema -> 22: added notification_log table")
+
     def get_schema_version(self) -> int:
         """Get current schema version."""
         cursor = self.connection.execute("SELECT value FROM metadata WHERE key = 'schema_version'")
@@ -889,7 +924,6 @@ class DatabaseStorage:
             "event_date": item.event_date.isoformat() if item.event_date else None,
             "remind_before_days": item.remind_before_days,
             "reminder_cadence": item.reminder_cadence,
-            "notified_at": item.notified_at,
             "conditions": json.dumps(item.conditions) if item.conditions else None,
             "completed_at": item.completed_at,
         }
@@ -1035,10 +1069,6 @@ class DatabaseStorage:
         except (KeyError, IndexError):
             reminder_cadence = "none"
         try:
-            notified_at = row["notified_at"] or 0
-        except (KeyError, IndexError):
-            notified_at = 0
-        try:
             conditions_str = row["conditions"]
             conditions = json.loads(conditions_str) if conditions_str else None
         except (KeyError, IndexError):
@@ -1081,7 +1111,6 @@ class DatabaseStorage:
             event_date=event_date,
             remind_before_days=remind_before_days,
             reminder_cadence=reminder_cadence,
-            notified_at=notified_at,
             conditions=conditions,
             completed_at=completed_at,
         )
@@ -1579,9 +1608,48 @@ class DatabaseStorage:
             date=row["date"],
         )
 
+    # Notification log operations
+
+    def record_notification(
+        self, item_id: UUID | None, kind: str, occurrence: str, fired_at: int | None = None
+    ) -> None:
+        """Record that a notification fired.
+
+        ``occurrence`` identifies the moment the notification was for —
+        an ISO datetime for a timed reminder, an ISO date for a per-day
+        notification — so rescheduling an item yields a new key and
+        re-arms it. ``item_id`` is None for notifications that are not
+        about a single item. Recording the same key twice keeps the
+        first ``fired_at``.
+        """
+        if fired_at is None:
+            fired_at = int(__import__("time").time() * 1000)
+        self.connection.execute(
+            "INSERT OR IGNORE INTO notification_log (item_id, kind, occurrence, fired_at) "
+            "VALUES (?, ?, ?, ?)",
+            (str(item_id) if item_id else "", kind, occurrence, fired_at),
+        )
+
+    def get_fired_notifications(self) -> set[tuple[str, str, str]]:
+        """Return every recorded (item_id, kind, occurrence) key."""
+        cursor = self.connection.execute("SELECT item_id, kind, occurrence FROM notification_log")
+        return {(row["item_id"], row["kind"], row["occurrence"]) for row in cursor}
+
+    def prune_notification_log(self, before: str) -> int:
+        """Delete entries whose occurrence sorts before ``before``.
+
+        ISO dates and datetimes order lexicographically, so an ISO date
+        works as the cutoff for both forms of occurrence.
+        """
+        cursor = self.connection.execute(
+            "DELETE FROM notification_log WHERE occurrence < ?", (before,)
+        )
+        return cursor.rowcount
+
     def clear(self) -> None:
         """Clear all data from the database (for testing)."""
         with self.transaction() as conn:
+            conn.execute("DELETE FROM notification_log")
             conn.execute("DELETE FROM focus_sessions")
             conn.execute("DELETE FROM pending_syncs")
             conn.execute("DELETE FROM list_sync_rules")

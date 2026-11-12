@@ -65,10 +65,18 @@ def db():
             due_time TEXT,
             due_time_block TEXT,
             event_date TEXT,
-            notified_at INTEGER NOT NULL DEFAULT 0,
             created_at INTEGER NOT NULL DEFAULT 0,
             updated_at INTEGER NOT NULL DEFAULT 0,
             completed_at INTEGER
+        )"""
+    )
+    conn.execute(
+        """CREATE TABLE notification_log (
+            item_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            occurrence TEXT NOT NULL,
+            fired_at INTEGER NOT NULL,
+            PRIMARY KEY (item_id, kind, occurrence)
         )"""
     )
     yield conn
@@ -118,7 +126,6 @@ def _insert_item(
     due_time=None,
     due_time_block=None,
     event_date=None,
-    notified_at=0,
     priority=2,
     created_at=0,
     updated_at=0,
@@ -130,8 +137,8 @@ def _insert_item(
         """INSERT INTO items (id, list_id, reminder, time_spent, pomodoro_count,
            estimated_pomodoros, estimated_minutes, work_duration, break_duration,
            long_break_duration, complete, deleted, priority, due_date, due_time,
-           due_time_block, event_date, notified_at, created_at, updated_at, completed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           due_time_block, event_date, created_at, updated_at, completed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             item_id,
             list_id,
@@ -147,7 +154,6 @@ def _insert_item(
             due_time,
             due_time_block,
             event_date,
-            notified_at,
             created_at,
             updated_at,
             completed_at,
@@ -1062,9 +1068,19 @@ class TestNotificationEffectiveness:
 
     def test_groups_notified_vs_not(self, db, svc):
         today = date.today().isoformat()
-        _insert_item(db, reminder="Notified done", due_date=today, notified_at=1000, complete=1)
-        _insert_item(db, reminder="Notified not done", due_date=today, notified_at=1000)
+        done_id, _ = _insert_item(db, reminder="Notified done", due_date=today, complete=1)
+        open_id, _ = _insert_item(db, reminder="Notified not done", due_date=today)
         _insert_item(db, reminder="Not notified done", due_date=today, complete=1)
+        for item_id in (done_id, open_id):
+            db.execute(
+                "INSERT INTO notification_log VALUES (?, 'lead', ?, 1000)",
+                (item_id, f"{today}T09:00"),
+            )
+        # A second entry for the same item must not count it twice.
+        db.execute(
+            "INSERT INTO notification_log VALUES (?, 'due_now', ?, 2000)",
+            (open_id, f"{today}T09:00"),
+        )
         df = svc.notification_effectiveness()
         assert len(df) == 2
         notified = df[df["notified"] == True]  # noqa: E712

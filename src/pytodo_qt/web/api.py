@@ -205,7 +205,6 @@ def _item_to_json(item: TodoItem) -> dict[str, Any]:
         "event_date": item.event_date.isoformat() if item.event_date else None,
         "remind_before_days": item.remind_before_days,
         "reminder_cadence": item.reminder_cadence,
-        "notified_at": item.notified_at,
         "conditions": item.conditions,
         "completed_at": item.completed_at,
         "effective_time_block": _effective_time_block(item),
