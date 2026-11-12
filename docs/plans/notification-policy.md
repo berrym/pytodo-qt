@@ -83,7 +83,7 @@ nothing when a timed commitment is actually approaching.
 | Kind | Default | Fires | Content |
 |---|---|---|---|
 | Daily summary | On, 09:00 | Once per logical day at the summary time | Counts of items due today and overdue, the earliest timed item of the day, and any advance-reminder lines |
-| Lead reminder | On, 15 minutes | `lead_minutes` before each timed item's due time and each block item's block start | Title, time, minutes remaining; "starts at" for events and blocks, "due at" for deadlines |
+| Lead reminder | On, 15 minutes | `lead_minutes` before each timed item's due time and each block item's block start | Title, time, minutes remaining; "starts at" for events, "due at" for deadlines. A block item names its window instead of counting down: "This evening · 17:00–21:00" |
 | Due-now alert | Deadlines only | At the due time, if the item is still incomplete | Title and due time |
 | Evening preview | Off, 20:00 | Once per logical day at the preview time | Count of items due the next day and the earliest timed one |
 | Catch-up | Automatic | After a gap in evaluation, when reminders were missed | One banner listing what came due during the gap |
@@ -199,14 +199,19 @@ would turn a sync delay into a missed or duplicated reminder.
 
 ### Presentation and scheduling
 
-A scheduler object in `gui/` owns the evaluation timer, calls the policy,
-turns the structured results into translated strings via `tr()`, dispatches
-through the existing `_notify`, and records fired keys. The logic leaves
-`main_window.py`.
+`TaskNotifier` in `gui/` calls the policy, records the keys an evaluation
+consumed, turns the structured results into translated strings via `tr()`,
+and dispatches through the existing `_notify`. The logic leaves
+`main_window.py`. Its sources (lists, settings, clock) and its delivery
+callable are passed in, so it runs in tests with a fixed clock and no window.
 
-- Evaluation aligns to the wall-clock minute so a 15-minute lead lands on the
-  minute. The existing timer starts at launch and can fire up to 59 seconds
-  late.
+- The main window's once-a-minute tick drives evaluation, alongside the
+  overdue refresh and recurring-item advance it already performed. The tick
+  is single-shot and re-armed each time for just after the next wall-clock
+  minute, so a 15-minute lead lands on the minute. The previous repeating
+  timer started at launch and could fire up to 59 seconds late.
+- Fired keys are recorded before anything is delivered, so a delivery
+  failure cannot cause a repeat.
 - Evaluation compares stored fire times against the injected clock, so a
   timer that fires late after sleep catches up by construction.
 - Evaluation runs before `advance_all_overdue_recurring` in each tick. That

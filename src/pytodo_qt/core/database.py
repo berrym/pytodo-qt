@@ -6,7 +6,7 @@ SQLite storage layer for pytodo-qt.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1629,6 +1629,24 @@ class DatabaseStorage:
             "VALUES (?, ?, ?, ?)",
             (str(item_id) if item_id else "", kind, occurrence, fired_at),
         )
+
+    def record_notifications(
+        self, keys: Iterable[tuple[str, str, str]], fired_at: int | None = None
+    ) -> None:
+        """Record several fired notifications in one transaction.
+
+        Each key is (item_id, kind, occurrence), with the empty string as
+        item_id for a notification that is not about a single item — the
+        form ``get_fired_notifications`` returns.
+        """
+        if fired_at is None:
+            fired_at = int(__import__("time").time() * 1000)
+        with self.transaction() as conn:
+            conn.executemany(
+                "INSERT OR IGNORE INTO notification_log (item_id, kind, occurrence, fired_at) "
+                "VALUES (?, ?, ?, ?)",
+                [(item_id, kind, occurrence, fired_at) for item_id, kind, occurrence in keys],
+            )
 
     def get_fired_notifications(self) -> set[tuple[str, str, str]]:
         """Return every recorded (item_id, kind, occurrence) key."""

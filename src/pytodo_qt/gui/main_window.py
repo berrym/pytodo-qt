@@ -44,6 +44,7 @@ from ..core.config import get_config, get_config_manager
 from ..core.database import DatabaseStorage
 from ..core.logger import Logger
 from ..core.models import Database, Device, PendingSync, TodoItem, TodoList
+from ..core.notification_policy import PolicySettings
 from ..core.offline_queue import OfflineQueue
 from ..crypto.keyring_storage import get_or_create_identity
 from ..net.client import AsyncClient
@@ -64,6 +65,7 @@ from .dialogs import (
 )
 from .styles import apply_current_theme
 from .styles.themes import Theme, get_current_theme
+from .task_notifier import TaskNotifier
 from .widgets import (
     KanbanBoardWidget,
     ListSelectorWidget,
@@ -79,11 +81,6 @@ if TYPE_CHECKING:
 
 
 logger = Logger(__name__)
-
-
-# Kind recorded in the notification log for the once-per-day due/overdue
-# notification.
-_DAILY_NOTIFICATION_KIND = "daily"
 
 
 def _prefer_os_notification(*, notifier_available: bool, platform: str) -> bool:
@@ -218,13 +215,28 @@ class MainWindow(QMainWindow):
         # Start auto-sync scheduler
         self._auto_scheduler.start()
 
-        # Overdue refresh timer — checks every 60s if timed items have become overdue
         from datetime import date as _date_init
 
         self._last_known_today = _date_init.today()
-        self._overdue_timer = QTimer(self)
-        self._overdue_timer.timeout.connect(self._check_timed_overdue)
-        self._overdue_timer.start(60_000)
+
+        self._task_notifier = TaskNotifier(
+            storage=self._storage,
+            lists=lambda: self._database.lists.values(),
+            settings=self._notification_policy_settings,
+            time_blocks=lambda: self._config_manager.config.time_blocks,
+            time_format=lambda: self._config_manager.config.appearance.time_format,
+            deliver=self._deliver_task_notification,
+            parent=self,
+        )
+
+        # Once-a-minute housekeeping: task notifications, overdue refresh,
+        # recurring-item advance. Single-shot and re-armed on every tick
+        # so each one lands just after the wall-clock minute — a reminder
+        # for 14:45 is then evaluated at 14:45:00, not up to a minute late.
+        self._minute_timer = QTimer(self)
+        self._minute_timer.setSingleShot(True)
+        self._minute_timer.timeout.connect(self._on_minute_tick)
+        self._arm_minute_timer()
 
         # Show window (or start hidden in the tray / minimized per preference)
         self._apply_startup_visibility()
@@ -234,8 +246,10 @@ class MainWindow(QMainWindow):
         # on first launch; subsequent launches are no-ops).
         asyncio.ensure_future(self._request_notification_permission())
 
-        # Check for due/overdue items and notify (after window shown so tray is ready)
-        QTimer.singleShot(2000, self._check_due_notifications)
+        # First notification evaluation shortly after launch rather than at
+        # the next minute boundary: it delivers the daily summary and any
+        # reminders that came due while the app was not running.
+        QTimer.singleShot(2000, self._evaluate_task_notifications)
 
     def _setup_window(self) -> None:
         """Configure the main window."""
@@ -2228,85 +2242,60 @@ class MainWindow(QMainWindow):
         if needs_refresh:
             self._refresh_ui()
 
+    def _arm_minute_timer(self) -> None:
+        """Schedule the next tick for just after the coming minute boundary."""
+        from datetime import datetime as _datetime
+
+        now = _datetime.now()
+        to_boundary_ms = (60 - now.second) * 1000 - now.microsecond // 1000
+        # A small margin keeps the tick on the far side of the boundary
+        # when the timer fires marginally early.
+        self._minute_timer.start(to_boundary_ms + 50)
+
+    def _on_minute_tick(self) -> None:
+        """Run the once-a-minute housekeeping."""
+        self._arm_minute_timer()
+
+        # Before recurring items are advanced: an overdue recurring item
+        # moves to its next occurrence as soon as its due time passes,
+        # and evaluated afterward the alert for the occurrence that just
+        # came due would never be seen.
+        self._evaluate_task_notifications()
+        self._check_timed_overdue()
+
         # Refresh status bar PIN (auto-regenerates when expired)
         if self._web_server is not None:
             self.status_bar_widget.set_web_status(
                 True, port=self._config.web.port, pin=self._web_server.pairing_pin
             )
 
-        # Periodic notification check (piggyback on the 60s timer)
-        self._check_due_notifications()
+        self._check_lan_address()
 
-    def _check_due_notifications(self) -> None:
-        """Send desktop notifications for due-today and overdue items.
+    def _evaluate_task_notifications(self) -> None:
+        """Deliver any task notifications that are due now."""
+        try:
+            self._task_notifier.evaluate()
+        except Exception:
+            logger.log.exception("Task notification evaluation failed")
 
-        Checks all lists for items that are due today or overdue, and
-        sends a notification for each item that has not been notified
-        today. What has fired is recorded in the device-local
-        notification log, so notifying leaves the items themselves —
-        and therefore sync — untouched.
-        """
-        from datetime import date as _date
+    def _notification_policy_settings(self) -> PolicySettings:
+        """Build the notification policy's settings from the live config."""
+        from datetime import time as _time
 
-        from ..core.models import is_due_today, is_overdue
-
-        notif_config = self._config.notifications
-        if not notif_config.enabled or self.tray_icon is None:
-            return
-
-        today_iso = _date.today().isoformat()
-        fired = self._storage.get_fired_notifications()
-        newly_fired: list[UUID] = []
-
-        overdue_items: list[str] = []
-        due_today_items: list[str] = []
-
-        for lst in self._database.lists.values():
-            if lst.deleted or lst.private:
-                continue
-            for item in lst.active_items():
-                if item.complete:
-                    continue
-                # Skip if already notified today
-                if (str(item.id), _DAILY_NOTIFICATION_KIND, today_iso) in fired:
-                    continue
-                if notif_config.notify_overdue and is_overdue(item.due_date, item.due_time):
-                    overdue_items.append(item.reminder)
-                    newly_fired.append(item.id)
-                elif notif_config.notify_due_today and is_due_today(item.due_date):
-                    due_today_items.append(item.reminder)
-                    newly_fired.append(item.id)
-
-        if not overdue_items and not due_today_items:
-            return
-
-        # Build notification message
-        lines: list[str] = []
-        if overdue_items:
-            lines.append(
-                self.tr("Overdue (%n item(s))", "", len(overdue_items))
-                + ": "
-                + ", ".join(overdue_items[:5])
-            )
-            if len(overdue_items) > 5:
-                lines[-1] += f" (+{len(overdue_items) - 5} more)"
-        if due_today_items:
-            lines.append(
-                self.tr("Due today (%n item(s))", "", len(due_today_items))
-                + ": "
-                + ", ".join(due_today_items[:5])
-            )
-            if len(due_today_items) > 5:
-                lines[-1] += f" (+{len(due_today_items) - 5} more)"
-
-        asyncio.create_task(
-            self._notify(self.tr("PyTodo-Qt Reminders"), "\n".join(lines), timeout=10)
+        config = self._config_manager.config
+        notifications = config.notifications
+        return PolicySettings(
+            enabled=notifications.enabled,
+            summary_enabled=notifications.notify_overdue or notifications.notify_due_today,
+            summary_time=_time(notifications.check_hour % 24),
+            day_start_hour=config.database.day_start_hour,
         )
 
-        for item_id in newly_fired:
-            self._storage.record_notification(item_id, _DAILY_NOTIFICATION_KIND, today_iso)
+    def _deliver_task_notification(self, title: str, body: str) -> None:
+        asyncio.create_task(self._notify(title, body, timeout=10))
 
-        # IP change detection
+    def _check_lan_address(self) -> None:
+        """Report a change of the machine's LAN address in the status bar."""
         from ..core.network import get_lan_ip as _get_current_ip
 
         current_ip = _get_current_ip()

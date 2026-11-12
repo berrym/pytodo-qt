@@ -307,6 +307,28 @@ class TestNotificationLog:
         storage.record_notification(item_id, "lead", "2026-11-13T15:00")
         assert len(storage.get_fired_notifications()) == 3
 
+    def test_record_several_keys_at_once(self, storage):
+        item_id = str(uuid4())
+        storage.record_notifications(
+            [(item_id, "lead", "2026-11-12T15:00"), ("", "summary", "2026-11-12")], fired_at=7
+        )
+        assert storage.get_fired_notifications() == {
+            (item_id, "lead", "2026-11-12T15:00"),
+            ("", "summary", "2026-11-12"),
+        }
+        rows = storage.connection.execute("SELECT fired_at FROM notification_log").fetchall()
+        assert {row["fired_at"] for row in rows} == {7}
+
+    def test_record_several_keys_ignores_ones_already_recorded(self, storage):
+        storage.record_notification(None, "summary", "2026-11-12", fired_at=1)
+        storage.record_notifications([("", "summary", "2026-11-12")], fired_at=2)
+        row = storage.connection.execute("SELECT fired_at FROM notification_log").fetchone()
+        assert row["fired_at"] == 1
+
+    def test_record_no_keys(self, storage):
+        storage.record_notifications([])
+        assert storage.get_fired_notifications() == set()
+
     def test_recording_twice_keeps_the_first_timestamp(self, storage):
         item_id = uuid4()
         storage.record_notification(item_id, "lead", "2026-11-12T15:00", fired_at=100)
