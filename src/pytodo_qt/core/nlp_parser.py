@@ -3,7 +3,8 @@
 Intent-based natural language task input parser.
 
 Extracts dates, times, priority, tags, recurrence, pomodoro estimates,
-estimated minutes, and work duration from free-form text using:
+estimated minutes, work duration, and advance reminders from free-form
+text using:
 - Token-based intent dictionaries (no regex for NLP patterns)
 - rapidfuzz for fuzzy matching (typos, abbreviations, voice dictation)
 - dateparser for date/time extraction (200+ languages)
@@ -24,6 +25,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 from .logger import Logger
 from .models import format_duration
+from .notification_policy import ADVANCE_DAYS_RANGE, AdvanceCadence
 
 if TYPE_CHECKING:
     from .config import TimeBlockConfig
@@ -50,6 +52,7 @@ class EntityKind(Enum):
     CONDITION = "condition"
     FILLER = "filler"
     SUBTASK = "subtask"
+    ADVANCE_REMINDER = "advance_reminder"
 
 
 @dataclass
@@ -89,6 +92,13 @@ class ParseResult:
     event_date: date | None = None  # Target period for scheduling tasks
     conditions: list[dict[str, str]] = field(default_factory=list)  # Structured conditions
     subtask_reminders: list[str] = field(default_factory=list)  # Inline subtask items
+    # An advance reminder asked for in the text ("remind me 3 days
+    # before"). It counts back from the due date, and the text may give
+    # none while the caller has one of its own, so both are reported
+    # whenever the phrase is present: a caller stores them only on an
+    # item that ends up with a due date.
+    remind_before_days: int = 0
+    reminder_cadence: str = AdvanceCadence.NONE.value
     spans: list[EntitySpan] = field(default_factory=list)
 
 
@@ -353,6 +363,215 @@ def _extract_tags(text: str, tokens: list[_Token], tracker: _SpanTracker) -> lis
                     tracker.reserve(EntitySpan(start, end, EntityKind.TAG, tag_text))
 
     return tags
+
+
+# ---------------------------------------------------------------------------
+# Advance reminder extraction
+# ---------------------------------------------------------------------------
+
+_TRAILING_PUNCTUATION = ".,;:!?"
+_POSSESSIVE_ENDINGS = ("'s", "\u2019s", "'", "\u2019")
+
+
+def _plain_word(token: _Token) -> str:
+    """A token's text without trailing punctuation or a possessive
+    ending: "before." is "before", "days'" is "days", "week's" is "week"."""
+    word = token.text.rstrip(_TRAILING_PUNCTUATION)
+    for ending in _POSSESSIVE_ENDINGS:
+        if word.endswith(ending):
+            return word[: -len(ending)]
+    return word
+
+
+def _phrase_length_at(
+    tokens: list[_Token], idx: int, phrases: list[list[str]], *, loose_end: bool = False
+) -> int:
+    """Number of tokens the longest of *phrases* takes up at *idx*, or 0.
+
+    *phrases* are word lists, longest first. With *loose_end* the last
+    word may carry trailing punctuation or a possessive ending.
+    """
+    for words in phrases:
+        if idx + len(words) > len(tokens):
+            continue
+        last = len(words) - 1
+        if all(
+            (_plain_word(tokens[idx + k]) if loose_end and k == last else tokens[idx + k].text)
+            == word
+            for k, word in enumerate(words)
+        ):
+            return len(words)
+    return 0
+
+
+def _advance_amount(tokens: list[_Token], idx: int) -> tuple[int, int] | None:
+    """Read a number of days at *idx*: "3 days", "a week", "the day",
+    "a couple of days", "two-week".
+
+    Returns (days, index after the amount), or None when the tokens at
+    *idx* are not a whole number of days or weeks.
+    """
+    intents = _get_intents()
+    vocab = intents["advance_reminder"]
+    units: dict[str, int] = vocab["units"]
+    couple_few: dict[str, int] = intents["couple_few"]
+    n = len(tokens)
+    if idx >= n:
+        return None
+
+    # "3-day", "two-week": number and unit in one token.
+    head, hyphen, tail = _plain_word(tokens[idx]).partition("-")
+    if hyphen:
+        count = _token_to_number(head)
+        per_unit = units.get(tail)
+        if count is None or per_unit is None or count < 1:
+            return None
+        return count * per_unit, idx + 1
+
+    pos = idx
+    count = None
+    if tokens[pos].text in vocab["articles"] and pos + 1 < n:
+        following = tokens[pos + 1]
+        if following.text in couple_few:
+            # "a couple", "a few"
+            count = couple_few[following.text]
+            pos += 2
+        elif _plain_word(following) in units:
+            # "the day", "a week"
+            count = 1
+            pos += 1
+    if count is None:
+        value, last = _tokens_to_number(tokens, pos)
+        if value is None or value != int(value):
+            return None
+        count = int(value)
+        pos = last + 1
+    if pos < n and tokens[pos - 1].text in couple_few and tokens[pos].text in vocab["partitives"]:
+        # "a couple of days"
+        pos += 1
+
+    if pos >= n or count < 1:
+        return None
+    per_unit = units.get(_plain_word(tokens[pos]))
+    if per_unit is None:
+        return None
+    return count * per_unit, pos + 1
+
+
+def _advance_phrase_at(tokens: list[_Token], idx: int) -> tuple[int, int, str] | None:
+    """Match an advance-reminder phrase starting at *idx*.
+
+    Two forms: trigger, optional cadence, amount, closer ("remind me
+    daily 3 days before") and opener, amount, notice word ("with 3 days
+    notice"). Returns (index after the phrase, days, cadence).
+    """
+    vocab = _get_intents()["advance_reminder"]
+
+    trigger = _phrase_length_at(tokens, idx, vocab["triggers"])
+    if trigger:
+        pos = idx + trigger
+        cadence = AdvanceCadence.ONCE.value
+        daily = _phrase_length_at(tokens, pos, vocab["cadence_daily"])
+        once = 0 if daily else _phrase_length_at(tokens, pos, vocab["cadence_once"])
+        pos += daily or once
+        run = _phrase_length_at(tokens, pos, vocab["cadence_from"])
+        pos += run
+        if daily or (run and not once):
+            cadence = AdvanceCadence.DAILY_UNTIL_DUE.value
+        amount = _advance_amount(tokens, pos)
+        if amount is not None:
+            days, pos = amount
+            closer = _phrase_length_at(tokens, pos, vocab["closers"], loose_end=True)
+            if closer:
+                pos += closer
+                pos += _phrase_length_at(tokens, pos, vocab["closer_tails"], loose_end=True)
+                return pos, days, cadence
+
+    opener = _phrase_length_at(tokens, idx, vocab["notice_openers"])
+    if opener:
+        amount = _advance_amount(tokens, idx + opener)
+        if amount is not None:
+            days, pos = amount
+            notice = _phrase_length_at(tokens, pos, vocab["notice_words"], loose_end=True)
+            if notice:
+                return pos + notice, days, AdvanceCadence.ONCE.value
+
+    return None
+
+
+def advance_reminder_label(days: int, cadence: str, *, has_due_date: bool = True) -> str:
+    """The text shown for a recognised advance reminder.
+
+    An advance reminder counts back from the due date; without one it
+    cannot be kept, which the text says.
+    """
+    unit = "day" if days == 1 else "days"
+    if cadence == AdvanceCadence.DAILY_UNTIL_DUE.value:
+        label = f"Remind daily from {days} {unit} before"
+    else:
+        label = f"Remind {days} {unit} before"
+    return label if has_due_date else f"{label} (needs a due date)"
+
+
+def _extract_advance_reminder(
+    text: str, tokens: list[_Token], tracker: _SpanTracker
+) -> tuple[int, str, EntitySpan | None]:
+    """Find advance-reminder phrases and reserve them.
+
+    Runs before recurrence and estimates, which would otherwise read
+    "daily" in "remind me daily 3 days before" as a recurrence and
+    "3 days" as a duration.
+
+    Returns (days, cadence, span) for the last phrase in the text, or
+    (0, "none", None). An earlier phrase is superseded: it is reserved as
+    filler, so it stays out of the reminder text without asking for a
+    second reminder.
+    """
+    lead_ins: list[list[str]] = _get_intents()["advance_reminder"]["lead_ins"]
+    low, high = ADVANCE_DAYS_RANGE
+    days_found = 0
+    cadence_found = AdvanceCadence.NONE.value
+    current: EntitySpan | None = None
+
+    idx = 0
+    while idx < len(tokens):
+        match = _advance_phrase_at(tokens, idx)
+        if match is None:
+            idx += 1
+            continue
+        after, days, cadence = match
+        end = tokens[after - 1].end
+        start = tokens[idx].start
+        # A lead-in directly before the phrase goes with it.
+        for words in lead_ins:
+            first = idx - len(words)
+            if first >= 0 and all(tokens[first + k].text == w for k, w in enumerate(words)):
+                if tracker.is_free(tokens[first].start, end):
+                    start = tokens[first].start
+                break
+        if tracker.is_free(start, end):
+            if current is not None:
+                tracker.release(current.start, current.end)
+                tracker.reserve(
+                    EntitySpan(
+                        current.start,
+                        current.end,
+                        EntityKind.FILLER,
+                        text[current.start : current.end],
+                    )
+                )
+            days_found = min(max(days, low), high)
+            cadence_found = cadence
+            current = EntitySpan(
+                start,
+                end,
+                EntityKind.ADVANCE_REMINDER,
+                advance_reminder_label(days_found, cadence_found),
+            )
+            tracker.reserve(current)
+        idx = after
+
+    return days_found, cadence_found, current
 
 
 # ---------------------------------------------------------------------------
@@ -1294,12 +1513,15 @@ def _extract_dates_and_times(
         nonlocal due_date
         # Check for prefix word(s) before the date tokens
         prefix_start = start
-        # Single-word prefixes: "due", "by", "on", "before"
+        # Single-word prefixes: "due", "by", "on", "before". One that
+        # already belongs to something else is left there: in "remind me
+        # 3 days before friday" the "before" closes the reminder phrase.
         for ptok in tokens:
             if (
                 ptok.end <= start
                 and start - ptok.end <= 1
                 and ptok.text in intents["date_prefixes"]
+                and tracker.is_free(ptok.start, ptok.end)
             ):
                 prefix_start = ptok.start
                 break
@@ -2744,6 +2966,12 @@ def parse(
     # 1. Tags (most unambiguous)
     tags = _extract_tags(text, tokens, tracker)
 
+    # Advance reminder ("remind me 3 days before"). Before everything
+    # that reads numbers or cadence words, so the phrase is taken whole.
+    remind_before_days, reminder_cadence, advance_span = _extract_advance_reminder(
+        text, tokens, tracker
+    )
+
     # 2. Priority
     priority = _extract_priority(text, tokens, tracker)
 
@@ -2785,6 +3013,11 @@ def parse(
         due_date = _next_occurrence_date(due_time_block, due_time, now, time_blocks)
         due_date_inferred = True
 
+    if advance_span is not None and due_date is None:
+        advance_span.display = advance_reminder_label(
+            remind_before_days, reminder_cadence, has_due_date=False
+        )
+
     # 8. Conditions (after all other extraction so span boundaries are settled)
     conditions = _extract_conditions(tokens, tracker)
 
@@ -2825,6 +3058,8 @@ def parse(
         event_date=event_date,
         conditions=conditions,
         subtask_reminders=subtask_reminders,
+        remind_before_days=remind_before_days,
+        reminder_cadence=reminder_cadence,
         spans=tracker.spans,
     )
 

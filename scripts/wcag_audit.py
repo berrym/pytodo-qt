@@ -125,6 +125,7 @@ def _desktop_pairs() -> list[Pair]:
             ("entity_condition on base", c["entity_condition"], c["base"]),
             ("entity_filler on base", c["entity_filler"], c["base"]),
             ("entity_subtask on base", c["entity_subtask"], c["base"]),
+            ("entity_advance_reminder on base", c["entity_advance_reminder"], c["base"]),
             # Focus-timer countdown text against panel base
             ("focus_timer_working on base", c["focus_timer_working"], c["base"]),
             ("focus_timer_break on base", c["focus_timer_break"], c["base"]),

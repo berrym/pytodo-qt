@@ -156,9 +156,27 @@ so the two are not offered separately, and Off stores `0` and `none`.
 - Detail panel: a row in the Schedule section, editable in edit mode on a
   task that has a due date. A change is one undo step. Add Todo only creates
   tasks, so this is where an existing task is given a reminder.
-- Not included: phrases such as "remind me 3 days before" in the smart
-  input, and a control in the web interface. The web API already carries
-  both fields.
+- Smart input: a phrase typed with the task sets both fields.
+  - Once: a trigger (`remind me`, `remind`, `reminder`), an amount in days
+    or weeks, and a closer (`before`, `beforehand`, `ahead`, `ahead of
+    time`, `in advance`, `early`): "remind me 3 days before", "remind me a
+    week before", "remind me the day before".
+  - Every day until due: `daily`, `every day` or `each day` after the
+    trigger, or `from` before the amount: "remind me daily 3 days before",
+    "remind me every day from 5 days before".
+  - Notice form, once: "with 3 days notice".
+  - All parts must be present and adjacent. "remind me to call mom" and a
+    bare "3 days before" are not advance reminders.
+  - The amount is limited to 90 days. Of two phrases, the last counts.
+  - The phrase is taken before recurrence and duration estimates are read,
+    so its "daily" is not a recurrence and its "3 days" is not an estimate.
+  - Without a due date the phrase is still removed from the title, its chip
+    says a due date is needed, and nothing is stored. A date supplied by
+    the calendar cell the dialog was opened from counts as a due date.
+  - The vocabulary is in the intent dictionary (`advance_reminder`).
+- Web interface: quick-add stores a reminder typed this way under the same
+  rule, and `/api/parse` reports both fields. There is no control for an
+  existing task; the web API carries both fields.
 
 ### Catch-up
 
@@ -423,6 +441,10 @@ The policy module is covered by fixed-clock unit tests, including:
   summary not using it up, `daily_until_due` on every day of the window,
   rescheduling re-arming, private lists and completed items left out, and
   the cap on the summary line.
+- Advance-reminder phrases: each recognised form, the phrases left alone,
+  recurrence and estimates outside the phrase, the limit on the amount, the
+  phrase without a due date, and the same through Add Todo and the web
+  quick-add.
 - Config round-trip, loading of pre-existing `[notifications]` sections, and
   values of the wrong kind.
 - Schema v21 → v22 migration, including that `items.notified_at` survives

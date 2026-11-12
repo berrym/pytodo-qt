@@ -5,10 +5,13 @@ before it is due. It is set on one row — a choice of Off, Once or Every
 day until due, and a day count — in the Scheduling group of the Add Todo
 dialog and in the Schedule section of the detail panel.
 
+It can also be typed into Add Todo's input line: "remind me 3 days
+before", "remind me daily from a week before", "with 3 days notice".
+
 This window hosts a real detail panel showing a sample task, and opens
 the real Add Todo dialog. Both write to nothing: the sample task lives
-in memory and the configuration is a scratch one. The line under the
-buttons shows the two fields as they would be stored.
+in memory and the configuration is a scratch one. The lines under the
+buttons show the fields as they would be stored.
 
 This is **not** part of the pytest suite and **not** CI-gated — it
 requires a human watching the screen. Undo of a change made in the
@@ -33,7 +36,7 @@ What to check in the detail panel (press its edit toggle first):
 - With "Sample task has a due date" unticked the row is greyed even in
   edit mode.
 
-What to check in Add Todo (the Advanced section opens by itself):
+What to check with "Open Add Todo with Advanced open":
 
 - "Remind ahead" is greyed until "Set due date" is ticked.
 - Alt+I moves to the choice.
@@ -42,6 +45,34 @@ What to check in Add Todo (the Advanced section opens by itself):
   would carry.
 - With --summary-off, a note under the row says the daily summary is
   off.
+
+What to check with "Open Add Todo for typing" (Advanced stays closed).
+Type each line, look at the highlight and the chips, then press OK and
+read the stored fields:
+
+- "Tax return friday remind me 3 days before" — the phrase is coloured
+  like the date, a chip reads "Remind 3 days before", the title is "Tax
+  return", and no duration or recurrence chip appears.
+- "Renew passport friday remind me daily from a week before" — the chip
+  reads "Remind daily from 7 days before"; stored as daily_until_due.
+- "Pay rent friday with 3 days notice" — the same reminder, once.
+- "Call mom remind me 2 days before" — no date: the chip reads "Remind
+  2 days before (needs a due date)", the phrase is still out of the
+  title, and nothing is stored.
+- "Water plants daily remind me 1 day before" — "daily" outside the
+  phrase is still a recurrence.
+- "Remind me to call mom friday" — no reminder chip; the title is "call
+  mom".
+- The × on the reminder chip removes the phrase from the line.
+- Type "Tax return friday remind me a week before", then open Advanced:
+  "Remind ahead" reads "Once", "7 days before".
+
+What to check with "Open Add Todo as from a calendar cell" (the dialog
+is given a date ten days ahead, as when a calendar day is clicked):
+
+- "Call mom remind me 2 days before" — the chip reads "Remind 2 days
+  before" with no note, and the stored task has the date and the
+  reminder.
 
 Tracking: https://github.com/berrym/pytodo-qt/issues/58
 """
@@ -129,8 +160,23 @@ def main() -> int:
     has_date = QCheckBox("Sample task has a due date")
     has_date.setChecked(True)
     layout.addWidget(has_date)
-    open_add = QPushButton("Open Add Todo")
+    open_add = QPushButton("Open Add Todo with Advanced open")
     layout.addWidget(open_add)
+    open_typing = QPushButton("Open Add Todo for typing")
+    layout.addWidget(open_typing)
+    open_cell = QPushButton("Open Add Todo as from a calendar cell")
+    layout.addWidget(open_cell)
+    layout.addWidget(QLabel("<b>Lines to type</b> (select and copy)"))
+    phrases = QLabel(
+        "Tax return friday remind me 3 days before\n"
+        "Renew passport friday remind me daily from a week before\n"
+        "Pay rent friday with 3 days notice\n"
+        "Call mom remind me 2 days before\n"
+        "Water plants daily remind me 1 day before\n"
+        "Remind me to call mom friday"
+    )
+    phrases.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    layout.addWidget(phrases)
     layout.addWidget(QLabel("<b>Sample task, as stored</b>"))
     panel_fields = QLabel()
     panel_fields.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -147,6 +193,7 @@ def main() -> int:
 
     def stored(item) -> str:
         return (
+            f'reminder = "{item.reminder}"\n'
             f"due_date = {item.due_date}\n"
             f"remind_before_days = {item.remind_before_days}\n"
             f'reminder_cadence = "{item.reminder_cadence}"'
@@ -166,20 +213,32 @@ def main() -> int:
         task.due_date = due if checked else None
         show_task()
 
-    def open_add_todo() -> None:
-        dialog = AddTodoDialog(window)
-        dialog._advanced_toggle.setChecked(True)
+    def run_dialog(dialog: AddTodoDialog) -> None:
         if dialog.exec():
             item = dialog.get_item()
             if item is not None:
                 dialog_fields.setText(stored(item))
 
+    def open_add_todo() -> None:
+        dialog = AddTodoDialog(window)
+        dialog._advanced_toggle.setChecked(True)
+        run_dialog(dialog)
+
+    def open_for_typing() -> None:
+        run_dialog(AddTodoDialog(window))
+
+    def open_from_cell() -> None:
+        cell = date.today() + timedelta(days=10)
+        run_dialog(AddTodoDialog(window, default_due_date=cell))
+
     panel.item_advance_reminder_changed.connect(on_panel_change)
     has_date.toggled.connect(on_has_date)
     open_add.clicked.connect(open_add_todo)
+    open_typing.clicked.connect(open_for_typing)
+    open_cell.clicked.connect(open_from_cell)
     show_task()
 
-    window.resize(760, 640)
+    window.resize(820, 760)
     window.show()
     print(f"Scratch directory: {scratch_root}")
     return app.exec()

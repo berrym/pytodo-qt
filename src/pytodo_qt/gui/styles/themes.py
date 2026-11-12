@@ -92,6 +92,7 @@ LIGHT_COLORS = {
     "entity_condition": "#DC2626",
     "entity_filler": "#64748b",
     "entity_subtask": "#0369a1",
+    "entity_advance_reminder": "#1976d2",
     # Focus-timer state colors — drive the countdown text color in
     # `dialogs/focus_timer.py`. Distinct enough to read state at a
     # glance even out of the corner of the eye.
@@ -163,6 +164,7 @@ DARK_COLORS = {
     "entity_condition": "#F87171",
     "entity_filler": "#94A3B8",
     "entity_subtask": "#38BDF8",
+    "entity_advance_reminder": "#6AB0F3",
     # Focus-timer state colors, dark-theme variants. Previously the
     # focus-timer dialog used the light-theme hex values regardless of
     # active theme, producing washed-out chart colors on dark

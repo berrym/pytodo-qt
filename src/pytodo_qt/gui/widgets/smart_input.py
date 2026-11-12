@@ -28,7 +28,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ...core.nlp_parser import EntityKind, EntitySpan, ParseResult, parse
+from ...core.nlp_parser import (
+    EntityKind,
+    EntitySpan,
+    ParseResult,
+    advance_reminder_label,
+    parse,
+)
 from ..styles.themes import get_colors
 
 # ---------------------------------------------------------------------------
@@ -51,6 +57,7 @@ _ENTITY_KEY_BY_KIND: dict[EntityKind, str] = {
     EntityKind.CONDITION: "entity_condition",
     EntityKind.FILLER: "entity_filler",
     EntityKind.SUBTASK: "entity_subtask",
+    EntityKind.ADVANCE_REMINDER: "entity_advance_reminder",
 }
 
 
@@ -282,6 +289,9 @@ class SmartInputWidget(QWidget):
         self._accepted_spans: set[tuple[int, int]] = (
             set()
         )  # (start, end) of confirmed fuzzy matches
+        # True when whatever hosts the input has a due date to give a
+        # task whose text names none (a calendar cell).
+        self._due_date_supplied = False
         self._debounce_timer = QTimer(self)
         self._debounce_timer.setSingleShot(True)
         self._debounce_timer.setInterval(100)
@@ -430,6 +440,17 @@ class SmartInputWidget(QWidget):
             return  # widget destroyed; nothing to do
         self._parse_result = parse(text)
 
+        # An advance reminder counts back from the due date, and the
+        # parser marks one without a date in the text as needing one.
+        # Where the date comes from elsewhere, it does not.
+        if self._due_date_supplied and self._parse_result.remind_before_days:
+            for span in self._parse_result.spans:
+                if span.kind is EntityKind.ADVANCE_REMINDER:
+                    span.display = advance_reminder_label(
+                        self._parse_result.remind_before_days,
+                        self._parse_result.reminder_cadence,
+                    )
+
         # Apply accepted state — user already confirmed these fuzzy matches
         for i, span in enumerate(self._parse_result.spans):
             if (span.start, span.end) in self._accepted_spans and span.confidence < 1.0:
@@ -514,6 +535,10 @@ class SmartInputWidget(QWidget):
     def set_text(self, text: str) -> None:
         self._accepted_spans.clear()
         self._text_edit.setPlainText(text)
+
+    def set_due_date_supplied(self, supplied: bool) -> None:
+        """Say whether a task whose text names no date gets one anyway."""
+        self._due_date_supplied = supplied
 
     def set_known_tags(self, tags: list[str]) -> None:
         """Set tags available for auto-completion."""

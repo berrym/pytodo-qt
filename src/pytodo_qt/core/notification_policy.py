@@ -151,6 +151,11 @@ class AdvanceCadence(Enum):
     DAILY_UNTIL_DUE = "daily_until_due"
 
 
+# The fewest and the most days before the due date an advance reminder
+# can start.
+ADVANCE_DAYS_RANGE = (1, 90)
+
+
 @dataclass(frozen=True)
 class ComingUp:
     """An item whose due date is near enough for its advance reminder."""

@@ -246,3 +246,66 @@ class TestSmartInputWidget:
         assert "tomorrow" in text
         assert "@" in text
         assert ":" in text
+
+
+# ---------------------------------------------------------------------------
+# TestAdvanceReminderChip
+# ---------------------------------------------------------------------------
+
+
+class TestAdvanceReminderChip:
+    """The chip and highlight for "remind me 3 days before"."""
+
+    @staticmethod
+    def _chips(widget: SmartInputWidget) -> list[EntityChip]:
+        widget.get_parse_result()
+        return [
+            chip
+            for chip in widget._chip_container.findChildren(EntityChip)
+            if chip._span.kind is EntityKind.ADVANCE_REMINDER
+        ]
+
+    def test_chip_text(self, qtbot) -> None:
+        widget = SmartInputWidget()
+        qtbot.addWidget(widget)
+        widget.set_text("pay rent tomorrow remind me 3 days before")
+        (chip,) = self._chips(widget)
+        assert chip.text().startswith("Remind 3 days before")
+
+    def test_chip_says_a_due_date_is_needed(self, qtbot) -> None:
+        widget = SmartInputWidget()
+        qtbot.addWidget(widget)
+        widget.set_text("pay rent remind me 3 days before")
+        (chip,) = self._chips(widget)
+        assert "needs a due date" in chip.text()
+
+    def test_chip_when_the_due_date_comes_from_elsewhere(self, qtbot) -> None:
+        widget = SmartInputWidget()
+        qtbot.addWidget(widget)
+        widget.set_due_date_supplied(True)
+        widget.set_text("pay rent remind me 3 days before")
+        (chip,) = self._chips(widget)
+        assert "needs a due date" not in chip.text()
+        assert chip.text().startswith("Remind 3 days before")
+
+    def test_removing_the_chip_removes_the_phrase(self, qtbot) -> None:
+        widget = SmartInputWidget()
+        qtbot.addWidget(widget)
+        widget.set_text("pay rent tomorrow remind me 3 days before")
+        (chip,) = self._chips(widget)
+        widget._on_chip_removed(chip._span.start, chip._span.end)
+        assert widget.get_text() == "pay rent tomorrow"
+        assert widget.get_parse_result().remind_before_days == 0
+
+    def test_kind_has_a_colour_in_both_themes(self) -> None:
+        from pytodo_qt.gui.styles.themes import DARK_COLORS, LIGHT_COLORS
+        from pytodo_qt.gui.widgets.smart_input import _ENTITY_KEY_BY_KIND
+
+        key = _ENTITY_KEY_BY_KIND[EntityKind.ADVANCE_REMINDER]
+        assert LIGHT_COLORS[key] == LIGHT_COLORS["entity_date"]
+        assert DARK_COLORS[key] == DARK_COLORS["entity_date"]
+
+    def test_every_kind_has_a_colour(self) -> None:
+        from pytodo_qt.gui.widgets.smart_input import _ENTITY_KEY_BY_KIND
+
+        assert set(_ENTITY_KEY_BY_KIND) == set(EntityKind)

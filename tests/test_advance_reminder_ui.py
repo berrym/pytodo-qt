@@ -1,8 +1,9 @@
 """Tests for setting a task's advance reminder.
 
 Covers the shared editor (a cadence choice and a day count), its row in
-the Add Todo dialog and in the detail panel, and the main window storing
-a change as one undoable step.
+the Add Todo dialog and in the detail panel, a reminder typed into Add
+Todo's smart input, and the main window storing a change as one
+undoable step.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import pytest
 
 from pytodo_qt.core.config import AppConfig
 from pytodo_qt.core.models import TodoItem, TodoList, create_todo_item, create_todo_list
+from pytodo_qt.core.nlp_parser import EntityKind
 from pytodo_qt.gui.dialogs.add_todo import AddTodoDialog
 from pytodo_qt.gui.main_window import MainWindow
 from pytodo_qt.gui.widgets.advance_reminder import AdvanceReminderEditor
@@ -207,6 +209,96 @@ class TestAddTodo:
         form = dialog._advance_reminder_note.parentWidget().layout()
         assert form.isRowVisible(dialog._advance_reminder_note)
         assert "daily summary" in dialog._advance_reminder_note.text()
+
+
+# ---------------------------------------------------------------------------
+# Add Todo, typed into the smart input
+# ---------------------------------------------------------------------------
+
+
+def typed_dialog(qtbot, text: str, **kwargs) -> AddTodoDialog:
+    dialog = AddTodoDialog(**kwargs)
+    qtbot.addWidget(dialog)
+    dialog._smart_input.set_text(text)
+    return dialog
+
+
+def chip_texts(dialog: AddTodoDialog) -> list[str]:
+    return [
+        span.display
+        for span in dialog._smart_input.get_parse_result().spans
+        if span.kind is EntityKind.ADVANCE_REMINDER
+    ]
+
+
+class TestAddTodoTyped:
+    def test_created_task_carries_the_typed_reminder(self, qtbot):
+        dialog = typed_dialog(qtbot, "Tax return tomorrow remind me daily 3 days before")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.reminder == "Tax return"
+        assert item.due_date == date.today() + timedelta(days=1)
+        assert (item.remind_before_days, item.reminder_cadence) == (3, "daily_until_due")
+
+    def test_typed_reminder_without_a_due_date_is_not_kept(self, qtbot):
+        dialog = typed_dialog(qtbot, "Call mom remind me 2 days before")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.reminder == "Call mom"
+        assert item.due_date is None
+        assert (item.remind_before_days, item.reminder_cadence) == (0, "none")
+
+    def test_chip_says_a_due_date_is_needed(self, qtbot):
+        dialog = typed_dialog(qtbot, "Call mom remind me 2 days before")
+        assert chip_texts(dialog) == ["Remind 2 days before (needs a due date)"]
+
+    def test_calendar_cell_supplies_the_due_date(self, qtbot):
+        cell = date.today() + timedelta(days=9)
+        dialog = typed_dialog(qtbot, "Call mom remind me 2 days before", default_due_date=cell)
+        assert chip_texts(dialog) == ["Remind 2 days before"]
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert item.due_date == cell
+        assert (item.remind_before_days, item.reminder_cadence) == (2, "once")
+
+    def test_no_phrase_stores_none(self, qtbot):
+        dialog = typed_dialog(qtbot, "Tax return tomorrow")
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert (item.remind_before_days, item.reminder_cadence) == (0, "none")
+
+    def test_opening_advanced_shows_the_typed_reminder(self, qtbot):
+        dialog = typed_dialog(qtbot, "Tax return tomorrow remind me a week before")
+        dialog._advanced_toggle.setChecked(True)
+        assert dialog.advance_reminder_editor.isEnabled()
+        assert dialog.advance_reminder_editor.value() == (7, "once")
+
+    def test_opening_advanced_without_a_due_date_shows_off(self, qtbot):
+        dialog = typed_dialog(qtbot, "Call mom remind me 2 days before")
+        dialog._advanced_toggle.setChecked(True)
+        assert dialog.advance_reminder_editor.value() == (0, "none")
+        assert not dialog.advance_reminder_editor.isEnabled()
+
+    def test_a_removed_phrase_clears_the_row(self, qtbot):
+        dialog = typed_dialog(qtbot, "Tax return tomorrow remind me a week before")
+        dialog._on_smart_parse_changed(dialog._smart_input.get_parse_result())
+        assert dialog.advance_reminder_editor.value() == (7, "once")
+        dialog._smart_input.set_text("Tax return tomorrow")
+        dialog._on_smart_parse_changed(dialog._smart_input.get_parse_result())
+        assert dialog.advance_reminder_editor.value() == (0, "none")
+
+    def test_reminder_set_in_advanced_is_what_gets_stored(self, qtbot):
+        dialog = typed_dialog(qtbot, "Tax return tomorrow remind me a week before")
+        dialog._advanced_toggle.setChecked(True)
+        dialog.advance_reminder_editor.days_spin.setValue(4)
+        dialog._on_accept()
+        item = dialog.get_item()
+        assert item is not None
+        assert (item.remind_before_days, item.reminder_cadence) == (4, "once")
 
 
 # ---------------------------------------------------------------------------

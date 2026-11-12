@@ -13,9 +13,9 @@ from __future__ import annotations
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QBoxLayout, QComboBox, QSpinBox, QWidget
 
-from ...core.notification_policy import AdvanceCadence
+from ...core.notification_policy import ADVANCE_DAYS_RANGE, AdvanceCadence
 
-DAYS_RANGE = (1, 90)
+DAYS_RANGE = ADVANCE_DAYS_RANGE
 DEFAULT_DAYS = 1
 
 

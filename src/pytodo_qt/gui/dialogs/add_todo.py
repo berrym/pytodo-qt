@@ -83,6 +83,7 @@ class AddTodoDialog(QDialog):
         self._apply_cell_launch_defaults()
         self._clamp_to_screen()
 
+        self._smart_input.set_due_date_supplied(default_due_date is not None)
         if known_tags:
             self._smart_input.set_known_tags(known_tags)
 
@@ -590,6 +591,14 @@ class AddTodoDialog(QDialog):
             else:
                 self.due_date_checkbox.setChecked(False)
 
+            # Advance reminder — kept only alongside a due date.
+            if synced_date is not None and result.remind_before_days:
+                self.advance_reminder_editor.set_value(
+                    result.remind_before_days, result.reminder_cadence
+                )
+            else:
+                self.advance_reminder_editor.set_value(0, "none")
+
             # Due time
             if result.due_time is not None:
                 self.due_time_checkbox.setChecked(True)
@@ -930,6 +939,13 @@ class AddTodoDialog(QDialog):
                 next_dt = _dt.now() + _td(minutes=result.recurrence_interval)
                 due_time = next_dt.time().replace(second=0, microsecond=0)
 
+            # An advance reminder counts back from the due date, so one
+            # asked for in the text is kept only when there is a date.
+            remind_before_days, reminder_cadence = 0, "none"
+            if due_date is not None and result.remind_before_days:
+                remind_before_days = result.remind_before_days
+                reminder_cadence = result.reminder_cadence
+
             self._item = TodoItem(
                 reminder=reminder,
                 priority=result.priority or 2,
@@ -937,6 +953,8 @@ class AddTodoDialog(QDialog):
                 due_time=due_time,
                 due_time_end=result.due_time_end,
                 due_time_block=result.due_time_block,
+                remind_before_days=remind_before_days,
+                reminder_cadence=reminder_cadence,
                 tags=result.tags,
                 recurrence_type=result.recurrence_type,
                 recurrence_interval=result.recurrence_interval,

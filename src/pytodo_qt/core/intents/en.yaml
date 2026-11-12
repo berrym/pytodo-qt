@@ -502,6 +502,78 @@ time_of_day_lead_ins:
   - for
 
 # ---------------------------------------------------------------------------
+# Advance reminder — a mention in the daily summary on the days before a
+# task is due: "remind me 3 days before", "remind me daily from a week
+# before", "with 3 days notice".
+#
+# A phrase is: an optional lead-in, a trigger, an optional cadence, an
+# amount (a number and a unit), and a closer. All of it must be present
+# and adjacent; "remind me to call" or a bare "3 days before" is not an
+# advance reminder. The notice form is: opener, amount, notice word.
+# ---------------------------------------------------------------------------
+
+advance_reminder:
+  # Words directly before the trigger that go with it, so that
+  # "... friday and remind me 2 days before" leaves no "and" behind.
+  lead_ins:
+    - "and please"
+    - "and also"
+    - "and a"
+    - "with a"
+    - and
+    - please
+    - also
+  triggers:
+    - "remind me"
+    - remind
+    - reminder
+  # Between the trigger and the amount. Without one the reminder is
+  # given once.
+  cadence_once:
+    - once
+  cadence_daily:
+    - "every day"
+    - "each day"
+    - daily
+    - everyday
+  # "from 5 days before" is a run of days, so it means daily as well;
+  # after a cadence word it changes nothing.
+  cadence_from:
+    - "starting from"
+    - starting
+    - from
+  # Days per unit.
+  units:
+    day: 1
+    days: 1
+    week: 7
+    weeks: 7
+  # "the day before" is one day; "a couple of days" skips the "of".
+  articles:
+    - a
+    - the
+  partitives:
+    - of
+  closers:
+    - "ahead of time"
+    - "in advance"
+    - before
+    - beforehand
+    - ahead
+    - early
+  # Words that may follow the closer and say nothing more: "3 days
+  # before it's due".
+  closer_tails:
+    - "it's due"
+    - "it is due"
+    - "the due date"
+    - "the deadline"
+  notice_openers:
+    - with
+  notice_words:
+    - notice
+
+# ---------------------------------------------------------------------------
 # Filler / connective phrases — multi-word fragments of natural speech
 # that carry no task content and should not appear in the reminder.
 # Recognized as EntityKind.FILLER spans during parsing, then excluded

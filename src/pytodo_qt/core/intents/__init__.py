@@ -108,6 +108,9 @@ def load_intents(lang: str = "en") -> dict[str, Any]:
     result["part_of_day_lead_ins"] = [str(p).split() for p in raw.get("part_of_day_lead_ins", [])]
     result["time_of_day_lead_ins"] = [str(p).split() for p in raw.get("time_of_day_lead_ins", [])]
 
+    # --- Advance reminder ---
+    result["advance_reminder"] = _build_advance_reminder(raw.get("advance_reminder") or {})
+
     # --- Scalars ---
     result["fuzzy_threshold"] = int(raw["fuzzy_threshold"])
 
@@ -145,6 +148,35 @@ def _parse_time(val: str) -> time:
     """Convert 'HH:MM' string to datetime.time."""
     parts = str(val).split(":")
     return time(int(parts[0]), int(parts[1]))
+
+
+def _word_lists(phrases: Any) -> list[list[str]]:
+    """Split phrases into word lists, longest first, so that a longer
+    phrase is tried before one it begins with."""
+    split = [str(phrase).lower().split() for phrase in phrases or []]
+    return sorted((words for words in split if words), key=len, reverse=True)
+
+
+def _build_advance_reminder(section: dict[str, Any]) -> dict[str, Any]:
+    """Convert the advance-reminder vocabulary to word lists and a unit map.
+
+    A dictionary without the section gives empty lists, with which no
+    phrase is recognised.
+    """
+    return {
+        "lead_ins": _word_lists(section.get("lead_ins")),
+        "triggers": _word_lists(section.get("triggers")),
+        "cadence_once": _word_lists(section.get("cadence_once")),
+        "cadence_daily": _word_lists(section.get("cadence_daily")),
+        "cadence_from": _word_lists(section.get("cadence_from")),
+        "units": {str(k).lower(): int(v) for k, v in (section.get("units") or {}).items()},
+        "articles": {str(word).lower() for word in section.get("articles") or []},
+        "partitives": {str(word).lower() for word in section.get("partitives") or []},
+        "closers": _word_lists(section.get("closers")),
+        "closer_tails": _word_lists(section.get("closer_tails")),
+        "notice_openers": _word_lists(section.get("notice_openers")),
+        "notice_words": _word_lists(section.get("notice_words")),
+    }
 
 
 def _expand_priority_tokens(tokens: dict[str, Any]) -> dict[str, int]:

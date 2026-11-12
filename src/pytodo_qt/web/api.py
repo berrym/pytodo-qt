@@ -769,6 +769,7 @@ async def handle_create_item(request: web.Request) -> web.Response:
 
     # NLP parsing: extract fields from natural language, then let explicit
     # body fields override.
+    advance_reminder_parsed = False
     if body.get("parse_nlp"):
         from ..core.nlp_parser import parse as nlp_parse
 
@@ -795,11 +796,26 @@ async def handle_create_item(request: web.Request) -> web.Response:
             item.recurrence_end_count = result.recurrence_end_count
         if result.pomodoro_estimate is not None:
             item.estimated_pomodoros = result.pomodoro_estimate
+        if result.remind_before_days:
+            item.remind_before_days = result.remind_before_days
+            item.reminder_cadence = result.reminder_cadence
+            advance_reminder_parsed = True
     else:
         item = create_todo_item(reminder)
 
     # Explicit body fields override NLP results
     _apply_item_fields(item, {k: v for k, v in body.items() if k != "reminder"}, lst)
+
+    # An advance reminder counts back from the due date, so one taken
+    # from the text is dropped when the item ends up without a date.
+    if (
+        advance_reminder_parsed
+        and item.due_date is None
+        and "remind_before_days" not in body
+        and "reminder_cadence" not in body
+    ):
+        item.remind_before_days = 0
+        item.reminder_cadence = "none"
 
     # Assign default board column if not explicitly set
     if not item.board_column and lst.board_columns:
@@ -1182,6 +1198,8 @@ async def handle_parse(request: web.Request) -> web.Response:
             "due_time_block": result.due_time_block,
             "event_date": result.event_date.isoformat() if result.event_date else None,
             "conditions": result.conditions if result.conditions else [],
+            "remind_before_days": result.remind_before_days,
+            "reminder_cadence": result.reminder_cadence,
             "spans": [
                 {
                     "start": s.start,

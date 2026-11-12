@@ -1733,6 +1733,10 @@ body {
   background: rgba(124, 58, 237, 0.12);
   color: #7c3aed;
 }
+.entity-chip.advance_reminder {
+  background: rgba(21, 101, 192, 0.12);
+  color: var(--entity-date);
+}
 .entity-chip.condition {
   background: rgba(220, 38, 38, 0.12);
   color: #dc2626;

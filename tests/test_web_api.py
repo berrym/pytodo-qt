@@ -1290,6 +1290,39 @@ class TestParseEndpoint:
             await client.close()
 
     @pytest.mark.asyncio
+    async def test_parse_reports_an_advance_reminder(self):
+        db = Database()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                "/api/parse",
+                json={"text": "Pay rent tomorrow remind me daily 3 days before"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["reminder"] == "Pay rent"
+            assert data["remind_before_days"] == 3
+            assert data["reminder_cadence"] == "daily_until_due"
+            kinds = {span["kind"]: span["display"] for span in data["spans"]}
+            assert kinds["advance_reminder"] == "Remind daily from 3 days before"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_parse_without_an_advance_reminder(self):
+        db = Database()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post("/api/parse", json={"text": "Pay rent tomorrow"})
+            data = await resp.json()
+            assert data["remind_before_days"] == 0
+            assert data["reminder_cadence"] == "none"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
     async def test_parse_empty_text(self):
         db = Database()
         client = await _make_client(db)
@@ -1449,6 +1482,95 @@ class TestCreateItemExtended:
             assert resp.status == 201
             data = await resp.json()
             assert data["estimated_pomodoros"] == 4
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_create_item_with_nlp_keeps_an_advance_reminder(self):
+        db = _make_db_with_data()
+        list_id = str(next(iter(db.lists)))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{list_id}/items",
+                json={
+                    "reminder": "Pay rent tomorrow remind me 3 days before",
+                    "parse_nlp": True,
+                },
+            )
+            assert resp.status == 201
+            data = await resp.json()
+            assert data["reminder"] == "Pay rent"
+            assert data["due_date"] is not None
+            assert data["remind_before_days"] == 3
+            assert data["reminder_cadence"] == "once"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_create_item_with_nlp_drops_an_advance_reminder_without_a_date(self):
+        db = _make_db_with_data()
+        list_id = str(next(iter(db.lists)))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{list_id}/items",
+                json={"reminder": "Pay rent remind me 3 days before", "parse_nlp": True},
+            )
+            assert resp.status == 201
+            data = await resp.json()
+            assert data["reminder"] == "Pay rent"
+            assert data["due_date"] is None
+            assert data["remind_before_days"] == 0
+            assert data["reminder_cadence"] == "none"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_create_item_with_nlp_advance_reminder_and_a_date_in_the_body(self):
+        db = _make_db_with_data()
+        list_id = str(next(iter(db.lists)))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{list_id}/items",
+                json={
+                    "reminder": "Pay rent remind me 3 days before",
+                    "parse_nlp": True,
+                    "due_date": "2030-01-15",
+                },
+            )
+            assert resp.status == 201
+            data = await resp.json()
+            assert data["due_date"] == "2030-01-15"
+            assert data["remind_before_days"] == 3
+            assert data["reminder_cadence"] == "once"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_create_item_explicit_advance_reminder_overrides_the_text(self):
+        db = _make_db_with_data()
+        list_id = str(next(iter(db.lists)))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{list_id}/items",
+                json={
+                    "reminder": "Pay rent tomorrow remind me 3 days before",
+                    "parse_nlp": True,
+                    "remind_before_days": 5,
+                    "reminder_cadence": "daily_until_due",
+                },
+            )
+            assert resp.status == 201
+            data = await resp.json()
+            assert data["remind_before_days"] == 5
+            assert data["reminder_cadence"] == "daily_until_due"
         finally:
             await client.close()
 
