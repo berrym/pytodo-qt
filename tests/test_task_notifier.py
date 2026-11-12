@@ -45,6 +45,7 @@ class Harness:
         self.now = at(9)
         self.settings = PolicySettings(summary_enabled=False)
         self.time_format = "24h"
+        self.focus_active = False
         self.delivered: list[tuple[str, str]] = []
         self.notifier = TaskNotifier(
             storage=storage,
@@ -53,6 +54,7 @@ class Harness:
             time_blocks=TimeBlockConfig,
             time_format=lambda: self.time_format,
             deliver=lambda title, body: self.delivered.append((title, body)),
+            focus_active=lambda: self.focus_active,
             clock=lambda: self.now,
         )
 
@@ -183,6 +185,68 @@ class TestEvaluate:
         harness.now = at(14, 45)
         result = harness.notifier.evaluate()
         assert len(result.reminders) == 1
+
+
+class TestHolding:
+    def test_summary_waits_for_the_focus_session_and_is_not_recorded(self, harness):
+        harness.settings = PolicySettings()
+        harness.add(make_item(due_date=DAY))
+        harness.focus_active = True
+        assert harness.tick(at(9)) == []
+        assert harness.storage.get_fired_notifications() == set()
+        harness.focus_active = False
+        assert harness.tick(at(9, 25)) == [("Today", "1 due today")]
+        assert harness.tick(at(9, 26)) == []
+
+    def test_focus_state_is_read_on_every_evaluation(self, harness):
+        harness.settings = PolicySettings()
+        harness.add(make_item(due_date=DAY))
+        harness.focus_active = True
+        for minute in range(5):
+            assert harness.tick(at(9, minute)) == []
+        harness.focus_active = False
+        assert len(harness.tick(at(9, 5))) == 1
+
+    def test_timed_reminder_is_delivered_during_a_focus_session(self, harness):
+        harness.add(make_item("Dentist", due_date=DAY, due_time=time(15)))
+        harness.focus_active = True
+        assert harness.tick(at(14, 45)) == [("Dentist", "Due at 15:00 · in 15 min")]
+
+    def test_summary_waits_for_quiet_hours_to_end(self, harness):
+        harness.settings = PolicySettings(summary_time=time(6))
+        harness.add(make_item(due_date=DAY))
+        assert harness.tick(at(6)) == []
+        assert harness.storage.get_fired_notifications() == set()
+        assert harness.tick(at(7)) == [("Today", "1 due today")]
+
+    def test_missed_items_wait_for_quiet_hours_to_end(self, harness):
+        harness.add(make_item("Report", due_date=DAY, due_time=time(2)))
+        assert harness.tick(at(4)) == []
+        assert harness.storage.get_fired_notifications() == set()
+        assert harness.tick(at(7)) == [("Earlier today", "02:00  Report")]
+        assert harness.tick(at(7, 1)) == []
+
+    def test_notifier_without_a_focus_source_never_holds_for_one(self, qapp, tmp_path):
+        storage = DatabaseStorage(tmp_path / "plain.db")
+        storage.open()
+        try:
+            todo_list = TodoList(name="List")
+            item = make_item(due_date=DAY)
+            todo_list.items[item.id] = item
+            delivered: list[tuple[str, str]] = []
+            notifier = TaskNotifier(
+                storage=storage,
+                lists=lambda: [todo_list],
+                settings=PolicySettings,
+                time_blocks=TimeBlockConfig,
+                time_format=lambda: "24h",
+                deliver=lambda title, body: delivered.append((title, body)),
+                clock=lambda: at(9),
+            )
+            notifier.evaluate()
+            assert delivered == [("Today", "1 due today")]
+        finally:
+            storage.close()
 
 
 class TestPruning:

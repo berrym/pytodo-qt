@@ -226,6 +226,7 @@ class MainWindow(QMainWindow):
             time_blocks=lambda: self._config_manager.config.time_blocks,
             time_format=lambda: self._config_manager.config.appearance.time_format,
             deliver=self._deliver_task_notification,
+            focus_active=self._focus_session_running,
             parent=self,
         )
 
@@ -2289,6 +2290,19 @@ class MainWindow(QMainWindow):
             summary_enabled=notifications.notify_overdue or notifications.notify_due_today,
             summary_time=_time(notifications.check_hour % 24),
             day_start_hour=config.database.day_start_hour,
+        )
+
+    def _focus_session_running(self) -> bool:
+        """Whether a focus timer is in its work phase or the stopwatch is
+        running. A paused session and a break do not count: the summary
+        and the report of missed items are held only while work is
+        actually under way."""
+        from .widgets.pomodoro import TimerState
+        from .widgets.stopwatch import StopwatchState
+
+        return (
+            self._pomodoro.state is TimerState.WORKING
+            or self._stopwatch.state is StopwatchState.RUNNING
         )
 
     def _deliver_task_notification(self, title: str, body: str) -> None:

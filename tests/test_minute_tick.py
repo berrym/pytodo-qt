@@ -14,6 +14,8 @@ from pytodo_qt.core.config import AppConfig
 from pytodo_qt.core.notification_policy import DueNowMode
 from pytodo_qt.gui import main_window as main_window_module
 from pytodo_qt.gui.main_window import MainWindow
+from pytodo_qt.gui.widgets.pomodoro import TimerState
+from pytodo_qt.gui.widgets.stopwatch import StopwatchState
 
 
 class TestMinuteTick:
@@ -104,6 +106,10 @@ class TestNotificationPolicySettings:
         assert settings.lead_minutes == 15
         assert settings.due_now is DueNowMode.DEADLINES
         assert settings.day_start_hour == 0
+        assert settings.quiet_hours_enabled
+        assert (settings.quiet_start, settings.quiet_end) == (time(22), time(7))
+        assert settings.quiet_allow_timed
+        assert settings.hold_during_focus
 
     def test_daily_check_time_sets_the_summary_time(self):
         settings, _ = self._settings(check_hour=7)
@@ -127,6 +133,34 @@ class TestNotificationPolicySettings:
         window = MagicMock()
         window._config_manager.config = config
         assert MainWindow._notification_policy_settings(window).day_start_hour == 4
+
+
+class TestFocusSessionRunning:
+    """Only work that is actually under way holds notifications back."""
+
+    def _running(self, pomodoro: TimerState, stopwatch: StopwatchState) -> bool:
+        window = MagicMock()
+        window._pomodoro.state = pomodoro
+        window._stopwatch.state = stopwatch
+        return MainWindow._focus_session_running(window)
+
+    def test_nothing_running(self):
+        assert not self._running(TimerState.IDLE, StopwatchState.IDLE)
+
+    def test_focus_timer_in_its_work_phase(self):
+        assert self._running(TimerState.WORKING, StopwatchState.IDLE)
+
+    def test_focus_timer_on_a_break(self):
+        assert not self._running(TimerState.BREAK, StopwatchState.IDLE)
+
+    def test_focus_timer_paused(self):
+        assert not self._running(TimerState.PAUSED, StopwatchState.IDLE)
+
+    def test_stopwatch_running(self):
+        assert self._running(TimerState.IDLE, StopwatchState.RUNNING)
+
+    def test_stopwatch_paused(self):
+        assert not self._running(TimerState.IDLE, StopwatchState.PAUSED)
 
 
 class TestCheckLanAddress:

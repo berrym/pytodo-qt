@@ -57,6 +57,7 @@ class TaskNotifier(QObject):
         time_blocks: Callable[[], TimeBlockConfig],
         time_format: Callable[[], str],
         deliver: Callable[[str, str], None],
+        focus_active: Callable[[], bool] = lambda: False,
         clock: Callable[[], datetime] = datetime.now,
         parent: QObject | None = None,
     ) -> None:
@@ -67,6 +68,7 @@ class TaskNotifier(QObject):
         self._time_blocks = time_blocks
         self._time_format = time_format
         self._deliver = deliver
+        self._focus_active = focus_active
         self._clock = clock
         self._last_pruned: date | None = None
 
@@ -76,6 +78,10 @@ class TaskNotifier(QObject):
         What the evaluation consumed is recorded before anything is
         delivered, so a failure while delivering cannot cause the same
         notification to be produced again on the next evaluation.
+
+        A notification held back by quiet hours or a running focus
+        session is neither recorded nor delivered; a later evaluation
+        produces it once the wait is over.
         """
         now = self._clock()
         result = evaluate(
@@ -84,6 +90,7 @@ class TaskNotifier(QObject):
             now,
             self._storage.get_fired_notifications(),
             self._time_blocks(),
+            focus_active=self._focus_active(),
         )
         if result.fired:
             self._storage.record_notifications(result.fired)

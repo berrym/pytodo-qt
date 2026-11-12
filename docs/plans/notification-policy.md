@@ -152,18 +152,41 @@ record. The same rules bound the result to at most one banner.
 ## Suppression rules
 
 - **Master switch.** `enabled = false` silences every kind in this document.
-- **Quiet hours.** Default 22:00–07:00; the window may cross midnight. The
-  daily summary, evening preview, and catch-up banner are never delivered
-  inside it; a summary or preview time that falls inside quiet hours fires
-  when the window ends. Lead reminders and due-now alerts are delivered
-  inside quiet hours by default: quiet hours shield against ambient digests,
-  while a time-anchored commitment placed inside the window (an early flight)
-  exists to interrupt. With `quiet_allow_timed = false` they are silenced as
-  well and re-evaluated under the catch-up rules when the window ends.
-- **Focus sessions.** While a focus session is in its work phase or the
+- **Quiet hours.** Default 22:00–07:00; the window may cross midnight. It
+  includes its start and excludes its end, and equal start and end times make
+  an empty window. The daily summary, evening preview, and catch-up banner
+  are never delivered inside it. Lead reminders and due-now alerts are
+  delivered inside quiet hours by default: quiet hours shield against ambient
+  digests, while a time-anchored commitment placed inside the window (an
+  early flight) exists to interrupt. With `quiet_allow_timed = false` they
+  are silenced as well and re-evaluated under the catch-up rules when the
+  window ends: an alert no more than ten minutes old is delivered, an older
+  one from the same logical day joins the missed set, and one from an earlier
+  day is only counted as overdue.
+- **A summary or preview time inside quiet hours.** It is treated as the end
+  of quiet hours on the same logical day: with the default window, a summary
+  set for 06:00 is delivered at 07:00, and one set for 23:00 is delivered at
+  07:00 that morning. Waiting for the window to end instead would lose the
+  23:00 summary altogether, because its logical day ends before the window
+  does.
+- **Focus sessions.** While a focus timer is in its work phase or the
   stopwatch is running, the daily summary, evening preview, and catch-up
   banner are held until the session ends. Lead reminders and due-now alerts
   are delivered regardless. Controlled by `hold_during_focus`.
+  - A paused timer or stopwatch does not hold, and neither does a break. A
+    session left paused would otherwise hold the summary indefinitely, and in
+    a work/break cycle a held summary arrives at the next break.
+  - There is no upper limit on the hold. A stopwatch that runs all morning
+    holds the summary all morning; timed reminders are unaffected.
+- **Holding and release.** A held notification is not written to the fired
+  record, so each later evaluation reconsiders it. Nothing is queued, and
+  there is no release event: the first once-a-minute evaluation after the
+  window or the session ends delivers what was held, built from the state of
+  the lists at that moment. Release therefore follows the end of a session by
+  up to a minute, which also keeps a released summary from arriving in the
+  same instant as the session-complete notification. A summary still held
+  when its logical day ends is not delivered; the next day's summary counts
+  the same items as overdue.
 - **Coalescing.** Lead reminders and due-now alerts that fire in the same
   evaluation merge into one banner with one line per item, capped at five
   lines plus a remainder count. Summary, preview, and catch-up merge the same
@@ -191,7 +214,8 @@ would turn a sync delay into a missed or duplicated reminder.
 
 - Input: the lists, the notification configuration, the current datetime, the
   fired record, and whether a focus session is active.
-- Output: the notifications to deliver and the keys to record as fired.
+- Output: the notifications to deliver, the keys to record as fired, and
+  what is being held by quiet hours or a focus session.
 - The current time is always a parameter. The module does not call
   `date.today()` or `datetime.now()`.
 - Notifications are returned as structured data (kind, item references,
@@ -312,9 +336,17 @@ The policy module is covered by fixed-clock unit tests, including:
 - Rescheduling re-arms; completing cancels; reopening does not replay.
 - The summary fires once per logical day, honors `day_start_hour`, is skipped
   when empty, and fires late on a launch after the summary time.
-- Quiet hours crossing midnight; a summary time inside quiet hours.
+- Quiet hours crossing midnight, within one day, disabled, and with equal
+  start and end times.
+- A summary time inside quiet hours fires at the end of the window on the
+  same logical day, including a late-evening summary time and a day start
+  later than midnight.
+- A launch inside quiet hours delivers no summary and records none.
 - A lead reminder inside quiet hours is delivered by default and silenced
-  with `quiet_allow_timed = false`.
+  with `quiet_allow_timed = false`; a silenced reminder is delivered, reported
+  as missed, or dropped when the window ends, according to its age.
+- Missed items found inside quiet hours are reported when the window ends,
+  inside the summary when it is released in the same evaluation.
 - A block item produces a lead reminder before its block start, no due-now
   alert, and re-arms when the block configuration changes.
 - Block resolution for every canonical block, including `late_night` across
@@ -322,7 +354,9 @@ The policy module is covered by fixed-clock unit tests, including:
 - Waking from sleep across a quiet-hours boundary.
 - Catch-up: missed set limited to the logical day, absorbed by a same-tick
   summary, delivered as one banner otherwise.
-- Focus hold releases at session end; timed reminders pass through.
+- Focus hold releases at session end; timed reminders pass through; a
+  released summary reflects the time it is delivered; a paused session, a
+  break, and a paused stopwatch do not hold.
 - Coalescing of simultaneous reminders and the five-line cap.
 - Private and deleted lists contribute nothing, including to counts.
 - Minutely recurrence: no lead reminder; due-now per occurrence.

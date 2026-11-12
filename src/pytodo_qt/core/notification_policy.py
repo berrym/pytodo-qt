@@ -24,6 +24,20 @@ Each timed notification is keyed by item, kind and occurrence (the due
 datetime). Rescheduling an item produces a new occurrence and so re-arms
 its reminders; completing or deleting it removes it from consideration.
 
+Two things can make a notification wait:
+
+- **Quiet hours** — a daily window, by default overnight, in which the
+  summary and the report of missed items are not delivered. Lead
+  reminders and due-now alerts are delivered inside it unless the
+  settings silence them too.
+- **A focus session** — while one is running, the summary and the
+  report of missed items wait for it to end. Lead reminders and due-now
+  alerts are delivered regardless.
+
+A notification that waits is not recorded as fired, so the first
+evaluation after the wait is over produces it from the state of things
+at that moment.
+
 Items in private or deleted lists are never considered, not even in
 counts: a notification is visible to anyone who can see the screen.
 """
@@ -87,6 +101,14 @@ class PolicySettings:
     lead_minutes: int = 15
     due_now: DueNowMode = DueNowMode.DEADLINES
     day_start_hour: int = 0
+    quiet_hours_enabled: bool = True
+    quiet_start: time = time(22, 0)
+    quiet_end: time = time(7, 0)
+    """Quiet hours run from ``quiet_start`` up to, not including,
+    ``quiet_end``, and may cross midnight."""
+    quiet_allow_timed: bool = True
+    """Deliver lead reminders and due-now alerts inside quiet hours."""
+    hold_during_focus: bool = True
 
 
 @dataclass(frozen=True)
@@ -137,12 +159,17 @@ class Evaluation:
     ``reminders`` belong in one notification, however many there are.
     ``missed`` is empty whenever ``summary`` is present, because the
     summary carries them.
+
+    ``held_items`` and ``held_summary`` describe what is waiting for
+    quiet hours or a focus session to end. Nothing held is in ``fired``.
     """
 
     reminders: tuple[Reminder, ...] = ()
     summary: Summary | None = None
     missed: tuple[TimedItem, ...] = ()
     fired: tuple[FiredKey, ...] = ()
+    held_items: tuple[TimedItem, ...] = ()
+    held_summary: bool = False
 
     @property
     def has_notifications(self) -> bool:
@@ -157,6 +184,23 @@ def logical_day(now: datetime, day_start_hour: int) -> date:
     if day_start_hour > 0 and now.hour < day_start_hour:
         return now.date() - timedelta(days=1)
     return now.date()
+
+
+def in_quiet_hours(moment: time, settings: PolicySettings) -> bool:
+    """Whether a time of day falls inside the quiet hours.
+
+    The window includes its start and excludes its end. A start later
+    than the end crosses midnight. Equal start and end make an empty
+    window.
+    """
+    if not settings.quiet_hours_enabled:
+        return False
+    start, end = settings.quiet_start, settings.quiet_end
+    if start < end:
+        return start <= moment < end
+    if start > end:
+        return moment >= start or moment < end
+    return False
 
 
 def is_event(item: TodoItem) -> bool:
@@ -208,15 +252,27 @@ def evaluate(
     now: datetime,
     fired: Collection[tuple[str, str, str]],
     time_blocks: TimeBlockConfig,
+    *,
+    focus_active: bool = False,
 ) -> Evaluation:
     """Work out which notifications are due at ``now``.
 
     ``fired`` is the set of keys already recorded. The returned
     ``Evaluation.fired`` lists the keys this evaluation consumed; they
     must be recorded so the same notification is not produced again.
+
+    ``focus_active`` is whether a focus session is running: a focus
+    timer in its work phase, or a running stopwatch. A paused session
+    and a break do not count.
     """
     if not settings.enabled:
         return Evaluation()
+
+    quiet = in_quiet_hours(now.time(), settings)
+    # The summary and the report of missed items wait.
+    digests_held = quiet or (settings.hold_during_focus and focus_active)
+    # Lead reminders and due-now alerts wait as well.
+    timed_held = quiet and not settings.quiet_allow_timed
 
     day = logical_day(now, settings.day_start_hour)
     day_start = datetime.combine(day, time(settings.day_start_hour))
@@ -225,6 +281,7 @@ def evaluate(
 
     reminders: list[Reminder] = []
     missed: list[TimedItem] = []
+    held: list[TimedItem] = []
     newly_fired: list[FiredKey] = []
     due_today = 0
     overdue = 0
@@ -261,10 +318,15 @@ def evaluate(
             if anchor < day_end and (next_up is None or anchor < next_up.at):
                 next_up = timed
             if lead_applies and lead_key not in fired and now >= lead_at:
-                newly_fired.append(lead_key)
                 # An item created or edited inside its own lead window
                 # was just handled; reminding about it at once is noise.
-                if item.updated_at <= _to_ms(lead_at):
+                wanted = item.updated_at <= _to_ms(lead_at)
+                if timed_held:
+                    if wanted:
+                        held.append(timed)
+                    continue
+                newly_fired.append(lead_key)
+                if wanted:
                     minutes_until = math.ceil((anchor - now).total_seconds() / 60)
                     reminders.append(
                         Reminder(
@@ -281,13 +343,18 @@ def evaluate(
             continue
 
         if due_applies and due_key not in fired:
+            # Edited after it came due: nothing to announce.
+            edited_since = item.updated_at > _to_ms(anchor)
+            fresh = age <= STALE_AFTER
+            if not edited_since and (timed_held or (digests_held and not fresh)):
+                held.append(timed)
+                continue
             newly_fired.append(due_key)
             if lead_applies and lead_key not in fired:
                 newly_fired.append(lead_key)
-            if item.updated_at > _to_ms(anchor):
-                # Edited after it came due; nothing to announce.
+            if edited_since:
                 pass
-            elif age <= STALE_AFTER:
+            elif fresh:
                 reminders.append(
                     Reminder(item.id, item.reminder, Kind.DUE_NOW, anchor, event, block, 0)
                 )
@@ -296,30 +363,48 @@ def evaluate(
         elif not due_applies and lead_applies and lead_key not in fired:
             # No alert is due at the anchor itself, and the lead reminder
             # never went out.
+            wanted = item.updated_at <= _to_ms(lead_at)
+            if wanted and digests_held:
+                held.append(timed)
+                continue
             newly_fired.append(lead_key)
-            if item.updated_at <= _to_ms(lead_at):
+            if wanted:
                 missed.append(timed)
 
     reminders.sort(key=lambda r: (r.at, r.title))
     missed.sort(key=lambda m: (m.at, m.title))
+    held.sort(key=lambda h: (h.at, h.title))
 
     summary: Summary | None = None
+    held_summary = False
     summary_key = FiredKey("", Kind.SUMMARY.value, day.isoformat())
     if settings.summary_enabled and summary_key not in fired:
-        summary_at = datetime.combine(day, settings.summary_time)
-        if settings.summary_time.hour < settings.day_start_hour:
+        summary_time = settings.summary_time
+        if in_quiet_hours(summary_time, settings):
+            # A summary set for a time inside quiet hours is given when
+            # they end, on the same logical day. Waiting out the window
+            # instead would lose a late-evening summary altogether: the
+            # day would be over before the window was.
+            summary_time = settings.quiet_end
+        summary_at = datetime.combine(day, summary_time)
+        if summary_time.hour < settings.day_start_hour:
             # A summary time before the day's start falls on the next
             # calendar date of the same logical day.
             summary_at += timedelta(days=1)
         if now >= summary_at:
-            newly_fired.append(summary_key)
-            if due_today or overdue or missed:
-                summary = Summary(day, due_today, overdue, next_up, tuple(missed))
-                missed = []
+            if digests_held:
+                held_summary = bool(due_today or overdue or held)
+            else:
+                newly_fired.append(summary_key)
+                if due_today or overdue or missed:
+                    summary = Summary(day, due_today, overdue, next_up, tuple(missed))
+                    missed = []
 
     return Evaluation(
         reminders=tuple(reminders),
         summary=summary,
         missed=tuple(missed),
         fired=tuple(newly_fired),
+        held_items=tuple(held),
+        held_summary=held_summary,
     )

@@ -1,12 +1,18 @@
-"""Manual visual-verification harness for task notification text.
+"""Manual verification harness for task notifications.
 
-Shows every shape of task notification — lead reminders, due-now alerts,
-several reminders merged into one, the daily summary, and missed items —
-without waiting for real due times. Each button builds a sample result
-of the notification policy, formats it with the same ``TaskNotifier``
-the application uses, and delivers it through the platform's
-notification channel: the in-app overlay on macOS, the desktop's native
-notifications elsewhere.
+The left column shows every shape of task notification — lead reminders,
+due-now alerts, several reminders merged into one, the daily summary,
+and missed items — without waiting for real due times. Each button
+builds a sample result of the notification policy, formats it with the
+same ``TaskNotifier`` the application uses, and delivers it through the
+platform's notification channel: the in-app overlay on macOS, the
+desktop's native notifications elsewhere.
+
+The right column shows *when* notifications are given. It runs the real
+notifier and policy against a scratch database and a handful of sample
+tasks, with a clock that is stepped by hand, so quiet hours and the
+focus-session hold can be watched without waiting for the night or for
+a session to end. Nothing in it touches the real database or settings.
 
 This is **not** part of the pytest suite and **not** CI-gated — it
 requires a human watching the screen.
@@ -29,17 +35,24 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tempfile
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from uuid import uuid4
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTime
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QGroupBox,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
+    QPlainTextEdit,
     QPushButton,
+    QTextEdit,
+    QTimeEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -48,12 +61,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from pytodo_qt.core.config import TimeBlockConfig  # noqa: E402
 from pytodo_qt.core.database import DatabaseStorage  # noqa: E402
+from pytodo_qt.core.models import TodoItem, TodoList  # noqa: E402
 from pytodo_qt.core.notification_policy import (  # noqa: E402
+    Evaluation,
     Kind,
     PolicySettings,
     Reminder,
     Summary,
     TimedItem,
+    in_quiet_hours,
 )
 from pytodo_qt.gui.task_notifier import TaskNotifier  # noqa: E402
 from pytodo_qt.gui.widgets.notification_overlay import NotificationManager  # noqa: E402
@@ -82,6 +98,202 @@ def _timed(title: str, when: datetime, **fields) -> TimedItem:
     return TimedItem(uuid4(), title, when, **fields)
 
 
+_SIMULATION_START = _at(8, 55)
+
+_SIMULATION_STEPS = """<b>Things to try</b> (press <i>Start over</i> before each):
+<ol>
+<li><b>Focus hold.</b> Tick <i>Focus session running</i>, press <i>+10 min</i>:
+the log shows the daily summary held at 09:00. Untick it, press <i>+1 min</i>:
+the summary appears.</li>
+<li><b>Timed reminders pass through a session.</b> Tick <i>Focus session
+running</i>, press <i>+1 hour</i>: the reminders for the expense report and
+the standup appear on time while the summary stays held.</li>
+<li><b>Quiet hours hold the summary.</b> Sleep until 23:30: nothing appears;
+the log shows what is held. Sleep until 07:00: only the medication missed at
+06:30 is reported. Sleep until 09:00: the new day's summary.</li>
+<li><b>Timed reminders pass through quiet hours.</b> Sleep until 22:55, press
+<i>+10 min</i>: the flight reminder appears at 23:00. With <i>Silence timed
+reminders</i> ticked it is held instead.</li>
+</ol>"""
+
+
+class HoldSimulation(QGroupBox):
+    """The real notifier and policy, driven by a clock stepped by hand.
+
+    Time passes in whole minutes with one evaluation per minute, as in
+    the running application. "Sleep until" moves the clock in one jump
+    and evaluates once on arrival, as after the machine wakes.
+    """
+
+    def __init__(
+        self, time_format: str, show: Callable[[str, str], None], parent: QWidget | None = None
+    ) -> None:
+        super().__init__("When notifications are given — simulated clock", parent)
+        self._show = show
+        self._scratch = tempfile.TemporaryDirectory(prefix="pytodo-notifications-")
+        self._storage = DatabaseStorage(Path(self._scratch.name) / "scratch.db")
+        self._storage.open()
+        self._now = _SIMULATION_START
+        self._tasks = self._sample_tasks()
+        self._shown: list[tuple[str, str]] = []
+        self._last_held = ""
+
+        self._clock_label = QLabel()
+        self._clock_label.setTextFormat(Qt.TextFormat.RichText)
+        self._focus_box = QCheckBox("Focus session running")
+        self._silence_box = QCheckBox("Silence timed reminders in quiet hours (off in the app)")
+        self._log = QPlainTextEdit()
+        self._log.setReadOnly(True)
+        self._log.setMinimumHeight(180)
+        self._wake_time = QTimeEdit(QTime(23, 30))
+        self._wake_time.setDisplayFormat("HH:mm")
+
+        self._notifier = TaskNotifier(
+            storage=self._storage,
+            lists=lambda: [self._tasks],
+            settings=self._settings,
+            time_blocks=TimeBlockConfig,
+            time_format=lambda: time_format,
+            deliver=self._on_delivered,
+            focus_active=self._focus_box.isChecked,
+            clock=lambda: self._now,
+            parent=self,
+        )
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self._clock_label)
+        layout.addWidget(self._focus_box)
+        layout.addWidget(self._silence_box)
+
+        passing = QHBoxLayout()
+        passing.addWidget(QLabel("Let time pass:"))
+        for label, minutes in (("+1 min", 1), ("+10 min", 10), ("+1 hour", 60)):
+            button = QPushButton(label)
+            button.clicked.connect(lambda _checked=False, m=minutes: self._pass_minutes(m))
+            passing.addWidget(button)
+        passing.addStretch(1)
+        layout.addLayout(passing)
+
+        sleeping = QHBoxLayout()
+        sleeping.addWidget(QLabel("Sleep until:"))
+        sleeping.addWidget(self._wake_time)
+        wake = QPushButton("Wake")
+        wake.clicked.connect(self._sleep_until_wake_time)
+        sleeping.addWidget(wake)
+        sleeping.addStretch(1)
+        start_over = QPushButton("Start over")
+        start_over.clicked.connect(self._start_over)
+        sleeping.addWidget(start_over)
+        layout.addLayout(sleeping)
+
+        tasks = QLabel(
+            "<b>Sample tasks</b> — yesterday: Renew passport. Today: Pay rent (no time), "
+            "Submit expense report 09:30, Team standup 10:00–10:15, Check in for flight "
+            "23:15. Tomorrow: Take medication 06:30.<br>"
+            "<b>Settings</b> — summary 09:00, reminders 15 min ahead, quiet hours "
+            "22:00–07:00."
+        )
+        tasks.setWordWrap(True)
+        tasks.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(tasks)
+        layout.addWidget(self._log, 1)
+        # A scrolling pane, not a label: a long word-wrapped label does
+        # not report the height it needs and gets clipped.
+        steps = QTextEdit()
+        steps.setReadOnly(True)
+        steps.setHtml(_SIMULATION_STEPS)
+        steps.setMinimumHeight(200)
+        layout.addWidget(steps, 1)
+        self._start_over()
+
+    @staticmethod
+    def _sample_tasks() -> TodoList:
+        def task(title: str, day_offset: int, **fields) -> TodoItem:
+            return TodoItem(
+                reminder=title,
+                due_date=TODAY + timedelta(days=day_offset),
+                created_at=0,
+                updated_at=0,
+                **fields,
+            )
+
+        items = [
+            task("Renew passport", -1),
+            task("Pay rent", 0),
+            task("Submit expense report", 0, due_time=time(9, 30)),
+            task("Team standup", 0, due_time=time(10), due_time_end=time(10, 15)),
+            task("Check in for flight", 0, due_time=time(23, 15)),
+            task("Take medication", 1, due_time=time(6, 30)),
+        ]
+        return TodoList(name="Sample", items={item.id: item for item in items})
+
+    def _settings(self) -> PolicySettings:
+        return PolicySettings(quiet_allow_timed=not self._silence_box.isChecked())
+
+    def _on_delivered(self, title: str, body: str) -> None:
+        self._shown.append((title, body))
+        self._show(title, body)
+
+    def _start_over(self) -> None:
+        self._storage.clear()
+        self._now = _SIMULATION_START
+        self._last_held = ""
+        self._focus_box.setChecked(False)
+        self._silence_box.setChecked(False)
+        self._log.clear()
+        self._update_clock_label()
+
+    def _pass_minutes(self, minutes: int) -> None:
+        for _ in range(minutes):
+            self._now += timedelta(minutes=1)
+            self._evaluate()
+
+    def _sleep_until_wake_time(self) -> None:
+        wake = self._wake_time.time()
+        target = datetime.combine(self._now.date(), time(wake.hour(), wake.minute()))
+        if target <= self._now:
+            target += timedelta(days=1)
+        self._write(f"asleep until {target:%H:%M}")
+        self._now = target
+        self._evaluate()
+
+    def _evaluate(self) -> None:
+        self._shown = []
+        result = self._notifier.evaluate()
+        for title, body in self._shown:
+            self._write("shown: " + title + " — " + body.replace("\n", " / "))
+        held = self._describe_held(result)
+        if held != self._last_held:
+            if held:
+                self._write("held: " + held)
+            elif not self._shown:
+                self._write("no longer held, and nothing shown: the day it belonged to is over")
+            self._last_held = held
+        self._update_clock_label()
+
+    def _describe_held(self, result: Evaluation) -> str:
+        parts = ["daily summary"] if result.held_summary else []
+        parts.extend(item.title for item in result.held_items)
+        if not parts:
+            return ""
+        quiet = in_quiet_hours(self._now.time(), self._settings())
+        return ", ".join(parts) + (" (quiet hours)" if quiet else " (focus session)")
+
+    def _write(self, line: str) -> None:
+        self._log.appendPlainText(f"{self._now:%a %H:%M}  {line}")
+
+    def _update_clock_label(self) -> None:
+        quiet = in_quiet_hours(self._now.time(), self._settings())
+        self._clock_label.setText(
+            f"Simulated time: <b>{self._now:%A %H:%M}</b> — "
+            f"quiet hours: <b>{'yes' if quiet else 'no'}</b>"
+        )
+
+    def shut_down(self) -> None:
+        self._storage.close()
+        self._scratch.cleanup()
+
+
 class Harness(QMainWindow):
     def __init__(self, time_format: str) -> None:
         super().__init__()
@@ -100,7 +312,9 @@ class Harness(QMainWindow):
         )
 
         central = QWidget()
-        layout = QVBoxLayout(central)
+        columns = QHBoxLayout(central)
+        shapes = QGroupBox("What each notification looks like")
+        layout = QVBoxLayout(shapes)
         channel = "desktop notifications" if self._os_notifier else "in-app overlay"
         intro = QLabel(
             f"Delivering through: <b>{channel}</b>. Each button shows one "
@@ -109,12 +323,21 @@ class Harness(QMainWindow):
         )
         intro.setWordWrap(True)
         intro.setTextFormat(Qt.TextFormat.RichText)
+        intro.setMinimumHeight(intro.fontMetrics().lineSpacing() * 3)
         layout.addWidget(intro)
         for label, fire in self._scenarios():
             button = QPushButton(label)
             button.clicked.connect(lambda _checked=False, f=fire: f())
             layout.addWidget(button)
+        layout.addStretch(1)
+        self._simulation = HoldSimulation(time_format, self._show, self)
+        columns.addWidget(shapes, 1)
+        columns.addWidget(self._simulation, 1)
         self.setCentralWidget(central)
+
+    def closeEvent(self, a0) -> None:  # noqa: N802 — Qt override
+        self._simulation.shut_down()
+        super().closeEvent(a0)
 
     def _scenarios(self) -> list[tuple[str, Callable[[], None]]]:
         n = self._notifier
@@ -273,9 +496,10 @@ def main() -> int:
 
     app = QApplication(sys.argv[:1])
     harness = Harness(args.time_format)
-    harness.resize(420, 0)
-    harness.show()
     screen = app.primaryScreen()
+    available_height = screen.availableGeometry().height() if screen is not None else 800
+    harness.resize(1000, min(820, available_height - 80))
+    harness.show()
     if screen is not None:
         area = screen.availableGeometry()
         harness.move(area.left() + 40, area.bottom() - harness.frameGeometry().height() - 40)

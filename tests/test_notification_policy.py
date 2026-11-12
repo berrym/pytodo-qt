@@ -22,6 +22,7 @@ from pytodo_qt.core.notification_policy import (
     PolicySettings,
     anchor_for,
     evaluate,
+    in_quiet_hours,
     is_event,
     logical_day,
 )
@@ -54,10 +55,13 @@ def run(
     fired=(),
     settings: PolicySettings | None = None,
     blocks: TimeBlockConfig = BLOCKS,
+    focus_active: bool = False,
 ) -> Evaluation:
     """Evaluate a flat list of items, or ready-made lists."""
     lists = items if items and isinstance(items[0], TodoList) else [make_list(*items)]
-    return evaluate(lists, settings or NO_SUMMARY, now, set(fired), blocks)
+    return evaluate(
+        lists, settings or NO_SUMMARY, now, set(fired), blocks, focus_active=focus_active
+    )
 
 
 # Most tests are about timed reminders; the summary gets its own class.
@@ -73,8 +77,10 @@ class Session:
         self.settings = settings or NO_SUMMARY
         self.fired: set[tuple[str, str, str]] = set()
 
-    def tick(self, now: datetime) -> Evaluation:
-        result = evaluate(self.lists, self.settings, now, self.fired, BLOCKS)
+    def tick(self, now: datetime, focus_active: bool = False) -> Evaluation:
+        result = evaluate(
+            self.lists, self.settings, now, self.fired, BLOCKS, focus_active=focus_active
+        )
         self.fired.update(result.fired)
         return result
 
@@ -700,7 +706,9 @@ class TestSummary:
         the 11th. An event dated the 12th at 01:00 is then neither due
         today nor overdue by date, but it was missed within this logical
         day, and that alone warrants the summary."""
-        settings = PolicySettings(day_start_hour=4, summary_time=time(1, 30))
+        settings = PolicySettings(
+            day_start_hour=4, summary_time=time(1, 30), quiet_hours_enabled=False
+        )
         item = make_item("Night shift", due_date=DAY, due_time=time(1), due_time_end=time(2))
         result = run([item], at(2), settings=settings)
         assert result.summary is not None
@@ -723,7 +731,9 @@ class TestSummary:
 
 
 class TestSummaryAndDayStart:
-    SETTINGS = PolicySettings(day_start_hour=4)
+    # These scenarios sit in the small hours; quiet hours have their own
+    # tests, including how they combine with the day start.
+    SETTINGS = PolicySettings(day_start_hour=4, quiet_hours_enabled=False)
 
     def test_due_today_follows_the_logical_day(self):
         """At 02:00 with a 04:00 day start it is still the previous day,
@@ -745,7 +755,7 @@ class TestSummaryAndDayStart:
         assert session.tick(at(9)).summary is not None
 
     def test_summary_time_before_the_day_start_lands_on_the_next_calendar_date(self):
-        settings = PolicySettings(day_start_hour=4, summary_time=time(2))
+        settings = PolicySettings(day_start_hour=4, summary_time=time(2), quiet_hours_enabled=False)
         yesterday = DAY - timedelta(days=1)
         items = [make_item(due_date=yesterday)]
         # 10:00 on the 11th is in the logical day of the 11th, whose
@@ -754,6 +764,324 @@ class TestSummaryAndDayStart:
         result = run(items, at(2), settings=settings)
         assert result.summary is not None
         assert result.summary.day == yesterday
+
+
+# ---------------------------------------------------------------------------
+# Quiet hours
+# ---------------------------------------------------------------------------
+
+
+class TestInQuietHours:
+    DEFAULT = PolicySettings()
+
+    @pytest.mark.parametrize(
+        ("moment", "quiet"),
+        [
+            (time(21, 59), False),
+            (time(22, 0), True),
+            (time(23, 30), True),
+            (time(0, 0), True),
+            (time(6, 59, 59), True),
+            (time(7, 0), False),
+            (time(12, 0), False),
+        ],
+    )
+    def test_default_window_crosses_midnight(self, moment, quiet):
+        assert in_quiet_hours(moment, self.DEFAULT) is quiet
+
+    @pytest.mark.parametrize(
+        ("moment", "quiet"),
+        [(time(12, 59), False), (time(13, 0), True), (time(14, 59), True), (time(15, 0), False)],
+    )
+    def test_window_within_one_day(self, moment, quiet):
+        settings = PolicySettings(quiet_start=time(13), quiet_end=time(15))
+        assert in_quiet_hours(moment, settings) is quiet
+
+    def test_disabled(self):
+        assert not in_quiet_hours(time(23), PolicySettings(quiet_hours_enabled=False))
+
+    def test_equal_start_and_end_is_an_empty_window(self):
+        settings = PolicySettings(quiet_start=time(8), quiet_end=time(8))
+        assert not in_quiet_hours(time(8), settings)
+        assert not in_quiet_hours(time(20), settings)
+
+
+class TestQuietHoursAndTimedReminders:
+    def test_lead_reminder_is_delivered_inside_quiet_hours(self):
+        item = make_item("Early flight", due_date=DAY, due_time=time(5))
+        result = run([item], at(4, 45))
+        assert [(r.title, r.kind) for r in result.reminders] == [("Early flight", Kind.LEAD)]
+        assert result.held_items == ()
+
+    def test_due_now_alert_is_delivered_inside_quiet_hours(self):
+        item = make_item("Early flight", due_date=DAY, due_time=time(5))
+        result = run([item], at(5))
+        assert [(r.title, r.kind) for r in result.reminders] == [("Early flight", Kind.DUE_NOW)]
+
+
+class TestQuietHoursSilencingTimedReminders:
+    SILENT = PolicySettings(summary_enabled=False, quiet_allow_timed=False)
+
+    def test_lead_reminder_is_held_and_not_recorded(self):
+        item = make_item("Early flight", due_date=DAY, due_time=time(5))
+        result = run([item], at(4, 45), settings=self.SILENT)
+        assert result.reminders == ()
+        assert result.fired == ()
+        assert [h.title for h in result.held_items] == ["Early flight"]
+
+    def test_due_now_alert_is_held_and_not_recorded(self):
+        item = make_item("Early flight", due_date=DAY, due_time=time(5))
+        result = run([item], at(5), settings=self.SILENT)
+        assert result.reminders == ()
+        assert result.fired == ()
+        assert [h.title for h in result.held_items] == ["Early flight"]
+
+    def test_outside_quiet_hours_nothing_changes(self):
+        item = make_item(due_date=DAY, due_time=time(15))
+        result = run([item], at(14, 45), settings=self.SILENT)
+        assert [r.kind for r in result.reminders] == [Kind.LEAD]
+
+    def test_lead_reminder_still_ahead_is_delivered_when_the_window_ends(self):
+        session = Session([make_item("Standup", due_date=DAY, due_time=time(7, 10))], self.SILENT)
+        assert session.tick(at(6, 55)).reminders == ()
+        result = session.tick(at(7))
+        assert [(r.kind, r.minutes_until) for r in result.reminders] == [(Kind.LEAD, 10)]
+
+    def test_deadline_just_past_is_alerted_when_the_window_ends(self):
+        session = Session([make_item("Submit", due_date=DAY, due_time=time(6, 55))], self.SILENT)
+        assert session.tick(at(6, 55)).reminders == ()
+        result = session.tick(at(7))
+        assert [r.kind for r in result.reminders] == [Kind.DUE_NOW]
+        assert result.missed == ()
+
+    def test_deadline_long_past_is_reported_as_missed_when_the_window_ends(self):
+        session = Session([make_item("Submit", due_date=DAY, due_time=time(5))], self.SILENT)
+        for moment in (at(4, 45), at(5), at(6, 59)):
+            result = session.tick(moment)
+            assert not result.has_notifications
+        result = session.tick(at(7))
+        assert result.reminders == ()
+        assert [m.title for m in result.missed] == ["Submit"]
+        assert not session.tick(at(7, 1)).has_notifications
+
+    def test_event_that_started_in_the_window_is_reported_as_missed(self):
+        event = make_item("Call", due_date=DAY, due_time=time(6), due_time_end=time(6, 30))
+        session = Session([event], self.SILENT)
+        assert not session.tick(at(5, 45)).has_notifications
+        assert [m.title for m in session.tick(at(7)).missed] == ["Call"]
+
+    def test_item_from_the_evening_before_is_only_overdue(self):
+        yesterday = DAY - timedelta(days=1)
+        session = Session([make_item(due_date=yesterday, due_time=time(23))], self.SILENT)
+        assert not session.tick(at(22, 45, yesterday)).has_notifications
+        assert not session.tick(at(23, 0, yesterday)).has_notifications
+        result = session.tick(at(7))
+        assert not result.has_notifications
+        assert result.held_items == ()
+
+    def test_item_edited_inside_its_lead_window_is_not_held(self):
+        item = make_item(due_date=DAY, due_time=time(5), updated_at=ms(at(4, 50)))
+        result = run([item], at(4, 55), settings=self.SILENT)
+        assert result.held_items == ()
+
+
+class TestQuietHoursAndTheSummary:
+    def test_summary_time_inside_quiet_hours_fires_when_they_end(self):
+        settings = PolicySettings(summary_time=time(6))
+        session = Session([make_item(due_date=DAY)], settings)
+        assert session.tick(at(6)).summary is None
+        assert session.tick(at(6, 59)).summary is None
+        assert session.tick(at(7)).summary is not None
+        assert session.tick(at(7, 1)).summary is None
+
+    def test_late_evening_summary_time_fires_that_morning(self):
+        settings = PolicySettings(summary_time=time(23))
+        session = Session([make_item(due_date=DAY)], settings)
+        assert session.tick(at(6, 59)).summary is None
+        result = session.tick(at(7))
+        assert result.summary is not None
+        assert result.summary.day == DAY
+        assert session.tick(at(23)).summary is None
+
+    def test_summary_time_at_the_start_of_quiet_hours_counts_as_inside(self):
+        settings = PolicySettings(summary_time=time(22))
+        assert run([make_item(due_date=DAY)], at(7), settings=settings).summary is not None
+
+    def test_summary_time_at_the_end_of_quiet_hours_is_outside(self):
+        settings = PolicySettings(summary_time=time(7))
+        session = Session([make_item(due_date=DAY)], settings)
+        assert session.tick(at(6, 59)).summary is None
+        assert session.tick(at(7)).summary is not None
+
+    def test_launch_inside_quiet_hours_holds_the_summary(self):
+        """Launched at 23:30 with the day's summary never given: it is
+        not given that night, and is not recorded as given either."""
+        result = run([make_item(due_date=DAY)], at(23, 30), settings=PolicySettings())
+        assert result.summary is None
+        assert result.fired == ()
+        assert result.held_summary
+
+    def test_summary_held_overnight_is_not_given_for_the_day_gone_by(self):
+        tomorrow = DAY + timedelta(days=1)
+        session = Session([make_item(due_date=DAY)], PolicySettings())
+        session.tick(at(23, 30))
+        assert session.tick(at(7, 0, tomorrow)).summary is None
+        result = session.tick(at(9, 0, tomorrow))
+        assert result.summary is not None
+        assert (result.summary.day, result.summary.overdue) == (tomorrow, 1)
+
+    def test_empty_summary_is_not_reported_as_held(self):
+        assert not run([], at(23, 30), settings=PolicySettings()).held_summary
+
+    def test_window_within_the_day_delays_the_summary(self):
+        settings = PolicySettings(quiet_start=time(8), quiet_end=time(10))
+        session = Session([make_item(due_date=DAY)], settings)
+        assert session.tick(at(9)).summary is None
+        assert session.tick(at(10)).summary is not None
+
+    def test_quiet_hours_disabled(self):
+        settings = PolicySettings(summary_time=time(6), quiet_hours_enabled=False)
+        assert run([make_item(due_date=DAY)], at(6), settings=settings).summary is not None
+
+    def test_summary_time_in_quiet_hours_with_a_later_day_start(self):
+        """Day start 04:00, summary set for 02:00, quiet until 07:00:
+        the summary is given at 07:00, three hours into the logical day."""
+        settings = PolicySettings(day_start_hour=4, summary_time=time(2))
+        session = Session([make_item(due_date=DAY)], settings)
+        assert session.tick(at(4)).summary is None
+        result = session.tick(at(7))
+        assert result.summary is not None
+        assert result.summary.day == DAY
+
+
+class TestQuietHoursAndMissedItems:
+    def test_missed_items_wait_for_the_window_to_end(self):
+        """Woken at 23:00 with a 21:00 deadline never alerted: the report
+        waits, and with it the record that the alert was dealt with."""
+        item = make_item("Submit", due_date=DAY, due_time=time(21))
+        result = run([item], at(23))
+        assert result.missed == ()
+        assert result.fired == ()
+        assert [h.title for h in result.held_items] == ["Submit"]
+
+    def test_missed_items_from_the_small_hours_are_reported_when_the_window_ends(self):
+        session = Session([make_item("Submit", due_date=DAY, due_time=time(1))], NO_SUMMARY)
+        # Asleep at 01:00; the first evaluation is at 03:00.
+        assert not session.tick(at(3)).has_notifications
+        assert [m.title for m in session.tick(at(7)).missed] == ["Submit"]
+
+    def test_event_missed_in_the_small_hours_waits_for_the_window_to_end(self):
+        """An event gets no due-now alert; the one reminder it would
+        have had is held, not written off."""
+        event = make_item("Call", due_date=DAY, due_time=time(1), due_time_end=time(2))
+        session = Session([event], NO_SUMMARY)
+        held = session.tick(at(3))
+        assert held.missed == ()
+        assert held.fired == ()
+        assert [h.title for h in held.held_items] == ["Call"]
+        assert [m.title for m in session.tick(at(7)).missed] == ["Call"]
+        assert not session.tick(at(7, 1)).has_notifications
+
+    def test_waking_after_the_window_has_ended_reports_at_once(self):
+        """Asleep from before the window to after it: nothing is held."""
+        item = make_item("Submit", due_date=DAY, due_time=time(5))
+        result = run([item], at(8))
+        assert [m.title for m in result.missed] == ["Submit"]
+        assert result.held_items == ()
+
+    def test_held_missed_items_join_the_summary_when_both_are_released(self):
+        settings = PolicySettings(summary_time=time(6))
+        session = Session([make_item("Submit", due_date=DAY, due_time=time(1))], settings)
+        assert not session.tick(at(6, 30)).has_notifications
+        result = session.tick(at(7))
+        assert result.summary is not None
+        assert [m.title for m in result.summary.missed] == ["Submit"]
+        assert result.missed == ()
+
+    def test_fresh_due_now_alert_is_not_held_with_the_missed_items(self):
+        item = make_item("Submit", due_date=DAY, due_time=time(23))
+        result = run([item], at(23, 5))
+        assert [r.kind for r in result.reminders] == [Kind.DUE_NOW]
+
+
+# ---------------------------------------------------------------------------
+# Focus sessions
+# ---------------------------------------------------------------------------
+
+
+class TestFocusHold:
+    SUMMARY = PolicySettings()
+
+    def test_summary_waits_for_the_session_to_end(self):
+        session = Session([make_item(due_date=DAY)], self.SUMMARY)
+        held = session.tick(at(9), focus_active=True)
+        assert held.summary is None
+        assert held.fired == ()
+        assert held.held_summary
+        assert session.tick(at(9, 20), focus_active=True).summary is None
+        assert session.tick(at(9, 25)).summary is not None
+        assert session.tick(at(9, 26)).summary is None
+
+    def test_released_summary_reflects_the_moment_it_is_given(self):
+        early = make_item("Early", due_date=DAY, due_time=time(9, 30), due_time_end=time(10))
+        later = make_item("Later", due_date=DAY, due_time=time(15))
+        session = Session([early, later], self.SUMMARY)
+        session.tick(at(9), focus_active=True)
+        session.tick(at(9, 15), focus_active=True)  # lead reminder for "Early"
+        result = session.tick(at(11))
+        assert result.summary is not None
+        assert result.summary.next_up is not None
+        assert result.summary.next_up.title == "Later"
+
+    def test_lead_reminder_passes_through(self):
+        item = make_item(due_date=DAY, due_time=time(15))
+        result = run([item], at(14, 45), focus_active=True)
+        assert [r.kind for r in result.reminders] == [Kind.LEAD]
+
+    def test_due_now_alert_passes_through(self):
+        item = make_item(due_date=DAY, due_time=time(15))
+        result = run([item], at(15), focus_active=True)
+        assert [r.kind for r in result.reminders] == [Kind.DUE_NOW]
+
+    def test_missed_items_wait_for_the_session_to_end(self):
+        session = Session([make_item("Submit", due_date=DAY, due_time=time(10))], NO_SUMMARY)
+        held = session.tick(at(13), focus_active=True)
+        assert held.missed == ()
+        assert held.fired == ()
+        assert [h.title for h in held.held_items] == ["Submit"]
+        assert [m.title for m in session.tick(at(13, 30)).missed] == ["Submit"]
+        assert not session.tick(at(13, 31)).has_notifications
+
+    def test_missed_event_waits_for_the_session_to_end(self):
+        event = make_item("Call", due_date=DAY, due_time=time(10), due_time_end=time(11))
+        session = Session([event], NO_SUMMARY)
+        held = session.tick(at(13), focus_active=True)
+        assert held.missed == ()
+        assert held.fired == ()
+        assert [h.title for h in held.held_items] == ["Call"]
+        assert [m.title for m in session.tick(at(13, 30)).missed] == ["Call"]
+
+    def test_hold_can_be_turned_off(self):
+        settings = PolicySettings(hold_during_focus=False)
+        result = run([make_item(due_date=DAY)], at(9), settings=settings, focus_active=True)
+        assert result.summary is not None
+
+    def test_no_session_no_hold(self):
+        result = run([make_item(due_date=DAY)], at(9), settings=self.SUMMARY)
+        assert result.summary is not None
+        assert not result.held_summary
+
+    def test_session_running_past_the_end_of_the_day_drops_that_days_summary(self):
+        tomorrow = DAY + timedelta(days=1)
+        settings = PolicySettings(quiet_hours_enabled=False)
+        session = Session([make_item(due_date=DAY)], settings)
+        assert session.tick(at(9), focus_active=True).summary is None
+        assert session.tick(at(23, 59), focus_active=True).summary is None
+        # A new day: its own summary is not due until 09:00.
+        assert session.tick(at(0, 5, tomorrow)).summary is None
+        result = session.tick(at(9, 0, tomorrow))
+        assert result.summary is not None
+        assert result.summary.overdue == 1
 
 
 class TestEvaluationShape:
