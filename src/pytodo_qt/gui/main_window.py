@@ -44,7 +44,7 @@ from ..core.config import get_config, get_config_manager
 from ..core.database import DatabaseStorage
 from ..core.logger import Logger
 from ..core.models import Database, Device, PendingSync, TodoItem, TodoList
-from ..core.notification_policy import PolicySettings
+from ..core.notification_policy import PolicySettings, settings_from_config
 from ..core.offline_queue import OfflineQueue
 from ..crypto.keyring_storage import get_or_create_identity
 from ..net.client import AsyncClient
@@ -2288,17 +2288,12 @@ class MainWindow(QMainWindow):
             logger.log.exception("Task notification evaluation failed")
 
     def _notification_policy_settings(self) -> PolicySettings:
-        """Build the notification policy's settings from the live config."""
-        from datetime import time as _time
+        """Build the notification policy's settings from the live config.
 
-        config = self._config_manager.config
-        notifications = config.notifications
-        return PolicySettings(
-            enabled=notifications.enabled,
-            summary_enabled=notifications.notify_overdue or notifications.notify_due_today,
-            summary_time=_time(notifications.check_hour % 24),
-            day_start_hour=config.database.day_start_hour,
-        )
+        Read on every evaluation, so a change made in Preferences
+        applies from the next one.
+        """
+        return settings_from_config(self._config_manager.config)
 
     def _focus_session_running(self) -> bool:
         """Whether a focus timer is in its work phase or the stopwatch is

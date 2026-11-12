@@ -52,7 +52,7 @@ from enum import Enum
 from typing import NamedTuple
 from uuid import UUID
 
-from .config import TimeBlockConfig
+from .config import AppConfig, TimeBlockConfig
 from .meeting_link import detect_meeting_link
 from .models import TodoItem, TodoList
 
@@ -174,6 +174,29 @@ class Evaluation:
     @property
     def has_notifications(self) -> bool:
         return bool(self.reminders or self.summary or self.missed)
+
+
+def settings_from_config(config: AppConfig) -> PolicySettings:
+    """Build the policy's settings from the application configuration."""
+    notifications = config.notifications
+    try:
+        due_now = DueNowMode(notifications.due_now)
+    except ValueError:
+        due_now = DueNowMode.DEADLINES
+    return PolicySettings(
+        enabled=notifications.enabled,
+        summary_enabled=notifications.summary_enabled,
+        summary_time=notifications.summary_time,
+        lead_enabled=notifications.lead_enabled,
+        lead_minutes=notifications.lead_minutes,
+        due_now=due_now,
+        day_start_hour=config.database.day_start_hour,
+        quiet_hours_enabled=notifications.quiet_hours_enabled,
+        quiet_start=notifications.quiet_start,
+        quiet_end=notifications.quiet_end,
+        quiet_allow_timed=notifications.quiet_allow_timed,
+        hold_during_focus=notifications.hold_during_focus,
+    )
 
 
 def logical_day(now: datetime, day_start_hour: int) -> date:

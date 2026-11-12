@@ -256,15 +256,171 @@ class TimeBlockConfig:
         return "morning"
 
 
+DUE_NOW_MODES = ("deadlines", "all", "off")
+LEAD_MINUTES_RANGE = (1, 120)
+
+
+def _clock_setting(section: dict[str, Any], key: str, default: time) -> time:
+    """Read an "HH:MM" time of day from a config section.
+
+    A TOML local time (``09:00:00``, unquoted) is accepted as well.
+    Anything else falls back to the default.
+    """
+    if key not in section:
+        return default
+    value = section[key]
+    if isinstance(value, time):
+        return time(value.hour, value.minute)
+    if isinstance(value, str):
+        try:
+            parsed = datetime.strptime(value.strip(), "%H:%M")
+        except ValueError:
+            pass
+        else:
+            return parsed.time()
+    logger.log.warning(
+        'Ignoring [notifications] %s = %r: expected a time such as "09:00"', key, value
+    )
+    return default
+
+
+def _flag_setting(section: dict[str, Any], key: str, default: bool) -> bool:
+    """Read a true/false value from a config section."""
+    if key not in section:
+        return default
+    value = section[key]
+    if isinstance(value, bool):
+        return value
+    logger.log.warning("Ignoring [notifications] %s = %r: expected true or false", key, value)
+    return default
+
+
 @dataclass
 class NotificationConfig:
-    """Task reminder notification settings."""
+    """Task notification settings.
 
-    enabled: bool = True  # Desktop notifications for due/overdue items
-    upcoming_days: int = 3  # Show items due within N days in Upcoming
-    check_hour: int = 9  # Hour (0-23) for daily notification check
-    notify_overdue: bool = True  # Notify about overdue items
-    notify_due_today: bool = True  # Notify about items due today
+    Covers the daily summary, the reminders around a timed task, and
+    when notifications are held back. Focus-session and milestone
+    notifications are configured with the focus timer.
+    """
+
+    enabled: bool = True  # Master switch for every task notification
+    summary_enabled: bool = True  # Daily summary
+    summary_time: time = time(9, 0)
+    lead_enabled: bool = True  # Reminder ahead of a timed task
+    lead_minutes: int = 15
+    due_now: str = "deadlines"  # Alert at the due time: deadlines, all, off
+    quiet_hours_enabled: bool = True
+    quiet_start: time = time(22, 0)
+    quiet_end: time = time(7, 0)
+    quiet_allow_timed: bool = True  # Timed reminders are delivered in quiet hours
+    hold_during_focus: bool = True  # The summary waits for a focus session to end
+
+    @classmethod
+    def from_dict(cls, section: dict[str, Any]) -> NotificationConfig:
+        """Build the settings from a ``[notifications]`` section.
+
+        A value of the wrong kind is ignored in favor of its default.
+
+        Sections written before these keys existed are read as well:
+
+        - ``check_hour = N`` gives ``summary_time`` of N:00.
+        - ``notify_overdue`` and ``notify_due_today`` both false give
+          ``summary_enabled`` false.
+        - ``upcoming_days`` is ignored; nothing used it.
+
+        A current key takes precedence over the key it replaces. The
+        old keys are not written back.
+        """
+        defaults = cls()
+
+        if "summary_time" in section or "check_hour" not in section:
+            summary_time = _clock_setting(section, "summary_time", defaults.summary_time)
+        else:
+            hour = section["check_hour"]
+            if isinstance(hour, int) and not isinstance(hour, bool) and 0 <= hour <= 23:
+                summary_time = time(hour, 0)
+            else:
+                logger.log.warning(
+                    "Ignoring [notifications] check_hour = %r: expected an hour from 0 to 23",
+                    hour,
+                )
+                summary_time = defaults.summary_time
+
+        if "summary_enabled" in section:
+            summary_enabled = _flag_setting(section, "summary_enabled", defaults.summary_enabled)
+        else:
+            summary_enabled = _flag_setting(section, "notify_overdue", True) or _flag_setting(
+                section, "notify_due_today", True
+            )
+
+        lead_minutes = section.get("lead_minutes", defaults.lead_minutes)
+        low, high = LEAD_MINUTES_RANGE
+        if not isinstance(lead_minutes, int) or isinstance(lead_minutes, bool):
+            logger.log.warning(
+                "Ignoring [notifications] lead_minutes = %r: expected a whole number", lead_minutes
+            )
+            lead_minutes = defaults.lead_minutes
+        elif not low <= lead_minutes <= high:
+            logger.log.warning(
+                "[notifications] lead_minutes = %r is outside %d-%d; using the nearest limit",
+                lead_minutes,
+                low,
+                high,
+            )
+            lead_minutes = min(max(lead_minutes, low), high)
+
+        due_now = section.get("due_now", defaults.due_now)
+        if due_now not in DUE_NOW_MODES:
+            logger.log.warning(
+                "Ignoring [notifications] due_now = %r: expected one of %s",
+                due_now,
+                ", ".join(DUE_NOW_MODES),
+            )
+            due_now = defaults.due_now
+
+        return cls(
+            enabled=_flag_setting(section, "enabled", defaults.enabled),
+            summary_enabled=summary_enabled,
+            summary_time=summary_time,
+            lead_enabled=_flag_setting(section, "lead_enabled", defaults.lead_enabled),
+            lead_minutes=lead_minutes,
+            due_now=due_now,
+            quiet_hours_enabled=_flag_setting(
+                section, "quiet_hours_enabled", defaults.quiet_hours_enabled
+            ),
+            quiet_start=_clock_setting(section, "quiet_start", defaults.quiet_start),
+            quiet_end=_clock_setting(section, "quiet_end", defaults.quiet_end),
+            quiet_allow_timed=_flag_setting(
+                section, "quiet_allow_timed", defaults.quiet_allow_timed
+            ),
+            hold_during_focus=_flag_setting(
+                section, "hold_during_focus", defaults.hold_during_focus
+            ),
+        )
+
+    def to_toml_lines(self) -> list[str]:
+        """The body of the ``[notifications]`` section."""
+
+        def flag(value: bool) -> str:
+            return str(value).lower()
+
+        def clock(value: time) -> str:
+            return f'"{value:%H:%M}"'
+
+        return [
+            f"enabled = {flag(self.enabled)}",
+            f"summary_enabled = {flag(self.summary_enabled)}",
+            f"summary_time = {clock(self.summary_time)}",
+            f"lead_enabled = {flag(self.lead_enabled)}",
+            f"lead_minutes = {self.lead_minutes}",
+            f'due_now = "{self.due_now}"',
+            f"quiet_hours_enabled = {flag(self.quiet_hours_enabled)}",
+            f"quiet_start = {clock(self.quiet_start)}",
+            f"quiet_end = {clock(self.quiet_end)}",
+            f"quiet_allow_timed = {flag(self.quiet_allow_timed)}",
+            f"hold_during_focus = {flag(self.hold_during_focus)}",
+        ]
 
 
 @dataclass
@@ -362,11 +518,7 @@ class AppConfig:
 
         # Notifications section
         lines.append("[notifications]")
-        lines.append(f"enabled = {str(self.notifications.enabled).lower()}")
-        lines.append(f"upcoming_days = {self.notifications.upcoming_days}")
-        lines.append(f"check_hour = {self.notifications.check_hour}")
-        lines.append(f"notify_overdue = {str(self.notifications.notify_overdue).lower()}")
-        lines.append(f"notify_due_today = {str(self.notifications.notify_due_today).lower()}")
+        lines.extend(self.notifications.to_toml_lines())
         lines.append("")
 
         # Pomodoro section
@@ -488,14 +640,7 @@ class AppConfig:
             )
 
         if "notifications" in data:
-            n = data["notifications"]
-            config.notifications = NotificationConfig(
-                enabled=n.get("enabled", True),
-                upcoming_days=n.get("upcoming_days", 3),
-                check_hour=n.get("check_hour", 9),
-                notify_overdue=n.get("notify_overdue", True),
-                notify_due_today=n.get("notify_due_today", True),
-            )
+            config.notifications = NotificationConfig.from_dict(data["notifications"])
 
         if "time_blocks" in data:
             tb = data["time_blocks"]

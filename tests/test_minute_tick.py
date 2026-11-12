@@ -11,7 +11,7 @@ from datetime import datetime, time
 from unittest.mock import MagicMock
 
 from pytodo_qt.core.config import AppConfig
-from pytodo_qt.core.notification_policy import DueNowMode
+from pytodo_qt.core.notification_policy import DueNowMode, PolicySettings
 from pytodo_qt.gui import main_window as main_window_module
 from pytodo_qt.gui.main_window import MainWindow
 from pytodo_qt.gui.widgets.pomodoro import TimerState
@@ -89,50 +89,23 @@ class TestEvaluateTaskNotifications:
 
 
 class TestNotificationPolicySettings:
-    def _settings(self, **notification_fields):
+    """The conversion itself is covered in test_notification_config.py."""
+
+    def test_built_from_the_live_configuration(self):
         config = AppConfig()
-        for name, value in notification_fields.items():
-            setattr(config.notifications, name, value)
         window = MagicMock()
         window._config_manager.config = config
-        return MainWindow._notification_policy_settings(window), config
+        assert MainWindow._notification_policy_settings(window) == PolicySettings()
 
-    def test_defaults(self):
-        settings, _ = self._settings()
-        assert settings.enabled
-        assert settings.summary_enabled
-        assert settings.summary_time == time(9)
-        assert settings.lead_enabled
-        assert settings.lead_minutes == 15
-        assert settings.due_now is DueNowMode.DEADLINES
-        assert settings.day_start_hour == 0
-        assert settings.quiet_hours_enabled
-        assert (settings.quiet_start, settings.quiet_end) == (time(22), time(7))
-        assert settings.quiet_allow_timed
-        assert settings.hold_during_focus
-
-    def test_daily_check_time_sets_the_summary_time(self):
-        settings, _ = self._settings(check_hour=7)
-        assert settings.summary_time == time(7)
-
-    def test_master_switch(self):
-        settings, _ = self._settings(enabled=False)
-        assert not settings.enabled
-
-    def test_summary_stays_on_while_either_content_option_is_on(self):
-        assert self._settings(notify_overdue=False)[0].summary_enabled
-        assert self._settings(notify_due_today=False)[0].summary_enabled
-
-    def test_summary_is_off_when_both_content_options_are_off(self):
-        settings, _ = self._settings(notify_overdue=False, notify_due_today=False)
-        assert not settings.summary_enabled
-
-    def test_day_start_follows_the_database_setting(self):
-        config = AppConfig()
+        config.notifications.lead_minutes = 30
+        config.notifications.due_now = "all"
+        config.notifications.summary_time = time(7, 30)
         config.database.day_start_hour = 4
-        window = MagicMock()
-        window._config_manager.config = config
-        assert MainWindow._notification_policy_settings(window).day_start_hour == 4
+        settings = MainWindow._notification_policy_settings(window)
+        assert settings.lead_minutes == 30
+        assert settings.due_now is DueNowMode.ALL
+        assert settings.summary_time == time(7, 30)
+        assert settings.day_start_hour == 4
 
 
 class TestFocusSessionRunning:

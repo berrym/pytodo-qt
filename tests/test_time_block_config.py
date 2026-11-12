@@ -1,4 +1,4 @@
-"""Tests for TimeBlockConfig and NotificationConfig — TOML round-trip + defaults."""
+"""Tests for TimeBlockConfig — TOML round-trip + defaults."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ from datetime import date, datetime
 
 from pytodo_qt.core.config import (
     AppConfig,
-    NotificationConfig,
     TimeBlockConfig,
 )
 
@@ -274,45 +273,6 @@ class TestBlockRange:
             start, end = rng
             minute = hour * 60
             assert start <= minute < end or start <= minute + 24 * 60 < end, (hour, name)
-
-
-class TestNotificationConfigDefaults:
-    def test_defaults(self):
-        n = NotificationConfig()
-        assert n.enabled is True
-        assert n.upcoming_days == 3
-        assert n.check_hour == 9
-        assert n.notify_overdue is True
-        assert n.notify_due_today is True
-
-
-class TestNotificationConfigTomlRoundTrip:
-    def test_round_trip(self):
-        original = AppConfig()
-        original.notifications = NotificationConfig(
-            enabled=False,
-            upcoming_days=7,
-            check_hour=8,
-            notify_overdue=False,
-            notify_due_today=True,
-        )
-        toml_str = original.to_toml()
-
-        import tomllib
-
-        parsed = tomllib.loads(toml_str)
-        restored = AppConfig.from_dict(parsed)
-
-        assert restored.notifications.enabled is False
-        assert restored.notifications.upcoming_days == 7
-        assert restored.notifications.check_hour == 8
-        assert restored.notifications.notify_overdue is False
-        assert restored.notifications.notify_due_today is True
-
-    def test_missing_section_uses_defaults(self):
-        c = AppConfig.from_dict({})
-        assert c.notifications.enabled is True
-        assert c.notifications.upcoming_days == 3
 
 
 class TestNextOccurrence:

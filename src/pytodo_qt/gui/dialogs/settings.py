@@ -5,9 +5,10 @@ Unified settings dialog with tabbed interface.
 
 from __future__ import annotations
 
+from datetime import time
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTime, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -23,12 +24,21 @@ from PyQt6.QtWidgets import (
     QSlider,
     QSpinBox,
     QTabWidget,
+    QTimeEdit,
     QVBoxLayout,
     QWidget,
 )
 
-from ...core.config import get_config, get_config_manager
+from ...core.config import (
+    LEAD_MINUTES_RANGE,
+    AppConfig,
+    NotificationConfig,
+    get_config,
+    get_config_manager,
+)
 from ...core.logger import Logger
+from ...core.models import _format_time
+from ...core.notification_policy import in_quiet_hours, settings_from_config
 from ...crypto import get_or_create_identity
 from ..styles.themes import (
     MONO_FONT_FAMILIES,
@@ -60,14 +70,9 @@ class SettingsDialog(QDialog):
         self.setMinimumWidth(620)
         self.setMinimumHeight(460)
 
-        # Consistent input-widget sizing across all tabs. Qt's default
-        # QSpinBox height clips suffix text on Linux and Windows when
-        # a stylesheet doesn't set an explicit min-height, and
-        # QLineEdit/QComboBox similarly render slightly too short on
-        # some platforms. One stylesheet rule applied at dialog scope
-        # fixes every tab at once and guarantees visual consistency
-        # regardless of platform font metrics.
-        self.setStyleSheet("QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { min-height: 26px; }")
+        self._apply_dialog_stylesheet()
+        # The stylesheet names theme colors, so it follows the theme.
+        self.theme_applied.connect(self._apply_dialog_stylesheet)
 
         self._config_manager = get_config_manager()
         self._config_manager.reload()  # Reload from disk to get saved values
@@ -76,6 +81,34 @@ class SettingsDialog(QDialog):
 
         self._setup_ui()
         self._load_settings()
+
+    def _apply_dialog_stylesheet(self) -> None:
+        """Style rules that apply to every tab of the dialog."""
+        colors = get_colors()
+        muted = colors["completed_text"]
+        self.setStyleSheet(
+            # Consistent input-widget sizing across all tabs. Qt's default
+            # QSpinBox height clips suffix text on Linux and Windows when
+            # a stylesheet doesn't set an explicit min-height, and
+            # QLineEdit/QComboBox similarly render slightly too short on
+            # some platforms. One rule at dialog scope fixes every tab at
+            # once regardless of platform font metrics.
+            "QLineEdit, QSpinBox, QDoubleSpinBox, QTimeEdit, QComboBox { min-height: 26px; }"
+            # The application theme styles spin boxes but not time
+            # fields; here they sit side by side and have to match.
+            "QTimeEdit {"
+            f"  background-color: {colors['base']}; color: {colors['text']};"
+            f"  border: 1px solid {colors['border']}; border-radius: 8px; padding: 4px;"
+            "}"
+            # The theme gives a switched-off control the same colors as a
+            # live one, which hides that an option above it governs it.
+            "QLabel:disabled, QCheckBox:disabled, QGroupBox:disabled, QSpinBox:disabled,"
+            " QDoubleSpinBox:disabled, QTimeEdit:disabled, QComboBox:disabled,"
+            f" QLineEdit:disabled {{ color: {muted}; }}"
+            "QCheckBox::indicator:checked:disabled {"
+            f"  background-color: {muted}; border-color: {muted};"
+            "}"
+        )
 
     def _setup_ui(self) -> None:
         """Set up the dialog UI."""
@@ -637,31 +670,228 @@ class SettingsDialog(QDialog):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        group = QGroupBox(self.tr("Task Reminders"))
-        form = QFormLayout(group)
+        general_group = QGroupBox(self.tr("General"))
+        general_form = QFormLayout(general_group)
+        self._notif_enabled = QCheckBox(self.tr("Enable task notifications"))
+        general_form.addRow(self._notif_enabled)
+        layout.addWidget(general_group)
 
-        self._notif_enabled = QCheckBox(self.tr("Enable desktop notifications"))
-        form.addRow(self._notif_enabled)
+        # Daily summary
+        self._notif_summary_group = QGroupBox(self.tr("Daily summary"))
+        self._notif_summary_form = QFormLayout(self._notif_summary_group)
+        self._notif_summary_enabled = QCheckBox(self.tr("Show a daily summary"))
+        self._notif_summary_form.addRow(self._notif_summary_enabled)
+        self._notif_summary_time = QTimeEdit()
+        self._notif_summary_time.setAccessibleName(self.tr("Daily summary time"))
+        self._notif_summary_time_label = QLabel(self.tr("Time:"))
+        self._notif_summary_form.addRow(self._notif_summary_time_label, self._notif_summary_time)
+        self._notif_summary_hint = self._make_notification_hint()
+        self._notif_summary_form.addRow("", self._notif_summary_hint)
+        layout.addWidget(self._notif_summary_group)
 
-        self._notif_overdue = QCheckBox(self.tr("Notify about overdue items"))
-        form.addRow(self._notif_overdue)
+        # Timed reminders
+        self._notif_timed_group = QGroupBox(self.tr("Timed reminders"))
+        timed_form = QFormLayout(self._notif_timed_group)
+        self._notif_lead_enabled = QCheckBox(self.tr("Remind ahead of a timed task"))
+        timed_form.addRow(self._notif_lead_enabled)
+        self._notif_lead_minutes = QSpinBox()
+        self._notif_lead_minutes.setRange(*LEAD_MINUTES_RANGE)
+        self._notif_lead_minutes.setSuffix(self.tr(" min"))
+        self._notif_lead_minutes.setAccessibleName(self.tr("Reminder lead time in minutes"))
+        self._notif_lead_minutes_label = QLabel(self.tr("How far ahead:"))
+        timed_form.addRow(self._notif_lead_minutes_label, self._notif_lead_minutes)
+        self._notif_due_now = QComboBox()
+        self._notif_due_now.addItem(self.tr("Alert for deadlines only"), "deadlines")
+        self._notif_due_now.addItem(self.tr("Alert for every timed task"), "all")
+        self._notif_due_now.addItem(self.tr("No alert"), "off")
+        self._notif_due_now.setToolTip(
+            self.tr(
+                "A deadline is a task with a single due time. A task with an end "
+                "time or a meeting link is an event, which is already under way "
+                "when its start time arrives."
+            )
+        )
+        timed_form.addRow(self.tr("At the due time:"), self._notif_due_now)
+        layout.addWidget(self._notif_timed_group)
 
-        self._notif_due_today = QCheckBox(self.tr("Notify about items due today"))
-        form.addRow(self._notif_due_today)
+        # Quiet time
+        self._notif_quiet_group = QGroupBox(self.tr("Quiet time"))
+        self._notif_quiet_form = QFormLayout(self._notif_quiet_group)
+        self._notif_quiet_enabled = QCheckBox(self.tr("Quiet hours"))
+        self._notif_quiet_enabled.setToolTip(
+            self.tr("The daily summary and reports of missed tasks wait until quiet hours end.")
+        )
+        self._notif_quiet_form.addRow(self._notif_quiet_enabled)
+        self._notif_quiet_start = QTimeEdit()
+        self._notif_quiet_start.setAccessibleName(self.tr("Quiet hours start"))
+        self._notif_quiet_end = QTimeEdit()
+        self._notif_quiet_end.setAccessibleName(self.tr("Quiet hours end"))
+        self._notif_quiet_until_label = QLabel(self.tr("until"))
+        quiet_times = QHBoxLayout()
+        quiet_times.addWidget(self._notif_quiet_start)
+        quiet_times.addWidget(self._notif_quiet_until_label)
+        quiet_times.addWidget(self._notif_quiet_end)
+        quiet_times.addStretch(1)
+        self._notif_quiet_from_label = QLabel(self.tr("From:"))
+        self._notif_quiet_form.addRow(self._notif_quiet_from_label, quiet_times)
+        self._notif_quiet_hint = self._make_notification_hint()
+        self._notif_quiet_form.addRow("", self._notif_quiet_hint)
+        self._notif_quiet_allow_timed = QCheckBox(
+            self.tr("Still deliver timed reminders during quiet hours")
+        )
+        self._notif_quiet_form.addRow("", self._notif_quiet_allow_timed)
+        self._notif_hold_during_focus = QCheckBox(
+            self.tr("Hold the summary while a focus session runs")
+        )
+        self._notif_hold_during_focus.setToolTip(
+            self.tr(
+                "Applies while a focus timer is in its work phase or the stopwatch "
+                "is running. Timed reminders are delivered regardless."
+            )
+        )
+        self._notif_quiet_form.addRow(self._notif_hold_during_focus)
+        layout.addWidget(self._notif_quiet_group)
 
-        self._notif_check_hour = QSpinBox()
-        self._notif_check_hour.setRange(0, 23)
-        self._notif_check_hour.setSuffix(":00")
-        form.addRow(self.tr("Daily check time:"), self._notif_check_hour)
-
-        self._notif_upcoming_days = QSpinBox()
-        self._notif_upcoming_days.setRange(1, 30)
-        self._notif_upcoming_days.setSuffix(self.tr(" days"))
-        form.addRow(self.tr("Upcoming window:"), self._notif_upcoming_days)
-
-        layout.addWidget(group)
+        note = QLabel(
+            self.tr("Focus-session and milestone notifications are set on the Focus Timer tab.")
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: palette(placeholderText);")
+        layout.addWidget(note)
         layout.addStretch()
+
+        for toggle in (
+            self._notif_enabled,
+            self._notif_summary_enabled,
+            self._notif_lead_enabled,
+            self._notif_quiet_enabled,
+        ):
+            toggle.toggled.connect(self._update_notification_controls)
+        for time_edit in (
+            self._notif_summary_time,
+            self._notif_quiet_start,
+            self._notif_quiet_end,
+        ):
+            time_edit.timeChanged.connect(self._update_notification_controls)
+        self.time_format_combo.currentIndexChanged.connect(self._update_notification_time_format)
         return widget
+
+    def _make_notification_hint(self) -> QLabel:
+        hint = QLabel()
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: palette(placeholderText); font-style: italic;")
+        return hint
+
+    def _notification_time_format(self) -> str:
+        """The time-format setting as currently chosen in this dialog."""
+        return self.time_format_combo.currentData() or "system"
+
+    def _update_notification_time_format(self) -> None:
+        """Show the time fields in the chosen 12- or 24-hour form."""
+        # 14:30 is written with a "14" only on a 24-hour clock.
+        twenty_four_hour = "14" in _format_time(time(14, 30), self._notification_time_format())
+        display_format = "HH:mm" if twenty_four_hour else "h:mm AP"
+        for time_edit in (
+            self._notif_summary_time,
+            self._notif_quiet_start,
+            self._notif_quiet_end,
+        ):
+            time_edit.setDisplayFormat(display_format)
+        self._update_notification_controls()
+
+    def _update_notification_controls(self) -> None:
+        """Grey out what a switched-off option governs, and refresh the hints."""
+        enabled = self._notif_enabled.isChecked()
+        for group in (
+            self._notif_summary_group,
+            self._notif_timed_group,
+            self._notif_quiet_group,
+        ):
+            group.setEnabled(enabled)
+        summary_enabled = self._notif_summary_enabled.isChecked()
+        self._notif_summary_time.setEnabled(summary_enabled)
+        self._notif_summary_time_label.setEnabled(summary_enabled)
+        lead_enabled = self._notif_lead_enabled.isChecked()
+        self._notif_lead_minutes.setEnabled(lead_enabled)
+        self._notif_lead_minutes_label.setEnabled(lead_enabled)
+        quiet_enabled = self._notif_quiet_enabled.isChecked()
+        for control in (
+            self._notif_quiet_from_label,
+            self._notif_quiet_start,
+            self._notif_quiet_until_label,
+            self._notif_quiet_end,
+            self._notif_quiet_allow_timed,
+        ):
+            control.setEnabled(quiet_enabled)
+
+        settings = self._notification_settings_shown()
+        quiet_start, quiet_end = settings.quiet_start, settings.quiet_end
+        quiet_is_empty = settings.quiet_hours_enabled and quiet_start == quiet_end
+        self._notif_quiet_hint.setText(
+            self.tr("The start and end are the same, so there are no quiet hours.")
+            if quiet_is_empty
+            else ""
+        )
+        self._notif_quiet_form.setRowVisible(self._notif_quiet_hint, quiet_is_empty)
+
+        summary_is_quiet = settings.summary_enabled and in_quiet_hours(
+            settings.summary_time, settings_from_config(self._config_with(settings))
+        )
+        self._notif_summary_hint.setText(
+            self.tr("Inside quiet hours: delivered at {time}.").format(
+                time=_format_time(quiet_end, self._notification_time_format())
+            )
+            if summary_is_quiet
+            else ""
+        )
+        self._notif_summary_form.setRowVisible(self._notif_summary_hint, summary_is_quiet)
+
+    @staticmethod
+    def _config_with(notifications: NotificationConfig) -> AppConfig:
+        config = AppConfig()
+        config.notifications = notifications
+        return config
+
+    def _notification_settings_shown(self) -> NotificationConfig:
+        """The notification settings as the tab currently shows them."""
+
+        def clock(time_edit: QTimeEdit) -> time:
+            shown = time_edit.time()
+            return time(shown.hour(), shown.minute())
+
+        return NotificationConfig(
+            enabled=self._notif_enabled.isChecked(),
+            summary_enabled=self._notif_summary_enabled.isChecked(),
+            summary_time=clock(self._notif_summary_time),
+            lead_enabled=self._notif_lead_enabled.isChecked(),
+            lead_minutes=self._notif_lead_minutes.value(),
+            due_now=self._notif_due_now.currentData() or "deadlines",
+            quiet_hours_enabled=self._notif_quiet_enabled.isChecked(),
+            quiet_start=clock(self._notif_quiet_start),
+            quiet_end=clock(self._notif_quiet_end),
+            quiet_allow_timed=self._notif_quiet_allow_timed.isChecked(),
+            hold_during_focus=self._notif_hold_during_focus.isChecked(),
+        )
+
+    def _show_notification_settings(self, notifications: NotificationConfig) -> None:
+        """Fill the Notifications tab from the given settings."""
+
+        def qtime(value: time) -> QTime:
+            return QTime(value.hour, value.minute)
+
+        self._notif_enabled.setChecked(notifications.enabled)
+        self._notif_summary_enabled.setChecked(notifications.summary_enabled)
+        self._notif_summary_time.setTime(qtime(notifications.summary_time))
+        self._notif_lead_enabled.setChecked(notifications.lead_enabled)
+        self._notif_lead_minutes.setValue(notifications.lead_minutes)
+        due_now_index = self._notif_due_now.findData(notifications.due_now)
+        self._notif_due_now.setCurrentIndex(max(due_now_index, 0))
+        self._notif_quiet_enabled.setChecked(notifications.quiet_hours_enabled)
+        self._notif_quiet_start.setTime(qtime(notifications.quiet_start))
+        self._notif_quiet_end.setTime(qtime(notifications.quiet_end))
+        self._notif_quiet_allow_timed.setChecked(notifications.quiet_allow_timed)
+        self._notif_hold_during_focus.setChecked(notifications.hold_during_focus)
+        self._update_notification_time_format()
 
     def _create_web_tab(self) -> QWidget:
         """Create the Web UI settings tab."""
@@ -840,11 +1070,7 @@ class SettingsDialog(QDialog):
         self._tb_night_end.setValue(config.time_blocks.night_end)
 
         # Notifications
-        self._notif_enabled.setChecked(config.notifications.enabled)
-        self._notif_overdue.setChecked(config.notifications.notify_overdue)
-        self._notif_due_today.setChecked(config.notifications.notify_due_today)
-        self._notif_check_hour.setValue(config.notifications.check_hour)
-        self._notif_upcoming_days.setValue(config.notifications.upcoming_days)
+        self._show_notification_settings(config.notifications)
 
         # Web
         self.web_enabled_check.setChecked(config.web.enabled)
@@ -941,11 +1167,7 @@ class SettingsDialog(QDialog):
         config.time_blocks.night_end = self._tb_night_end.value()
 
         # Notifications
-        config.notifications.enabled = self._notif_enabled.isChecked()
-        config.notifications.notify_overdue = self._notif_overdue.isChecked()
-        config.notifications.notify_due_today = self._notif_due_today.isChecked()
-        config.notifications.check_hour = self._notif_check_hour.value()
-        config.notifications.upcoming_days = self._notif_upcoming_days.value()
+        config.notifications = self._notification_settings_shown()
 
         # Web
         config.web.enabled = self.web_enabled_check.isChecked()

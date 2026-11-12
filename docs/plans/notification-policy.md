@@ -308,23 +308,52 @@ atomic writes alongside the data it describes and for a single migration path.
 | `lead_enabled` | `true` | Lead reminders |
 | `lead_minutes` | `15` | Minutes before the due time |
 | `due_now` | `"deadlines"` | `deadlines`, `all`, or `off` |
-| `preview_enabled` | `false` | Evening preview |
-| `preview_time` | `"20:00"` | Evening preview time |
 | `quiet_hours_enabled` | `true` | Quiet hours |
 | `quiet_start` | `"22:00"` | Start of quiet hours |
 | `quiet_end` | `"07:00"` | End of quiet hours |
 | `quiet_allow_timed` | `true` | Deliver lead reminders and due-now alerts inside quiet hours |
 | `hold_during_focus` | `true` | Hold summary, preview, and catch-up during focus sessions |
 
-Existing keys:
+`preview_enabled` (`false`) and `preview_time` (`"20:00"`) are added together
+with the evening preview, not before it.
 
-- `check_hour` → migrated to `summary_time` (`N` becomes `"N:00"`), then removed.
+Values:
+
+- Times are `"HH:MM"` strings. An unquoted TOML local time is read as well.
+- `lead_minutes` is a whole number from 1 to 120; a value outside the range
+  is brought to the nearest limit.
+- A value of the wrong kind is ignored in favor of its default, with a
+  warning in the log. The other keys of the section are unaffected.
+
+Existing keys are read when the key that replaces them is absent, and are not
+written back, so the first save completes the migration:
+
+- `check_hour` → `summary_time` (`N` becomes `"N:00"`).
 - `notify_overdue`, `notify_due_today` → when both are `false`,
-  `summary_enabled` loads as `false`; then removed.
-- `upcoming_days` → removed.
+  `summary_enabled` loads as `false`. With only one of them `false` the
+  summary stays on and shows both counts; the two were separate content
+  switches and the summary has no equivalent.
+- `upcoming_days` → dropped. Nothing read it.
+
+Builds through v0.3.11b8 share the configuration file with a source checkout
+and write it at exit with only the keys they know. After such a build has
+run, the next launch of this version finds the keys above gone and reads the
+old ones again: the summary time and switch survive, and every other value in
+this section returns to its default. This ends when those builds are retired
+and is to be stated in the release notes.
 
 The Notifications tab in Preferences is regrouped to match: General, Daily
-summary, Timed reminders, Quiet time, Evening preview.
+summary, Timed reminders, Quiet time. An Evening preview group is added with
+the evening preview.
+
+- Unticking the master switch disables the other groups; unticking a group's
+  own switch disables what it governs. The focus-session hold does not depend
+  on the quiet-hours switch.
+- Time fields have minute precision and follow the 12- or 24-hour setting.
+- A summary time inside quiet hours shows when the summary is delivered
+  instead. Equal quiet-hours start and end times show that no quiet hours
+  result.
+- A change applies from the next once-a-minute evaluation.
 
 ## Testing
 
@@ -362,7 +391,8 @@ The policy module is covered by fixed-clock unit tests, including:
 - Minutely recurrence: no lead reminder; due-now per occurrence.
 - A recurring timed item still produces its due-now alert in the tick where
   it is auto-advanced.
-- Config round-trip and loading of pre-existing `[notifications]` sections.
+- Config round-trip, loading of pre-existing `[notifications]` sections, and
+  values of the wrong kind.
 - Schema v21 → v22 migration, including that `items.notified_at` survives
   it and that an insert naming the column still succeeds.
 

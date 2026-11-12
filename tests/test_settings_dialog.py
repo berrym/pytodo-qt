@@ -5,10 +5,15 @@ interaction and the form-wide field-growth policy.
 
 from __future__ import annotations
 
+import copy
+from datetime import time
+from unittest.mock import MagicMock
+
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTime
 from PyQt6.QtWidgets import QApplication, QFormLayout
 
+from pytodo_qt.core.config import NotificationConfig
 from pytodo_qt.gui.dialogs.settings import SettingsDialog
 
 
@@ -181,3 +186,202 @@ class TestRememberLastViewQtEnum:
         dlg._on_remember_view_toggled(Qt.CheckState.Unchecked.value)
         assert dlg._view_mode_combo.isEnabled() is True
         dlg.deleteLater()
+
+
+@pytest.fixture
+def dialog(app):
+    dlg = SettingsDialog()
+    # Start every test from the defaults, whatever the config on disk says.
+    dlg._show_notification_settings(NotificationConfig())
+    dlg.time_format_combo.setCurrentIndex(dlg.time_format_combo.findData("24h"))
+    yield dlg
+    dlg.deleteLater()
+
+
+class TestNotificationsTab:
+    """The regrouped Notifications tab: what it shows, what it saves,
+    and what a switched-off option greys out. Nothing here saves."""
+
+    CHANGED = NotificationConfig(
+        enabled=False,
+        summary_enabled=False,
+        summary_time=time(7, 45),
+        lead_enabled=False,
+        lead_minutes=30,
+        due_now="all",
+        quiet_hours_enabled=False,
+        quiet_start=time(23, 30),
+        quiet_end=time(6, 15),
+        quiet_allow_timed=False,
+        hold_during_focus=False,
+    )
+
+    def test_shows_the_defaults(self, dialog):
+        assert dialog._notification_settings_shown() == NotificationConfig()
+
+    def test_what_is_shown_is_what_is_read_back(self, dialog):
+        dialog._show_notification_settings(self.CHANGED)
+        assert dialog._notification_settings_shown() == self.CHANGED
+
+    def test_controls_carry_the_shown_values(self, dialog):
+        dialog._show_notification_settings(self.CHANGED)
+        assert dialog._notif_summary_time.time() == QTime(7, 45)
+        assert dialog._notif_lead_minutes.value() == 30
+        assert dialog._notif_due_now.currentData() == "all"
+        assert dialog._notif_quiet_start.time() == QTime(23, 30)
+        assert dialog._notif_quiet_end.time() == QTime(6, 15)
+
+    def test_due_now_offers_the_three_modes(self, dialog):
+        combo = dialog._notif_due_now
+        assert [combo.itemData(i) for i in range(combo.count())] == ["deadlines", "all", "off"]
+
+    def test_unknown_due_now_mode_shows_the_first_choice(self, dialog):
+        dialog._show_notification_settings(NotificationConfig(due_now="sometimes"))
+        assert dialog._notif_due_now.currentData() == "deadlines"
+
+    def test_lead_time_range(self, dialog):
+        spin = dialog._notif_lead_minutes
+        assert (spin.minimum(), spin.maximum()) == (1, 120)
+
+    def test_removed_controls_are_gone(self, dialog):
+        for name in (
+            "_notif_overdue",
+            "_notif_due_today",
+            "_notif_check_hour",
+            "_notif_upcoming_days",
+        ):
+            assert not hasattr(dialog, name)
+
+    def test_time_fields_have_accessible_names(self, dialog):
+        assert dialog._notif_summary_time.accessibleName()
+        assert dialog._notif_quiet_start.accessibleName()
+        assert dialog._notif_quiet_end.accessibleName()
+        assert dialog._notif_lead_minutes.accessibleName()
+
+    def test_saving_stores_what_the_tab_shows(self, dialog):
+        """Saving replaces the notification settings wholesale. The
+        dialog works on a copy here and its save to disk is stubbed."""
+        dialog._config = copy.deepcopy(dialog._config)
+        dialog._config_manager = MagicMock()
+        dialog._config_manager.save.return_value = True
+        dialog._show_notification_settings(self.CHANGED)
+
+        assert dialog._save_settings()
+
+        assert dialog._config.notifications == self.CHANGED
+        dialog._config_manager.save.assert_called_once_with()
+
+    # -- greying -----------------------------------------------------------
+
+    def test_master_switch_greys_every_group(self, dialog):
+        groups = (
+            dialog._notif_summary_group,
+            dialog._notif_timed_group,
+            dialog._notif_quiet_group,
+        )
+        assert all(group.isEnabled() for group in groups)
+        dialog._notif_enabled.setChecked(False)
+        assert not any(group.isEnabled() for group in groups)
+        dialog._notif_enabled.setChecked(True)
+        assert all(group.isEnabled() for group in groups)
+
+    def test_summary_switch_greys_its_time(self, dialog):
+        dialog._notif_summary_enabled.setChecked(False)
+        assert not dialog._notif_summary_time.isEnabled()
+        assert not dialog._notif_summary_time_label.isEnabled()
+        dialog._notif_summary_enabled.setChecked(True)
+        assert dialog._notif_summary_time.isEnabled()
+
+    def test_lead_switch_greys_the_lead_time_only(self, dialog):
+        dialog._notif_lead_enabled.setChecked(False)
+        assert not dialog._notif_lead_minutes.isEnabled()
+        assert not dialog._notif_lead_minutes_label.isEnabled()
+        assert dialog._notif_due_now.isEnabled()
+
+    def test_quiet_switch_greys_what_it_governs(self, dialog):
+        dialog._notif_quiet_enabled.setChecked(False)
+        assert not dialog._notif_quiet_start.isEnabled()
+        assert not dialog._notif_quiet_end.isEnabled()
+        assert not dialog._notif_quiet_from_label.isEnabled()
+        assert not dialog._notif_quiet_allow_timed.isEnabled()
+
+    def test_focus_hold_does_not_depend_on_quiet_hours(self, dialog):
+        dialog._notif_quiet_enabled.setChecked(False)
+        assert dialog._notif_hold_during_focus.isEnabled()
+
+    def test_greyed_values_are_still_saved(self, dialog):
+        dialog._notif_quiet_start.setTime(QTime(21, 0))
+        dialog._notif_quiet_enabled.setChecked(False)
+        shown = dialog._notification_settings_shown()
+        assert shown.quiet_hours_enabled is False
+        assert shown.quiet_start == time(21, 0)
+
+    def test_dialog_stylesheet_marks_disabled_controls(self, dialog):
+        assert ":disabled" in dialog.styleSheet()
+        assert "QTimeEdit" in dialog.styleSheet()
+
+    # -- hints -------------------------------------------------------------
+
+    def _summary_hint_shown(self, dialog) -> bool:
+        return dialog._notif_summary_form.isRowVisible(dialog._notif_summary_hint)
+
+    def _quiet_hint_shown(self, dialog) -> bool:
+        return dialog._notif_quiet_form.isRowVisible(dialog._notif_quiet_hint)
+
+    def test_no_hints_with_the_defaults(self, dialog):
+        assert not self._summary_hint_shown(dialog)
+        assert not self._quiet_hint_shown(dialog)
+
+    def test_summary_time_inside_quiet_hours_says_when_it_is_delivered(self, dialog):
+        dialog._notif_summary_time.setTime(QTime(6, 0))
+        assert self._summary_hint_shown(dialog)
+        assert "07:00" in dialog._notif_summary_hint.text()
+
+    def test_summary_hint_follows_the_end_of_quiet_hours(self, dialog):
+        dialog._notif_summary_time.setTime(QTime(6, 0))
+        dialog._notif_quiet_end.setTime(QTime(8, 30))
+        assert "08:30" in dialog._notif_summary_hint.text()
+
+    def test_summary_hint_goes_when_the_time_leaves_quiet_hours(self, dialog):
+        dialog._notif_summary_time.setTime(QTime(6, 0))
+        dialog._notif_summary_time.setTime(QTime(7, 0))
+        assert not self._summary_hint_shown(dialog)
+
+    def test_no_summary_hint_with_quiet_hours_off(self, dialog):
+        dialog._notif_summary_time.setTime(QTime(6, 0))
+        dialog._notif_quiet_enabled.setChecked(False)
+        assert not self._summary_hint_shown(dialog)
+
+    def test_no_summary_hint_with_the_summary_off(self, dialog):
+        dialog._notif_summary_time.setTime(QTime(6, 0))
+        dialog._notif_summary_enabled.setChecked(False)
+        assert not self._summary_hint_shown(dialog)
+
+    def test_equal_quiet_start_and_end_is_pointed_out(self, dialog):
+        dialog._notif_quiet_end.setTime(QTime(22, 0))
+        assert self._quiet_hint_shown(dialog)
+        assert dialog._notif_quiet_hint.text()
+        dialog._notif_quiet_end.setTime(QTime(7, 0))
+        assert not self._quiet_hint_shown(dialog)
+
+    # -- time format -------------------------------------------------------
+
+    def test_time_fields_follow_the_24_hour_setting(self, dialog):
+        assert dialog._notif_summary_time.displayFormat() == "HH:mm"
+        assert dialog._notif_quiet_start.displayFormat() == "HH:mm"
+        assert dialog._notif_quiet_end.displayFormat() == "HH:mm"
+
+    def test_time_fields_follow_the_12_hour_setting(self, dialog):
+        dialog.time_format_combo.setCurrentIndex(dialog.time_format_combo.findData("12h"))
+        assert dialog._notif_summary_time.displayFormat() == "h:mm AP"
+        assert dialog._notif_quiet_end.displayFormat() == "h:mm AP"
+
+    def test_hint_time_follows_the_format_setting(self, dialog):
+        dialog._notif_summary_time.setTime(QTime(6, 0))
+        dialog.time_format_combo.setCurrentIndex(dialog.time_format_combo.findData("12h"))
+        assert "7:00 AM" in dialog._notif_summary_hint.text()
+
+    def test_changing_the_format_keeps_the_times(self, dialog):
+        dialog._show_notification_settings(self.CHANGED)
+        dialog.time_format_combo.setCurrentIndex(dialog.time_format_combo.findData("12h"))
+        assert dialog._notification_settings_shown() == self.CHANGED
