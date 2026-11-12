@@ -181,6 +181,99 @@ class TestBlockForHourCustom:
         assert c.block_for_hour(3) == "late_night"
 
 
+class TestBlockRange:
+    """block_range resolves a named block to minute offsets from the
+    midnight that starts the block's day."""
+
+    def test_parent_blocks_span_their_configured_range(self):
+        c = TimeBlockConfig()
+        assert c.block_range("morning") == (6 * 60, 12 * 60)
+        assert c.block_range("afternoon") == (12 * 60, 17 * 60)
+        assert c.block_range("evening") == (17 * 60, 21 * 60)
+
+    def test_night_runs_past_midnight(self):
+        # 21:00 to 06:00 the next day: the end is 30 hours after the
+        # midnight that starts the block's day.
+        c = TimeBlockConfig()
+        assert c.block_range("night") == (21 * 60, 30 * 60)
+
+    def test_early_and_late_split_at_the_midpoint(self):
+        c = TimeBlockConfig()
+        assert c.block_range("early_morning") == (6 * 60, 9 * 60)
+        assert c.block_range("late_morning") == (9 * 60, 12 * 60)
+        assert c.block_range("early_evening") == (17 * 60, 19 * 60)
+        assert c.block_range("late_evening") == (19 * 60, 21 * 60)
+
+    def test_odd_length_range_splits_on_the_half_hour(self):
+        # Afternoon is five hours long, so its midpoint is 14:30 —
+        # the same boundary block_for_hour uses (hours 12-14 early,
+        # 15-16 late).
+        c = TimeBlockConfig()
+        assert c.block_range("early_afternoon") == (12 * 60, 14 * 60 + 30)
+        assert c.block_range("late_afternoon") == (14 * 60 + 30, 17 * 60)
+
+    def test_late_night_starts_after_midnight(self):
+        # Night is nine hours from 21:00; its second half starts at
+        # 01:30 on the following calendar day.
+        c = TimeBlockConfig()
+        assert c.block_range("late_night") == (25 * 60 + 30, 30 * 60)
+
+    def test_fixed_bands(self):
+        c = TimeBlockConfig()
+        assert c.block_range("noon") == (11 * 60 + 30, 12 * 60 + 30)
+        assert c.block_range("midnight") == (23 * 60 + 30, 24 * 60 + 30)
+
+    def test_fixed_bands_ignore_configuration(self):
+        c = TimeBlockConfig(morning_start=4, morning_end=10, afternoon_start=10)
+        assert c.block_range("noon") == (11 * 60 + 30, 12 * 60 + 30)
+
+    def test_custom_configuration(self):
+        c = TimeBlockConfig(
+            morning_start=4,
+            morning_end=10,
+            afternoon_start=10,
+            afternoon_end=15,
+            evening_start=15,
+            evening_end=19,
+            night_start=19,
+            night_end=4,
+        )
+        assert c.block_range("morning") == (4 * 60, 10 * 60)
+        assert c.block_range("late_afternoon") == (12 * 60 + 30, 15 * 60)
+        assert c.block_range("night") == (19 * 60, 28 * 60)
+        assert c.block_range("late_night") == (23 * 60 + 30, 28 * 60)
+
+    def test_night_that_does_not_cross_midnight(self):
+        c = TimeBlockConfig(night_start=20, night_end=23)
+        assert c.block_range("night") == (20 * 60, 23 * 60)
+        assert c.block_range("late_night") == (21 * 60 + 30, 23 * 60)
+
+    def test_unknown_block_is_none(self):
+        c = TimeBlockConfig()
+        assert c.block_range("teatime") is None
+        assert c.block_range("early_teatime") is None
+        assert c.block_range("") is None
+
+    def test_zero_length_range_is_none(self):
+        c = TimeBlockConfig(evening_start=18, evening_end=18)
+        assert c.block_range("evening") is None
+        assert c.block_range("late_evening") is None
+
+    def test_agrees_with_block_for_hour(self):
+        # Every hour falls inside the range block_range reports for the
+        # name block_for_hour gives it. block_for_hour uses "night" for
+        # the first half of the night only; block_range("night") is the
+        # whole range, which still contains those hours.
+        c = TimeBlockConfig()
+        for hour in range(24):
+            name = c.block_for_hour(hour)
+            rng = c.block_range(name)
+            assert rng is not None, name
+            start, end = rng
+            minute = hour * 60
+            assert start <= minute < end or start <= minute + 24 * 60 < end, (hour, name)
+
+
 class TestNotificationConfigDefaults:
     def test_defaults(self):
         n = NotificationConfig()

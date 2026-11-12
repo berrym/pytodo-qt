@@ -141,6 +141,63 @@ class TimeBlockConfig:
     night_start: int = 21
     night_end: int = 6  # crosses midnight
 
+    def block_range(self, block: str) -> tuple[int, int] | None:
+        """Return the (start, end) of a named time block in minutes.
+
+        Both values are offsets from midnight at the start of the day the
+        block belongs to, so a block that begins or runs past midnight
+        has values of 1440 or more: with the default night range of
+        21:00-06:00, ``late_night`` is (1530, 1800), i.e. 01:30-06:00 on
+        the following calendar day.
+
+        - ``morning``, ``afternoon``, ``evening`` and ``night`` span their
+          configured range. ``night`` is the whole range, although
+          ``block_for_hour`` reports only its first half under that name.
+        - ``early_X`` is the first half of ``X`` and ``late_X`` the
+          second, split at the midpoint to the minute. A range whose end
+          hour is not after its start hour is taken to cross midnight.
+        - ``noon`` and ``midnight`` are the fixed bands 11:30-12:30 and
+          23:30-00:30.
+
+        Returns None for an unrecognized name and for a zero-length
+        configured range.
+        """
+        fixed = {
+            "noon": (11 * 60 + 30, 12 * 60 + 30),
+            "midnight": (23 * 60 + 30, 24 * 60 + 30),
+        }
+        if block in fixed:
+            return fixed[block]
+
+        half: str | None = None
+        parent = block
+        for prefix in ("early_", "late_"):
+            if block.startswith(prefix):
+                half = prefix
+                parent = block[len(prefix) :]
+                break
+
+        bounds = {
+            "morning": (self.morning_start, self.morning_end),
+            "afternoon": (self.afternoon_start, self.afternoon_end),
+            "evening": (self.evening_start, self.evening_end),
+            "night": (self.night_start, self.night_end),
+        }.get(parent)
+        if bounds is None:
+            return None
+
+        start_hour, end_hour = bounds
+        span = ((end_hour - start_hour) % 24) * 60
+        if span == 0:
+            return None
+        start = (start_hour % 24) * 60
+        end = start + span
+        if half == "early_":
+            end = start + span // 2
+        elif half == "late_":
+            start = start + span // 2
+        return (start, end)
+
     def block_for_hour(self, hour: int) -> str:
         """Return the canonical time block name for an hour of the day.
 
