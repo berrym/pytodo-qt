@@ -1351,6 +1351,8 @@ def _extract_estimated_minutes(tokens: list[_Token], tracker: _SpanTracker) -> i
     # "in three quarters of an hour" matching at "an hour", where the
     # immediate prev is "of".
     _ESTIMATE_SKIP_PREV = {"length", "session", "half", "every"}
+    amount_words = _get_intents()["amounts"]
+    couple_few: dict[str, int] = _get_intents()["couple_few"]
     for i, tok in enumerate(tokens):
         if not tracker.is_free(tok.start, tok.end):
             continue
@@ -1366,6 +1368,21 @@ def _extract_estimated_minutes(tokens: list[_Token], tracker: _SpanTracker) -> i
         ):
             continue
         num, num_end = _tokens_to_number(tokens, i)
+        # "a couple of hours", "a few minutes": the article belongs to
+        # the amount, and so does an "of" after it.
+        if (
+            tok.text in amount_words["articles"]
+            and i + 1 < len(tokens)
+            and tokens[i + 1].text in couple_few
+        ):
+            num, num_end = couple_few[tokens[i + 1].text], i + 1
+        if (
+            num is not None
+            and tokens[num_end].text in couple_few
+            and num_end + 1 < len(tokens)
+            and tokens[num_end + 1].text in amount_words["partitives"]
+        ):
+            num_end += 1
         if num is None or num <= 0:
             continue
         unit_idx = num_end + 1

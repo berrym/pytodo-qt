@@ -2977,3 +2977,70 @@ class TestBareNumberRanges:
 
     def test_range_across_midnight_with_am_pm_is_kept(self) -> None:
         assert self._read("shift 10pm-2am")[2:] == (time(22, 0), time(2, 0))
+
+
+# ---------------------------------------------------------------------------
+# TestCoupleAndFewEstimates
+# ---------------------------------------------------------------------------
+
+
+class TestCoupleAndFewEstimates:
+    """ "a couple of hours" and "a few minutes" are duration estimates,
+    read whole so that no "a" or "of" is left in the title."""
+
+    def test_a_couple_of_hours(self) -> None:
+        r = parse("study a couple of hours", today=TODAY)
+        assert r.estimated_minutes == 120
+        assert r.reminder == "study"
+
+    def test_a_couple_hours(self) -> None:
+        r = parse("study a couple hours", today=TODAY)
+        assert r.estimated_minutes == 120
+        assert r.reminder == "study"
+
+    def test_couple_of_hours_without_the_article(self) -> None:
+        r = parse("study couple of hours friday", today=TODAY)
+        assert r.estimated_minutes == 120
+        assert r.due_date == date(2026, 3, 13)
+        assert r.reminder == "study"
+
+    def test_a_few_hours(self) -> None:
+        r = parse("read a few hours tomorrow", today=TODAY)
+        assert r.estimated_minutes == 180
+        assert r.reminder == "read"
+
+    def test_a_few_minutes_beside_a_time(self) -> None:
+        r = parse("nap a few minutes at 3pm", today=TODAY)
+        assert r.estimated_minutes == 3
+        assert r.due_time == time(15, 0)
+        assert r.reminder == "nap"
+
+    def test_a_couple_of_days(self) -> None:
+        r = parse("work a couple of days", today=TODAY)
+        assert r.estimated_minutes == 2 * 24 * 60
+        assert r.reminder == "work"
+
+    def test_span_covers_the_article_and_the_of(self) -> None:
+        text = "study a couple of hours"
+        r = parse(text, today=TODAY)
+        (span,) = [s for s in r.spans if s.kind is EntityKind.ESTIMATE]
+        assert text[span.start : span.end] == "a couple of hours"
+
+    def test_in_a_couple_of_days_is_still_a_date(self) -> None:
+        r = parse("call bob in a couple of days", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+        assert r.estimated_minutes is None
+        assert r.reminder == "call bob"
+
+    def test_a_couple_of_things_is_not_an_estimate(self) -> None:
+        r = parse("buy a couple of apples", today=TODAY)
+        assert r.estimated_minutes is None
+        assert r.reminder == "buy a couple of apples"
+
+    def test_relative_date_and_reminder_still_take_the_amount(self) -> None:
+        r = parse("send invoice a couple of days before mar 20", today=TODAY)
+        assert r.due_date == date(2026, 3, 18)
+        assert r.estimated_minutes is None
+        r = parse("pay rent friday remind me a couple of days before", today=TODAY)
+        assert r.remind_before_days == 2
+        assert r.estimated_minutes is None
