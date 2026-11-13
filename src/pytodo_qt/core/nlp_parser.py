@@ -2665,6 +2665,20 @@ def _extract_dates_and_times(
                     due_date = today
                 break
 
+    # Whether the text places its time at night: "tonight", or "night"
+    # after a day ("tomorrow night", "friday night", "at night").
+    night_named = any(
+        tok.text in intents["night_words"]
+        or (
+            tok.text == "night"
+            and idx > 0
+            and (
+                tokens[idx - 1].text in day_names or tokens[idx - 1].text in intents["night_after"]
+            )
+        )
+        for idx, tok in enumerate(tokens)
+    )
+
     def _day_part_hint() -> str | None:
         """ "am" or "pm" from a word naming a part of the day, if any."""
         if _skipped_tod_context in ("morning", "dawn", "sunrise"):
@@ -2690,7 +2704,10 @@ def _extract_dates_and_times(
             return parsed
         hint = _day_part_hint()
         hour = parsed.hour
-        if hint == "pm":
+        if night_named and (hour == 12 or hour <= 4):
+            # At night, twelve is midnight and one to four are the small hours.
+            hour = 0 if hour == 12 else hour
+        elif hint == "pm":
             hour = hour + 12 if hour < 12 else hour
         elif hint == "am":
             hour = 0 if hour == 12 else hour
@@ -2736,7 +2753,9 @@ def _extract_dates_and_times(
                     continue
             # Spelled-out time: "at two thirty", "at half past three", "at eight"
             # Pass AM/PM context from a skipped time_of_day word ("morning" → am)
-            spoken_t, spoken_end = _parse_spoken_time(tokens, j + 1, ampm_hint=_day_part_hint())
+            spoken_t, spoken_end = _parse_spoken_time(
+                tokens, j + 1, ampm_hint=_day_part_hint(), night=night_named
+            )
             if spoken_t is not None and tracker.is_free(tok.start, tokens[spoken_end].end):
                 _set_time(spoken_t, tok.start, tokens[spoken_end].end)
                 continue
@@ -2746,7 +2765,7 @@ def _extract_dates_and_times(
         if due_time is None:
             intents_num = _get_intents()["number_words"]
             if tok.text in intents_num and 1 <= intents_num[tok.text] <= 12:
-                spoken_t, spoken_end = _parse_spoken_time(tokens, j)
+                spoken_t, spoken_end = _parse_spoken_time(tokens, j, night=night_named)
                 if spoken_t is not None and tracker.is_free(tok.start, tokens[spoken_end].end):
                     # Only claim if followed by am/pm or a minute word — avoid false positives
                     # on bare number words in the middle of reminder text
@@ -2863,11 +2882,47 @@ def _extract_dates_and_times(
         except Exception:
             logger.log.debug("dateparser search_dates failed", exc_info=True)
 
+    # A time in the small hours that the text places at night comes after
+    # that night's midnight, on the next calendar day: "tonight at 12:30"
+    # is 00:30 tomorrow.
+    if (
+        night_named
+        and due_time is not None
+        and due_time_end is None
+        and due_time < _SMALL_HOURS_END
+    ):
+        if due_date is not None:
+            due_date += timedelta(days=1)
+        # The evening or night the text named is the one before that
+        # time, not a part of the day the task now falls on, so the
+        # block is not kept. Its words stay out of the title: they show
+        # the date when nothing else does, and are filler otherwise.
+        due_time_block = None
+        date_shown = False
+        for span in tracker.spans:
+            if span.kind is EntityKind.DATE and due_date is not None:
+                span.display = due_date.strftime("%b %d, %Y")
+                date_shown = True
+        for span in tracker.spans:
+            if span.kind is not EntityKind.TIME_BLOCK:
+                continue
+            if due_date is not None and not date_shown:
+                span.kind = EntityKind.DATE
+                span.display = due_date.strftime("%b %d, %Y")
+                date_shown = True
+            else:
+                span.kind = EntityKind.FILLER
+                span.display = text[span.start : span.end]
+
     return _DateTimeResult(due_date, due_time, due_time_end, due_time_block, event_date)
 
 
+# A clock time before this, placed at night, is after midnight.
+_SMALL_HOURS_END = time(5, 0)
+
+
 def _parse_spoken_time(
-    tokens: list[_Token], start_idx: int, ampm_hint: str | None = None
+    tokens: list[_Token], start_idx: int, ampm_hint: str | None = None, *, night: bool = False
 ) -> tuple[time | None, int]:
     """Parse spelled-out time from tokens starting at start_idx.
 
@@ -2882,6 +2937,8 @@ def _parse_spoken_time(
 
     Args:
         ampm_hint: "am" or "pm" context from a skipped time_of_day word (e.g., "morning" → "am").
+        night: the text places the time at night ("tonight"), where twelve is
+            midnight and one to four are the small hours.
 
     Returns (time_or_None, last_token_index_consumed).
     last_token_index_consumed is start_idx - 1 if nothing matched.
@@ -2929,6 +2986,8 @@ def _parse_spoken_time(
         return idx
 
     def _apply_ampm(hour: int, ampm: str | None) -> int:
+        if ampm is None and night and (hour == 12 or 1 <= hour <= 4):
+            return 0 if hour == 12 else hour
         # Use explicit am/pm first, fall back to hint, then default heuristic
         effective = ampm or ampm_hint
         if effective == "pm" and hour < 12:

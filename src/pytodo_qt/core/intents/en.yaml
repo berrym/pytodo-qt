@@ -503,6 +503,20 @@ part_of_day_lead_ins:
   - "during the"
   - at
 
+# Night — when the text places a clock time at night, twelve is midnight
+# and one to four are the small hours, on the calendar day after:
+# "tonight at 12:30", "friday night at 1". "tonight" says so on its own;
+# "night" does after a weekday or one of the words below ("tomorrow
+# night", "at night"), not as part of a name ("movie night").
+night_words:
+  - tonight
+night_after:
+  - tomorrow
+  - today
+  - this
+  - at
+  - late
+
 # Prepositions directly before a word that names a moment ("by noon",
 # "before lunch", "around midnight", "for lunch"). They are consumed with it, as
 # they already are before a numeric time ("by 3pm").

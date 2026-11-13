@@ -3536,3 +3536,99 @@ class TestUntilABareHour:
         assert r.recurrence_end_date == date(2026, 3, 20)
         assert r.priority == 1
         assert r.reminder == "walk"
+
+
+# ---------------------------------------------------------------------------
+# TestClockTimesAtNight
+# ---------------------------------------------------------------------------
+
+
+class TestClockTimesAtNight:
+    """Placed at night, twelve is midnight and one to four are the small
+    hours, on the calendar day after the night named.
+
+    It is 3 PM on Wednesday 2026-03-11.
+    """
+
+    @staticmethod
+    def _parse(text: str):
+        return parse(text, now=datetime(2026, 3, 11, 15, 0))
+
+    def _when(self, text: str) -> tuple[date | None, time | None]:
+        r = self._parse(text)
+        return r.due_date, r.due_time
+
+    def test_tonight_at_twelve_is_midnight(self) -> None:
+        assert self._when("call tonight at 12") == (date(2026, 3, 12), time(0, 0))
+        assert self._when("call tonight at twelve") == (date(2026, 3, 12), time(0, 0))
+
+    def test_tonight_at_half_past_twelve(self) -> None:
+        assert self._when("call tonight at 12:30") == (date(2026, 3, 12), time(0, 30))
+        assert self._when("call tonight at twelve thirty") == (date(2026, 3, 12), time(0, 30))
+
+    def test_tonight_at_midnight_is_the_night_ahead(self) -> None:
+        assert self._when("call tonight at midnight") == (date(2026, 3, 12), time(0, 0))
+
+    def test_am_written_out_after_tonight(self) -> None:
+        assert self._when("call tonight at 12:30am") == (date(2026, 3, 12), time(0, 30))
+        assert self._when("call tonight at 1am") == (date(2026, 3, 12), time(1, 0))
+
+    def test_one_to_four_are_the_small_hours(self) -> None:
+        assert self._when("call tonight at 1") == (date(2026, 3, 12), time(1, 0))
+        assert self._when("call tonight at 1:30") == (date(2026, 3, 12), time(1, 30))
+        assert self._when("call tonight at 4:45") == (date(2026, 3, 12), time(4, 45))
+
+    def test_five_onward_is_the_evening_of_the_same_day(self) -> None:
+        assert self._when("call tonight at 5") == (date(2026, 3, 11), time(17, 0))
+        assert self._when("call tonight at 8") == (date(2026, 3, 11), time(20, 0))
+        assert self._when("call tonight at 11:30") == (date(2026, 3, 11), time(23, 30))
+
+    def test_pm_written_out_is_kept(self) -> None:
+        assert self._when("call tonight at 2pm") == (date(2026, 3, 11), time(14, 0))
+        assert self._when("call tonight at 12pm") == (date(2026, 3, 11), time(12, 0))
+
+    def test_a_named_night(self) -> None:
+        assert self._when("call tomorrow night at 12:30") == (date(2026, 3, 13), time(0, 30))
+        assert self._when("call friday night at 1") == (date(2026, 3, 14), time(1, 0))
+
+    def test_at_night_without_a_day(self) -> None:
+        # No day is named, so the next 2 AM is meant: tomorrow's.
+        assert self._when("call at night at 2") == (date(2026, 3, 12), time(2, 0))
+
+    def test_night_as_part_of_a_name_changes_nothing(self) -> None:
+        assert self._when("movie night friday at 1") == (date(2026, 3, 13), time(13, 0))
+
+    def test_evening_is_not_night(self) -> None:
+        assert self._when("call this evening at 12") == (date(2026, 3, 11), time(12, 0))
+
+    def test_without_night_twelve_and_one_are_as_before(self) -> None:
+        assert self._when("call tomorrow at 12:30") == (date(2026, 3, 12), time(12, 30))
+        assert self._when("call tomorrow at 1") == (date(2026, 3, 12), time(13, 0))
+        assert self._when("call tomorrow morning at 12:30") == (date(2026, 3, 12), time(0, 30))
+
+    def test_the_night_block_is_not_kept(self) -> None:
+        r = self._parse("call tonight at 12:30")
+        assert r.due_time_block is None
+        assert r.reminder == "call"
+        assert not [s for s in r.spans if s.kind is EntityKind.TIME_BLOCK]
+
+    def test_tonight_shows_the_date_it_lands_on(self) -> None:
+        text = "call tonight at 12:30"
+        r = self._parse(text)
+        (span,) = [s for s in r.spans if s.kind is EntityKind.DATE]
+        assert text[span.start : span.end] == "tonight"
+        assert span.display == "Mar 12, 2026"
+
+    def test_a_date_already_shown_is_moved(self) -> None:
+        r = self._parse("call tomorrow night at 12:30")
+        (span,) = [s for s in r.spans if s.kind is EntityKind.DATE]
+        assert span.display == "Mar 13, 2026"
+        assert r.reminder == "call"
+
+    def test_tonight_at_a_normal_hour_keeps_its_block(self) -> None:
+        r = self._parse("call tonight at 8")
+        assert r.due_time_block == "evening"
+
+    def test_tonight_without_a_time_is_unchanged(self) -> None:
+        r = self._parse("call tonight")
+        assert (r.due_date, r.due_time, r.due_time_block) == (date(2026, 3, 11), None, "evening")
