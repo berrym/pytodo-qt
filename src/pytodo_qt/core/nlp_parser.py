@@ -1068,8 +1068,43 @@ def _extract_recurrence(
         # "until 5pm" and "until noon" name a time of day, which the
         # time step reads; an end date is a day.
         following = tokens[i + 1].text
+        after = tokens[i + 2].text if i + 2 < len(tokens) else None
         if following in intents["time_of_day"] or _parse_time_token(following) is not None:
             continue
+        # So does a bare hour: "until 5", "from 2 until 5". With a month
+        # or a unit after it the number belongs to a date or a duration
+        # ("until 5 dec", "until 3 weeks are up").
+        hour = None if following in intents["quantity_words"] else _token_to_number(following)
+        if (
+            hour is not None
+            and 1 <= hour <= 12
+            and after not in _month_words()
+            and after not in intents["time_estimate_units"]
+        ):
+            continue
+        # "until the 5th": the day of this month, or of the next once it
+        # has passed. Left to the date parser, a bare ordinal is read as
+        # a month.
+        if following == "the" and after is not None:
+            beyond = tokens[i + 3].text if i + 3 < len(tokens) else None
+            day_num, consumed = _ordinal_to_day(after, beyond)
+            last = i + 1 + consumed
+            then = tokens[last + 1].text if last + 1 < len(tokens) else None
+            if day_num is not None and then != "of" and then not in _month_words():
+                try:
+                    end_day = date(today.year, today.month, day_num)
+                except ValueError:
+                    end_day = None
+                if end_day is not None:
+                    if end_day <= today:
+                        end_day = _add_months(end_day, 1)
+                    rec_end_date = end_day
+                    tracker.reserve(
+                        EntitySpan(
+                            start, tokens[last].end, EntityKind.RECURRENCE, f"until {end_day}"
+                        )
+                    )
+                    break
         # Remaining text after "until"
         remaining = text[tokens[i + 1].start :]
         try:
@@ -1549,6 +1584,14 @@ def _add_months(d: date, months: int) -> date:
     month = (month - 1) % 12 + 1
     max_day = _cal.monthrange(year, month)[1]
     return date(year, month, min(d.day, max_day))
+
+
+def _month_words() -> set[str]:
+    """Month names and their abbreviations, lowercase."""
+    import calendar as _cal
+
+    names = {_cal.month_name[i].lower() for i in range(1, 13)}
+    return names | {_cal.month_abbr[i].lower() for i in range(1, 13)}
 
 
 def _ordinal_to_day(token_text: str, next_token_text: str | None = None) -> tuple[int | None, int]:

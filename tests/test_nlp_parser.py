@@ -3464,3 +3464,75 @@ class TestNamedMomentsInRanges:
         assert self._range("work 9 to 5") == ("work", time(9, 0), time(17, 0))
         assert self._range("meeting 2-4") == ("meeting", time(14, 0), time(16, 0))
         assert self._range("review from 2pm to 4pm") == ("review", time(14, 0), time(16, 0))
+
+
+# ---------------------------------------------------------------------------
+# TestUntilABareHour
+# ---------------------------------------------------------------------------
+
+
+class TestUntilABareHour:
+    """ "until 5" is a time of day, like "until 5pm". A day after "until"
+    is still the end of a recurrence."""
+
+    @staticmethod
+    def _parse(text: str):
+        return parse(text, now=datetime(2026, 3, 11, 9, 0))
+
+    def test_until_a_bare_hour_is_a_time(self) -> None:
+        r = self._parse("study until 5")
+        assert r.due_time == time(17, 0)
+        assert r.recurrence_end_date is None
+        assert r.reminder == "study"
+
+    def test_until_a_spelled_hour(self) -> None:
+        r = self._parse("study until five")
+        assert r.due_time == time(17, 0)
+        assert r.recurrence_end_date is None
+
+    def test_hour_with_a_day_after_it(self) -> None:
+        r = self._parse("open until 9 friday")
+        assert r.due_time == time(9, 0)
+        assert r.due_date == date(2026, 3, 13)
+        assert r.recurrence_end_date is None
+        assert r.reminder == "open"
+
+    def test_range_closed_by_until(self) -> None:
+        r = self._parse("study from 2 until 5")
+        assert (r.due_time, r.due_time_end) == (time(14, 0), time(17, 0))
+        assert r.reminder == "study"
+
+    def test_number_with_a_month_is_still_an_end_date(self) -> None:
+        assert self._parse("walk until 5 dec").recurrence_end_date == date(2026, 12, 5)
+        assert self._parse("walk until dec 5").recurrence_end_date == date(2026, 12, 5)
+
+    def test_number_past_twelve_is_still_an_end_date(self) -> None:
+        r = self._parse("walk until 15")
+        assert r.recurrence_end_date == date(2026, 3, 15)
+        assert r.due_time is None
+
+    def test_duration_after_until_is_unchanged(self) -> None:
+        r = self._parse("diet until 3 weeks are up")
+        assert r.recurrence_type == "weekly"
+        assert r.due_time is None
+
+    def test_until_a_weekday_is_unchanged(self) -> None:
+        assert self._parse("walk until friday").recurrence_end_date == date(2026, 3, 13)
+
+    def test_until_the_fifth_is_a_day_of_the_month(self) -> None:
+        # The 5th of March has passed; the next one is in April.
+        assert self._parse("walk until the 5th").recurrence_end_date == date(2026, 4, 5)
+        assert self._parse("walk until the fifth").recurrence_end_date == date(2026, 4, 5)
+
+    def test_until_a_day_still_to_come_this_month(self) -> None:
+        assert self._parse("walk until the 20th").recurrence_end_date == date(2026, 3, 20)
+
+    def test_until_the_fifth_of_a_month_is_unchanged(self) -> None:
+        assert self._parse("walk until the 5th of may").recurrence_end_date == date(2026, 5, 5)
+
+    def test_ordinal_end_leaves_the_rest_of_the_text(self) -> None:
+        r = self._parse("walk daily until the 20th p1")
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_end_date == date(2026, 3, 20)
+        assert r.priority == 1
+        assert r.reminder == "walk"
