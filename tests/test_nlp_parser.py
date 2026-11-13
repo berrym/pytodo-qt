@@ -3332,3 +3332,52 @@ class TestLabelsAreNotSubtaskLists:
         r = parse("prepare notes: agenda, minutes", today=TODAY)
         assert r.reminder == "prepare notes"
         assert r.subtask_reminders == ["agenda", "minutes"]
+
+
+# ---------------------------------------------------------------------------
+# TestBareNumbersAreNotTimesOrDates
+# ---------------------------------------------------------------------------
+
+
+class TestBareNumbersAreNotTimesOrDates:
+    """Numbers said one after another are not a clock time unless they
+    are said the way a time is, and are not a date on their own."""
+
+    @staticmethod
+    def _read(text: str) -> tuple[str, date | None, time | None]:
+        r = parse(text, today=TODAY)
+        return r.reminder, r.due_date, r.due_time
+
+    def test_counting_aloud(self) -> None:
+        assert self._read("read one two three") == ("read one two three", None, None)
+
+    def test_two_small_numbers(self) -> None:
+        assert self._read("pick two three items") == ("pick two three items", None, None)
+        assert self._read("call five nine times") == ("call five nine times", None, None)
+
+    def test_two_digit_numbers_alone(self) -> None:
+        assert self._read("buy 5 9 volt batteries") == ("buy 5 9 volt batteries", None, None)
+
+    def test_minute_under_ten_with_oh(self) -> None:
+        assert self._read("meet at nine oh five") == ("meet", TODAY, time(9, 5))
+
+    def test_minute_under_ten_written_with_two_digits(self) -> None:
+        assert self._read("meet at 9 05") == ("meet", TODAY, time(9, 5))
+
+    def test_minutes_of_ten_or_more_are_unchanged(self) -> None:
+        assert self._read("meet at two thirty")[2] == time(14, 30)
+        assert self._read("meet eleven fifteen")[2] == time(11, 15)
+        assert self._read("meet at three forty five")[2] == time(15, 45)
+        assert self._read("meet at ten ten")[2] == time(10, 10)
+        assert self._read("meet at 9 30")[2] == time(9, 30)
+
+    def test_hour_with_am_pm_is_unchanged(self) -> None:
+        assert self._read("six thirty pm run") == ("run", TODAY, time(18, 30))
+        assert self._read("standup nine a m")[2] == time(9, 0)
+
+    def test_hour_followed_by_a_small_number_is_the_hour_alone(self) -> None:
+        assert self._read("meet at nine five") == ("meet five", TODAY, time(9, 0))
+
+    def test_named_dates_are_unchanged(self) -> None:
+        assert self._read("party on the 5th")[1] == date(2026, 4, 5)
+        assert self._read("party march 20")[1] == date(2026, 3, 20)

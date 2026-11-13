@@ -2731,6 +2731,18 @@ def _extract_dates_and_times(
                             and prefix_start == pos
                         ):
                             break
+                        # Bare numbers name a date only after a word
+                        # that says so: "pick two three items" is not
+                        # February 3.
+                        matched_words = matched_text.lower().split()
+                        if (
+                            matched_words
+                            and prefix_start == pos
+                            and all(
+                                word.isdigit() or word in number_words for word in matched_words
+                            )
+                        ):
+                            break
                         if tracker.is_free(prefix_start, end_pos):
                             has_date = dt.date() != today or matched_text.lower() in ("today",)
                             has_time = (dt.hour != 0 or dt.minute != 0) and not any(
@@ -2886,6 +2898,13 @@ def _parse_spoken_time(
             minute, minute_end = _tokens_to_number(tokens, i + 1)
             # Reject if minute consumed token is an am/pm trigger
             if minute is not None and not (0 <= int(minute) <= 59):
+                minute = None
+            # A minute under ten is said with "oh" ("nine oh five", read
+            # below) or written with two digits ("9 05"). A bare small
+            # number after the hour is another number: "read one two
+            # three" names no time.
+            two_digits = tokens[i + 1].text.isdigit() and len(tokens[i + 1].text) == 2
+            if minute is not None and int(minute) < 10 and not two_digits:
                 minute = None
 
         # "oh five" pattern — "eleven oh five"
