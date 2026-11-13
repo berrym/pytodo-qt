@@ -936,7 +936,13 @@ def _extract_recurrence(
         match = _fuzzy_match_token(tok.text, list(rec_tokens.keys()), threshold + 5)
         if match and len(tok.text) >= 4:
             matched_word, confidence = match
-            if matched_word != tok.text:
+            # A typo keeps the word's first letter and changes its length
+            # by one at most. Without that, a real word that merely
+            # looks like a frequency word is taken for one: "minute" for
+            # "minutely", "annual" for "annually", "lightly" for
+            # "nightly".
+            is_typo = tok.text[0] == matched_word[0] and abs(len(tok.text) - len(matched_word)) <= 1
+            if matched_word != tok.text and is_typo:
                 entry = rec_tokens[matched_word]
                 rec_type, rec_interval = entry[0], entry[1]
                 rec_span_start = tok.start

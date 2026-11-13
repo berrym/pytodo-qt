@@ -3095,3 +3095,61 @@ class TestFuzzyPhrasesMatchWordByWord:
         (span,) = [s for s in r.spans if s.kind is EntityKind.PRIORITY]
         assert span.confidence < 1.0
         assert span.matched == "high priority"
+
+
+# ---------------------------------------------------------------------------
+# TestFrequencyWordTypos
+# ---------------------------------------------------------------------------
+
+
+class TestFrequencyWordTypos:
+    """A word is read as a mistyped frequency word only when it has the
+    shape of a typo: the same first letter, and a length within one."""
+
+    def test_minute_is_not_minutely(self) -> None:
+        r = parse("nap one minute", today=TODAY)
+        assert r.recurrence_type is None
+        assert r.estimated_minutes == 1
+        assert r.reminder == "nap"
+
+    def test_wait_a_minute(self) -> None:
+        r = parse("wait a minute", today=TODAY)
+        assert r.recurrence_type is None
+        assert r.reminder == "wait"
+
+    def test_minute_as_an_ordinary_word(self) -> None:
+        r = parse("minute meeting notes", today=TODAY)
+        assert r.recurrence_type is None
+        assert r.reminder == "minute meeting notes"
+
+    def test_real_words_that_look_like_frequency_words(self) -> None:
+        for text in ("finish annual report", "update manually", "pack lightly", "hold tightly"):
+            r = parse(text, today=TODAY)
+            assert r.recurrence_type is None, text
+            assert r.reminder == text, text
+            assert not [s for s in r.spans if s.kind is EntityKind.RECURRENCE], text
+
+    def test_typos_are_still_read(self) -> None:
+        for text, kind, interval in (
+            ("stand up daly", "daily", 1),
+            ("sync weeky", "weekly", 1),
+            ("review budget montly", "monthly", 1),
+            ("check minutly", "minutely", 1),
+            ("backup houly", "minutely", 60),
+            ("backup nighty", "daily", 1),
+        ):
+            r = parse(text, today=TODAY)
+            assert (r.recurrence_type, r.recurrence_interval) == (kind, interval), text
+
+    def test_typo_is_still_marked_uncertain(self) -> None:
+        r = parse("stand up daly", today=TODAY)
+        (span,) = [s for s in r.spans if s.kind is EntityKind.RECURRENCE]
+        assert span.confidence < 1.0
+        assert span.matched == "daily"
+
+    def test_exact_forms_are_unchanged(self) -> None:
+        assert parse("check email minutely", today=TODAY).recurrence_type == "minutely"
+        assert parse("review annually", today=TODAY).recurrence_type == "yearly"
+        r = parse("check every 5 minutes", today=TODAY)
+        assert (r.recurrence_type, r.recurrence_interval) == ("minutely", 5)
+        assert parse("check every minute", today=TODAY).recurrence_type == "minutely"
