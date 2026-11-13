@@ -3044,3 +3044,54 @@ class TestCoupleAndFewEstimates:
         r = parse("pay rent friday remind me a couple of days before", today=TODAY)
         assert r.remind_before_days == 2
         assert r.estimated_minutes is None
+
+
+# ---------------------------------------------------------------------------
+# TestFuzzyPhrasesMatchWordByWord
+# ---------------------------------------------------------------------------
+
+
+class TestFuzzyPhrasesMatchWordByWord:
+    """A mistyped priority phrase is recognised only when each typed
+    word is one of the phrase's words, allowing for typos."""
+
+    def test_wait_a_is_not_can_wait(self) -> None:
+        r = parse("wait a couple of days", today=TODAY)
+        assert r.priority is None
+        assert r.reminder == "wait"
+        assert r.estimated_minutes == 2 * 24 * 60
+
+    def test_a_shared_word_is_not_enough(self) -> None:
+        for text in ("call a wait list", "not a priority", "wait a minute"):
+            r = parse(text, today=TODAY)
+            assert r.priority is None, text
+            assert not [s for s in r.spans if s.kind is EntityKind.PRIORITY], text
+
+    def test_exact_phrase_still_matches(self) -> None:
+        r = parse("this can wait", today=TODAY)
+        assert r.priority == 3
+        assert r.reminder == "this"
+
+    def test_typo_in_one_word_still_matches(self) -> None:
+        for text, level in (
+            ("report hihg priority", 1),
+            ("report high prioirty", 1),
+            ("report cant wait", 3),
+            ("report can wiat", 3),
+            ("report low priorty", 3),
+            ("report not importnt", 3),
+        ):
+            r = parse(text, today=TODAY)
+            assert r.priority == level, text
+            assert r.reminder == "report", text
+
+    def test_words_in_another_order_still_match(self) -> None:
+        r = parse("report priority high", today=TODAY)
+        assert r.priority == 1
+        assert r.reminder == "report"
+
+    def test_fuzzy_match_is_still_marked_uncertain(self) -> None:
+        r = parse("report hihg priority", today=TODAY)
+        (span,) = [s for s in r.spans if s.kind is EntityKind.PRIORITY]
+        assert span.confidence < 1.0
+        assert span.matched == "high priority"

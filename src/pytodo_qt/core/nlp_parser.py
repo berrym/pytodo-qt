@@ -248,22 +248,53 @@ def _fuzzy_match_token(
     return (match, score / 100.0)
 
 
+# How alike a typed word and a word of a phrase must be, out of 100, for
+# the typed word to count as that word mistyped.
+_WORD_SIMILARITY = 70
+
+
+def _words_resemble(query: str, phrase: str) -> bool:
+    """Whether each word of *query* is one of the words of *phrase*,
+    allowing for typos, with no phrase word used twice.
+
+    Order does not matter: "priority high" has the words of "high
+    priority". "wait a" does not have the words of "can wait": "a"
+    resembles neither.
+    """
+    from rapidfuzz import fuzz
+
+    remaining = phrase.split()
+    for word in query.split():
+        best = max(remaining, key=lambda candidate: fuzz.ratio(word, candidate), default=None)
+        if best is None or fuzz.ratio(word, best) < _WORD_SIMILARITY:
+            return False
+        remaining.remove(best)
+    return True
+
+
 def _fuzzy_match_phrase(
     query: str, choices: list[str] | dict[str, Any], threshold: int = 80
 ) -> tuple[str, float] | None:
-    """Fuzzy match a phrase against choices using token_sort_ratio (word-order independent)."""
+    """Fuzzy match a phrase against choices.
+
+    The phrases are compared whole with their words sorted, so word
+    order does not matter, and a match must also hold word by word (see
+    ``_words_resemble``). The whole-phrase score alone lets a phrase
+    that shares one long word with a choice pass on that word: "wait a"
+    scores 86 against "can wait".
+    """
     from rapidfuzz import fuzz, process
 
     choice_list = list(choices) if isinstance(choices, dict) else choices
     if not choice_list:
         return None
-    result = process.extractOne(
-        query, choice_list, scorer=fuzz.token_sort_ratio, score_cutoff=threshold
+    candidates = process.extract(
+        query, choice_list, scorer=fuzz.token_sort_ratio, score_cutoff=threshold, limit=None
     )
-    if result is None:
-        return None
-    match, score, _idx = result
-    return (match, score / 100.0)
+    for match, score, _idx in candidates:
+        if _words_resemble(query, match):
+            return (match, score / 100.0)
+    return None
 
 
 def _token_to_number(token_text: str) -> int | None:
