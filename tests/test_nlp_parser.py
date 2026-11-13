@@ -2907,3 +2907,73 @@ class TestWordBeforeTheSubtaskColon:
 
     def test_text_without_entities_keeps_its_colon(self) -> None:
         assert parse("watch dune:part two", today=TODAY).reminder == "watch dune:part two"
+
+
+# ---------------------------------------------------------------------------
+# TestBareNumberRanges
+# ---------------------------------------------------------------------------
+
+
+class TestBareNumberRanges:
+    """Two numbers written without am/pm are a time range only when that
+    reading holds up, and a date only after a word that says so."""
+
+    @staticmethod
+    def _read(text: str) -> tuple[str, date | None, time | None, time | None]:
+        r = parse(text, today=TODAY)
+        return r.reminder, r.due_date, r.due_time, r.due_time_end
+
+    def test_range_after_a_counting_word_stays_in_the_title(self) -> None:
+        assert self._read("read chapters 3-5") == ("read chapters 3-5", None, None, None)
+
+    def test_spelled_range_after_a_counting_word(self) -> None:
+        assert self._read("read chapters 3 to 5") == ("read chapters 3 to 5", None, None, None)
+
+    def test_counting_word_with_a_date_elsewhere(self) -> None:
+        reminder, due, start, end = self._read("exercises 1 to 3 friday")
+        assert (reminder, due) == ("exercises 1 to 3", date(2026, 3, 13))
+        assert (start, end) == (None, None)
+
+    def test_range_that_runs_backwards_is_not_a_time(self) -> None:
+        reminder, due, start, end = self._read("final 2-1 friday")
+        assert (reminder, due) == ("final 2-1", date(2026, 3, 13))
+        assert (start, end) == (None, None)
+
+    def test_range_backwards_past_noon_is_not_a_time(self) -> None:
+        # 6 would be read as 6 PM, before which 12 cannot come.
+        assert self._read("party 6-12")[2:] == (None, None)
+
+    def test_pages_are_not_a_date(self) -> None:
+        assert self._read("read pages 10-15") == ("read pages 10-15", None, None, None)
+
+    def test_two_numbers_are_not_a_date_without_a_date_word(self) -> None:
+        reminder, due, _, _ = self._read("order 10-15 boxes")
+        assert due is None
+        assert reminder == "order 10-15 boxes"
+
+    def test_two_numbers_after_a_date_word_are_a_date(self) -> None:
+        assert self._read("report by 3-15")[:2] == ("report", date(2026, 3, 15))
+        assert self._read("taxes due 10-15")[:2] == ("taxes", date(2026, 10, 15))
+
+    def test_slash_date_is_unaffected(self) -> None:
+        assert self._read("review 10/15")[:2] == ("review", date(2026, 10, 15))
+
+    def test_iso_date_is_unaffected(self) -> None:
+        assert self._read("meeting 2026-11-20")[:2] == ("meeting", date(2026, 11, 20))
+
+    def test_plain_bare_range_is_still_a_time_range(self) -> None:
+        assert self._read("meeting 2-4")[2:] == (time(14, 0), time(16, 0))
+        assert self._read("meeting 9-11")[2:] == (time(9, 0), time(11, 0))
+        assert self._read("call 9-5 friday")[2:] == (time(9, 0), time(17, 0))
+        assert self._read("study 3 to 5")[2:] == (time(15, 0), time(17, 0))
+
+    def test_range_followed_by_other_words_is_still_a_time_range(self) -> None:
+        reminder, _, start, end = self._read("meeting 2-4 with bob")
+        assert (reminder, start, end) == ("meeting with bob", time(14, 0), time(16, 0))
+
+    def test_am_pm_makes_it_a_time_range_after_a_counting_word(self) -> None:
+        reminder, _, start, end = self._read("chapters 3-5pm")
+        assert (reminder, start, end) == ("chapters", time(15, 0), time(17, 0))
+
+    def test_range_across_midnight_with_am_pm_is_kept(self) -> None:
+        assert self._read("shift 10pm-2am")[2:] == (time(22, 0), time(2, 0))

@@ -515,6 +515,76 @@ time_of_day_lead_ins:
   - for
 
 # ---------------------------------------------------------------------------
+# Counting words — a pair of bare numbers directly after one of these is
+# a range of that thing, not a time range: "read chapters 3-5",
+# "steps 1 to 3". A pair with am/pm is a time range wherever it stands.
+# ---------------------------------------------------------------------------
+
+counting_words:
+  - page
+  - pages
+  - pp
+  - chapter
+  - chapters
+  - ch
+  - section
+  - sections
+  - step
+  - steps
+  - item
+  - items
+  - row
+  - rows
+  - line
+  - lines
+  - slide
+  - slides
+  - lesson
+  - lessons
+  - unit
+  - units
+  - part
+  - parts
+  - level
+  - levels
+  - exercise
+  - exercises
+  - problem
+  - problems
+  - question
+  - questions
+  - verse
+  - verses
+  - episode
+  - episodes
+  - volume
+  - volumes
+  - track
+  - tracks
+  - ticket
+  - tickets
+  - issue
+  - issues
+  - task
+  - tasks
+  - day
+  - days
+  - week
+  - weeks
+  - age
+  - ages
+  - room
+  - rooms
+  - version
+  - versions
+  - score
+  - scores
+  - grade
+  - grades
+  - number
+  - numbers
+
+# ---------------------------------------------------------------------------
 # Amounts — a count and a unit, as in "3 days", "a week", "the day",
 # "a couple of days". Used by advance reminders and relative dates, each
 # with its own units.

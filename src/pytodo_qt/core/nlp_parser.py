@@ -2393,6 +2393,20 @@ def _extract_dates_and_times(
             end = _apply_range_ampm(eh, "pm" if s_ampm == "am" else "am")
         return start, end
 
+    counting_words: set[str] = intents["counting_words"]
+
+    def _bare_pair_is_a_time_range(idx: int, start: time, end: time) -> bool:
+        """Whether two numbers written without am/pm or a colon, starting
+        at token idx, are a time range.
+
+        They are not when the range would run backwards ("score 2-1"),
+        or when they follow a word for something that is counted
+        ("chapters 3-5").
+        """
+        if end <= start:
+            return False
+        return not (idx > 0 and tokens[idx - 1].text in counting_words)
+
     def _with_lead_in(idx: int) -> int:
         """Character offset a range starting at token idx begins at,
         taking in an "at" directly before it."""
@@ -2450,7 +2464,11 @@ def _extract_dates_and_times(
                     if e_ampm:
                         span_end_pos = tokens[ampm_end].end
                 sh_adj, eh_adj = _resolve_range(sh, s_ampm, eh, e_ampm)
-                _set_time_range(time(sh_adj, sm), time(eh_adj, em), _with_lead_in(j), span_end_pos)
+                t_start, t_end = time(sh_adj, sm), time(eh_adj, em)
+                bare = s_ampm is None and e_ampm is None and ":" not in dashed
+                if bare and not _bare_pair_is_a_time_range(j, t_start, t_end):
+                    continue
+                _set_time_range(t_start, t_end, _with_lead_in(j), span_end_pos)
                 continue
 
         # Bare connector: "3 to 5", "six till eight pm", "9am to 10am"
@@ -2463,9 +2481,16 @@ def _extract_dates_and_times(
                 if second is not None:
                     eh, em, e_ampm, ee = second
                     sh_adj, eh_adj = _resolve_range(sh, s_ampm, eh, e_ampm)
-                    _set_time_range(
-                        time(sh_adj, sm), time(eh_adj, em), _with_lead_in(j), tokens[ee].end
+                    t_start, t_end = time(sh_adj, sm), time(eh_adj, em)
+                    bare = (
+                        s_ampm is None
+                        and e_ampm is None
+                        and ":" not in tok.text
+                        and ":" not in tokens[ci + 1].text
                     )
+                    if bare and not _bare_pair_is_a_time_range(j, t_start, t_end):
+                        continue
+                    _set_time_range(t_start, t_end, _with_lead_in(j), tokens[ee].end)
                     continue
 
     # --- "now" / "right now" (after ranges so "from now to X" works) ---
@@ -2588,6 +2613,17 @@ def _extract_dates_and_times(
                             ):
                                 prefix_start = ptok.start
                                 break
+                        # Two bare numbers with a hyphen are a date only
+                        # after a word that says so: "due 10-15", not
+                        # "read pages 10-15".
+                        month_text, hyphen, day_text = matched_text.strip().partition("-")
+                        if (
+                            hyphen
+                            and month_text.isdigit()
+                            and day_text.isdigit()
+                            and prefix_start == pos
+                        ):
+                            break
                         if tracker.is_free(prefix_start, end_pos):
                             has_date = dt.date() != today or matched_text.lower() in ("today",)
                             has_time = dt.hour != 0 or dt.minute != 0
