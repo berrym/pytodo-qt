@@ -3276,3 +3276,59 @@ class TestColonPairsThatAreNotTimes:
         assert (r.due_time, r.due_time_end) == (time(9, 30), time(10, 15))
         r = parse("meet from 9:30 to 10:15", today=TODAY)
         assert (r.due_time, r.due_time_end) == (time(9, 30), time(10, 15))
+
+
+# ---------------------------------------------------------------------------
+# TestLabelsAreNotSubtaskLists
+# ---------------------------------------------------------------------------
+
+
+class TestLabelsAreNotSubtaskLists:
+    """A colon after a label word says what the text is about. It does
+    not start a list of subtasks."""
+
+    def test_re(self) -> None:
+        r = parse("email re: budget", today=TODAY)
+        assert r.reminder == "email re: budget"
+        assert r.subtask_reminders == []
+
+    def test_re_with_commas_after_it(self) -> None:
+        r = parse("email re: budget, hiring", today=TODAY)
+        assert r.reminder == "email re: budget, hiring"
+        assert r.subtask_reminders == []
+
+    def test_other_labels(self) -> None:
+        for text in (
+            "fwd: invoice from bob",
+            "note: call bob",
+            "todo: buy milk",
+            "fyi: server down",
+        ):
+            r = parse(text, today=TODAY)
+            assert r.reminder == text, text
+            assert r.subtask_reminders == [], text
+            assert not [s for s in r.spans if s.kind is EntityKind.SUBTASK], text
+
+    def test_label_in_capitals(self) -> None:
+        r = parse("RE: budget review tomorrow", today=TODAY)
+        assert r.reminder == "RE: budget review"
+        assert r.due_date == date(2026, 3, 12)
+
+    def test_the_rest_of_the_text_is_still_read(self) -> None:
+        r = parse("Note: call bob friday p1", today=TODAY)
+        assert r.reminder == "Note: call bob"
+        assert r.due_date == date(2026, 3, 13)
+        assert r.priority == 1
+
+    def test_a_list_after_a_label_is_still_a_list(self) -> None:
+        r = parse("email bob re: trip: tickets, hotel", today=TODAY)
+        assert r.reminder == "email bob re: trip"
+        assert r.subtask_reminders == ["tickets", "hotel"]
+
+    def test_any_other_word_still_starts_a_list(self) -> None:
+        r = parse("Pack: socks", today=TODAY)
+        assert r.reminder == "Pack"
+        assert r.subtask_reminders == ["socks"]
+        r = parse("prepare notes: agenda, minutes", today=TODAY)
+        assert r.reminder == "prepare notes"
+        assert r.subtask_reminders == ["agenda", "minutes"]

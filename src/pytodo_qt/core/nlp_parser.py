@@ -3015,14 +3015,23 @@ def _extract_subtasks(text: str, tracker: _SpanTracker) -> list[str]:
     _build_reminder excludes the delimiter+items tail from the reminder
     while the parent text remains. Items are split on commas with
     Oxford-comma and "and" handling. The earliest delimiter wins.
+
+    A colon after a label word ("re:", "note:", "todo:") says what the
+    text is about and starts no list; the text stays as typed.
     """
     _delimiters = [": ", " with tasks ", " with subtasks ", " including "]
+    label_words: set[str] = _get_intents()["label_words"]
 
     lower = text.lower()
     best_idx = -1
     best_delim_len = 0
     for delim in _delimiters:
         idx = lower.find(delim)
+        while delim == ": " and idx != -1:
+            before = lower[:idx].split()
+            if not before or before[-1] not in label_words:
+                break
+            idx = lower.find(delim, idx + 1)
         if idx == -1:
             continue
         if best_idx == -1 or idx < best_idx:

@@ -696,6 +696,25 @@ advance_reminder:
     - notice
 
 # ---------------------------------------------------------------------------
+# Label words — a colon after one of these introduces what the text is
+# about, not a list of subtasks: "email re: budget", "note: call bob".
+# After any other word a colon starts an inline subtask list
+# ("pack: socks, charger").
+# ---------------------------------------------------------------------------
+
+label_words:
+  - re
+  - fwd
+  - fw
+  - note
+  - todo
+  - ps
+  - nb
+  - fyi
+  - subject
+  - attn
+
+# ---------------------------------------------------------------------------
 # Filler / connective phrases — multi-word fragments of natural speech
 # that carry no task content and should not appear in the reminder.
 # Recognized as EntityKind.FILLER spans during parsing, then excluded
