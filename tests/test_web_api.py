@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 from datetime import date, timedelta
+from uuid import UUID
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -1573,6 +1574,195 @@ class TestCreateItemExtended:
             assert data["reminder_cadence"] == "daily_until_due"
         finally:
             await client.close()
+
+    async def _quick_add(self, text: str, **extra):
+        """Post ``text`` to the first list as the web page's add box does.
+        Returns (response JSON, the list as stored)."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{lst.id}/items",
+                json={"reminder": text, "parse_nlp": True, **extra},
+            )
+            assert resp.status == 201
+            return await resp.json(), lst
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_quick_add_keeps_the_end_of_a_time_range(self):
+        data, _ = await self._quick_add("Standup tomorrow 9am to 10am")
+        assert data["reminder"] == "Standup"
+        assert data["due_time"] == "09:00:00"
+        assert data["due_time_end"] == "10:00:00"
+
+    @pytest.mark.asyncio
+    async def test_quick_add_keeps_a_time_block(self):
+        data, _ = await self._quick_add("Laundry tomorrow morning")
+        assert data["reminder"] == "Laundry"
+        assert data["due_time_block"] == "morning"
+        assert data["due_date"] is not None
+
+    @pytest.mark.asyncio
+    async def test_quick_add_keeps_an_estimate(self):
+        data, _ = await self._quick_add("Write essay ~2h")
+        assert data["reminder"] == "Write essay"
+        assert data["estimated_minutes"] == 120
+
+    @pytest.mark.asyncio
+    async def test_quick_add_keeps_a_session_length(self):
+        data, _ = await self._quick_add("Deep focus session length 50 minutes")
+        assert data["work_duration"] == 50
+
+    @pytest.mark.asyncio
+    async def test_quick_add_keeps_an_event_date(self):
+        data, _ = await self._quick_add("Book appointment for friday")
+        assert data["event_date"] is not None
+
+    @pytest.mark.asyncio
+    async def test_quick_add_keeps_a_condition(self):
+        data, _ = await self._quick_add("Go running unless it rains")
+        assert data["conditions"] == [{"type": "unless", "expression": "it rains"}]
+
+    @pytest.mark.asyncio
+    async def test_quick_add_without_those_fields_leaves_them_unset(self):
+        data, _ = await self._quick_add("Buy stamps")
+        assert data["due_time_end"] is None
+        assert data["due_time_block"] is None
+        assert data["event_date"] is None
+        assert data["estimated_minutes"] == 0
+        assert data["work_duration"] == 0
+        assert not data["conditions"]
+
+    @pytest.mark.asyncio
+    async def test_explicit_field_overrides_the_parsed_one(self):
+        data, _ = await self._quick_add("Write essay ~2h", estimated_minutes=45)
+        assert data["estimated_minutes"] == 45
+
+    @pytest.mark.asyncio
+    async def test_quick_add_creates_inline_subtasks(self):
+        data, lst = await self._quick_add("Tomorrow p1 pack: socks, charger")
+        assert data["reminder"] == "pack"
+        parent = lst.items[UUID(data["id"])]
+        children = [item for item in lst.items.values() if item.parent_id == parent.id]
+        assert sorted(child.reminder for child in children) == ["charger", "socks"]
+
+    @pytest.mark.asyncio
+    async def test_subtasks_take_the_parents_priority_date_and_column(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        lst.board_columns = ["Backlog", "Doing"]
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{lst.id}/items",
+                json={"reminder": "Tomorrow at 3pm p1 pack: socks, charger", "parse_nlp": True},
+            )
+            data = await resp.json()
+        finally:
+            await client.close()
+        parent = lst.items[UUID(data["id"])]
+        children = [item for item in lst.items.values() if item.parent_id == parent.id]
+        assert len(children) == 2
+        for child in children:
+            assert child.priority == 1
+            assert child.due_date == parent.due_date
+            assert child.due_time == parent.due_time
+            assert child.board_column == "Backlog"
+
+    @pytest.mark.asyncio
+    async def test_subtasks_follow_an_explicit_override_of_the_parent(self):
+        data, lst = await self._quick_add("p1 pack: socks, charger", priority=3)
+        children = [item for item in lst.items.values() if item.parent_id == UUID(data["id"])]
+        assert [child.priority for child in children] == [3, 3]
+
+    @pytest.mark.asyncio
+    async def test_no_subtasks_without_the_inline_form(self):
+        data, lst = await self._quick_add("Pack socks tomorrow")
+        assert not [item for item in lst.items.values() if item.parent_id == UUID(data["id"])]
+
+    @pytest.mark.asyncio
+    async def test_an_item_added_as_a_subtask_gets_no_subtasks_of_its_own(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        existing = next(iter(lst.items.values()))
+        before = len(lst.items)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{lst.id}/items",
+                json={
+                    "reminder": "Pack: socks, charger",
+                    "parse_nlp": True,
+                    "parent_id": str(existing.id),
+                },
+            )
+            assert resp.status == 201
+        finally:
+            await client.close()
+        assert len(lst.items) == before + 1
+
+    @pytest.mark.asyncio
+    async def test_text_is_stored_as_typed_without_parsing(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        before = len(lst.items)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{lst.id}/items", json={"reminder": "Pack: socks, charger"}
+            )
+            data = await resp.json()
+        finally:
+            await client.close()
+        assert data["reminder"] == "Pack: socks, charger"
+        assert len(lst.items) == before + 1
+
+    @pytest.mark.asyncio
+    async def test_with_the_desktop_running_each_item_is_an_undo_step(self):
+        """With a main window, items go through its undo stack: the
+        parent first, then each subtask."""
+        from pytodo_qt.web.api import main_window_key
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        pushed = []
+
+        class Stack:
+            def push(self, command) -> None:
+                pushed.append(command)
+                command.redo()
+
+        class Window:
+            _database = db
+            _undo_stack = Stack()
+
+            def _save_database(self) -> None:
+                pass
+
+            def _refresh_ui(self) -> None:
+                pass
+
+        client = await _make_client(db)
+        client.server.app[main_window_key] = Window()
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{lst.id}/items",
+                json={"reminder": "Pack: socks, charger", "parse_nlp": True},
+            )
+            data = await resp.json()
+        finally:
+            await client.close()
+        assert [command._item.reminder for command in pushed] == ["Pack", "socks", "charger"]
+        assert [command._item.parent_id for command in pushed[1:]] == [UUID(data["id"])] * 2
+        assert len([item for item in lst.items.values() if item.parent_id]) == 2
 
     @pytest.mark.asyncio
     async def test_create_item_nlp_with_override(self):

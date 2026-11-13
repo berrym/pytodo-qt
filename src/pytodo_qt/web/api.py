@@ -746,7 +746,10 @@ async def handle_create_item(request: web.Request) -> web.Response:
 
     Accepts all item fields. When ``parse_nlp`` is true, the ``reminder``
     text is run through the NLP parser first and extracted fields are applied
-    (explicit fields in the body override parsed values).
+    (explicit fields in the body override parsed values). Everything the
+    parser reads is kept, as when the same text is typed into the desktop's
+    Add Todo: subtasks written inline ("pack: socks, charger") are created
+    as child items. The response is the parent item.
     """
     db: Database = request.app[database_key]
     try:
@@ -770,6 +773,7 @@ async def handle_create_item(request: web.Request) -> web.Response:
     # NLP parsing: extract fields from natural language, then let explicit
     # body fields override.
     advance_reminder_parsed = False
+    subtask_reminders: list[str] = []
     if body.get("parse_nlp"):
         from ..core.nlp_parser import parse as nlp_parse
 
@@ -779,6 +783,12 @@ async def handle_create_item(request: web.Request) -> web.Response:
             item.due_date = result.due_date
         if result.due_time is not None:
             item.due_time = result.due_time
+        if result.due_time_end is not None:
+            item.due_time_end = result.due_time_end
+        if result.due_time_block:
+            item.due_time_block = result.due_time_block
+        if result.event_date is not None:
+            item.event_date = result.event_date
         if result.priority is not None:
             item.priority = result.priority
         if result.tags:
@@ -796,6 +806,13 @@ async def handle_create_item(request: web.Request) -> web.Response:
             item.recurrence_end_count = result.recurrence_end_count
         if result.pomodoro_estimate is not None:
             item.estimated_pomodoros = result.pomodoro_estimate
+        if result.estimated_minutes:
+            item.estimated_minutes = result.estimated_minutes
+        if result.work_duration:
+            item.work_duration = result.work_duration
+        if result.conditions:
+            item.conditions = result.conditions
+        subtask_reminders = result.subtask_reminders
         if result.remind_before_days:
             item.remind_before_days = result.remind_before_days
             item.reminder_cadence = result.reminder_cadence
@@ -821,14 +838,28 @@ async def handle_create_item(request: web.Request) -> web.Response:
     if not item.board_column and lst.board_columns:
         item.board_column = lst.board_columns[0]
 
+    # Subtasks written inline become child items, each taking the
+    # parent's priority, due date, due time and board column. An item
+    # that is itself a subtask gets none.
+    children = []
+    if item.parent_id is None:
+        for sub_text in subtask_reminders:
+            child = create_todo_item(
+                sub_text, priority=item.priority, due_date=item.due_date, due_time=item.due_time
+            )
+            child.parent_id = item.id
+            child.board_column = item.board_column
+            children.append(child)
+
     window = request.app.get(main_window_key)
     if window:
         from ..gui.commands import AddItemCommand
 
-        cmd = AddItemCommand(window, list_id, item)
-        window._undo_stack.push(cmd)
+        for added in (item, *children):
+            window._undo_stack.push(AddItemCommand(window, list_id, added))
     else:
-        lst.add_item(item)
+        for added in (item, *children):
+            lst.add_item(added)
         _schedule_save_and_refresh(request)
     return web.json_response(_item_to_json(item), status=201)
 
