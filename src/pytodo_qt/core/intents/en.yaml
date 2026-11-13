@@ -518,6 +518,8 @@ time_of_day_lead_ins:
 # Counting words — a pair of bare numbers directly after one of these is
 # a range of that thing, not a time range: "read chapters 3-5",
 # "steps 1 to 3". A pair with am/pm is a time range wherever it stands.
+# Two numbers with a colon after one of these are not a clock time
+# either: "verse 3:16", "ratio 4:30".
 # ---------------------------------------------------------------------------
 
 counting_words:
@@ -583,6 +585,10 @@ counting_words:
   - grades
   - number
   - numbers
+  - ratio
+  - ratios
+  - odds
+  - scale
 
 # ---------------------------------------------------------------------------
 # Amounts — a count and a unit, as in "3 days", "a week", "the day",

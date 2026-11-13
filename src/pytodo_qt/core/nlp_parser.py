@@ -2327,7 +2327,7 @@ def _extract_dates_and_times(
         # Colon form: "3:30", "10:15"
         if h is None and ":" in t.text:
             parts = t.text.split(":")
-            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            if len(parts) == 2 and parts[0].isdigit() and _is_minutes(parts[1]):
                 hh, mm = int(parts[0]), int(parts[1])
                 if 0 <= hh <= 23 and 0 <= mm <= 59:
                     return hh, mm, idx
@@ -2402,7 +2402,7 @@ def _extract_dates_and_times(
                 text = text[: -len(suffix)]
                 break
         hour_text, colon, minute_text = text.partition(":")
-        if not hour_text.isdigit() or (colon and not minute_text.isdigit()):
+        if not hour_text.isdigit() or (colon and not _is_minutes(minute_text)):
             return None
         hour, minute = int(hour_text), int(minute_text) if colon else 0
         if minute > 59:
@@ -2669,9 +2669,17 @@ def _extract_dates_and_times(
                     _set_time(t, tok.start, next_tok.end)
                     continue
 
-        # Bare single-token time: "3pm", "10:30am", "14:00"
+        # Bare single-token time: "3pm", "10:30am", "14:00". Two numbers
+        # with a colon directly after a word for something counted are
+        # that thing's numbers: "verse 3:16".
         t = _clock_token(tok.text)
-        if t is not None:
+        after_counting_word = (
+            ":" in tok.text
+            and not tok.text.endswith("m")
+            and j > 0
+            and tokens[j - 1].text in counting_words
+        )
+        if t is not None and not after_counting_word:
             _set_time(t, tok.start, tok.end)
 
     # --- Phase 4: dateparser fallback for anything we didn't catch ---
@@ -2685,6 +2693,16 @@ def _extract_dates_and_times(
                 "STRICT_PARSING": False,
             }
             results = search_dates(text, languages=["en"], settings=settings)
+            # Two numbers with a colon were for the steps above to read
+            # as a clock time. One they left is not a time ("ratio 3:1",
+            # "verse 3:16"), and is not to be read as one here.
+            unread_colon_pairs = {
+                tok.text
+                for tok in tokens
+                if tok.text.replace(":", "", 1).isdigit()
+                and ":" in tok.text
+                and tracker.is_free(tok.start, tok.end)
+            }
             if results:
                 for matched_text, dt in results:
                     search_start = 0
@@ -2715,7 +2733,9 @@ def _extract_dates_and_times(
                             break
                         if tracker.is_free(prefix_start, end_pos):
                             has_date = dt.date() != today or matched_text.lower() in ("today",)
-                            has_time = dt.hour != 0 or dt.minute != 0
+                            has_time = (dt.hour != 0 or dt.minute != 0) and not any(
+                                word in unread_colon_pairs for word in matched_text.lower().split()
+                            )
                             if has_date:
                                 tracker.unreserve_kind(EntityKind.DATE)
                                 due_date = dt.date()
@@ -2903,7 +2923,7 @@ def _parse_time_token(text: str) -> time | None:
             core = text[: -len(suffix)]
             if ":" in core:
                 parts = core.split(":")
-                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                if len(parts) == 2 and parts[0].isdigit() and _is_minutes(parts[1]):
                     h, m = int(parts[0]), int(parts[1])
                     if suffix == "pm" and h != 12:
                         h += 12
@@ -2923,12 +2943,18 @@ def _parse_time_token(text: str) -> time | None:
     # 24-hour HH:MM
     if ":" in text:
         parts = text.split(":")
-        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+        if len(parts) == 2 and parts[0].isdigit() and _is_minutes(parts[1]):
             h, m = int(parts[0]), int(parts[1])
             if 0 <= h <= 23 and 0 <= m <= 59:
                 return time(h, m)
 
     return None
+
+
+def _is_minutes(text: str) -> bool:
+    """Whether *text* is the minutes of a clock time: two digits. "3:1"
+    is a ratio or a score, not a minute past three."""
+    return len(text) == 2 and text.isdigit()
 
 
 # ---------------------------------------------------------------------------

@@ -3224,3 +3224,55 @@ class TestColonTimesFollowTheBareHourRule:
         (span,) = [s for s in r.spans if s.kind is EntityKind.TIME]
         assert text[span.start : span.end] == "at 8:30"
         assert span.display == "8:30 PM"
+
+
+# ---------------------------------------------------------------------------
+# TestColonPairsThatAreNotTimes
+# ---------------------------------------------------------------------------
+
+
+class TestColonPairsThatAreNotTimes:
+    """Two numbers with a colon are a clock time only with two digits of
+    minutes, and not directly after a word for something counted."""
+
+    @staticmethod
+    def _read(text: str) -> tuple[str, date | None, time | None]:
+        r = parse(text, today=TODAY)
+        return r.reminder, r.due_date, r.due_time
+
+    def test_single_digit_after_the_colon(self) -> None:
+        assert self._read("mix paint 3:1") == ("mix paint 3:1", None, None)
+
+    def test_single_digit_after_a_lead_in(self) -> None:
+        assert self._read("meet at 3:5") == ("meet at 3:5", None, None)
+
+    def test_after_a_counting_word(self) -> None:
+        assert self._read("verse 3:16") == ("verse 3:16", None, None)
+        assert self._read("ratio 4:30") == ("ratio 4:30", None, None)
+
+    def test_after_a_counting_word_with_a_date_elsewhere(self) -> None:
+        assert self._read("score 21:15 friday") == ("score 21:15", date(2026, 3, 13), None)
+
+    def test_date_beside_a_ratio_is_still_read(self) -> None:
+        reminder, due, due_time = self._read("mix paint 3:1 tomorrow")
+        assert (reminder, due, due_time) == ("mix paint 3:1", date(2026, 3, 12), None)
+
+    def test_am_pm_makes_it_a_time_after_a_counting_word(self) -> None:
+        reminder, _, due_time = self._read("chapter 4:30pm")
+        assert (reminder, due_time) == ("chapter", time(16, 30))
+
+    def test_two_digit_minutes_are_still_a_time(self) -> None:
+        assert self._read("meet at 3:05")[2] == time(15, 5)
+        assert self._read("call bob 3:30")[2] == time(15, 30)
+        assert self._read("meet at 14:00")[2] == time(14, 0)
+
+    def test_range_needs_two_digit_minutes_too(self) -> None:
+        r = parse("standup 9:3-10:15", today=TODAY)
+        assert r.due_time is None
+        assert r.due_time_end is None
+
+    def test_range_with_minutes_is_still_read(self) -> None:
+        r = parse("standup 9:30-10:15", today=TODAY)
+        assert (r.due_time, r.due_time_end) == (time(9, 30), time(10, 15))
+        r = parse("meet from 9:30 to 10:15", today=TODAY)
+        assert (r.due_time, r.due_time_end) == (time(9, 30), time(10, 15))
