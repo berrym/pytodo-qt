@@ -513,6 +513,8 @@ time_of_day_lead_ins:
   - after
   - around
   - for
+  - until
+  - till
 
 # ---------------------------------------------------------------------------
 # Counting words — a pair of bare numbers directly after one of these is

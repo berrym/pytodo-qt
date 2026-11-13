@@ -1065,6 +1065,11 @@ def _extract_recurrence(
         start = tokens[i].start
         if not tracker.is_free(start, tokens[i].end):
             continue
+        # "until 5pm" and "until noon" name a time of day, which the
+        # time step reads; an end date is a day.
+        following = tokens[i + 1].text
+        if following in intents["time_of_day"] or _parse_time_token(following) is not None:
+            continue
         # Remaining text after "until"
         remaining = text[tokens[i + 1].start :]
         try:
@@ -2417,10 +2422,15 @@ def _extract_dates_and_times(
         when it has one: "3", "six thirty", "9am", "9:30 am".
 
         Returns (hour as written, minute, am/pm or None, last index
-        consumed).
+        consumed). A named moment ("noon", "midnight") is returned as
+        its 24-hour time, marked exact in place of am/pm.
         """
         if idx >= len(tokens):
             return None
+        moment = tod.get(tokens[idx].text)
+        if moment is not None:
+            # "noon", "midnight": a time that needs no am/pm.
+            return moment.hour, moment.minute, _EXACT, idx
         attached = _clock_text(tokens[idx].text)
         if attached is not None and attached[2] is not None:
             return attached[0], attached[1], attached[2], idx
@@ -2437,6 +2447,8 @@ def _extract_dates_and_times(
         that the range runs forward: "10 to 2pm" is 10 AM to 2 PM, and
         "11am to 1" is 11 AM to 1 PM.
         """
+        if _EXACT in (s_ampm, e_ampm):
+            return _resolve_around_a_moment(sh, s_ampm, eh, e_ampm)
         if s_ampm is not None and e_ampm is not None:
             return _apply_range_ampm(sh, s_ampm), _apply_range_ampm(eh, e_ampm)
         if s_ampm is None:
@@ -2445,6 +2457,36 @@ def _extract_dates_and_times(
         end = _apply_range_ampm(eh, s_ampm)
         if end <= start:
             end = _apply_range_ampm(eh, "pm" if s_ampm == "am" else "am")
+        return start, end
+
+    def _resolve_around_a_moment(
+        sh: int, s_ampm: str | None, eh: int, e_ampm: str | None
+    ) -> tuple[int, int]:
+        """Hours of a range with a named moment at one end or both.
+
+        The moment is exact. An end written with am/pm is kept. A bare
+        hour at the other end is the reading nearest the moment that
+        runs forward: "10 to noon" starts at 10 AM, "8 to midnight" at
+        8 PM, "noon to 2" ends at 2 PM.
+        """
+
+        def readings(hour: int) -> list[int]:
+            return [hour] if hour > 12 else sorted({hour % 12, hour % 12 + 12})
+
+        start = sh if s_ampm == _EXACT else None
+        end = eh if e_ampm == _EXACT else None
+        if start is None and s_ampm is not None:
+            start = _apply_range_ampm(sh, s_ampm)
+        if end is None and e_ampm is not None:
+            end = _apply_range_ampm(eh, e_ampm)
+        if start is None:
+            assert end is not None
+            # Midnight ends the day it closes.
+            before = [hour for hour in readings(sh) if hour < (end or 24)]
+            start = max(before) if before else sh
+        if end is None:
+            after = [hour for hour in readings(eh) if hour > start]
+            end = min(after) if after else eh
         return start, end
 
     counting_words: set[str] = intents["counting_words"]
@@ -2468,9 +2510,19 @@ def _extract_dates_and_times(
             return tokens[idx - 1].start
         return tokens[idx].start
 
+    def _only_times_in(start: int, end: int) -> bool:
+        """Whether nothing but times is reserved in [start, end). A
+        named moment is read as a time before ranges are looked for; a
+        range takes it over."""
+        return all(
+            span.kind is EntityKind.TIME
+            for span in tracker.spans
+            if span.start < end and span.end > start
+        )
+
     def _set_time_range(t_start: time, t_end: time, span_start: int, span_end: int) -> None:
         nonlocal due_time, due_time_end
-        if tracker.is_free(span_start, span_end):
+        if _only_times_in(span_start, span_end):
             tracker.unreserve_kind(EntityKind.TIME)
             due_time = t_start
             due_time_end = t_end
@@ -2481,7 +2533,7 @@ def _extract_dates_and_times(
     for j, tok in enumerate(tokens):
         if due_time_end is not None:
             break  # Already found a range
-        if not tracker.is_free(tok.start, tok.end):
+        if not _only_times_in(tok.start, tok.end):
             continue
 
         # Opener patterns: "between X and Y [am/pm]", "from X to/through/till Y [am/pm]"
@@ -2604,7 +2656,9 @@ def _extract_dates_and_times(
         return parsed.replace(hour=hour)
 
     # --- Explicit time patterns (at 3pm, by 5:00, after 10am, etc.) ---
-    _time_prefixes = {"at", "by", "before", "after"} | intents["approximation_prefixes"]
+    _time_prefixes = {"at", "by", "before", "after", "until", "till"} | intents[
+        "approximation_prefixes"
+    ]
     for j, tok in enumerate(tokens):
         if not tracker.is_free(tok.start, tok.end):
             continue
@@ -2982,6 +3036,9 @@ def _is_minutes(text: str) -> bool:
 
 
 _CLAUSE_PUNCTUATION = (",", ";", ".", ":")
+
+# In place of am/pm for an end of a time range that is a named moment.
+_EXACT = "exact"
 
 
 def _build_reminder(text: str, spans: list[EntitySpan]) -> str:

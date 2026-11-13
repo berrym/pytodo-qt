@@ -3381,3 +3381,86 @@ class TestBareNumbersAreNotTimesOrDates:
     def test_named_dates_are_unchanged(self) -> None:
         assert self._read("party on the 5th")[1] == date(2026, 4, 5)
         assert self._read("party march 20")[1] == date(2026, 3, 20)
+
+
+# ---------------------------------------------------------------------------
+# TestNamedMomentsInRanges
+# ---------------------------------------------------------------------------
+
+
+class TestNamedMomentsInRanges:
+    """ "noon" and "midnight" can be either end of a time range, and
+    "until" before a time of day is a time, not a recurrence end."""
+
+    @staticmethod
+    def _range(text: str) -> tuple[str, time | None, time | None]:
+        r = parse(text, today=TODAY)
+        return r.reminder, r.due_time, r.due_time_end
+
+    def test_moment_as_the_end(self) -> None:
+        assert self._range("work 9am to noon") == ("work", time(9, 0), time(12, 0))
+        assert self._range("shift 8pm to midnight") == ("shift", time(20, 0), time(0, 0))
+
+    def test_moment_as_the_start(self) -> None:
+        assert self._range("lunch noon to 1pm") == ("lunch", time(12, 0), time(13, 0))
+
+    def test_both_ends(self) -> None:
+        assert self._range("work from noon to midnight") == ("work", time(12, 0), time(0, 0))
+
+    def test_bare_hour_before_a_moment_runs_up_to_it(self) -> None:
+        assert self._range("work from 10 to noon") == ("work", time(10, 0), time(12, 0))
+        assert self._range("work 10 to noon") == ("work", time(10, 0), time(12, 0))
+        assert self._range("shift 8 to midnight") == ("shift", time(20, 0), time(0, 0))
+
+    def test_bare_hour_after_a_moment_follows_it(self) -> None:
+        assert self._range("lunch noon to 1") == ("lunch", time(12, 0), time(13, 0))
+        assert self._range("shift from midnight to 6") == ("shift", time(0, 0), time(6, 0))
+
+    def test_minutes_after_a_moment(self) -> None:
+        assert self._range("nap noon to 12:30") == ("nap", time(12, 0), time(12, 30))
+
+    def test_until_as_the_connector(self) -> None:
+        r = parse("standup from 9am until noon tomorrow", today=TODAY)
+        assert (r.due_time, r.due_time_end) == (time(9, 0), time(12, 0))
+        assert r.due_date == date(2026, 3, 12)
+        assert r.reminder == "standup"
+        assert r.recurrence_end_date is None
+
+    def test_range_chip_text(self) -> None:
+        r = parse("work 9am to noon", today=TODAY)
+        (span,) = [s for s in r.spans if s.kind is EntityKind.TIME]
+        assert span.display == "9:00 AM–12:00 PM"
+
+    def test_until_a_clock_time_is_a_time(self) -> None:
+        r = parse("study until 5pm", today=TODAY)
+        assert r.due_time == time(17, 0)
+        assert r.recurrence_end_date is None
+        assert r.reminder == "study"
+
+    def test_till_a_clock_time_is_a_time(self) -> None:
+        r = parse("study till 5pm", today=TODAY)
+        assert r.due_time == time(17, 0)
+        assert r.reminder == "study"
+
+    def test_until_a_moment_is_a_time(self) -> None:
+        r = parse("open until noon", today=TODAY)
+        assert r.due_time == time(12, 0)
+        assert r.recurrence_end_date is None
+        assert r.reminder == "open"
+
+    def test_until_a_day_is_still_a_recurrence_end(self) -> None:
+        r = parse("walk until friday", today=TODAY)
+        assert r.recurrence_end_date == date(2026, 3, 13)
+        assert r.due_time is None
+        r = parse("run every day until dec 1", today=TODAY)
+        assert r.recurrence_type == "daily"
+        assert r.recurrence_end_date == date(2026, 12, 1)
+
+    def test_a_moment_alone_is_unchanged(self) -> None:
+        assert self._range("meet at noon") == ("meet", time(12, 0), None)
+        assert self._range("meet by noon") == ("meet", time(12, 0), None)
+
+    def test_ranges_without_a_moment_are_unchanged(self) -> None:
+        assert self._range("work 9 to 5") == ("work", time(9, 0), time(17, 0))
+        assert self._range("meeting 2-4") == ("meeting", time(14, 0), time(16, 0))
+        assert self._range("review from 2pm to 4pm") == ("review", time(14, 0), time(16, 0))
