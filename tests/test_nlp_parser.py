@@ -3153,3 +3153,74 @@ class TestFrequencyWordTypos:
         r = parse("check every 5 minutes", today=TODAY)
         assert (r.recurrence_type, r.recurrence_interval) == ("minutely", 5)
         assert parse("check every minute", today=TODAY).recurrence_type == "minutely"
+
+
+# ---------------------------------------------------------------------------
+# TestColonTimesFollowTheBareHourRule
+# ---------------------------------------------------------------------------
+
+
+class TestColonTimesFollowTheBareHourRule:
+    """A time written with a colon and no am/pm gets the half of the day
+    a bare hour gets: "at 8:30" follows "at 8"."""
+
+    @staticmethod
+    def _time(text: str) -> time | None:
+        return parse(text, today=TODAY).due_time
+
+    def test_tonight(self) -> None:
+        assert self._time("meet tonight at 8") == time(20, 0)
+        assert self._time("meet tonight at 8:30") == time(20, 30)
+
+    def test_this_evening(self) -> None:
+        assert self._time("meet this evening at 7:15") == time(19, 15)
+
+    def test_this_afternoon_before_or_after_the_time(self) -> None:
+        assert self._time("meet this afternoon at 2:30") == time(14, 30)
+        assert self._time("meet at 2:30 this afternoon") == time(14, 30)
+
+    def test_a_block_word_gives_the_half(self) -> None:
+        assert self._time("dinner at 7") == time(19, 0)
+        assert self._time("dinner at 7:30") == time(19, 30)
+
+    def test_morning(self) -> None:
+        assert self._time("meet tomorrow morning at 3:30") == time(3, 30)
+        assert self._time("meet tomorrow morning at 12:30") == time(0, 30)
+
+    def test_without_context_one_to_six_is_the_afternoon(self) -> None:
+        assert self._time("meet at 3") == time(15, 0)
+        assert self._time("meet at 3:30") == time(15, 30)
+        assert self._time("meet at 1:00") == time(13, 0)
+        assert self._time("meet at 6:45") == time(18, 45)
+
+    def test_without_context_seven_to_twelve_is_as_written(self) -> None:
+        assert self._time("meet at 7:30") == time(7, 30)
+        assert self._time("meet at 11:45") == time(11, 45)
+        assert self._time("meet at 12:30") == time(12, 30)
+
+    def test_without_a_lead_in(self) -> None:
+        assert self._time("meet 3:30") == time(15, 30)
+
+    def test_am_pm_written_out_wins(self) -> None:
+        assert self._time("flight at 5:10am") == time(5, 10)
+        assert self._time("flight at 5:10 am") == time(5, 10)
+        assert self._time("meet tonight at 3:30am") == time(3, 30)
+        assert self._time("meet at 3:30pm") == time(15, 30)
+        assert self._time("meet at 3:30 pm") == time(15, 30)
+
+    def test_leading_zero_is_a_24_hour_time(self) -> None:
+        assert self._time("flight at 05:10") == time(5, 10)
+        assert self._time("meet at 03:30") == time(3, 30)
+        assert self._time("meet tonight at 08:30") == time(8, 30)
+
+    def test_24_hour_times_are_as_written(self) -> None:
+        assert self._time("meet at 15:30") == time(15, 30)
+        assert self._time("meet at 0:30") == time(0, 30)
+
+    def test_title_and_span_are_unchanged(self) -> None:
+        text = "meet tonight at 8:30"
+        r = parse(text, today=TODAY)
+        assert r.reminder == "meet"
+        (span,) = [s for s in r.spans if s.kind is EntityKind.TIME]
+        assert text[span.start : span.end] == "at 8:30"
+        assert span.display == "8:30 PM"

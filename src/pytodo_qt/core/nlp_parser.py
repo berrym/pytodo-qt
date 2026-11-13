@@ -2570,6 +2570,39 @@ def _extract_dates_and_times(
                     due_date = today
                 break
 
+    def _day_part_hint() -> str | None:
+        """ "am" or "pm" from a word naming a part of the day, if any."""
+        if _skipped_tod_context in ("morning", "dawn", "sunrise"):
+            return "am"
+        if _skipped_tod_context in ("evening", "night", "tonight", "dusk", "sunset"):
+            return "pm"
+        return None
+
+    def _clock_token(text: str) -> time | None:
+        """Read one word as a clock time, giving a time written with a
+        colon and no am/pm the half of the day a bare hour gets.
+
+        "at 8:30" follows the rule for "at 8": the part of the day named
+        elsewhere decides ("tonight at 8:30"), and without one an hour
+        from 1 to 6 is the afternoon. A leading zero or an hour past 12
+        is a 24-hour time and is kept as written.
+        """
+        parsed = _parse_time_token(text)
+        if parsed is None or ":" not in text:
+            return parsed
+        hour_text = text.partition(":")[0]
+        if hour_text.startswith("0") or not 1 <= parsed.hour <= 12 or text.endswith("m"):
+            return parsed
+        hint = _day_part_hint()
+        hour = parsed.hour
+        if hint == "pm":
+            hour = hour + 12 if hour < 12 else hour
+        elif hint == "am":
+            hour = 0 if hour == 12 else hour
+        elif hour <= 6:
+            hour += 12
+        return parsed.replace(hour=hour)
+
     # --- Explicit time patterns (at 3pm, by 5:00, after 10am, etc.) ---
     _time_prefixes = {"at", "by", "before", "after"} | intents["approximation_prefixes"]
     for j, tok in enumerate(tokens):
@@ -2579,7 +2612,14 @@ def _extract_dates_and_times(
         # "at/by/before/around/about <time>" with prefix
         if tok.text in _time_prefixes and j + 1 < len(tokens):
             time_tok = tokens[j + 1]
-            t = _parse_time_token(time_tok.text)
+            # "at 5:30 pm" is read below, with its am/pm.
+            followed_by_am_pm = j + 2 < len(tokens) and tokens[j + 2].text in (
+                "am",
+                "pm",
+                "a.m.",
+                "p.m.",
+            )
+            t = None if followed_by_am_pm else _clock_token(time_tok.text)
             if t is not None:
                 _set_time(t, tok.start, time_tok.end)
                 continue
@@ -2599,12 +2639,7 @@ def _extract_dates_and_times(
                     continue
             # Spelled-out time: "at two thirty", "at half past three", "at eight"
             # Pass AM/PM context from a skipped time_of_day word ("morning" → am)
-            _am_context = None
-            if _skipped_tod_context in ("morning", "dawn", "sunrise"):
-                _am_context = "am"
-            elif _skipped_tod_context in ("evening", "night", "tonight", "dusk", "sunset"):
-                _am_context = "pm"
-            spoken_t, spoken_end = _parse_spoken_time(tokens, j + 1, ampm_hint=_am_context)
+            spoken_t, spoken_end = _parse_spoken_time(tokens, j + 1, ampm_hint=_day_part_hint())
             if spoken_t is not None and tracker.is_free(tok.start, tokens[spoken_end].end):
                 _set_time(spoken_t, tok.start, tokens[spoken_end].end)
                 continue
@@ -2635,7 +2670,7 @@ def _extract_dates_and_times(
                     continue
 
         # Bare single-token time: "3pm", "10:30am", "14:00"
-        t = _parse_time_token(tok.text)
+        t = _clock_token(tok.text)
         if t is not None:
             _set_time(t, tok.start, tok.end)
 
