@@ -2845,3 +2845,65 @@ class TestQuantityWordsAreNotClockTimes:
         r = parse("meet at a quarter to four", today=TODAY)
         assert r.due_time == time(15, 45)
         assert r.reminder == "meet"
+
+
+# ---------------------------------------------------------------------------
+# TestWordBeforeTheSubtaskColon
+# ---------------------------------------------------------------------------
+
+
+class TestWordBeforeTheSubtaskColon:
+    """The word directly before an inline subtask list is still read:
+    its colon belongs to the list, not to the word."""
+
+    def test_the_input_fields_own_example(self) -> None:
+        r = parse("Plan trip tomorrow at 3pm @errands p1: book flight, pack", today=TODAY)
+        assert r.reminder == "Plan trip"
+        assert r.priority == 1
+        assert r.due_date == date(2026, 3, 12)
+        assert r.due_time == time(15, 0)
+        assert r.tags == ["@errands"]
+        assert r.subtask_reminders == ["book flight", "pack"]
+
+    def test_priority_before_the_colon(self) -> None:
+        r = parse("Pack p1: socks, charger", today=TODAY)
+        assert r.priority == 1
+        assert r.reminder == "Pack"
+        assert r.subtask_reminders == ["socks", "charger"]
+
+    def test_date_before_the_colon(self) -> None:
+        r = parse("Pack tomorrow: socks, charger", today=TODAY)
+        assert r.due_date == date(2026, 3, 12)
+        assert r.reminder == "Pack"
+
+    def test_time_before_the_colon(self) -> None:
+        r = parse("Pack tomorrow at 3pm: socks, charger", today=TODAY)
+        assert r.due_time == time(15, 0)
+        assert r.reminder == "Pack"
+
+    def test_estimate_before_the_colon(self) -> None:
+        r = parse("Pack 30 minutes: socks, charger", today=TODAY)
+        assert r.estimated_minutes == 30
+        assert r.reminder == "Pack"
+
+    def test_plain_word_before_the_colon_is_unchanged(self) -> None:
+        r = parse("Pack: socks, charger", today=TODAY)
+        assert r.reminder == "Pack"
+        assert r.subtask_reminders == ["socks", "charger"]
+
+    def test_colon_ending_the_text_is_dropped_from_the_title(self) -> None:
+        r = parse("Call mom tomorrow:", today=TODAY)
+        assert r.due_date == date(2026, 3, 12)
+        assert r.reminder == "Call mom"
+
+    def test_colon_inside_a_clock_time_is_untouched(self) -> None:
+        r = parse("Meeting at 3:30pm friday", today=TODAY)
+        assert r.due_time == time(15, 30)
+        assert r.reminder == "Meeting"
+
+    def test_colon_inside_a_url_is_untouched(self) -> None:
+        r = parse("see https://example.com/a:b friday", today=TODAY)
+        assert r.reminder == "see https://example.com/a:b"
+
+    def test_text_without_entities_keeps_its_colon(self) -> None:
+        assert parse("watch dune:part two", today=TODAY).reminder == "watch dune:part two"

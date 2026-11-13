@@ -135,18 +135,19 @@ class _Token:
 def _word_end(word: str) -> int:
     """Length of *word* without the punctuation that closes a clause.
 
-    A trailing comma or semicolon, and a full stop ending a sentence,
-    are not part of the word: "friday," is "friday". A full stop is
-    kept when the word has another one inside ("a.m.", "p.m."), and a
-    word that is nothing but punctuation is left whole. "!" is not
-    removed; trailing exclamation marks set the priority.
+    A trailing comma, semicolon or colon, and a full stop ending a
+    sentence, are not part of the word: "friday," is "friday", and in
+    "pack p1: socks" the word before the subtask list is "p1". A full
+    stop is kept when the word has another one inside ("a.m.", "p.m."),
+    and a word that is nothing but punctuation is left whole. "!" is
+    not removed; trailing exclamation marks set the priority.
     """
     end = len(word)
-    while end > 1 and word[end - 1] in ",;":
+    while end > 1 and word[end - 1] in ",;:":
         end -= 1
     if end > 1 and word[end - 1] == "." and "." not in word[: end - 1]:
         end -= 1
-        while end > 1 and word[end - 1] in ",;":
+        while end > 1 and word[end - 1] in ",;:":
             end -= 1
     return end if any(ch.isalnum() for ch in word[:end]) else len(word)
 
@@ -2810,7 +2811,7 @@ def _parse_time_token(text: str) -> time | None:
 # ---------------------------------------------------------------------------
 
 
-_CLAUSE_PUNCTUATION = (",", ";", ".")
+_CLAUSE_PUNCTUATION = (",", ";", ".", ":")
 
 
 def _build_reminder(text: str, spans: list[EntitySpan]) -> str:
@@ -2842,8 +2843,8 @@ def _build_reminder(text: str, spans: list[EntitySpan]) -> str:
                 words[-1] += piece
             continue
         words.append(piece)
-    # A comma or semicolon at the very end now separates nothing.
-    return " ".join(words).rstrip(",;").rstrip()
+    # A comma, semicolon or colon at the very end now separates nothing.
+    return " ".join(words).rstrip(",;:").rstrip()
 
 
 # ---------------------------------------------------------------------------
