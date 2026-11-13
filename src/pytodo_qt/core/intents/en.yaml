@@ -224,6 +224,19 @@ number_words:
   several: 5
 
 # ---------------------------------------------------------------------------
+# Quantity words — the number words above that count things but never
+# name an hour or a minute. A spelled-out clock time ("two thirty") is
+# not read from them: "a couple" is not 1:02.
+# ---------------------------------------------------------------------------
+
+quantity_words:
+  - a
+  - an
+  - couple
+  - few
+  - several
+
+# ---------------------------------------------------------------------------
 # Couple/few — subset used for "in a couple/few days" date patterns
 # ---------------------------------------------------------------------------
 

@@ -76,6 +76,7 @@ def load_intents(lang: str = "en") -> dict[str, Any]:
     result["time_estimate_units"] = dict(raw["time_estimate_units"])
     result["number_words"] = dict(raw["number_words"])
     result["couple_few"] = dict(raw["couple_few"])
+    result["quantity_words"] = _word_set(raw.get("quantity_words"))
     result["unit_map"] = dict(raw["unit_map"])
     result["unit_multiplier"] = dict(raw["unit_multiplier"])
     result["date_abbreviations"] = dict(raw["date_abbreviations"])

@@ -2776,3 +2776,72 @@ class TestRelativeDates:
         assert r.due_date == date(2026, 3, 17)
         assert (r.remind_before_days, r.reminder_cadence) == (1, "once")
         assert r.reminder == "send invoice"
+
+
+# ---------------------------------------------------------------------------
+# TestQuantityWordsAreNotClockTimes
+# ---------------------------------------------------------------------------
+
+
+class TestQuantityWordsAreNotClockTimes:
+    """ "a", "an", "couple", "few" and "several" count things. A
+    spelled-out clock time is not read from them."""
+
+    def test_a_couple(self) -> None:
+        r = parse("buy a couple apples", today=TODAY)
+        assert r.due_time is None
+        assert r.due_date is None
+        assert r.reminder == "buy a couple apples"
+
+    def test_a_few(self) -> None:
+        r = parse("call a few people friday", today=TODAY)
+        assert r.due_time is None
+        assert r.due_date == date(2026, 3, 13)
+        assert r.reminder == "call a few people"
+
+    def test_several(self) -> None:
+        r = parse("email several clients", today=TODAY)
+        assert r.due_time is None
+        assert r.reminder == "email several clients"
+
+    def test_quantity_word_is_not_a_minute(self) -> None:
+        # "two" is an hour; "few" after it is not its minutes.
+        r = parse("pick two few-day trips", today=TODAY)
+        assert r.due_time is None
+
+    def test_a_couple_of_days_before_a_date(self) -> None:
+        r = parse("send invoice a couple of days before mar 20", today=TODAY)
+        assert r.due_date == date(2026, 3, 18)
+        assert r.due_time is None
+        assert r.reminder == "send invoice"
+
+    def test_a_few_days_after_a_date(self) -> None:
+        r = parse("send invoice a few days after mar 20", today=TODAY)
+        assert r.due_date == date(2026, 3, 23)
+        assert r.due_time is None
+
+    def test_in_a_couple_days_is_still_a_date(self) -> None:
+        r = parse("call bob in a couple days", today=TODAY)
+        assert r.due_date == date(2026, 3, 13)
+        assert r.due_time is None
+
+    def test_several_hours_is_still_an_estimate(self) -> None:
+        r = parse("wait several hours friday", today=TODAY)
+        assert r.estimated_minutes == 5 * 60
+        assert r.due_time is None
+
+    def test_spelled_out_time_still_works(self) -> None:
+        assert parse("call at two thirty", today=TODAY).due_time == time(14, 30)
+        assert parse("meet at half past three", today=TODAY).due_time == time(15, 30)
+        assert parse("standup nine a m", today=TODAY).due_time == time(9, 0)
+        assert parse("meet at one", today=TODAY).due_time == time(13, 0)
+
+    def test_a_quarter_past(self) -> None:
+        r = parse("meet at a quarter past three", today=TODAY)
+        assert r.due_time == time(15, 15)
+        assert r.reminder == "meet"
+
+    def test_a_quarter_to(self) -> None:
+        r = parse("meet at a quarter to four", today=TODAY)
+        assert r.due_time == time(15, 45)
+        assert r.reminder == "meet"

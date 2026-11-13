@@ -2619,7 +2619,11 @@ def _parse_spoken_time(
     Handles:
         "two thirty" → 14:30, "six thirty pm" → 18:30, "seven fifteen am" → 07:15,
         "half past three" → 15:30, "quarter to four" → 15:45, "quarter past twelve" → 12:15,
+        "a quarter past three" → 15:15,
         "eleven oh five" → 11:05, "eight" → 08:00, "nine a m" → 09:00
+
+    Quantity words ("a", "couple", "few") are number words elsewhere but
+    name neither an hour nor a minute: "a couple" is not 1:02.
 
     Args:
         ampm_hint: "am" or "pm" context from a skipped time_of_day word (e.g., "morning" → "am").
@@ -2633,6 +2637,7 @@ def _parse_spoken_time(
 
     intents = _get_intents()
     number_words = intents["number_words"]
+    quantity_words: set[str] = intents["quantity_words"]
 
     def _word_num(idx: int) -> int | None:
         if idx >= n:
@@ -2640,6 +2645,8 @@ def _parse_spoken_time(
         t = tokens[idx].text
         if t.isdigit():
             return int(t)
+        if t in quantity_words:
+            return None
         return number_words.get(t)
 
     def _is_am_pm(idx: int) -> str | None:
@@ -2681,6 +2688,11 @@ def _parse_spoken_time(
         return hour
 
     i = start_idx
+
+    # "a quarter past three", "a half past three": the article goes with
+    # the fraction.
+    if tokens[i].text == "a" and i + 1 < n and tokens[i + 1].text in ("half", "quarter"):
+        i += 1
 
     # --- "half past X" ---
     if tokens[i].text == "half" and i + 2 < n and tokens[i + 1].text == "past":
@@ -2724,7 +2736,7 @@ def _parse_spoken_time(
         # Check for minute word(s): "two thirty", "seven fifteen", "three forty five"
         minute: int | float | None = None
         minute_end = i
-        if i + 1 < n:
+        if i + 1 < n and tokens[i + 1].text not in quantity_words:
             minute, minute_end = _tokens_to_number(tokens, i + 1)
             # Reject if minute consumed token is an am/pm trigger
             if minute is not None and not (0 <= int(minute) <= 59):
