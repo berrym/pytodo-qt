@@ -3632,3 +3632,100 @@ class TestClockTimesAtNight:
     def test_tonight_without_a_time_is_unchanged(self) -> None:
         r = self._parse("call tonight")
         assert (r.due_date, r.due_time, r.due_time_block) == (date(2026, 3, 11), None, "evening")
+
+
+# ---------------------------------------------------------------------------
+# TestTimeRangesAtNight
+# ---------------------------------------------------------------------------
+
+
+class TestTimeRangesAtNight:
+    """A range placed at night follows the rule for a single time at
+    night, and may run past midnight.
+
+    It is 3 PM on Wednesday 2026-03-11.
+    """
+
+    @staticmethod
+    def _parse(text: str):
+        return parse(text, now=datetime(2026, 3, 11, 15, 0))
+
+    def _range(self, text: str) -> tuple[str, date | None, time | None, time | None]:
+        r = self._parse(text)
+        return r.reminder, r.due_date, r.due_time, r.due_time_end
+
+    def test_past_midnight_from_an_evening_start(self) -> None:
+        expected = ("study", date(2026, 3, 11), time(23, 0), time(1, 0))
+        assert self._range("study tonight 11 to 1") == expected
+        assert self._range("study tonight from 11 to 1") == expected
+        assert self._range("study tonight 11-1") == expected
+
+    def test_ending_at_twelve_is_midnight(self) -> None:
+        assert self._range("study tonight 10 to 12")[2:] == (time(22, 0), time(0, 0))
+
+    def test_ending_in_the_morning(self) -> None:
+        assert self._range("shift tonight 10 to 6")[2:] == (time(22, 0), time(6, 0))
+
+    def test_within_the_evening_is_unchanged(self) -> None:
+        assert self._range("study tonight 9 to 11")[1:] == (
+            date(2026, 3, 11),
+            time(21, 0),
+            time(23, 0),
+        )
+        assert self._range("study tonight 8-10")[2:] == (time(20, 0), time(22, 0))
+        assert self._range("study tonight 7 to 9")[2:] == (time(19, 0), time(21, 0))
+
+    def test_a_named_night(self) -> None:
+        assert self._range("party friday night 10 to 2") == (
+            "party",
+            date(2026, 3, 13),
+            time(22, 0),
+            time(2, 0),
+        )
+
+    def test_minutes_decide_which_reading_comes_first(self) -> None:
+        assert self._range("study tomorrow night from 11:30 to 12:30")[2:] == (
+            time(23, 30),
+            time(0, 30),
+        )
+
+    def test_one_end_with_am_pm(self) -> None:
+        assert self._range("study tonight 11 to 1am")[2:] == (time(23, 0), time(1, 0))
+        assert self._range("study tonight 11pm to 1")[2:] == (time(23, 0), time(1, 0))
+
+    def test_starting_at_twelve_is_after_midnight_on_the_next_day(self) -> None:
+        assert self._range("study tonight from 12 to 2")[1:] == (
+            date(2026, 3, 12),
+            time(0, 0),
+            time(2, 0),
+        )
+        assert self._range("study tonight from 12 to 12:30")[2:] == (time(0, 0), time(0, 30))
+
+    def test_starting_in_the_small_hours_is_the_next_day(self) -> None:
+        assert self._range("study tonight 1 to 3")[1:] == (
+            date(2026, 3, 12),
+            time(1, 0),
+            time(3, 0),
+        )
+        assert self._range("study tonight 1am to 3am")[1] == date(2026, 3, 12)
+        assert self._range("study tonight from midnight to 2")[1] == date(2026, 3, 12)
+
+    def test_a_range_moved_to_the_next_day_keeps_no_block(self) -> None:
+        assert self._parse("study tonight 1 to 3").due_time_block is None
+        assert self._parse("study tonight 11 to 1").due_time_block == "evening"
+
+    def test_a_backwards_pair_in_the_small_hours_is_not_a_range(self) -> None:
+        r = self._parse("final 2-1 tonight")
+        assert (r.due_time, r.due_time_end) == (None, None)
+        assert r.reminder == "final 2-1"
+
+    def test_a_counting_word_still_keeps_its_numbers(self) -> None:
+        r = self._parse("read chapters 3-5 tonight")
+        assert (r.due_time, r.due_time_end) == (None, None)
+        assert r.reminder == "read chapters 3-5"
+
+    def test_ranges_without_night_are_unchanged(self) -> None:
+        assert self._range("study 11 to 1")[2:] == (time(11, 0), time(13, 0))
+        assert self._range("meeting 2-4")[2:] == (time(14, 0), time(16, 0))
+        assert self._range("study this evening 6 to 8")[2:] == (time(18, 0), time(20, 0))
+        assert self._range("study tomorrow morning 9 to 11")[2:] == (time(9, 0), time(11, 0))

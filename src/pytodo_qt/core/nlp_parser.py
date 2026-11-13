@@ -2349,6 +2349,20 @@ def _extract_dates_and_times(
             elif due_time_block.endswith(("afternoon", "evening", "night")):
                 _skipped_tod_context = "evening"
 
+    # Whether the text places its time at night: "tonight", or "night"
+    # after a day ("tomorrow night", "friday night", "at night").
+    night_named = any(
+        tok.text in intents["night_words"]
+        or (
+            tok.text == "night"
+            and idx > 0
+            and (
+                tokens[idx - 1].text in day_names or tokens[idx - 1].text in intents["night_after"]
+            )
+        )
+        for idx, tok in enumerate(tokens)
+    )
+
     # --- Time ranges (between X and Y, from X to Y, X-Y) ---
     _range_closers_between = {"and"}
     _range_closers_from = {"to", "through", "till", "until"}
@@ -2483,15 +2497,20 @@ def _extract_dates_and_times(
         ampm, ampm_end = _check_ampm_at(last + 1)
         return hour, minute, ampm, ampm_end if ampm else last
 
-    def _resolve_range(sh: int, s_ampm: str | None, eh: int, e_ampm: str | None) -> tuple[int, int]:
+    def _resolve_range(
+        sh: int, s_ampm: str | None, eh: int, e_ampm: str | None, sm: int = 0, em: int = 0
+    ) -> tuple[int, int]:
         """Turn the hours of a range, as written, into 24-hour hours.
 
         An end without am/pm takes it from the other end, adjusted so
         that the range runs forward: "10 to 2pm" is 10 AM to 2 PM, and
-        "11am to 1" is 11 AM to 1 PM.
+        "11am to 1" is 11 AM to 1 PM. The minutes matter only to a
+        range placed at night.
         """
         if _EXACT in (s_ampm, e_ampm):
             return _resolve_around_a_moment(sh, s_ampm, eh, e_ampm)
+        if night_named and (s_ampm is None or e_ampm is None):
+            return _resolve_at_night(sh, s_ampm, eh, e_ampm, sm, em)
         if s_ampm is not None and e_ampm is not None:
             return _apply_range_ampm(sh, s_ampm), _apply_range_ampm(eh, e_ampm)
         if s_ampm is None:
@@ -2500,6 +2519,40 @@ def _extract_dates_and_times(
         end = _apply_range_ampm(eh, s_ampm)
         if end <= start:
             end = _apply_range_ampm(eh, "pm" if s_ampm == "am" else "am")
+        return start, end
+
+    def _resolve_at_night(
+        sh: int, s_ampm: str | None, eh: int, e_ampm: str | None, sm: int, em: int
+    ) -> tuple[int, int]:
+        """Hours of a range the text places at night ("tonight 11 to 1").
+
+        A bare start follows the rule for a single time at night: five
+        to eleven are the evening, twelve is midnight, one to four are
+        the small hours. A bare end after an evening start is its first
+        reading after the start, past midnight if need be: "11 to 1"
+        ends at 1 AM, "9 to 11" at 11 PM. After a start in the small
+        hours the end is in the morning as well.
+        """
+
+        def at_night(hour: int) -> int:
+            if hour > 12:
+                return hour
+            if hour == 12:
+                return 0
+            return hour if hour <= 4 else hour + 12
+
+        start = _apply_range_ampm(sh, s_ampm) if s_ampm is not None else at_night(sh)
+        if e_ampm is not None:
+            return start, _apply_range_ampm(eh, e_ampm)
+        if eh > 12:
+            return start, eh
+        if start < _SMALL_HOURS_END.hour:
+            return start, eh % 12
+        start_minute = start * 60 + sm
+        end = min(
+            (eh % 12, eh % 12 + 12),
+            key=lambda hour: (hour * 60 + em - start_minute) % (24 * 60) or 24 * 60,
+        )
         return start, end
 
     def _resolve_around_a_moment(
@@ -2540,9 +2593,11 @@ def _extract_dates_and_times(
 
         They are not when the range would run backwards ("score 2-1"),
         or when they follow a word for something that is counted
-        ("chapters 3-5").
+        ("chapters 3-5"). A range placed at night may run past midnight
+        from an evening start ("tonight 11 to 1").
         """
-        if end <= start:
+        past_midnight = night_named and start.hour >= 12
+        if end <= start and not past_midnight:
             return False
         return not (idx > 0 and tokens[idx - 1].text in counting_words)
 
@@ -2593,7 +2648,7 @@ def _extract_dates_and_times(
             if second is None:
                 continue
             eh, em, e_ampm, ee = second
-            sh_adj, eh_adj = _resolve_range(sh, s_ampm, eh, e_ampm)
+            sh_adj, eh_adj = _resolve_range(sh, s_ampm, eh, e_ampm, sm, em)
             _set_time_range(time(sh_adj, sm), time(eh_adj, em), tok.start, tokens[ee].end)
             continue
 
@@ -2612,7 +2667,7 @@ def _extract_dates_and_times(
                     e_ampm, ampm_end = _check_ampm_at(j + 1)
                     if e_ampm:
                         span_end_pos = tokens[ampm_end].end
-                sh_adj, eh_adj = _resolve_range(sh, s_ampm, eh, e_ampm)
+                sh_adj, eh_adj = _resolve_range(sh, s_ampm, eh, e_ampm, sm, em)
                 t_start, t_end = time(sh_adj, sm), time(eh_adj, em)
                 bare = s_ampm is None and e_ampm is None and ":" not in dashed
                 if bare and not _bare_pair_is_a_time_range(j, t_start, t_end):
@@ -2629,7 +2684,7 @@ def _extract_dates_and_times(
                 second = _range_end(ci + 1)
                 if second is not None:
                     eh, em, e_ampm, ee = second
-                    sh_adj, eh_adj = _resolve_range(sh, s_ampm, eh, e_ampm)
+                    sh_adj, eh_adj = _resolve_range(sh, s_ampm, eh, e_ampm, sm, em)
                     t_start, t_end = time(sh_adj, sm), time(eh_adj, em)
                     bare = (
                         s_ampm is None
@@ -2664,20 +2719,6 @@ def _extract_dates_and_times(
                 if due_date is None:
                     due_date = today
                 break
-
-    # Whether the text places its time at night: "tonight", or "night"
-    # after a day ("tomorrow night", "friday night", "at night").
-    night_named = any(
-        tok.text in intents["night_words"]
-        or (
-            tok.text == "night"
-            and idx > 0
-            and (
-                tokens[idx - 1].text in day_names or tokens[idx - 1].text in intents["night_after"]
-            )
-        )
-        for idx, tok in enumerate(tokens)
-    )
 
     def _day_part_hint() -> str | None:
         """ "am" or "pm" from a word naming a part of the day, if any."""
@@ -2884,13 +2925,9 @@ def _extract_dates_and_times(
 
     # A time in the small hours that the text places at night comes after
     # that night's midnight, on the next calendar day: "tonight at 12:30"
-    # is 00:30 tomorrow.
-    if (
-        night_named
-        and due_time is not None
-        and due_time_end is None
-        and due_time < _SMALL_HOURS_END
-    ):
+    # is 00:30 tomorrow. A range goes by its start: "tonight 1 to 3" is
+    # tomorrow, "tonight 11 to 1" starts today.
+    if night_named and due_time is not None and due_time < _SMALL_HOURS_END:
         if due_date is not None:
             due_date += timedelta(days=1)
         # The evening or night the text named is the one before that
