@@ -75,6 +75,30 @@ def _flush_qt_events_before_teardown(qtbot):
         app.processEvents()
 
 
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtest_teardown(item):
+    """Destroy the widgets a test registered, once the test is torn down.
+
+    pytest-qt closes each widget given to ``qtbot.addWidget`` and calls
+    ``deleteLater`` on it. A deferred delete posted outside a running
+    event loop is not carried out by ``processEvents``, which is all
+    pytest-qt calls, so the widgets stay alive until Python's garbage
+    collector frees their wrappers. That happens at an arbitrary later
+    moment and piece by piece, and a pyqtgraph plot destroyed that way
+    can be left with a layout request pending on items that are gone:
+    the next ``processEvents`` then crashes the test run.
+
+    Carrying out the deferred deletes here destroys each widget whole,
+    parent first, at a known point between tests.
+    """
+    result = yield
+    from PyQt6.QtCore import QCoreApplication, QEvent
+
+    if QCoreApplication.instance() is not None:
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    return result
+
+
 @pytest.fixture(scope="session")
 def exit_report(tmp_path_factory: pytest.TempPathFactory) -> tuple[int, dict, str]:
     """Launch and quit the real application once per test session.
