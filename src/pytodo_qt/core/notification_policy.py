@@ -15,6 +15,8 @@ Notification kinds:
   when its start arrives.
 - **Daily summary** — once per logical day: how many items are due
   today, how many are overdue, and the next item with a time.
+- **Evening preview** — once per logical day, off unless switched on:
+  how many items are due the next day, and the first with a time.
 - **Advance reminder** — a line in the daily summary on the days
   leading up to an item's due date, for items that ask for one. It is
   never a notification of its own.
@@ -71,6 +73,7 @@ class Kind(Enum):
     DUE_NOW = "due_now"
     SUMMARY = "summary"
     ADVANCE = "advance"
+    PREVIEW = "preview"
 
 
 class DueNowMode(Enum):
@@ -101,6 +104,8 @@ class PolicySettings:
     enabled: bool = True
     summary_enabled: bool = True
     summary_time: time = time(9, 0)
+    preview_enabled: bool = False
+    preview_time: time = time(20, 0)
     lead_enabled: bool = True
     lead_minutes: int = 15
     due_now: DueNowMode = DueNowMode.DEADLINES
@@ -184,15 +189,29 @@ class Summary:
 
 
 @dataclass(frozen=True)
+class Preview:
+    """The evening look at the next day."""
+
+    day: date
+    """The logical day the preview is given on."""
+    due_tomorrow: int
+    """Items due on the day after ``day``; at least one."""
+    first: TimedItem | None
+    """The earliest of them with a time, if any has one."""
+
+
+@dataclass(frozen=True)
 class Evaluation:
     """What to deliver now, and what to record as fired.
 
     ``reminders`` belong in one notification, however many there are.
     ``missed`` is empty whenever ``summary`` is present, because the
-    summary carries them.
+    summary carries them. ``summary``, ``missed`` and ``preview`` belong
+    in one notification between them.
 
-    ``held_items`` and ``held_summary`` describe what is waiting for
-    quiet hours or a focus session to end. Nothing held is in ``fired``.
+    ``held_items``, ``held_summary`` and ``held_preview`` describe what
+    is waiting for quiet hours or a focus session to end. Nothing held
+    is in ``fired``.
     """
 
     reminders: tuple[Reminder, ...] = ()
@@ -201,10 +220,12 @@ class Evaluation:
     fired: tuple[FiredKey, ...] = ()
     held_items: tuple[TimedItem, ...] = ()
     held_summary: bool = False
+    preview: Preview | None = None
+    held_preview: bool = False
 
     @property
     def has_notifications(self) -> bool:
-        return bool(self.reminders or self.summary or self.missed)
+        return bool(self.reminders or self.summary or self.missed or self.preview)
 
 
 def settings_from_config(config: AppConfig) -> PolicySettings:
@@ -218,6 +239,8 @@ def settings_from_config(config: AppConfig) -> PolicySettings:
         enabled=notifications.enabled,
         summary_enabled=notifications.summary_enabled,
         summary_time=notifications.summary_time,
+        preview_enabled=notifications.preview_enabled,
+        preview_time=notifications.preview_time,
         lead_enabled=notifications.lead_enabled,
         lead_minutes=notifications.lead_minutes,
         due_now=due_now,
@@ -255,6 +278,20 @@ def in_quiet_hours(moment: time, settings: PolicySettings) -> bool:
     if start > end:
         return moment >= start or moment < end
     return False
+
+
+def effective_preview_time(settings: PolicySettings) -> time:
+    """The time of day the evening preview is given at.
+
+    A preview set for a time inside quiet hours is given one minute
+    before they start. The end of quiet hours, where a summary set
+    inside them goes, is the morning: a look at tomorrow would arrive
+    most of a day early.
+    """
+    if not in_quiet_hours(settings.preview_time, settings):
+        return settings.preview_time
+    before_quiet = datetime.combine(date.min + timedelta(days=1), settings.quiet_start)
+    return (before_quiet - timedelta(minutes=1)).time()
 
 
 def is_event(item: TodoItem) -> bool:
@@ -352,6 +389,7 @@ def evaluate(
     day = logical_day(now, settings.day_start_hour)
     day_start = datetime.combine(day, time(settings.day_start_hour))
     day_end = day_start + timedelta(days=1)
+    tomorrow = day + timedelta(days=1)
     lead = timedelta(minutes=settings.lead_minutes)
 
     reminders: list[Reminder] = []
@@ -362,7 +400,9 @@ def evaluate(
     newly_fired: list[FiredKey] = []
     due_today = 0
     overdue = 0
+    due_tomorrow = 0
     next_up: TimedItem | None = None
+    first_tomorrow: TimedItem | None = None
 
     for item in _eligible_items(lists):
         assert item.due_date is not None  # narrowed by _eligible_items
@@ -371,6 +411,8 @@ def evaluate(
         elif item.due_date < day:
             overdue += 1
         else:
+            if item.due_date == tomorrow:
+                due_tomorrow += 1
             advance = advance_reminder_for(item, day)
             if advance is not None:
                 # "Once" means the first summary in the window, which is
@@ -390,6 +432,8 @@ def evaluate(
         anchor, block = anchored
         event = is_event(item)
         timed = TimedItem(item.id, item.reminder, anchor, event, block)
+        if item.due_date == tomorrow and (first_tomorrow is None or anchor < first_tomorrow.at):
+            first_tomorrow = timed
 
         occurrence = anchor.isoformat(timespec="minutes")
         lead_key = FiredKey(str(item.id), Kind.LEAD.value, occurrence)
@@ -496,6 +540,22 @@ def evaluate(
                     # is given; a held summary leaves them unrecorded.
                     newly_fired.extend(advance_keys)
 
+    preview: Preview | None = None
+    held_preview = False
+    preview_key = FiredKey("", Kind.PREVIEW.value, day.isoformat())
+    if settings.preview_enabled and preview_key not in fired:
+        preview_time = effective_preview_time(settings)
+        preview_at = datetime.combine(day, preview_time)
+        if preview_time.hour < settings.day_start_hour:
+            preview_at += timedelta(days=1)
+        if now >= preview_at:
+            if digests_held:
+                held_preview = due_tomorrow > 0
+            else:
+                newly_fired.append(preview_key)
+                if due_tomorrow:
+                    preview = Preview(day, due_tomorrow, first_tomorrow)
+
     return Evaluation(
         reminders=tuple(reminders),
         summary=summary,
@@ -503,4 +563,6 @@ def evaluate(
         fired=tuple(newly_fired),
         held_items=tuple(held),
         held_summary=held_summary,
+        preview=preview,
+        held_preview=held_preview,
     )

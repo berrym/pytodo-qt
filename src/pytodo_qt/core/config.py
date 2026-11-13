@@ -307,6 +307,8 @@ class NotificationConfig:
     enabled: bool = True  # Master switch for every task notification
     summary_enabled: bool = True  # Daily summary
     summary_time: time = time(9, 0)
+    preview_enabled: bool = False  # Evening preview of the next day
+    preview_time: time = time(20, 0)
     lead_enabled: bool = True  # Reminder ahead of a timed task
     lead_minutes: int = 15
     due_now: str = "deadlines"  # Alert at the due time: deadlines, all, off
@@ -314,7 +316,8 @@ class NotificationConfig:
     quiet_start: time = time(22, 0)
     quiet_end: time = time(7, 0)
     quiet_allow_timed: bool = True  # Timed reminders are delivered in quiet hours
-    hold_during_focus: bool = True  # The summary waits for a focus session to end
+    # The summary and the preview wait for a focus session to end
+    hold_during_focus: bool = True
 
     @classmethod
     def from_dict(cls, section: dict[str, Any]) -> NotificationConfig:
@@ -383,6 +386,8 @@ class NotificationConfig:
             enabled=_flag_setting(section, "enabled", defaults.enabled),
             summary_enabled=summary_enabled,
             summary_time=summary_time,
+            preview_enabled=_flag_setting(section, "preview_enabled", defaults.preview_enabled),
+            preview_time=_clock_setting(section, "preview_time", defaults.preview_time),
             lead_enabled=_flag_setting(section, "lead_enabled", defaults.lead_enabled),
             lead_minutes=lead_minutes,
             due_now=due_now,
@@ -412,6 +417,8 @@ class NotificationConfig:
             f"enabled = {flag(self.enabled)}",
             f"summary_enabled = {flag(self.summary_enabled)}",
             f"summary_time = {clock(self.summary_time)}",
+            f"preview_enabled = {flag(self.preview_enabled)}",
+            f"preview_time = {clock(self.preview_time)}",
             f"lead_enabled = {flag(self.lead_enabled)}",
             f"lead_minutes = {self.lead_minutes}",
             f'due_now = "{self.due_now}"',

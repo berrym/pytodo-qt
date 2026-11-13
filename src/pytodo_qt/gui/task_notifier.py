@@ -28,6 +28,7 @@ from ..core.notification_policy import (
     Evaluation,
     Kind,
     PolicySettings,
+    Preview,
     Reminder,
     Summary,
     TimedItem,
@@ -101,10 +102,15 @@ class TaskNotifier(QObject):
 
         if result.reminders:
             self._deliver(*self.format_reminders(result.reminders))
+        # The summary, the report of missed items and the evening
+        # preview share one notification: a preview due together with
+        # either of the others is a line in it.
         if result.summary is not None:
-            self._deliver(*self.format_summary(result.summary))
-        if result.missed:
-            self._deliver(*self.format_missed(result.missed))
+            self._deliver(*self.format_summary(result.summary, result.preview))
+        elif result.missed:
+            self._deliver(*self.format_missed(result.missed, result.preview))
+        elif result.preview is not None:
+            self._deliver(*self.format_preview(result.preview))
         return result
 
     def _prune(self, now: datetime) -> None:
@@ -150,8 +156,9 @@ class TaskNotifier(QObject):
         ]
         return self.tr("%n reminders", "", len(reminders)), self._capped(lines)
 
-    def format_summary(self, summary: Summary) -> tuple[str, str]:
-        """Return (title, body) for the daily summary."""
+    def format_summary(self, summary: Summary, preview: Preview | None = None) -> tuple[str, str]:
+        """Return (title, body) for the daily summary, with the evening
+        preview as its last line when both are due together."""
         counts: list[str] = []
         if summary.due_today:
             counts.append(self.tr("%n due today", "", summary.due_today))
@@ -184,7 +191,28 @@ class TaskNotifier(QObject):
             if hidden > 0:
                 shown.append(self.tr("+{count} more").format(count=hidden))
             lines.append(self.tr("Coming up: {items}").format(items=", ".join(shown)))
+        if preview is not None:
+            lines.append(self._preview_line(preview))
         return self.tr("Today"), "\n".join(lines)
+
+    def format_preview(self, preview: Preview) -> tuple[str, str]:
+        """Return (title, body) for the evening preview on its own."""
+        if preview.first is None:
+            return self.tr("Tomorrow"), self.tr("%n due tomorrow", "", preview.due_tomorrow)
+        return self.tr("Tomorrow"), self._preview_counts(preview)
+
+    def _preview_line(self, preview: Preview) -> str:
+        """The evening preview as a line of another notification."""
+        return self.tr("Tomorrow: {preview}").format(preview=self._preview_counts(preview))
+
+    def _preview_counts(self, preview: Preview) -> str:
+        count = self.tr("%n due", "", preview.due_tomorrow)
+        if preview.first is None:
+            return count
+        first = self.tr("First: {title} at {time}").format(
+            title=self._title(preview.first.title), time=self._time(preview.first.at)
+        )
+        return f"{count} · {first}"
 
     def _coming_up(self, item: ComingUp) -> str:
         """An advance reminder as it reads within the summary's line."""
@@ -193,16 +221,22 @@ class TaskNotifier(QObject):
             return self.tr("{title} tomorrow").format(title=title)
         return self.tr("{title} in {days} days").format(title=title, days=item.days_until)
 
-    def format_missed(self, missed: tuple[TimedItem, ...]) -> tuple[str, str]:
+    def format_missed(
+        self, missed: tuple[TimedItem, ...], preview: Preview | None = None
+    ) -> tuple[str, str]:
         """Return (title, body) for reminders whose moment passed while
-        nothing was evaluating."""
+        nothing was evaluating, with the evening preview as the last
+        line when both are due together."""
         lines = [
             self.tr("{time}  {title}").format(
                 time=self._time(item.at), title=self._title(item.title)
             )
             for item in missed
         ]
-        return self.tr("Earlier today"), self._capped(lines)
+        body = self._capped(lines)
+        if preview is not None:
+            body = f"{body}\n{self._preview_line(preview)}"
+        return self.tr("Earlier today"), body
 
     def _what(self, reminder: Reminder) -> str:
         if reminder.kind is Kind.DUE_NOW:

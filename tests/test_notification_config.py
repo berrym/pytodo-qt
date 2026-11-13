@@ -32,6 +32,8 @@ class TestDefaults:
         assert n.enabled is True
         assert n.summary_enabled is True
         assert n.summary_time == time(9, 0)
+        assert n.preview_enabled is False
+        assert n.preview_time == time(20, 0)
         assert n.lead_enabled is True
         assert n.lead_minutes == 15
         assert n.due_now == "deadlines"
@@ -57,6 +59,8 @@ class TestRoundTrip:
         enabled=False,
         summary_enabled=False,
         summary_time=time(7, 45),
+        preview_enabled=True,
+        preview_time=time(19, 15),
         lead_enabled=False,
         lead_minutes=30,
         due_now="all",
@@ -78,6 +82,7 @@ class TestRoundTrip:
         config.notifications = self.CHANGED
         section = saved_section(config)
         assert section["summary_time"] == "07:45"
+        assert section["preview_time"] == "19:15"
         assert section["quiet_start"] == "23:30"
         assert section["quiet_end"] == "06:15"
 
@@ -86,6 +91,8 @@ class TestRoundTrip:
             "enabled",
             "summary_enabled",
             "summary_time",
+            "preview_enabled",
+            "preview_time",
             "lead_enabled",
             "lead_minutes",
             "due_now",
@@ -218,6 +225,8 @@ class TestSettingsFromConfig:
             enabled=False,
             summary_enabled=False,
             summary_time=time(7, 45),
+            preview_enabled=True,
+            preview_time=time(19, 15),
             lead_enabled=False,
             lead_minutes=30,
             due_now=DueNowMode.ALL,
@@ -253,3 +262,21 @@ class TestSettingsFromConfig:
         settings = settings_from_config(config)
         assert settings.summary_time == time(6, 0)
         assert settings.summary_enabled is False
+
+
+class TestPreviewKeys:
+    def test_read_from_a_section(self):
+        n = load('preview_enabled = true\npreview_time = "18:30"')
+        assert n.preview_enabled is True
+        assert n.preview_time == time(18, 30)
+
+    def test_a_section_without_them_leaves_the_preview_off(self):
+        n = load("enabled = true\ncheck_hour = 6")
+        assert n.preview_enabled is False
+        assert n.preview_time == time(20, 0)
+
+    def test_unreadable_time_falls_back_to_the_default(self):
+        assert load('preview_time = "late"').preview_time == time(20, 0)
+
+    def test_flag_that_is_not_true_or_false_falls_back(self):
+        assert load('preview_enabled = "yes"').preview_enabled is False

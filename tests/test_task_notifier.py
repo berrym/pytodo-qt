@@ -18,6 +18,7 @@ from pytodo_qt.core.notification_policy import (
     ComingUp,
     Kind,
     PolicySettings,
+    Preview,
     Reminder,
     Summary,
     TimedItem,
@@ -512,3 +513,114 @@ class TestAdvanceReminderDelivery:
         )
         harness.tick(at(9))
         assert harness.tick(at(9, 0, DAY + timedelta(days=1))) == []
+
+
+TOMORROW = DAY + timedelta(days=1)
+
+
+class TestPreviewText:
+    def test_count_and_first_item(self, harness):
+        preview = Preview(DAY, 3, timed("Dentist", at(9, 0, TOMORROW)))
+        assert harness.notifier.format_preview(preview) == (
+            "Tomorrow",
+            "3 due · First: Dentist at 09:00",
+        )
+
+    def test_nothing_timed(self, harness):
+        assert harness.notifier.format_preview(Preview(DAY, 2, None)) == (
+            "Tomorrow",
+            "2 due tomorrow",
+        )
+
+    def test_one_item(self, harness):
+        assert harness.notifier.format_preview(Preview(DAY, 1, None)) == (
+            "Tomorrow",
+            "1 due tomorrow",
+        )
+
+    def test_time_follows_the_time_format(self, harness):
+        harness.time_format = "12h"
+        preview = Preview(DAY, 1, timed("Dentist", at(14, 30, TOMORROW)))
+        assert harness.notifier.format_preview(preview)[1] == "1 due · First: Dentist at 2:30 PM"
+
+    def test_meeting_url_is_dropped_from_the_first_item(self, harness):
+        first = timed("Sync https://meet.google.com/abc-defg-hij", at(10, 0, TOMORROW))
+        _, body = harness.notifier.format_preview(Preview(DAY, 1, first))
+        assert body == "1 due · First: Sync at 10:00"
+
+    def test_as_the_last_line_of_the_summary(self, harness):
+        summary = Summary(DAY, 3, 2, None, ())
+        preview = Preview(DAY, 2, timed("Dentist", at(9, 0, TOMORROW)))
+        assert harness.notifier.format_summary(summary, preview) == (
+            "Today",
+            "3 due today · 2 overdue\nTomorrow: 2 due · First: Dentist at 09:00",
+        )
+
+    def test_as_a_summary_line_with_nothing_timed(self, harness):
+        _, body = harness.notifier.format_summary(
+            Summary(DAY, 1, 0, None, ()), Preview(DAY, 2, None)
+        )
+        assert body.split("\n")[-1] == "Tomorrow: 2 due"
+
+    def test_summary_without_a_preview_is_unchanged(self, harness):
+        assert harness.notifier.format_summary(Summary(DAY, 1, 0, None, ())) == (
+            "Today",
+            "1 due today",
+        )
+
+    def test_as_the_last_line_of_the_missed_report(self, harness):
+        missed = (timed("Early call", at(8)),)
+        assert harness.notifier.format_missed(missed, Preview(DAY, 2, None)) == (
+            "Earlier today",
+            "08:00  Early call\nTomorrow: 2 due",
+        )
+
+    def test_after_the_cap_on_missed_items(self, harness):
+        missed = tuple(timed(f"Task {n}", at(8, n)) for n in range(7))
+        _, body = harness.notifier.format_missed(missed, Preview(DAY, 1, None))
+        assert body.split("\n")[-2:] == ["+2 more", "Tomorrow: 1 due"]
+
+
+class TestPreviewDelivery:
+    def test_delivered_at_the_preview_time_and_recorded(self, harness):
+        harness.settings = PolicySettings(summary_enabled=False, preview_enabled=True)
+        harness.add(make_item("Dentist", due_date=TOMORROW, due_time=time(9)))
+        harness.add(make_item("Groceries", due_date=TOMORROW))
+        assert harness.tick(at(19, 59)) == []
+        assert harness.tick(at(20)) == [("Tomorrow", "2 due · First: Dentist at 09:00")]
+        assert ("", "preview", DAY.isoformat()) in harness.storage.get_fired_notifications()
+
+    def test_delivered_once(self, harness):
+        harness.settings = PolicySettings(summary_enabled=False, preview_enabled=True)
+        harness.add(make_item("Groceries", due_date=TOMORROW))
+        assert len(harness.tick(at(20))) == 1
+        assert harness.tick(at(20, 1)) == []
+
+    def test_nothing_due_tomorrow_delivers_nothing(self, harness):
+        harness.settings = PolicySettings(summary_enabled=False, preview_enabled=True)
+        harness.add(make_item("Today", due_date=DAY))
+        assert harness.tick(at(20)) == []
+
+    def test_with_the_summary_it_is_one_notification(self, harness):
+        harness.settings = PolicySettings(preview_enabled=True)
+        harness.add(make_item("Report", due_date=DAY))
+        harness.add(make_item("Groceries", due_date=TOMORROW))
+        assert harness.tick(at(20, 30)) == [("Today", "1 due today\nTomorrow: 1 due")]
+
+    def test_with_missed_items_it_is_one_notification(self, harness):
+        # The summary was given in the morning; a reminder was then
+        # missed, and the app is next evaluated after the preview time.
+        harness.settings = PolicySettings(preview_enabled=True)
+        harness.add(make_item("Call", due_date=DAY, due_time=time(15)))
+        harness.add(make_item("Groceries", due_date=TOMORROW))
+        harness.tick(at(9))
+        assert harness.tick(at(20, 30)) == [("Earlier today", "15:00  Call\nTomorrow: 1 due")]
+
+    def test_held_during_a_focus_session_then_delivered(self, harness):
+        harness.settings = PolicySettings(summary_enabled=False, preview_enabled=True)
+        harness.add(make_item("Groceries", due_date=TOMORROW))
+        harness.focus_active = True
+        assert harness.tick(at(20)) == []
+        assert ("", "preview", DAY.isoformat()) not in harness.storage.get_fired_notifications()
+        harness.focus_active = False
+        assert harness.tick(at(20, 20)) == [("Tomorrow", "1 due tomorrow")]

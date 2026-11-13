@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from PyQt6.QtCore import Qt, QTime
-from PyQt6.QtWidgets import QApplication, QFormLayout
+from PyQt6.QtWidgets import QApplication, QFormLayout, QScrollArea
 
 from pytodo_qt.core.config import NotificationConfig
 from pytodo_qt.gui.dialogs.settings import SettingsDialog
@@ -206,6 +206,8 @@ class TestNotificationsTab:
         enabled=False,
         summary_enabled=False,
         summary_time=time(7, 45),
+        preview_enabled=True,
+        preview_time=time(19, 15),
         lead_enabled=False,
         lead_minutes=30,
         due_now="all",
@@ -226,6 +228,8 @@ class TestNotificationsTab:
     def test_controls_carry_the_shown_values(self, dialog):
         dialog._show_notification_settings(self.CHANGED)
         assert dialog._notif_summary_time.time() == QTime(7, 45)
+        assert dialog._notif_preview_enabled.isChecked()
+        assert dialog._notif_preview_time.time() == QTime(19, 15)
         assert dialog._notif_lead_minutes.value() == 30
         assert dialog._notif_due_now.currentData() == "all"
         assert dialog._notif_quiet_start.time() == QTime(23, 30)
@@ -254,6 +258,7 @@ class TestNotificationsTab:
 
     def test_time_fields_have_accessible_names(self, dialog):
         assert dialog._notif_summary_time.accessibleName()
+        assert dialog._notif_preview_time.accessibleName()
         assert dialog._notif_quiet_start.accessibleName()
         assert dialog._notif_quiet_end.accessibleName()
         assert dialog._notif_lead_minutes.accessibleName()
@@ -276,6 +281,7 @@ class TestNotificationsTab:
     def test_master_switch_greys_every_group(self, dialog):
         groups = (
             dialog._notif_summary_group,
+            dialog._notif_preview_group,
             dialog._notif_timed_group,
             dialog._notif_quiet_group,
         )
@@ -291,6 +297,43 @@ class TestNotificationsTab:
         assert not dialog._notif_summary_time_label.isEnabled()
         dialog._notif_summary_enabled.setChecked(True)
         assert dialog._notif_summary_time.isEnabled()
+
+    def test_preview_is_off_and_its_time_greyed_by_default(self, dialog):
+        assert not dialog._notif_preview_enabled.isChecked()
+        assert not dialog._notif_preview_time.isEnabled()
+        assert not dialog._notif_preview_time_label.isEnabled()
+        assert dialog._notif_preview_time.time() == QTime(20, 0)
+
+    def test_preview_switch_governs_its_time(self, dialog):
+        dialog._notif_preview_enabled.setChecked(True)
+        assert dialog._notif_preview_time.isEnabled()
+        assert dialog._notif_preview_time_label.isEnabled()
+        dialog._notif_preview_enabled.setChecked(False)
+        assert not dialog._notif_preview_time.isEnabled()
+
+    def test_preview_group_sits_between_the_summary_and_timed_reminders(self, dialog):
+        layout = dialog._notif_summary_group.parentWidget().layout()
+        order = [layout.itemAt(i).widget() for i in range(layout.count())]
+        summary = order.index(dialog._notif_summary_group)
+        assert order[summary + 1] is dialog._notif_preview_group
+        assert order[summary + 2] is dialog._notif_timed_group
+
+    def _notifications_page(self, dialog):
+        names = [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())]
+        return dialog.tabs.widget(names.index("Notifications"))
+
+    def test_tab_scrolls_rather_than_squeezing_its_rows(self, dialog):
+        page = self._notifications_page(dialog)
+        assert isinstance(page, QScrollArea)
+        assert page.widgetResizable()
+        assert page.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        assert page.widget() is dialog._notif_summary_group.parentWidget()
+
+    def test_tab_asks_for_the_full_height_of_its_content(self, dialog):
+        page = self._notifications_page(dialog)
+        assert page.sizeHint().height() >= page.widget().sizeHint().height()
+        # Tall enough that the dialog need not scroll where there is room.
+        assert dialog.sizeHint().height() >= page.widget().sizeHint().height()
 
     def test_lead_switch_greys_the_lead_time_only(self, dialog):
         dialog._notif_lead_enabled.setChecked(False)
@@ -327,6 +370,46 @@ class TestNotificationsTab:
 
     def _quiet_hint_shown(self, dialog) -> bool:
         return dialog._notif_quiet_form.isRowVisible(dialog._notif_quiet_hint)
+
+    def _preview_hint_shown(self, dialog) -> bool:
+        return dialog._notif_preview_form.isRowVisible(dialog._notif_preview_hint)
+
+    def test_no_preview_hint_outside_quiet_hours(self, dialog):
+        dialog._notif_preview_enabled.setChecked(True)
+        assert not self._preview_hint_shown(dialog)
+
+    def test_preview_inside_quiet_hours_says_when_it_is_shown(self, dialog):
+        dialog._notif_preview_enabled.setChecked(True)
+        dialog._notif_preview_time.setTime(QTime(23, 0))
+        assert self._preview_hint_shown(dialog)
+        assert "21:59" in dialog._notif_preview_hint.text()
+
+    def test_preview_hint_follows_the_quiet_start(self, dialog):
+        dialog._notif_preview_enabled.setChecked(True)
+        dialog._notif_preview_time.setTime(QTime(23, 0))
+        dialog._notif_quiet_start.setTime(QTime(22, 30))
+        assert "22:29" in dialog._notif_preview_hint.text()
+
+    def test_preview_hint_follows_the_time_format(self, dialog):
+        dialog._notif_preview_enabled.setChecked(True)
+        dialog._notif_preview_time.setTime(QTime(23, 0))
+        dialog.time_format_combo.setCurrentIndex(dialog.time_format_combo.findData("12h"))
+        assert "9:59 PM" in dialog._notif_preview_hint.text()
+
+    def test_no_preview_hint_while_the_preview_is_off(self, dialog):
+        dialog._notif_preview_time.setTime(QTime(23, 0))
+        assert not self._preview_hint_shown(dialog)
+
+    def test_no_preview_hint_while_quiet_hours_are_off(self, dialog):
+        dialog._notif_preview_enabled.setChecked(True)
+        dialog._notif_preview_time.setTime(QTime(23, 0))
+        dialog._notif_quiet_enabled.setChecked(False)
+        assert not self._preview_hint_shown(dialog)
+
+    def test_preview_time_field_follows_the_time_format(self, dialog):
+        assert dialog._notif_preview_time.displayFormat() == "HH:mm"
+        dialog.time_format_combo.setCurrentIndex(dialog.time_format_combo.findData("12h"))
+        assert dialog._notif_preview_time.displayFormat() == "h:mm AP"
 
     def test_no_hints_with_the_defaults(self, dialog):
         assert not self._summary_hint_shown(dialog)

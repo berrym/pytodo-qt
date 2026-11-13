@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import time
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt, QTime, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, QTime, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSpinBox,
     QTabWidget,
@@ -38,7 +39,11 @@ from ...core.config import (
 )
 from ...core.logger import Logger
 from ...core.models import _format_time
-from ...core.notification_policy import in_quiet_hours, settings_from_config
+from ...core.notification_policy import (
+    effective_preview_time,
+    in_quiet_hours,
+    settings_from_config,
+)
 from ...crypto import get_or_create_identity
 from ..styles.themes import (
     MONO_FONT_FAMILIES,
@@ -52,6 +57,23 @@ if TYPE_CHECKING:
 
 
 logger = Logger(__name__)
+
+
+class _FullHeightScrollArea(QScrollArea):
+    """A scroll area that asks for the full size of what it holds.
+
+    A plain scroll area asks for a small fixed size and scrolls from
+    the start. This one lets the dialog open tall enough to show
+    everything where the screen allows, and scrolls only where it does
+    not, or when the content grows afterwards.
+    """
+
+    def sizeHint(self) -> QSize:  # noqa: N802 — Qt override
+        content = self.widget()
+        if content is None:
+            return super().sizeHint()
+        frame = 2 * self.frameWidth()
+        return content.sizeHint() + QSize(frame, frame)
 
 
 class SettingsDialog(QDialog):
@@ -689,6 +711,25 @@ class SettingsDialog(QDialog):
         self._notif_summary_form.addRow("", self._notif_summary_hint)
         layout.addWidget(self._notif_summary_group)
 
+        # Evening preview
+        self._notif_preview_group = QGroupBox(self.tr("Evening preview"))
+        self._notif_preview_form = QFormLayout(self._notif_preview_group)
+        self._notif_preview_enabled = QCheckBox(self.tr("Show an evening preview of tomorrow"))
+        self._notif_preview_enabled.setToolTip(
+            self.tr(
+                "How many tasks are due the next day, and the first with a time. "
+                "Nothing is shown when nothing is due."
+            )
+        )
+        self._notif_preview_form.addRow(self._notif_preview_enabled)
+        self._notif_preview_time = QTimeEdit()
+        self._notif_preview_time.setAccessibleName(self.tr("Evening preview time"))
+        self._notif_preview_time_label = QLabel(self.tr("Time:"))
+        self._notif_preview_form.addRow(self._notif_preview_time_label, self._notif_preview_time)
+        self._notif_preview_hint = self._make_notification_hint()
+        self._notif_preview_form.addRow("", self._notif_preview_hint)
+        layout.addWidget(self._notif_preview_group)
+
         # Timed reminders
         self._notif_timed_group = QGroupBox(self.tr("Timed reminders"))
         timed_form = QFormLayout(self._notif_timed_group)
@@ -719,7 +760,10 @@ class SettingsDialog(QDialog):
         self._notif_quiet_form = QFormLayout(self._notif_quiet_group)
         self._notif_quiet_enabled = QCheckBox(self.tr("Quiet hours"))
         self._notif_quiet_enabled.setToolTip(
-            self.tr("The daily summary and reports of missed tasks wait until quiet hours end.")
+            self.tr(
+                "The daily summary and reports of missed tasks wait until quiet hours end. "
+                "The evening preview is not shown during them."
+            )
         )
         self._notif_quiet_form.addRow(self._notif_quiet_enabled)
         self._notif_quiet_start = QTimeEdit()
@@ -741,7 +785,7 @@ class SettingsDialog(QDialog):
         )
         self._notif_quiet_form.addRow("", self._notif_quiet_allow_timed)
         self._notif_hold_during_focus = QCheckBox(
-            self.tr("Hold the summary while a focus session runs")
+            self.tr("Hold the summary and preview while a focus session runs")
         )
         self._notif_hold_during_focus.setToolTip(
             self.tr(
@@ -763,18 +807,31 @@ class SettingsDialog(QDialog):
         for toggle in (
             self._notif_enabled,
             self._notif_summary_enabled,
+            self._notif_preview_enabled,
             self._notif_lead_enabled,
             self._notif_quiet_enabled,
         ):
             toggle.toggled.connect(self._update_notification_controls)
         for time_edit in (
             self._notif_summary_time,
+            self._notif_preview_time,
             self._notif_quiet_start,
             self._notif_quiet_end,
         ):
             time_edit.timeChanged.connect(self._update_notification_controls)
         self.time_format_combo.currentIndexChanged.connect(self._update_notification_time_format)
-        return widget
+
+        # The tallest tab, and taller still when its hints show. In a
+        # scroll area it asks for its full height where the screen has
+        # it, and scrolls where it has not; without one its rows are
+        # squeezed into each other.
+        scroll = _FullHeightScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setAccessibleName(self.tr("Notification settings"))
+        scroll.setWidget(widget)
+        return scroll
 
     def _make_notification_hint(self) -> QLabel:
         hint = QLabel()
@@ -793,6 +850,7 @@ class SettingsDialog(QDialog):
         display_format = "HH:mm" if twenty_four_hour else "h:mm AP"
         for time_edit in (
             self._notif_summary_time,
+            self._notif_preview_time,
             self._notif_quiet_start,
             self._notif_quiet_end,
         ):
@@ -804,6 +862,7 @@ class SettingsDialog(QDialog):
         enabled = self._notif_enabled.isChecked()
         for group in (
             self._notif_summary_group,
+            self._notif_preview_group,
             self._notif_timed_group,
             self._notif_quiet_group,
         ):
@@ -811,6 +870,9 @@ class SettingsDialog(QDialog):
         summary_enabled = self._notif_summary_enabled.isChecked()
         self._notif_summary_time.setEnabled(summary_enabled)
         self._notif_summary_time_label.setEnabled(summary_enabled)
+        preview_enabled = self._notif_preview_enabled.isChecked()
+        self._notif_preview_time.setEnabled(preview_enabled)
+        self._notif_preview_time_label.setEnabled(preview_enabled)
         lead_enabled = self._notif_lead_enabled.isChecked()
         self._notif_lead_minutes.setEnabled(lead_enabled)
         self._notif_lead_minutes_label.setEnabled(lead_enabled)
@@ -834,8 +896,9 @@ class SettingsDialog(QDialog):
         )
         self._notif_quiet_form.setRowVisible(self._notif_quiet_hint, quiet_is_empty)
 
+        policy = settings_from_config(self._config_with(settings))
         summary_is_quiet = settings.summary_enabled and in_quiet_hours(
-            settings.summary_time, settings_from_config(self._config_with(settings))
+            settings.summary_time, policy
         )
         self._notif_summary_hint.setText(
             self.tr("Inside quiet hours: delivered at {time}.").format(
@@ -845,6 +908,18 @@ class SettingsDialog(QDialog):
             else ""
         )
         self._notif_summary_form.setRowVisible(self._notif_summary_hint, summary_is_quiet)
+
+        preview_is_quiet = settings.preview_enabled and in_quiet_hours(
+            settings.preview_time, policy
+        )
+        self._notif_preview_hint.setText(
+            self.tr("Inside quiet hours: shown at {time}, before they start.").format(
+                time=_format_time(effective_preview_time(policy), self._notification_time_format())
+            )
+            if preview_is_quiet
+            else ""
+        )
+        self._notif_preview_form.setRowVisible(self._notif_preview_hint, preview_is_quiet)
 
     @staticmethod
     def _config_with(notifications: NotificationConfig) -> AppConfig:
@@ -863,6 +938,8 @@ class SettingsDialog(QDialog):
             enabled=self._notif_enabled.isChecked(),
             summary_enabled=self._notif_summary_enabled.isChecked(),
             summary_time=clock(self._notif_summary_time),
+            preview_enabled=self._notif_preview_enabled.isChecked(),
+            preview_time=clock(self._notif_preview_time),
             lead_enabled=self._notif_lead_enabled.isChecked(),
             lead_minutes=self._notif_lead_minutes.value(),
             due_now=self._notif_due_now.currentData() or "deadlines",
@@ -882,6 +959,8 @@ class SettingsDialog(QDialog):
         self._notif_enabled.setChecked(notifications.enabled)
         self._notif_summary_enabled.setChecked(notifications.summary_enabled)
         self._notif_summary_time.setTime(qtime(notifications.summary_time))
+        self._notif_preview_enabled.setChecked(notifications.preview_enabled)
+        self._notif_preview_time.setTime(qtime(notifications.preview_time))
         self._notif_lead_enabled.setChecked(notifications.lead_enabled)
         self._notif_lead_minutes.setValue(notifications.lead_minutes)
         due_now_index = self._notif_due_now.findData(notifications.due_now)

@@ -24,7 +24,14 @@ scratch file now; the last one changes on Apply or OK.
 
 What to check on the Notifications tab:
 
-- Four groups: General, Daily summary, Timed reminders, Quiet time.
+- Five groups: General, Daily summary, Evening preview, Timed
+  reminders, Quiet time.
+- "Show an evening preview of tomorrow" is unticked and its time field
+  (20:00) greyed. Ticking it makes the field live.
+- With the preview ticked and its time set to 23:00, a hint says it is
+  shown at 21:59, before quiet hours start. Changing the quiet hours
+  start changes the time in the hint; unticking "Quiet hours" removes
+  the hint.
 - With the default seed the summary time reads 06:00 (from
   ``check_hour = 6``) and a hint says it is delivered at 07:00.
 - Unticking "Enable task notifications" greys the three groups below it.
@@ -35,6 +42,8 @@ What to check on the Notifications tab:
 - The time fields follow Appearance → Time format, live.
 - The time fields look like the spin boxes beside them, in the light
   and the dark theme (Appearance → Theme).
+- After Apply, the "now" pane includes ``preview_enabled`` and
+  ``preview_time``.
 - After Apply, the "now" pane holds only the current keys:
   no ``check_hour``, ``notify_overdue``, ``notify_due_today`` or
   ``upcoming_days``.

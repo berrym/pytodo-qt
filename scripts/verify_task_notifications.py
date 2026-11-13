@@ -2,7 +2,8 @@
 
 The left column shows every shape of task notification — lead reminders,
 due-now alerts, several reminders merged into one, the daily summary,
-and missed items — without waiting for real due times. Each button
+missed items, and the evening preview — without waiting for real due
+times. Each button
 builds a sample result of the notification policy, formats it with the
 same ``TaskNotifier`` the application uses, and delivers it through the
 platform's notification channel: the in-app overlay on macOS, the
@@ -10,9 +11,9 @@ desktop's native notifications elsewhere.
 
 The right column shows *when* notifications are given. It runs the real
 notifier and policy against a scratch database and a handful of sample
-tasks, with a clock that is stepped by hand, so quiet hours and the
-focus-session hold can be watched without waiting for the night or for
-a session to end. Nothing in it touches the real database or settings.
+tasks, with a clock that is stepped by hand, so quiet hours, the
+focus-session hold and the evening preview can be watched without
+waiting for the night or for a session to end. Nothing in it touches the real database or settings.
 
 This is **not** part of the pytest suite and **not** CI-gated — it
 requires a human watching the screen.
@@ -67,6 +68,7 @@ from pytodo_qt.core.notification_policy import (  # noqa: E402
     Evaluation,
     Kind,
     PolicySettings,
+    Preview,
     Reminder,
     Summary,
     TimedItem,
@@ -120,6 +122,22 @@ reminders</i> ticked it is held instead.</li>
 day reads "Book dentist tomorrow, File tax return in 2 days", the day after
 has no such line (the dentist is due, the tax return was mentioned once), and
 neither has the last day.</li>
+<li><b>Evening preview.</b> Tick <i>Evening preview</i>. Sleep until 19:59:
+the day's summary appears. Press <i>+1 min</i>: at 20:00 a notification titled
+"Tomorrow" reads "1 due · First: Take medication at 06:30". Press <i>+10
+min</i>: it is not repeated.</li>
+<li><b>Preview and summary together.</b> Tick <i>Evening preview</i>. Sleep
+until 20:30: one notification, the "Today" summary with "Tomorrow: 1 due ·
+First: Take medication at 06:30" as its last line.</li>
+<li><b>Preview set inside quiet hours.</b> Tick <i>Evening preview</i> and set
+its time to 23:00. Sleep until 21:58: only the summary. Press <i>+1 min</i>:
+the preview appears at 21:59, the minute before quiet hours start. With
+<i>Start over</i> and the same settings, sleep until 22:30 instead: the
+preview is held, and sleeping on until 07:00 does not bring it back.</li>
+<li><b>Preview and a focus session.</b> Tick <i>Evening preview</i> and
+<i>Focus session running</i>. Sleep until 20:00: the log shows the summary and
+the preview held. Untick the session, press <i>+1 min</i>: one notification
+with both.</li>
 </ol>"""
 
 
@@ -148,6 +166,9 @@ class HoldSimulation(QGroupBox):
         self._clock_label.setTextFormat(Qt.TextFormat.RichText)
         self._focus_box = QCheckBox("Focus session running")
         self._silence_box = QCheckBox("Silence timed reminders in quiet hours (off in the app)")
+        self._preview_box = QCheckBox("Evening preview (off in the app) at")
+        self._preview_time = QTimeEdit(QTime(20, 0))
+        self._preview_time.setDisplayFormat("HH:mm")
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
         self._log.setMinimumHeight(180)
@@ -170,6 +191,11 @@ class HoldSimulation(QGroupBox):
         layout.addWidget(self._clock_label)
         layout.addWidget(self._focus_box)
         layout.addWidget(self._silence_box)
+        preview_row = QHBoxLayout()
+        preview_row.addWidget(self._preview_box)
+        preview_row.addWidget(self._preview_time)
+        preview_row.addStretch(1)
+        layout.addLayout(preview_row)
 
         passing = QHBoxLayout()
         passing.addWidget(QLabel("Let time pass:"))
@@ -199,7 +225,7 @@ class HoldSimulation(QGroupBox):
             "(remind every day, from 3 days ahead). In 3 days: File tax return "
             "(remind once, 2 days ahead).<br>"
             "<b>Settings</b> — summary 09:00, reminders 15 min ahead, quiet hours "
-            "22:00–07:00."
+            "22:00–07:00, evening preview off unless ticked above."
         )
         tasks.setWordWrap(True)
         tasks.setTextFormat(Qt.TextFormat.RichText)
@@ -239,7 +265,12 @@ class HoldSimulation(QGroupBox):
         return TodoList(name="Sample", items={item.id: item for item in items})
 
     def _settings(self) -> PolicySettings:
-        return PolicySettings(quiet_allow_timed=not self._silence_box.isChecked())
+        preview_time = self._preview_time.time()
+        return PolicySettings(
+            quiet_allow_timed=not self._silence_box.isChecked(),
+            preview_enabled=self._preview_box.isChecked(),
+            preview_time=time(preview_time.hour(), preview_time.minute()),
+        )
 
     def _on_delivered(self, title: str, body: str) -> None:
         self._shown.append((title, body))
@@ -251,6 +282,8 @@ class HoldSimulation(QGroupBox):
         self._last_held = ""
         self._focus_box.setChecked(False)
         self._silence_box.setChecked(False)
+        self._preview_box.setChecked(False)
+        self._preview_time.setTime(QTime(20, 0))
         self._log.clear()
         self._update_clock_label()
 
@@ -284,6 +317,8 @@ class HoldSimulation(QGroupBox):
 
     def _describe_held(self, result: Evaluation) -> str:
         parts = ["daily summary"] if result.held_summary else []
+        if result.held_preview:
+            parts.append("evening preview")
         parts.extend(item.title for item in result.held_items)
         if not parts:
             return ""
@@ -357,6 +392,7 @@ class Harness(QMainWindow):
     def _scenarios(self) -> list[tuple[str, Callable[[], None]]]:
         n = self._notifier
         reminders = n.format_reminders
+        tomorrow_first = _timed("Dentist", datetime.combine(TODAY + timedelta(days=1), time(9, 0)))
         soon = _at(15)
         return [
             (
@@ -505,6 +541,31 @@ class Harness(QMainWindow):
                             _timed("Early call", _at(8), is_event=True),
                             _timed("Submit expense report", _at(10)),
                         )
+                    )
+                ),
+            ),
+            (
+                "Evening preview",
+                lambda: self._show(*n.format_preview(Preview(TODAY, 3, tomorrow_first))),
+            ),
+            (
+                "Evening preview — nothing with a time",
+                lambda: self._show(*n.format_preview(Preview(TODAY, 2, None))),
+            ),
+            (
+                "Summary with the preview as its last line",
+                lambda: self._show(
+                    *n.format_summary(
+                        Summary(TODAY, 2, 1, None, ()), Preview(TODAY, 3, tomorrow_first)
+                    )
+                ),
+            ),
+            (
+                "Missed items with the preview as the last line",
+                lambda: self._show(
+                    *n.format_missed(
+                        (_timed("Submit expense report", _at(10)),),
+                        Preview(TODAY, 3, tomorrow_first),
                     )
                 ),
             ),

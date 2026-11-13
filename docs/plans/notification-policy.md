@@ -121,6 +121,22 @@ nothing when a timed commitment is actually approaching.
   already being attended is redundant.
 - Block items produce no due-now alert. A block is a window, not a cutoff.
 
+### Evening preview
+
+- Off by default. When on, it is given once per logical day at
+  `preview_time`: how many items are due the next logical day, and the
+  earliest of them with a time, block items ordered by their block start.
+- Skipped when nothing is due the next day.
+- When the app is not running at the preview time, it is given on the first
+  evaluation after that time on the same logical day. A day that ends
+  without one is not made up the next morning.
+- It carries no overdue count and no advance-reminder lines; those belong to
+  the morning summary.
+- On its own it is titled "Tomorrow": `3 due · First: Dentist at 09:00`, or
+  `3 due tomorrow` when none has a time. Due in the same evaluation as the
+  daily summary or the catch-up banner, it is the last line of that banner
+  instead: `Tomorrow: 3 due · First: Dentist at 09:00`.
+
 ### Advance deadline reminders
 
 `remind_before_days` and `reminder_cadence` become functional. The window of
@@ -210,12 +226,17 @@ record. The same rules bound the result to at most one banner.
   window ends: an alert no more than ten minutes old is delivered, an older
   one from the same logical day joins the missed set, and one from an earlier
   day is only counted as overdue.
-- **A summary or preview time inside quiet hours.** It is treated as the end
-  of quiet hours on the same logical day: with the default window, a summary
-  set for 06:00 is delivered at 07:00, and one set for 23:00 is delivered at
-  07:00 that morning. Waiting for the window to end instead would lose the
-  23:00 summary altogether, because its logical day ends before the window
-  does.
+- **A summary time inside quiet hours.** It is treated as the end of quiet
+  hours on the same logical day: with the default window, a summary set for
+  06:00 is delivered at 07:00, and one set for 23:00 is delivered at 07:00
+  that morning. Waiting for the window to end instead would lose the 23:00
+  summary altogether, because its logical day ends before the window does.
+- **A preview time inside quiet hours.** It is treated as one minute before
+  quiet hours start: with the default window, a preview set for 23:00 is
+  given at 21:59. The end of quiet hours is the morning, where a look at
+  tomorrow would arrive most of a day early. A preview not given before
+  quiet hours begin is held through them, and by their end its logical day
+  is normally over, so it is not given at all.
 - **Focus sessions.** While a focus timer is in its work phase or the
   stopwatch is running, the daily summary, evening preview, and catch-up
   banner are held until the session ends. Lead reminders and due-now alerts
@@ -352,6 +373,8 @@ atomic writes alongside the data it describes and for a single migration path.
 | `enabled` | `true` | Master switch |
 | `summary_enabled` | `true` | Daily summary |
 | `summary_time` | `"09:00"` | Daily summary time |
+| `preview_enabled` | `false` | Evening preview |
+| `preview_time` | `"20:00"` | Evening preview time |
 | `lead_enabled` | `true` | Lead reminders |
 | `lead_minutes` | `15` | Minutes before the due time |
 | `due_now` | `"deadlines"` | `deadlines`, `all`, or `off` |
@@ -360,9 +383,6 @@ atomic writes alongside the data it describes and for a single migration path.
 | `quiet_end` | `"07:00"` | End of quiet hours |
 | `quiet_allow_timed` | `true` | Deliver lead reminders and due-now alerts inside quiet hours |
 | `hold_during_focus` | `true` | Hold summary, preview, and catch-up during focus sessions |
-
-`preview_enabled` (`false`) and `preview_time` (`"20:00"`) are added together
-with the evening preview, not before it.
 
 Values:
 
@@ -390,16 +410,15 @@ this section returns to its default. This ends when those builds are retired
 and is to be stated in the release notes.
 
 The Notifications tab in Preferences is regrouped to match: General, Daily
-summary, Timed reminders, Quiet time. An Evening preview group is added with
-the evening preview.
+summary, Evening preview, Timed reminders, Quiet time.
 
 - Unticking the master switch disables the other groups; unticking a group's
   own switch disables what it governs. The focus-session hold does not depend
   on the quiet-hours switch.
 - Time fields have minute precision and follow the 12- or 24-hour setting.
 - A summary time inside quiet hours shows when the summary is delivered
-  instead. Equal quiet-hours start and end times show that no quiet hours
-  result.
+  instead, and a preview time inside them shows when the preview is. Equal
+  quiet-hours start and end times show that no quiet hours result.
 - A change applies from the next once-a-minute evaluation.
 
 ## Testing
@@ -438,6 +457,10 @@ The policy module is covered by fixed-clock unit tests, including:
 - Minutely recurrence: no lead reminder; due-now per occurrence.
 - A recurring timed item still produces its due-now alert in the tick where
   it is auto-advanced.
+- Evening preview: off by default, the count and first timed item of the
+  next logical day, once per day, a late start, a day that ended without
+  one, a preview time inside quiet hours, the focus hold, and one banner
+  when it is due with the summary or the missed items.
 - Advance reminders: the window's first and last day, `once` given once and
   made up by a later summary when the first day's was not delivered, a held
   summary not using it up, `daily_until_due` on every day of the window,

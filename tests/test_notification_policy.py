@@ -21,8 +21,10 @@ from pytodo_qt.core.notification_policy import (
     FiredKey,
     Kind,
     PolicySettings,
+    Preview,
     advance_reminder_for,
     anchor_for,
+    effective_preview_time,
     evaluate,
     in_quiet_hours,
     is_event,
@@ -1342,3 +1344,253 @@ class TestEvaluationShape:
             ("Event", Kind.LEAD),
         ]
         assert summaries == 1
+
+
+# ---------------------------------------------------------------------------
+# Evening preview
+# ---------------------------------------------------------------------------
+
+TOMORROW = DAY + timedelta(days=1)
+PREVIEW = PolicySettings(summary_enabled=False, preview_enabled=True)
+PREVIEW_KEY = FiredKey("", "preview", DAY.isoformat())
+
+
+class TestEveningPreview:
+    def test_off_by_default(self):
+        result = run([make_item(due_date=TOMORROW)], at(20))
+        assert result.preview is None
+        assert PREVIEW_KEY not in result.fired
+
+    def test_given_at_the_preview_time(self):
+        result = run([make_item(due_date=TOMORROW)], at(20), settings=PREVIEW)
+        assert result.preview == Preview(DAY, 1, None)
+        assert PREVIEW_KEY in result.fired
+        assert result.has_notifications
+
+    def test_not_before_the_preview_time(self):
+        result = run([make_item(due_date=TOMORROW)], at(19, 59), settings=PREVIEW)
+        assert result.preview is None
+        assert PREVIEW_KEY not in result.fired
+
+    def test_once_per_day(self):
+        session = Session([make_item(due_date=TOMORROW)], PREVIEW)
+        assert session.tick(at(20)).preview is not None
+        assert session.tick(at(20, 1)).preview is None
+        assert session.tick(at(21, 30)).preview is None
+
+    def test_given_again_the_next_day(self):
+        item = make_item(due_date=DAY + timedelta(days=2))
+        session = Session([make_item(due_date=TOMORROW), item], PREVIEW)
+        assert session.tick(at(20)).preview is not None
+        later = session.tick(at(20, 0, TOMORROW))
+        assert later.preview == Preview(TOMORROW, 1, None)
+
+    def test_counts_only_the_next_day(self):
+        items = [
+            make_item("Today", due_date=DAY),
+            make_item("Overdue", due_date=DAY - timedelta(days=1)),
+            make_item("Tomorrow A", due_date=TOMORROW),
+            make_item("Tomorrow B", due_date=TOMORROW),
+            make_item("Later", due_date=DAY + timedelta(days=2)),
+            make_item("Undated"),
+        ]
+        preview = run(items, at(20), settings=PREVIEW).preview
+        assert preview is not None
+        assert preview.due_tomorrow == 2
+
+    def test_nothing_due_tomorrow_gives_no_preview(self):
+        result = run([make_item(due_date=DAY)], at(20), settings=PREVIEW)
+        assert result.preview is None
+        assert not result.has_notifications
+        # The day's decision is recorded all the same.
+        assert PREVIEW_KEY in result.fired
+
+    def test_first_is_the_earliest_timed_item(self):
+        items = [
+            make_item("Lunch", due_date=TOMORROW, due_time=time(12, 30)),
+            make_item("Dentist", due_date=TOMORROW, due_time=time(9)),
+            make_item("Untimed", due_date=TOMORROW),
+        ]
+        preview = run(items, at(20), settings=PREVIEW).preview
+        assert preview is not None
+        assert preview.due_tomorrow == 3
+        assert preview.first is not None
+        assert (preview.first.title, preview.first.at) == ("Dentist", at(9, 0, TOMORROW))
+
+    def test_a_block_item_counts_from_its_block_start(self):
+        items = [
+            make_item("Laundry", due_date=TOMORROW, due_time_block="morning"),
+            make_item("Call", due_date=TOMORROW, due_time=time(15)),
+        ]
+        preview = run(items, at(20), settings=PREVIEW).preview
+        assert preview is not None and preview.first is not None
+        assert preview.first.title == "Laundry"
+        assert preview.first.block == "morning"
+
+    def test_a_timed_item_today_is_not_the_first(self):
+        items = [
+            make_item("Tonight", due_date=DAY, due_time=time(23)),
+            make_item("Dentist", due_date=TOMORROW, due_time=time(9)),
+        ]
+        preview = run(items, at(20), settings=PREVIEW).preview
+        assert preview is not None and preview.first is not None
+        assert preview.first.title == "Dentist"
+
+    def test_completed_items_are_left_out(self):
+        items = [
+            make_item("Done", due_date=TOMORROW, complete=True),
+            make_item("Open", due_date=TOMORROW),
+        ]
+        preview = run(items, at(20), settings=PREVIEW).preview
+        assert preview is not None
+        assert preview.due_tomorrow == 1
+
+    def test_private_lists_are_left_out(self):
+        private = make_list(make_item(due_date=TOMORROW), private=True)
+        result = run([private], at(20), settings=PREVIEW)
+        assert result.preview is None
+
+    def test_master_switch_silences_it(self):
+        settings = PolicySettings(enabled=False, preview_enabled=True)
+        result = run([make_item(due_date=TOMORROW)], at(20), settings=settings)
+        assert result.preview is None
+        assert result.fired == ()
+
+    def test_late_start_gives_it_on_the_first_evaluation_after(self):
+        result = run([make_item(due_date=TOMORROW)], at(21, 30), settings=PREVIEW)
+        assert result.preview is not None
+
+    def test_a_day_that_ended_without_one_is_not_made_up(self):
+        # First evaluation is the next morning: yesterday's preview is
+        # gone, and today's is not due until the evening.
+        item = make_item(due_date=TOMORROW + timedelta(days=1))
+        result = run([item], at(8, 0, TOMORROW), settings=PREVIEW)
+        assert result.preview is None
+        assert result.fired == ()
+
+    def test_custom_preview_time(self):
+        settings = PolicySettings(
+            summary_enabled=False, preview_enabled=True, preview_time=time(18, 30)
+        )
+        item = make_item(due_date=TOMORROW)
+        assert run([item], at(18, 29), settings=settings).preview is None
+        assert run([item], at(18, 30), settings=settings).preview is not None
+
+    def test_with_the_summary_in_one_evaluation(self):
+        settings = PolicySettings(preview_enabled=True)
+        items = [make_item("Today", due_date=DAY), make_item("Tomorrow", due_date=TOMORROW)]
+        result = run(items, at(20, 30), settings=settings)
+        assert result.summary is not None
+        assert result.preview is not None
+        assert {key.kind for key in result.fired} == {"summary", "preview"}
+
+
+class TestEveningPreviewAndDayStart:
+    SETTINGS = PolicySettings(
+        summary_enabled=False, preview_enabled=True, day_start_hour=4, quiet_hours_enabled=False
+    )
+
+    def test_after_midnight_is_still_the_same_day(self):
+        # 01:00 on the 13th belongs to the 12th; "tomorrow" is the 13th.
+        item = make_item(due_date=TOMORROW)
+        result = run([item], at(1, 0, TOMORROW), settings=self.SETTINGS)
+        assert result.preview == Preview(DAY, 1, None)
+
+    def test_preview_time_before_the_day_start_falls_after_midnight(self):
+        settings = PolicySettings(
+            summary_enabled=False,
+            preview_enabled=True,
+            preview_time=time(1, 0),
+            day_start_hour=4,
+            quiet_hours_enabled=False,
+        )
+        item = make_item(due_date=TOMORROW)
+        assert run([item], at(23, 0), settings=settings).preview is None
+        assert run([item], at(1, 0, TOMORROW), settings=settings).preview is not None
+
+
+class TestEffectivePreviewTime:
+    def test_outside_quiet_hours_it_is_the_set_time(self):
+        assert effective_preview_time(PREVIEW) == time(20, 0)
+
+    @pytest.mark.parametrize("inside", [time(22, 0), time(23, 0), time(2, 0), time(6, 59)])
+    def test_inside_quiet_hours_it_is_the_minute_before_they_start(self, inside):
+        settings = PolicySettings(preview_enabled=True, preview_time=inside)
+        assert effective_preview_time(settings) == time(21, 59)
+
+    def test_the_end_of_quiet_hours_is_outside_them(self):
+        settings = PolicySettings(preview_enabled=True, preview_time=time(7, 0))
+        assert effective_preview_time(settings) == time(7, 0)
+
+    def test_quiet_hours_starting_at_midnight(self):
+        settings = PolicySettings(
+            preview_enabled=True,
+            preview_time=time(1, 0),
+            quiet_start=time(0, 0),
+            quiet_end=time(7, 0),
+        )
+        assert effective_preview_time(settings) == time(23, 59)
+
+    def test_quiet_hours_switched_off(self):
+        settings = PolicySettings(
+            preview_enabled=True, preview_time=time(23, 0), quiet_hours_enabled=False
+        )
+        assert effective_preview_time(settings) == time(23, 0)
+
+
+class TestEveningPreviewAndQuietHours:
+    LATE = PolicySettings(summary_enabled=False, preview_enabled=True, preview_time=time(23, 0))
+
+    def test_set_inside_quiet_hours_it_is_given_before_they_start(self):
+        item = make_item(due_date=TOMORROW)
+        assert run([item], at(21, 58), settings=self.LATE).preview is None
+        assert run([item], at(21, 59), settings=self.LATE).preview is not None
+
+    def test_not_given_once_quiet_hours_have_begun(self):
+        result = run([make_item(due_date=TOMORROW)], at(22, 0), settings=self.LATE)
+        assert result.preview is None
+        assert result.held_preview
+        assert PREVIEW_KEY not in result.fired
+
+    def test_missed_before_quiet_hours_it_is_not_given_in_the_morning(self):
+        session = Session([make_item(due_date=TOMORROW + timedelta(days=1))], self.LATE)
+        assert session.tick(at(22, 30)).preview is None
+        morning = session.tick(at(7, 0, TOMORROW))
+        assert morning.preview is None
+        assert not morning.held_preview
+
+    def test_first_evaluation_inside_quiet_hours_holds_a_normal_preview(self):
+        result = run([make_item(due_date=TOMORROW)], at(22, 15), settings=PREVIEW)
+        assert result.preview is None
+        assert result.held_preview
+
+    def test_nothing_due_tomorrow_is_not_reported_as_held(self):
+        result = run([make_item(due_date=DAY)], at(22, 15), settings=PREVIEW)
+        assert not result.held_preview
+
+
+class TestEveningPreviewAndFocus:
+    def test_held_while_a_session_runs(self):
+        result = run([make_item(due_date=TOMORROW)], at(20), settings=PREVIEW, focus_active=True)
+        assert result.preview is None
+        assert result.held_preview
+        assert PREVIEW_KEY not in result.fired
+
+    def test_given_when_the_session_ends(self):
+        session = Session([make_item(due_date=TOMORROW)], PREVIEW)
+        assert session.tick(at(20), focus_active=True).preview is None
+        assert session.tick(at(20, 25), focus_active=True).preview is None
+        assert session.tick(at(20, 26)).preview is not None
+
+    def test_not_held_when_holding_is_switched_off(self):
+        settings = PolicySettings(
+            summary_enabled=False, preview_enabled=True, hold_during_focus=False
+        )
+        result = run([make_item(due_date=TOMORROW)], at(20), settings=settings, focus_active=True)
+        assert result.preview is not None
+
+    def test_a_session_running_into_quiet_hours_loses_it(self):
+        session = Session([make_item(due_date=TOMORROW)], PREVIEW)
+        assert session.tick(at(20), focus_active=True).preview is None
+        assert session.tick(at(22, 5)).preview is None
+        assert session.tick(at(7, 0, TOMORROW)).preview is None
