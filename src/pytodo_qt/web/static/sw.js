@@ -33,7 +33,7 @@ if (self.location.protocol === "http:") {
   return;
 }
 
-var CACHE_VERSION = "v25";
+var CACHE_VERSION = "v26";
 var CACHE_NAME = "pytodo-" + CACHE_VERSION;
 var STATIC_ASSETS = [
   "/",

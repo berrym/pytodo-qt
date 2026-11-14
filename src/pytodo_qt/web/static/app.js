@@ -2094,7 +2094,8 @@
     var startX = 0,
       startY = 0,
       currentX = 0;
-    var swiping = false,
+    var pressed = false,
+      swiping = false,
       locked = false;
     var threshold = 120; // Require deliberate swipe (was 80)
 
@@ -2109,7 +2110,11 @@
     el.appendChild(rightAction);
 
     el.addEventListener("pointerdown", function (e) {
+      // Swiping is a touch and pen gesture. A mouse has the checkbox and
+      // the delete button on the row.
+      if (e.pointerType === "mouse") return;
       if (e.target.closest(".item-checkbox, .item-actions, button")) return;
+      pressed = true;
       startX = e.clientX;
       startY = e.clientY;
       currentX = 0;
@@ -2119,7 +2124,8 @@
     });
 
     el.addEventListener("pointermove", function (e) {
-      if (locked) return;
+      // A pointer that hovers moves over the task without being pressed.
+      if (!pressed || locked) return;
       var dx = e.clientX - startX;
       var dy = e.clientY - startY;
 
@@ -2144,6 +2150,7 @@
     });
 
     el.addEventListener("pointerup", function () {
+      pressed = false;
       if (!swiping) return;
       swiping = false;
       el.style.transition = "transform 0.2s ease-out";
@@ -2161,6 +2168,7 @@
     });
 
     el.addEventListener("pointercancel", function () {
+      pressed = false;
       swiping = false;
       el.style.transition = "transform 0.2s ease-out";
       el.style.transform = "";
