@@ -7,6 +7,7 @@ so it can safely read the in-memory Database without locking.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import ssl
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -30,6 +31,46 @@ _STATIC_DIR = Path(__file__).parent / "static"
 # missing-asset failure surfaces as a clear startup error rather than as
 # a stub HTML response or 404 mid-session.
 _REQUIRED_STATIC_FILES = ("index.html", "sw.js")
+
+
+# Stands in sw.js for the version of the page's files; replaced when the
+# worker script is served.
+_ASSET_VERSION_PLACEHOLDER = "__ASSET_VERSION__"
+
+# The last version computed, with the names, sizes and modification times
+# of the files it was computed from.
+_asset_version_memo: tuple[tuple[tuple[str, int, int], ...], str] | None = None
+
+
+def static_asset_version() -> str:
+    """Return a short hash of the files in the static directory.
+
+    The service worker stores the page's files under this version, so it
+    has to change whenever any of them does. It is computed from their
+    contents and recomputed only when a file's size or modification time
+    has changed, which lets an edit made while the server runs take
+    effect without a restart.
+    """
+    global _asset_version_memo
+    files = sorted(
+        path for path in _STATIC_DIR.rglob("*") if path.is_file() and not path.name.startswith(".")
+    )
+    stamp = tuple(
+        (path.relative_to(_STATIC_DIR).as_posix(), stat.st_size, stat.st_mtime_ns)
+        for path, stat in ((path, path.stat()) for path in files)
+    )
+    if _asset_version_memo is not None and _asset_version_memo[0] == stamp:
+        return _asset_version_memo[1]
+
+    digest = hashlib.sha256()
+    for path in files:
+        digest.update(path.relative_to(_STATIC_DIR).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    version = digest.hexdigest()[:16]
+    _asset_version_memo = (stamp, version)
+    return version
 
 
 def _verify_static_assets() -> None:
@@ -561,8 +602,11 @@ class WebServer:
         return web.FileResponse(_STATIC_DIR / "index.html")
 
     async def _serve_sw(self, request: web.Request) -> web.StreamResponse:
-        """Serve service worker from root scope."""
-        return web.FileResponse(
-            _STATIC_DIR / "sw.js",
+        """Serve the service worker from the root scope, carrying the
+        version of the page's files it is to store."""
+        script = (_STATIC_DIR / "sw.js").read_text(encoding="utf-8")
+        return web.Response(
+            text=script.replace(_ASSET_VERSION_PLACEHOLDER, static_asset_version()),
+            content_type="application/javascript",
             headers={"Service-Worker-Allowed": "/"},
         )

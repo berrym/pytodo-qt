@@ -11,13 +11,17 @@ Covers:
 from __future__ import annotations
 
 import json
+import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from pytodo_qt.core.models import Database
-from pytodo_qt.web.server import WebServer
+from pytodo_qt.web import server as web_server
+from pytodo_qt.web.server import WebServer, static_asset_version
 
 STATIC_DIR = Path(__file__).parent.parent / "src" / "pytodo_qt" / "web" / "static"
 
@@ -49,7 +53,7 @@ class TestStaticFiles:
     def test_sw_has_cache_version(self):
         content = (STATIC_DIR / "sw.js").read_text()
         assert "CACHE_VERSION" in content
-        assert "CACHE_NAME" in content
+        assert "STATIC_CACHE" in content
 
     def test_sw_has_install_handler(self):
         content = (STATIC_DIR / "sw.js").read_text()
@@ -207,6 +211,107 @@ class TestServiceWorkerRoute:
             assert resp.status == 200
             ct = resp.headers.get("Content-Type", "")
             assert "javascript" in ct or "text/" in ct
+
+
+# ===========================================================================
+# Version of the page's files
+# ===========================================================================
+
+
+@pytest.fixture
+def static_copy(tmp_path, monkeypatch):
+    """A copy of the static directory that the server serves from."""
+    copy = tmp_path / "static"
+    shutil.copytree(STATIC_DIR, copy)
+    monkeypatch.setattr(web_server, "_STATIC_DIR", copy)
+    return copy
+
+
+class TestAssetVersion:
+    def test_worker_script_has_one_placeholder(self):
+        content = (STATIC_DIR / "sw.js").read_text()
+        assert content.count("__ASSET_VERSION__") == 1
+
+    def test_version_is_repeatable(self):
+        assert static_asset_version() == static_asset_version()
+        assert re.fullmatch(r"[0-9a-f]{16}", static_asset_version())
+
+    @pytest.mark.parametrize("name", ["app.js", "style.css", "index.html", "sw.js", "icon-192.png"])
+    def test_version_changes_when_a_file_changes(self, static_copy, name):
+        before = static_asset_version()
+        with (static_copy / name).open("ab") as handle:
+            handle.write(b"\n")
+        assert static_asset_version() != before
+
+    def test_version_changes_when_a_file_is_added(self, static_copy):
+        before = static_asset_version()
+        (static_copy / "extra.js").write_text("// new")
+        assert static_asset_version() != before
+
+    def test_version_is_the_same_for_the_same_files(self, static_copy):
+        """The version comes from names and contents, not from where the
+        files are or when they were written."""
+        original = static_asset_version()
+        for path in static_copy.iterdir():
+            path.touch()
+        assert static_asset_version() == original
+
+    def test_hidden_files_do_not_change_the_version(self, static_copy):
+        before = static_asset_version()
+        (static_copy / ".DS_Store").write_bytes(b"x")
+        assert static_asset_version() == before
+
+    @pytest.mark.asyncio
+    async def test_served_worker_carries_the_version(self):
+        client = await _make_client()
+        async with client:
+            resp = await client.get("/sw.js")
+            text = await resp.text()
+            assert "__ASSET_VERSION__" not in text
+            assert f'var CACHE_VERSION = "{static_asset_version()}";' in text
+
+    @pytest.mark.asyncio
+    async def test_served_worker_changes_when_a_file_changes(self, static_copy):
+        client = await _make_client()
+        async with client:
+            before = await (await client.get("/sw.js")).text()
+            with (static_copy / "style.css").open("ab") as handle:
+                handle.write(b"\n")
+            after = await (await client.get("/sw.js")).text()
+            assert after != before
+
+
+class TestPrecachedFiles:
+    def test_every_precached_file_exists(self):
+        """The worker's install fails as a whole when one file is missing."""
+        content = (STATIC_DIR / "sw.js").read_text()
+        block = re.search(r"var STATIC_ASSETS = \[(.*?)\];", content, re.DOTALL)
+        assert block is not None
+        urls = re.findall(r'"([^"]+)"', block.group(1))
+        assert "/" in urls
+        assert "/static/app.js" in urls
+        for url in urls:
+            if url == "/":
+                continue
+            assert url.startswith("/static/"), url
+            assert (STATIC_DIR / url.removeprefix("/static/")).is_file(), url
+
+
+class TestScriptSyntax:
+    @pytest.mark.parametrize("name", ["sw.js", "app.js"])
+    def test_script_parses(self, name):
+        """A script that does not parse is dropped by the browser without
+        a visible error; sw.js went unparsed for months that way."""
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("Node.js is not installed")
+        result = subprocess.run(
+            [node, "--check", str(STATIC_DIR / name)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
 
 
 class TestManifestRoute:
