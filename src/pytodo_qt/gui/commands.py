@@ -8,6 +8,7 @@ sync LWW resolution works correctly after undo/redo.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import date, time
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -1209,20 +1210,33 @@ class WebUpdateItemCommand(QUndoCommand):
     and restores them on undo.
     """
 
+    # Every field _apply_item_fields in the web API can change. A field
+    # left out here is one that undo silently leaves as edited.
     _SNAPSHOT_FIELDS = (
         "reminder",
         "priority",
         "complete",
+        "completed_at",
         "due_date",
         "due_time",
+        "due_time_end",
+        "due_time_block",
+        "event_date",
         "tags",
         "board_column",
         "parent_id",
         "estimated_pomodoros",
+        "estimated_minutes",
+        "work_duration",
+        "break_duration",
+        "long_break_duration",
         "recurrence_type",
         "recurrence_interval",
         "recurrence_end_date",
         "recurrence_end_count",
+        "remind_before_days",
+        "reminder_cadence",
+        "conditions",
     )
 
     def __init__(
@@ -1239,31 +1253,16 @@ class WebUpdateItemCommand(QUndoCommand):
         self._new_fields = new_fields
         self._old_snapshot: dict = {}
 
-    @staticmethod
-    def _snapshot(item: TodoItem) -> dict:
-        return {
-            "reminder": item.reminder,
-            "priority": item.priority,
-            "complete": item.complete,
-            "due_date": item.due_date,
-            "due_time": item.due_time,
-            "tags": list(item.tags),
-            "board_column": item.board_column,
-            "parent_id": item.parent_id,
-            "estimated_pomodoros": item.estimated_pomodoros,
-            "recurrence_type": item.recurrence_type,
-            "recurrence_interval": item.recurrence_interval,
-            "recurrence_end_date": item.recurrence_end_date,
-            "recurrence_end_count": item.recurrence_end_count,
-        }
+    @classmethod
+    def _snapshot(cls, item: TodoItem) -> dict:
+        # Copied, so that a later change to a list on the item does not
+        # reach into the snapshot.
+        return {name: deepcopy(getattr(item, name)) for name in cls._SNAPSHOT_FIELDS}
 
     @staticmethod
     def _restore(item: TodoItem, snapshot: dict) -> None:
-        for key, value in snapshot.items():
-            if key == "tags":
-                item.tags = list(value)
-            else:
-                setattr(item, key, value)
+        for name, value in snapshot.items():
+            setattr(item, name, deepcopy(value))
 
     def redo(self) -> None:
         todo_list = self._window._database.lists.get(self._list_id)

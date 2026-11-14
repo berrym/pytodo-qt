@@ -7,8 +7,11 @@ and handle edge cases like missing items/lists gracefully.
 
 from __future__ import annotations
 
+import inspect
+import re
 import time
 from datetime import date
+from datetime import time as clock_time
 from unittest.mock import MagicMock
 from uuid import uuid4
 
@@ -33,6 +36,7 @@ from pytodo_qt.gui.commands import (
     RenameListCommand,
     ToggleCompleteCommand,
     TogglePrivateCommand,
+    WebUpdateItemCommand,
 )
 
 
@@ -1121,6 +1125,135 @@ class TestEditEstimatedMinutesCommand:
         db, lst, _, _ = make_populated_db()
         window = make_window(db)
         cmd = EditEstimatedMinutesCommand(window, lst.id, uuid4(), 30, 60)
+
+        cmd.redo()  # Should not raise
+        cmd.undo()  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# WebUpdateItemCommand
+# ---------------------------------------------------------------------------
+
+
+class TestWebUpdateItemCommand:
+    """An edit made from the web page is one undo step on the desktop."""
+
+    # A value for every field the web API accepts, each different from
+    # what a new item holds.
+    EVERY_FIELD = {
+        "reminder": "Buy oat milk",
+        "priority": 1,
+        "complete": True,
+        "tags": ["shop", "food"],
+        "due_date": "2026-12-01",
+        "due_time": "09:30:00",
+        "due_time_end": "10:30:00",
+        "due_time_block": "morning",
+        "event_date": "2026-12-05",
+        "board_column": "Doing",
+        "parent_id": str(uuid4()),
+        "estimated_pomodoros": 3,
+        "estimated_minutes": 45,
+        "work_duration": 50,
+        "break_duration": 10,
+        "long_break_duration": 20,
+        "recurrence_type": "weekly",
+        "recurrence_interval": 2,
+        "recurrence_end_date": "2027-01-01",
+        "recurrence_end_count": 6,
+        "remind_before_days": 3,
+        "reminder_cadence": "once",
+        "conditions": [{"type": "if", "expression": "it rains"}],
+    }
+
+    @staticmethod
+    def _state(item: TodoItem) -> dict:
+        state = item.to_dict()
+        del state["updated_at"]
+        return state
+
+    def test_every_field_the_api_changes_is_in_the_snapshot(self):
+        """A field the API can change and the snapshot leaves out is a
+        field undo does not restore."""
+        from pytodo_qt.web.api import _apply_item_fields
+
+        accepted = set(re.findall(r'"(\w+)" in body', inspect.getsource(_apply_item_fields)))
+        assert accepted - set(WebUpdateItemCommand._SNAPSHOT_FIELDS) == set()
+        assert set(self.EVERY_FIELD) | {"completed_at"} == accepted
+
+    def test_redo_applies_every_field(self):
+        db, lst, item1, _ = make_populated_db()
+        lst.board_columns = ["To Do", "Doing", "Done"]
+        before = self._state(item1)
+        cmd = WebUpdateItemCommand(make_window(db), lst.id, item1.id, dict(self.EVERY_FIELD))
+
+        cmd.redo()
+
+        after = self._state(item1)
+        unchanged = [name for name in self.EVERY_FIELD if after[name] == before[name]]
+        assert unchanged == []
+        assert item1.due_time_end == clock_time(10, 30)
+        assert item1.completed_at is not None
+
+    def test_undo_restores_every_field(self):
+        db, lst, item1, _ = make_populated_db()
+        lst.board_columns = ["To Do", "Doing", "Done"]
+        before = self._state(item1)
+        cmd = WebUpdateItemCommand(make_window(db), lst.id, item1.id, dict(self.EVERY_FIELD))
+
+        cmd.redo()
+        cmd.undo()
+
+        assert self._state(item1) == before
+
+    def test_undo_restores_a_reminder_that_was_set_before(self):
+        db, lst, item1, _ = make_populated_db()
+        item1.due_date = date(2026, 12, 1)
+        item1.remind_before_days = 7
+        item1.reminder_cadence = "daily_until_due"
+        fields = {"remind_before_days": 0, "reminder_cadence": "none"}
+        cmd = WebUpdateItemCommand(make_window(db), lst.id, item1.id, fields)
+
+        cmd.redo()
+        assert (item1.remind_before_days, item1.reminder_cadence) == (0, "none")
+        cmd.undo()
+        assert (item1.remind_before_days, item1.reminder_cadence) == (7, "daily_until_due")
+
+    def test_undo_of_completing_clears_the_completion_time(self):
+        db, lst, item1, _ = make_populated_db()
+        cmd = WebUpdateItemCommand(make_window(db), lst.id, item1.id, {"complete": True})
+
+        cmd.redo()
+        assert item1.completed_at is not None
+        cmd.undo()
+        assert item1.complete is False
+        assert item1.completed_at is None
+
+    def test_the_snapshot_does_not_follow_later_changes_to_a_list(self):
+        db, lst, item1, _ = make_populated_db()
+        item1.tags = ["shop"]
+        cmd = WebUpdateItemCommand(make_window(db), lst.id, item1.id, {"priority": 1})
+
+        cmd.redo()
+        item1.tags.append("added-in-place")
+        cmd.undo()
+
+        assert item1.tags == ["shop"]
+
+    def test_redo_after_undo_applies_the_edit_again(self):
+        db, lst, item1, _ = make_populated_db()
+        window = make_window(db)
+        stack = QUndoStack()
+        stack.push(WebUpdateItemCommand(window, lst.id, item1.id, {"estimated_minutes": 45}))
+        assert item1.estimated_minutes == 45
+        stack.undo()
+        assert item1.estimated_minutes == 0
+        stack.redo()
+        assert item1.estimated_minutes == 45
+
+    def test_noop_if_item_missing(self):
+        db, lst, _, _ = make_populated_db()
+        cmd = WebUpdateItemCommand(make_window(db), lst.id, uuid4(), {"priority": 1})
 
         cmd.redo()  # Should not raise
         cmd.undo()  # Should not raise
