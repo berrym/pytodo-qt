@@ -1160,6 +1160,43 @@ class TestImprovementSuggestions:
         suggestions = svc.improvement_suggestions()
         assert isinstance(suggestions, list)
 
+    @staticmethod
+    def _add_tasks(db, *, notified: bool, done: int, open_: int) -> None:
+        """Insert tasks due far ahead, so that none of them is overdue."""
+        for index in range(done + open_):
+            item_id, _ = _insert_item(
+                db, reminder="Task", due_date="2099-12-31", complete=1 if index < done else 0
+            )
+            if notified:
+                db.execute("INSERT INTO notified_items VALUES (?, 1000)", (item_id,))
+
+    @staticmethod
+    def _notification_lines(svc) -> list[str]:
+        return [s for s in svc.improvement_suggestions() if "Notified tasks" in s]
+
+    def test_notifications_helping_with_enough_tasks_in_each_group(self, db, svc):
+        self._add_tasks(db, notified=True, done=4, open_=1)
+        self._add_tasks(db, notified=False, done=2, open_=3)
+        assert self._notification_lines(svc) == [
+            "Notified tasks complete at 80% vs 40% for non-notified. Notifications are helping!"
+        ]
+
+    def test_too_few_notified_tasks_says_nothing(self, db, svc):
+        """One notified task that got done is not a 100% completion rate."""
+        self._add_tasks(db, notified=True, done=4, open_=0)
+        self._add_tasks(db, notified=False, done=2, open_=3)
+        assert self._notification_lines(svc) == []
+
+    def test_too_few_other_tasks_says_nothing(self, db, svc):
+        self._add_tasks(db, notified=True, done=5, open_=0)
+        self._add_tasks(db, notified=False, done=0, open_=4)
+        assert self._notification_lines(svc) == []
+
+    def test_a_small_difference_says_nothing(self, db, svc):
+        self._add_tasks(db, notified=True, done=5, open_=5)
+        self._add_tasks(db, notified=False, done=5, open_=5)
+        assert self._notification_lines(svc) == []
+
     def test_overdue_suggestion_triggers(self, db, svc):
         """When >20% of tasks are overdue, a suggestion should mention it."""
         for i in range(5):

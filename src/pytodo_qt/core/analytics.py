@@ -14,6 +14,10 @@ from typing import NamedTuple, cast
 
 import pandas as pd
 
+# The fewest tasks each group needs, notified and not, before their
+# completion rates are compared in a suggestion.
+_MIN_EFFECTIVENESS_SAMPLE = 5
+
 # ---------------------------------------------------------------------------
 # Result types for completion-timing analytics (Step 4 of calendar Gantt
 # redesign). NamedTuples per feedback-return-type-patterns.md: NamedTuple
@@ -1301,7 +1305,13 @@ class AnalyticsService:
             if not notified_row.empty and not not_notified_row.empty:
                 n_rate = float(notified_row.iloc[0]["completion_rate"])
                 u_rate = float(not_notified_row.iloc[0]["completion_rate"])
-                if n_rate > u_rate + 0.1:
+                # A rate over a handful of tasks says nothing: one
+                # notified task that got done would read as 100%.
+                enough = (
+                    int(notified_row.iloc[0]["task_count"]) >= _MIN_EFFECTIVENESS_SAMPLE
+                    and int(not_notified_row.iloc[0]["task_count"]) >= _MIN_EFFECTIVENESS_SAMPLE
+                )
+                if enough and n_rate > u_rate + 0.1:
                     suggestions.append(
                         f"Notified tasks complete at {round(n_rate * 100)}% vs "
                         f"{round(u_rate * 100)}% for non-notified. Notifications are helping!"
