@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -178,6 +178,17 @@ CREATE TABLE IF NOT EXISTS notification_log (
 )
 """
 
+# Every item that has had a notification of its own, with the time of
+# the first. The log above is pruned as it ages; this is not, so that an
+# item counts as notified for as long as it exists. Local to this device
+# for the same reason as the log.
+_CREATE_NOTIFIED_ITEMS_TABLE = """
+CREATE TABLE IF NOT EXISTS notified_items (
+    item_id TEXT PRIMARY KEY,
+    first_fired_at INTEGER NOT NULL
+)
+"""
+
 _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_lists_deleted ON lists(deleted)",
     "CREATE INDEX IF NOT EXISTS idx_lists_name ON lists(name)",
@@ -295,6 +306,7 @@ class DatabaseStorage:
         conn.execute(_CREATE_PENDING_SYNCS_TABLE)
         conn.execute(_CREATE_FOCUS_SESSIONS_TABLE)
         conn.execute(_CREATE_NOTIFICATION_LOG_TABLE)
+        conn.execute(_CREATE_NOTIFIED_ITEMS_TABLE)
 
         for index_sql in _CREATE_INDEXES:
             conn.execute(index_sql)
@@ -327,6 +339,7 @@ class DatabaseStorage:
         self._migrate_schema_to_21()
         self._migrate_schema_to_22()
         self._migrate_schema_to_23()
+        self._migrate_schema_to_24()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -726,6 +739,41 @@ class DatabaseStorage:
         logger.log.info(
             "Migrated schema -> 23: removed the stand-in time from %d time-block items", changed
         )
+
+    def _migrate_schema_to_24(self) -> None:
+        """Migrate schema to version 24 (items that have been notified).
+
+        The notified_items table is created with the rest of the schema.
+        It is filled here from what is already known: items.notified_at,
+        where a build through v0.3.11b8 recorded a notification, and the
+        notification log. The earlier of the two times is kept. Nothing
+        here depends on items.notified_at once it has run, so the column
+        can be dropped later without losing the record.
+        """
+        current_version = self.get_schema_version()
+        if current_version >= 24:
+            return
+
+        # Repeating either statement changes nothing, so a run that was
+        # interrupted is simply run again.
+        conn = self.connection
+        conn.execute(
+            "INSERT OR IGNORE INTO notified_items (item_id, first_fired_at) "
+            "SELECT item_id, MIN(fired_at) FROM notification_log "
+            "WHERE item_id <> '' GROUP BY item_id"
+        )
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(items)")]
+        if "notified_at" in columns:
+            conn.execute(
+                "INSERT INTO notified_items (item_id, first_fired_at) "
+                "SELECT id, notified_at FROM items WHERE notified_at > 0 "
+                "ON CONFLICT(item_id) DO UPDATE SET "
+                "first_fired_at = MIN(first_fired_at, excluded.first_fired_at)"
+            )
+        seeded = conn.execute("SELECT COUNT(*) FROM notified_items").fetchone()[0]
+
+        self.set_schema_version(24)
+        logger.log.info("Migrated schema -> 24: recorded %d items as notified", seeded)
 
     def get_schema_version(self) -> int:
         """Get current schema version."""
@@ -1667,13 +1715,7 @@ class DatabaseStorage:
         about a single item. Recording the same key twice keeps the
         first ``fired_at``.
         """
-        if fired_at is None:
-            fired_at = int(__import__("time").time() * 1000)
-        self.connection.execute(
-            "INSERT OR IGNORE INTO notification_log (item_id, kind, occurrence, fired_at) "
-            "VALUES (?, ?, ?, ?)",
-            (str(item_id) if item_id else "", kind, occurrence, fired_at),
-        )
+        self.record_notifications([(str(item_id) if item_id else "", kind, occurrence)], fired_at)
 
     def record_notifications(
         self, keys: Iterable[tuple[str, str, str]], fired_at: int | None = None
@@ -1683,14 +1725,23 @@ class DatabaseStorage:
         Each key is (item_id, kind, occurrence), with the empty string as
         item_id for a notification that is not about a single item — the
         form ``get_fired_notifications`` returns.
+
+        Each item named is also recorded as notified, which outlasts the
+        pruning of the log.
         """
         if fired_at is None:
             fired_at = int(__import__("time").time() * 1000)
+        rows = [(item_id, kind, occurrence, fired_at) for item_id, kind, occurrence in keys]
+        item_ids = {item_id for item_id, _, _, _ in rows if item_id}
         with self.transaction() as conn:
             conn.executemany(
                 "INSERT OR IGNORE INTO notification_log (item_id, kind, occurrence, fired_at) "
                 "VALUES (?, ?, ?, ?)",
-                [(item_id, kind, occurrence, fired_at) for item_id, kind, occurrence in keys],
+                rows,
+            )
+            conn.executemany(
+                "INSERT OR IGNORE INTO notified_items (item_id, first_fired_at) VALUES (?, ?)",
+                [(item_id, fired_at) for item_id in sorted(item_ids)],
             )
 
     def get_fired_notifications(self) -> set[tuple[str, str, str]]:
@@ -1702,7 +1753,8 @@ class DatabaseStorage:
         """Delete entries whose occurrence sorts before ``before``.
 
         ISO dates and datetimes order lexicographically, so an ISO date
-        works as the cutoff for both forms of occurrence.
+        works as the cutoff for both forms of occurrence. The record of
+        which items have been notified is kept.
         """
         cursor = self.connection.execute(
             "DELETE FROM notification_log WHERE occurrence < ?", (before,)
@@ -1713,6 +1765,7 @@ class DatabaseStorage:
         """Clear all data from the database (for testing)."""
         with self.transaction() as conn:
             conn.execute("DELETE FROM notification_log")
+            conn.execute("DELETE FROM notified_items")
             conn.execute("DELETE FROM focus_sessions")
             conn.execute("DELETE FROM pending_syncs")
             conn.execute("DELETE FROM list_sync_rules")

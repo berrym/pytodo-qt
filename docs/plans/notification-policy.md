@@ -358,11 +358,33 @@ CREATE TABLE notification_log (
   make. It is dropped in a later migration once those builds are retired. A
   save from this version leaves the column at its default, so an older build
   run afterward may repeat its once-per-day banner.
-- `AnalyticsService.notification_effectiveness` reads the log instead of
-  `notified_at > 0`.
 
 A file in the XDG state directory was considered. The table is preferred for
 atomic writes alongside the data it describes and for a single migration path.
+
+### Notified items
+
+A second local table, added in schema v24, holds every item that has had a
+notification of its own and the time of the first:
+
+```sql
+CREATE TABLE notified_items (
+    item_id        TEXT PRIMARY KEY,
+    first_fired_at INTEGER NOT NULL  -- ms since epoch
+);
+```
+
+- A row is written in the same transaction that records a fired notification
+  for the item. Summary, preview and catch-up notifications name no item and
+  write none.
+- Pruning the log leaves the table alone, so an item counts as notified for as
+  long as it exists. The log cannot answer that question once its entries for
+  the item are more than 30 days old.
+- The v24 migration fills the table from the log and from any
+  `items.notified_at` above zero, keeping the earlier time. After it has run
+  nothing reads `items.notified_at`.
+- `AnalyticsService.notification_effectiveness` reads this table. It read
+  `notified_at > 0` before v22 and the log in v22 and v23.
 
 ## Configuration
 
@@ -474,6 +496,9 @@ The policy module is covered by fixed-clock unit tests, including:
   values of the wrong kind.
 - Schema v21 → v22 migration, including that `items.notified_at` survives
   it and that an insert naming the column still succeeds.
+- Schema v23 → v24 migration from the log, from `items.notified_at`, from
+  both, with the column already dropped, and run twice.
+- An item whose log entries have been pruned still counts as notified.
 
 Visual verification on macOS (overlay path) and Fedora KDE (OS path) covers
 banner text, coalesced layout, and the regrouped Notifications tab.

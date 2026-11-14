@@ -79,6 +79,12 @@ def db():
             PRIMARY KEY (item_id, kind, occurrence)
         )"""
     )
+    conn.execute(
+        """CREATE TABLE notified_items (
+            item_id TEXT PRIMARY KEY,
+            first_fired_at INTEGER NOT NULL
+        )"""
+    )
     yield conn
     conn.close()
 
@@ -1072,20 +1078,32 @@ class TestNotificationEffectiveness:
         open_id, _ = _insert_item(db, reminder="Notified not done", due_date=today)
         _insert_item(db, reminder="Not notified done", due_date=today, complete=1)
         for item_id in (done_id, open_id):
-            db.execute(
-                "INSERT INTO notification_log VALUES (?, 'lead', ?, 1000)",
-                (item_id, f"{today}T09:00"),
-            )
-        # A second entry for the same item must not count it twice.
-        db.execute(
-            "INSERT INTO notification_log VALUES (?, 'due_now', ?, 2000)",
-            (open_id, f"{today}T09:00"),
-        )
+            db.execute("INSERT INTO notified_items VALUES (?, 1000)", (item_id,))
         df = svc.notification_effectiveness()
         assert len(df) == 2
         notified = df[df["notified"] == True]  # noqa: E712
         assert notified.iloc[0]["task_count"] == 2
         assert notified.iloc[0]["completed_count"] == 1
+        not_notified = df[df["notified"] == False]  # noqa: E712
+        assert not_notified.iloc[0]["task_count"] == 1
+        assert not_notified.iloc[0]["completed_count"] == 1
+
+    def test_an_item_stays_notified_with_nothing_left_in_the_log(self, db, svc):
+        """The log is pruned after 30 days; the item was still notified."""
+        item_id, _ = _insert_item(db, reminder="Long ago", due_date="2026-01-05", complete=1)
+        db.execute("INSERT INTO notified_items VALUES (?, 1000)", (item_id,))
+        assert db.execute("SELECT COUNT(*) FROM notification_log").fetchone()[0] == 0
+        df = svc.notification_effectiveness()
+        assert df["notified"].tolist() == [True]
+
+    def test_the_log_alone_does_not_make_an_item_notified(self, db, svc):
+        item_id, _ = _insert_item(db, reminder="Logged only", due_date="2026-01-05")
+        db.execute(
+            "INSERT INTO notification_log VALUES (?, 'lead', '2026-01-05T09:00', 1000)",
+            (item_id,),
+        )
+        df = svc.notification_effectiveness()
+        assert df["notified"].tolist() == [False]
 
 
 class TestLongestStreak:

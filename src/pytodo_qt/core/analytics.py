@@ -1156,6 +1156,10 @@ class AnalyticsService:
     def notification_effectiveness(self) -> pd.DataFrame:
         """Compare notified items vs non-notified: completion rates.
 
+        An item counts as notified once it has had a notification of its
+        own, however long ago. The notification log cannot answer that:
+        its entries are pruned as they age.
+
         Returns DataFrame with columns:
             notified (bool), task_count, completed_count, completion_rate
         """
@@ -1167,7 +1171,7 @@ class AnalyticsService:
         query = """
             SELECT
                 CASE WHEN EXISTS (
-                    SELECT 1 FROM notification_log n WHERE n.item_id = items.id
+                    SELECT 1 FROM notified_items n WHERE n.item_id = items.id
                 ) THEN 1 ELSE 0 END as notified,
                 complete
             FROM items

@@ -266,6 +266,14 @@ class TestPruning:
         harness.tick(at(9, 0, DAY + timedelta(days=1)))
         assert ("", "summary", "2026-09-01") not in harness.storage.get_fired_notifications()
 
+    def test_a_pruned_item_is_still_recorded_as_notified(self, harness):
+        item = harness.add(make_item("Dentist", due_date=DAY, due_time=time(15)))
+        harness.tick(at(14, 45))
+        harness.tick(at(9, 0, DAY + timedelta(days=45)))
+        assert harness.storage.get_fired_notifications() == set()
+        rows = harness.storage.connection.execute("SELECT item_id FROM notified_items").fetchall()
+        assert [row["item_id"] for row in rows] == [str(item.id)]
+
 
 class TestReminderText:
     def test_deadline_lead(self, harness):

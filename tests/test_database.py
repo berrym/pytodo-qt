@@ -1,5 +1,6 @@
 """Tests for SQLite database storage layer."""
 
+import sqlite3
 import tempfile
 from datetime import date, time
 from pathlib import Path
@@ -198,6 +199,105 @@ class TestSchemaMigrationV18ToV19:
             storage2.open()
             assert storage2.get_schema_version() == SCHEMA_VERSION
             storage2.close()
+
+
+class TestSchemaMigrationToV24:
+    """v24 records which items have been notified, apart from the log."""
+
+    def _make_v23_database(self, db_path: Path) -> dict[str, str]:
+        """Create a current database, then rewind it to the v23 shape:
+        no notified_items table, version 23, and items notified in the
+        ways an earlier version could record."""
+        storage = DatabaseStorage(db_path)
+        storage.open()
+        lst = TodoList(name="Errands")
+        storage.save_list(lst)
+        ids = {}
+        for name in ("in_log", "old_column", "both", "neither"):
+            item = TodoItem(reminder=name)
+            storage.save_item(lst.id, item)
+            ids[name] = str(item.id)
+        conn = storage.connection
+        conn.execute("DROP TABLE notified_items")
+        insert = "INSERT INTO notification_log VALUES (?, ?, ?, ?)"
+        conn.execute(insert, (ids["in_log"], "lead", "2026-11-12T15:00", 500))
+        conn.execute(insert, (ids["in_log"], "due_now", "2026-11-12T15:00", 400))
+        conn.execute(insert, (ids["both"], "lead", "2026-11-12T15:00", 900))
+        conn.execute(insert, ("", "summary", "2026-11-12", 100))
+        update = "UPDATE items SET notified_at = ? WHERE id = ?"
+        conn.execute(update, (300, ids["old_column"]))
+        conn.execute(update, (200, ids["both"]))
+        storage.set_schema_version(23)
+        storage.close()
+        return ids
+
+    @staticmethod
+    def _notified(storage: DatabaseStorage) -> dict[str, int]:
+        rows = storage.connection.execute("SELECT * FROM notified_items").fetchall()
+        return {row["item_id"]: row["first_fired_at"] for row in rows}
+
+    def test_migration_records_items_from_the_log_and_the_old_column(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            ids = self._make_v23_database(db_path)
+
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            try:
+                assert storage.get_schema_version() == SCHEMA_VERSION
+                assert SCHEMA_VERSION >= 24
+                assert self._notified(storage) == {
+                    ids["in_log"]: 400,
+                    ids["old_column"]: 300,
+                    ids["both"]: 200,
+                }
+            finally:
+                storage.close()
+
+    def test_migration_leaves_the_log_as_it_was(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            self._make_v23_database(db_path)
+
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            try:
+                assert len(storage.get_fired_notifications()) == 4
+            finally:
+                storage.close()
+
+    def test_running_the_migration_again_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            self._make_v23_database(db_path)
+
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            try:
+                before = self._notified(storage)
+                storage.set_schema_version(23)
+                storage._migrate_schema_to_24()
+                assert self._notified(storage) == before
+                assert storage.get_schema_version() == SCHEMA_VERSION
+            finally:
+                storage.close()
+
+    def test_migration_without_the_old_column(self):
+        """The log alone is used once items.notified_at has been dropped."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            ids = self._make_v23_database(db_path)
+            raw = sqlite3.connect(db_path)
+            raw.execute("ALTER TABLE items DROP COLUMN notified_at")
+            raw.commit()
+            raw.close()
+
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            try:
+                assert self._notified(storage) == {ids["in_log"]: 400, ids["both"]: 900}
+            finally:
+                storage.close()
 
 
 class TestSchemaMigrationToV22:
@@ -479,6 +579,55 @@ class TestNotificationLog:
             ("", "summary", "2026-11-12"),
             (str(item_id), "lead", "2026-11-12T09:00"),
         }
+
+    def test_recording_marks_the_item_as_notified(self, storage):
+        item_id = uuid4()
+        storage.record_notification(item_id, "lead", "2026-11-12T15:00", fired_at=100)
+        rows = storage.connection.execute("SELECT * FROM notified_items").fetchall()
+        assert [(row["item_id"], row["first_fired_at"]) for row in rows] == [(str(item_id), 100)]
+
+    def test_a_later_notification_keeps_the_first_time(self, storage):
+        item_id = uuid4()
+        storage.record_notification(item_id, "lead", "2026-11-12T15:00", fired_at=100)
+        storage.record_notification(item_id, "due_now", "2026-11-12T15:00", fired_at=200)
+        storage.record_notification(item_id, "lead", "2026-11-19T15:00", fired_at=300)
+        rows = storage.connection.execute("SELECT first_fired_at FROM notified_items").fetchall()
+        assert [row["first_fired_at"] for row in rows] == [100]
+
+    def test_a_notification_about_no_item_marks_nothing(self, storage):
+        storage.record_notification(None, "summary", "2026-11-12")
+        storage.record_notifications([("", "preview", "2026-11-12")])
+        assert storage.connection.execute("SELECT COUNT(*) FROM notified_items").fetchone()[0] == 0
+
+    def test_several_keys_mark_each_item_once(self, storage):
+        first, second = str(uuid4()), str(uuid4())
+        storage.record_notifications(
+            [
+                (first, "lead", "2026-11-12T15:00"),
+                (first, "due_now", "2026-11-12T15:00"),
+                (second, "advance", "2026-11-20"),
+                ("", "summary", "2026-11-12"),
+            ],
+            fired_at=7,
+        )
+        rows = storage.connection.execute("SELECT * FROM notified_items").fetchall()
+        assert {(row["item_id"], row["first_fired_at"]) for row in rows} == {
+            (first, 7),
+            (second, 7),
+        }
+
+    def test_pruning_the_log_keeps_the_item_marked(self, storage):
+        item_id = uuid4()
+        storage.record_notification(item_id, "lead", "2026-10-01T09:00")
+        assert storage.prune_notification_log("2026-10-15") == 1
+        assert storage.get_fired_notifications() == set()
+        rows = storage.connection.execute("SELECT item_id FROM notified_items").fetchall()
+        assert [row["item_id"] for row in rows] == [str(item_id)]
+
+    def test_clear_empties_the_notified_items(self, storage):
+        storage.record_notification(uuid4(), "lead", "2026-11-12T15:00")
+        storage.clear()
+        assert storage.connection.execute("SELECT COUNT(*) FROM notified_items").fetchone()[0] == 0
 
     def test_recording_does_not_touch_the_item(self, storage):
         """Notifying must not look like an edit: the item row, and with
