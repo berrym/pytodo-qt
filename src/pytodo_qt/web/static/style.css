@@ -1917,6 +1917,41 @@ body {
   flex: 1;
 }
 
+/* -- Advance reminder -- */
+
+.detail-remind-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Wide enough for "Every day until due"; on a narrow screen the day
+   count wraps under the choice instead of squeezing it. */
+.detail-remind-row select {
+  flex: 1 1 190px;
+}
+
+.detail-remind-count {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.detail-remind-count input {
+  width: 72px;
+}
+
+.detail-remind-unit {
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.detail-remind-row select:disabled,
+.detail-remind-row input:disabled {
+  opacity: 0.55;
+}
+
 .detail-recurrence-end {
   margin-top: 8px;
   padding-top: 8px;

@@ -2072,6 +2072,101 @@ class TestUpdateV18Fields:
 # ===========================================================================
 
 
+class TestUpdateAdvanceReminder:
+    """The day count and the cadence are stored as a consistent pair."""
+
+    @staticmethod
+    async def _put(stored: tuple[int, str], body: dict) -> tuple[int, str]:
+        """Send ``body`` for an item holding ``stored``; return what the
+        response reports, having checked that the item holds the same."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_date = date.today() + timedelta(days=30)
+        item.remind_before_days, item.reminder_cadence = stored
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.put(f"/api/items/{item.id}", json=body)
+            assert resp.status == 200
+            data = await resp.json()
+        finally:
+            await client.close()
+        reported = (data["remind_before_days"], data["reminder_cadence"])
+        assert (item.remind_before_days, item.reminder_cadence) == reported
+        return reported
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("stored", "body", "expected"),
+        [
+            # Both fields, as the page sends them.
+            ((0, "none"), {"remind_before_days": 3, "reminder_cadence": "once"}, (3, "once")),
+            (
+                (3, "once"),
+                {"remind_before_days": 14, "reminder_cadence": "daily_until_due"},
+                (14, "daily_until_due"),
+            ),
+            ((3, "once"), {"remind_before_days": 0, "reminder_cadence": "none"}, (0, "none")),
+            # Off stores no day count, whatever count comes with it.
+            ((3, "once"), {"remind_before_days": 7, "reminder_cadence": "none"}, (0, "none")),
+            ((3, "once"), {"reminder_cadence": "none"}, (0, "none")),
+            # The count is held to 1-90 while a cadence is chosen.
+            ((0, "none"), {"remind_before_days": 500, "reminder_cadence": "once"}, (90, "once")),
+            ((0, "none"), {"remind_before_days": 90, "reminder_cadence": "once"}, (90, "once")),
+            ((0, "none"), {"remind_before_days": 91, "reminder_cadence": "once"}, (90, "once")),
+            ((0, "none"), {"remind_before_days": 0, "reminder_cadence": "once"}, (1, "once")),
+            ((0, "none"), {"remind_before_days": -4, "reminder_cadence": "once"}, (1, "once")),
+            # One field alone is read with the stored other.
+            ((0, "none"), {"reminder_cadence": "daily_until_due"}, (1, "daily_until_due")),
+            ((3, "once"), {"reminder_cadence": "daily_until_due"}, (3, "daily_until_due")),
+            ((3, "once"), {"remind_before_days": 10}, (10, "once")),
+            ((3, "once"), {"remind_before_days": 0}, (1, "once")),
+            ((3, "once"), {"remind_before_days": 365}, (90, "once")),
+            ((0, "none"), {"remind_before_days": 10}, (0, "none")),
+            # A cadence that is not one of the three is ignored.
+            ((3, "once"), {"reminder_cadence": "hourly"}, (3, "once")),
+            ((0, "none"), {"remind_before_days": 5, "reminder_cadence": "hourly"}, (0, "none")),
+        ],
+    )
+    async def test_the_pair_is_stored_consistently(self, stored, body, expected):
+        assert await self._put(stored, body) == expected
+
+    @pytest.mark.asyncio
+    async def test_an_edit_to_another_field_leaves_a_stored_pair_alone(self):
+        """A pair stored before the rule existed is not rewritten by an
+        edit that does not mention the reminder."""
+        assert await self._put((400, "once"), {"priority": 1}) == (400, "once")
+
+    @pytest.mark.asyncio
+    async def test_clearing_the_due_date_keeps_the_reminder(self):
+        """The reminder lies dormant without a due date, as on the
+        desktop, and is there again when a date is put back."""
+        assert await self._put((3, "once"), {"due_date": None}) == (3, "once")
+
+    @pytest.mark.asyncio
+    async def test_create_holds_an_explicit_count_to_the_range(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/lists/{lst.id}/items",
+                json={
+                    "reminder": "Renew passport",
+                    "due_date": "2027-03-01",
+                    "remind_before_days": 500,
+                    "reminder_cadence": "once",
+                },
+            )
+            assert resp.status == 201
+            data = await resp.json()
+        finally:
+            await client.close()
+        assert (data["remind_before_days"], data["reminder_cadence"]) == (90, "once")
+
+
 class TestBoardEndpoint:
     @pytest.mark.asyncio
     async def test_get_board(self):

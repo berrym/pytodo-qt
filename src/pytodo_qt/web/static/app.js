@@ -4231,6 +4231,7 @@
     detailBody.appendChild(
       makeField("Due Date", "date", item.due_date || "", function (val) {
         saveItemField(itemId, { due_date: val || null });
+        remindAhead.setHasDueDate(Boolean(val));
       }),
     );
 
@@ -4245,6 +4246,16 @@
         },
       ),
     );
+
+    // Remind ahead. It counts back from the due date, so it sits with
+    // the date and is told when the date above is set or cleared.
+    var remindAhead = makeRemindAhead(item, function (days, cadence) {
+      saveItemField(itemId, {
+        remind_before_days: days,
+        reminder_cadence: cadence,
+      });
+    });
+    detailBody.appendChild(remindAhead.element);
 
     // Tags
     detailBody.appendChild(
@@ -4644,6 +4655,120 @@
     });
     div.appendChild(select);
     return div;
+  }
+
+  // An advance reminder is two stored fields, a day count and a
+  // cadence, that only mean something together: they are edited as one
+  // choice and always saved as a pair.
+  var REMIND_AHEAD_MIN_DAYS = 1;
+  var REMIND_AHEAD_MAX_DAYS = 90;
+  var REMIND_AHEAD_CHOICES = [
+    ["none", "Off"],
+    ["once", "Once"],
+    ["daily_until_due", "Every day until due"],
+  ];
+
+  function remindAheadDays(value) {
+    var days = parseInt(value, 10);
+    if (isNaN(days)) return REMIND_AHEAD_MIN_DAYS;
+    return Math.min(
+      Math.max(days, REMIND_AHEAD_MIN_DAYS),
+      REMIND_AHEAD_MAX_DAYS,
+    );
+  }
+
+  function makeRemindAhead(item, onChange) {
+    var div = document.createElement("div");
+    div.className = "detail-field";
+    var lbl = document.createElement("label");
+    lbl.textContent = "Remind ahead";
+    lbl.htmlFor = "detail-remind-cadence";
+    div.appendChild(lbl);
+
+    var row = document.createElement("div");
+    row.className = "detail-remind-row";
+
+    var select = document.createElement("select");
+    select.id = "detail-remind-cadence";
+    select.setAttribute("aria-describedby", "detail-remind-note");
+    REMIND_AHEAD_CHOICES.forEach(function (choice) {
+      var opt = document.createElement("option");
+      opt.value = choice[0];
+      opt.textContent = choice[1];
+      select.appendChild(opt);
+    });
+    row.appendChild(select);
+
+    var count = document.createElement("span");
+    count.className = "detail-remind-count";
+    var daysInput = document.createElement("input");
+    daysInput.type = "number";
+    daysInput.min = String(REMIND_AHEAD_MIN_DAYS);
+    daysInput.max = String(REMIND_AHEAD_MAX_DAYS);
+    daysInput.step = "1";
+    daysInput.inputMode = "numeric";
+    daysInput.setAttribute("aria-label", "Days before the due date");
+    count.appendChild(daysInput);
+    var unit = document.createElement("span");
+    unit.className = "detail-remind-unit";
+    count.appendChild(unit);
+    row.appendChild(count);
+    div.appendChild(row);
+
+    var note = document.createElement("div");
+    note.className = "detail-meta";
+    note.id = "detail-remind-note";
+    div.appendChild(note);
+
+    // A stored pair that asks for no reminder, an unknown cadence or a
+    // day count below one, is shown as "Off".
+    var stored = REMIND_AHEAD_CHOICES.some(function (choice) {
+      return choice[0] === item.reminder_cadence;
+    });
+    var on = stored && item.remind_before_days >= REMIND_AHEAD_MIN_DAYS;
+    select.value = on ? item.reminder_cadence : "none";
+    daysInput.value = remindAheadDays(on ? item.remind_before_days : NaN);
+    var hasDueDate = Boolean(item.due_date);
+
+    function refresh() {
+      var off = select.value === "none";
+      count.classList.toggle("hidden", off);
+      unit.textContent =
+        parseInt(daysInput.value, 10) === 1 ? "day before" : "days before";
+      select.disabled = !hasDueDate;
+      daysInput.disabled = !hasDueDate;
+      note.textContent = hasDueDate
+        ? "Mentions the task in the daily summary on the days before it is due."
+        : "Needs a due date.";
+    }
+
+    function report() {
+      if (select.value === "none") {
+        onChange(0, "none");
+      } else {
+        onChange(remindAheadDays(daysInput.value), select.value);
+      }
+    }
+
+    select.addEventListener("change", function () {
+      refresh();
+      report();
+    });
+    daysInput.addEventListener("input", refresh);
+    daysInput.addEventListener("change", function () {
+      daysInput.value = remindAheadDays(daysInput.value);
+      refresh();
+      report();
+    });
+    refresh();
+
+    return {
+      element: div,
+      setHasDueDate: function (value) {
+        hasDueDate = value;
+        refresh();
+      },
+    };
   }
 
   var lastSavedFields = null;

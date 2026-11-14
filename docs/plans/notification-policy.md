@@ -193,8 +193,15 @@ so the two are not offered separately, and Off stores `0` and `none`.
     the typed reminder either way, greyed until there is a date.
   - The vocabulary is in the intent dictionary (`advance_reminder`).
 - Web interface: quick-add stores a reminder typed this way under the same
-  rule, and `/api/parse` reports both fields. There is no control for an
-  existing task; the web API carries both fields.
+  rule, and `/api/parse` reports both fields.
+- Web item sheet: a "Remind ahead" row under Due Date and Due Time, with the
+  same three choices and day count. It is disabled, with "Needs a due date."
+  under it, while the task has no due date, and follows the due date field in
+  the same sheet as it is set or cleared. The row saves both fields together.
+  A stored reminder is kept when the due date is cleared, as on the desktop.
+- Web API: the two fields are stored as a consistent pair whenever either is
+  sent. The cadence decides: `none` stores a day count of `0`, and any other
+  cadence stores a count held to 1–90.
 
 ### Catch-up
 

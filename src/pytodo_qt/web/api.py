@@ -25,6 +25,7 @@ from ..core.models import (
     format_recurrence_short,
     is_overdue,
 )
+from ..core.notification_policy import ADVANCE_DAYS_RANGE, AdvanceCadence
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -737,6 +738,15 @@ def _apply_item_fields(item: TodoItem, body: dict[str, Any], lst: TodoList | Non
         val = str(body["reminder_cadence"])
         if val in ("none", "once", "daily_until_due"):
             item.reminder_cadence = val
+    if "remind_before_days" in body or "reminder_cadence" in body:
+        # The two fields mean something only as a pair. The cadence
+        # decides: none stores no day count, and any other stores a
+        # count inside the range the reminder supports.
+        if item.reminder_cadence == AdvanceCadence.NONE.value:
+            item.remind_before_days = 0
+        else:
+            low, high = ADVANCE_DAYS_RANGE
+            item.remind_before_days = min(max(item.remind_before_days, low), high)
     if "conditions" in body:
         item.conditions = body["conditions"] if body["conditions"] else None
 
