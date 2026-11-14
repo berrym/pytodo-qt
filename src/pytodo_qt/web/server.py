@@ -479,6 +479,7 @@ class WebServer:
             database_key,
             device_store_key,
             main_window_key,
+            revalidation_middleware,
             save_callback_key,
             security_headers_middleware,
             setup_routes,
@@ -486,7 +487,9 @@ class WebServer:
             ws_clients_key,
         )
 
-        app = web.Application(middlewares=[security_headers_middleware, auth_middleware])
+        app = web.Application(
+            middlewares=[security_headers_middleware, revalidation_middleware, auth_middleware]
+        )
         app[database_key] = self._database
         app[ws_clients_key] = set()
         app[web_server_key] = self

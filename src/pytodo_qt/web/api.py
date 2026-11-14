@@ -75,6 +75,25 @@ _LAST_SEEN_DEBOUNCE_SECONDS = 60
 
 
 @web.middleware
+async def revalidation_middleware(
+    request: web.Request, handler: Callable[..., Any]
+) -> web.StreamResponse:
+    """Have browsers check the page's files with the server before reuse.
+
+    Without a caching instruction a browser decides for itself how long
+    a file stays fresh, and can show a page from before the last change
+    to it. "no-cache" permits storing the file but requires asking
+    whether it has changed; an unchanged file is answered with 304 and
+    no body.
+    """
+    response = await handler(request)
+    path = request.path
+    if path in ("/", "/sw.js") or path.startswith("/static/"):
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
+
+@web.middleware
 async def auth_middleware(request: web.Request, handler: Callable[..., Any]) -> web.StreamResponse:
     """Require per-device Bearer token for API and WebSocket requests."""
     import time as _time

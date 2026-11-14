@@ -314,6 +314,37 @@ class TestScriptSyntax:
         assert result.returncode == 0, result.stderr
 
 
+class TestRevalidation:
+    """The page's files are checked with the server before reuse."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["/", "/sw.js", "/static/app.js", "/static/style.css"])
+    async def test_page_files_are_revalidated(self, path):
+        client = await _make_client()
+        async with client:
+            resp = await client.get(path)
+            assert resp.status == 200
+            assert resp.headers.get("Cache-Control") == "no-cache"
+
+    @pytest.mark.asyncio
+    async def test_api_responses_are_left_alone(self):
+        client = await _make_client()
+        async with client:
+            resp = await client.get("/api/status")
+            assert "Cache-Control" not in resp.headers
+
+    @pytest.mark.asyncio
+    async def test_unchanged_file_is_answered_without_a_body(self):
+        client = await _make_client()
+        async with client:
+            first = await client.get("/static/app.js")
+            etag = first.headers.get("ETag")
+            assert etag
+            second = await client.get("/static/app.js", headers={"If-None-Match": etag})
+            assert second.status == 304
+            assert second.headers.get("Cache-Control") == "no-cache"
+
+
 class TestManifestRoute:
     @pytest.mark.asyncio
     async def test_manifest_served_via_static(self):
