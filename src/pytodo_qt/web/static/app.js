@@ -4647,38 +4647,56 @@
   }
 
   var lastSavedFields = null;
+  // Edits waiting out the debounce, by item id. An edit made while
+  // another is waiting joins it; replacing it would lose the first.
+  var pendingItemFields = {};
 
   function saveItemField(itemId, fields) {
+    pendingItemFields[itemId] = Object.assign(
+      pendingItemFields[itemId] || {},
+      fields,
+    );
     clearTimeout(saveDebounceTimer);
-    saveDebounceTimer = setTimeout(async function () {
-      var indicator = document.getElementById("detail-save-indicator");
-      if (indicator) {
-        indicator.textContent = "Saving...";
-        indicator.className = "detail-save-indicator";
+    saveDebounceTimer = setTimeout(flushPendingItemFields, 500);
+  }
+
+  async function flushPendingItemFields() {
+    var waiting = pendingItemFields;
+    pendingItemFields = {};
+    var itemIds = Object.keys(waiting);
+    for (var i = 0; i < itemIds.length; i++) {
+      await sendItemFields(itemIds[i], waiting[itemIds[i]]);
+    }
+  }
+
+  async function sendItemFields(itemId, fields) {
+    var indicator = document.getElementById("detail-save-indicator");
+    if (indicator) {
+      indicator.textContent = "Saving...";
+      indicator.className = "detail-save-indicator";
+    }
+    var ua = getItemUpdatedAt(itemId);
+    if (ua !== undefined) fields.updated_at = ua;
+    lastSavedFields = Object.assign({}, fields);
+    try {
+      var result = await api("/items/" + itemId, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      });
+      updateCachedItemTimestamp(itemId, result.updated_at);
+      if (indicator) indicator.textContent = "Saved \u2713";
+      setTimeout(function () {
+        if (indicator) indicator.textContent = "";
+      }, 2000);
+      await refreshCurrentList();
+    } catch (e) {
+      if (e.status === 409) {
+        showDetailConflict(itemId, e.body.current);
+      } else {
+        if (indicator) indicator.textContent = "Save failed";
       }
-      var ua = getItemUpdatedAt(itemId);
-      if (ua !== undefined) fields.updated_at = ua;
-      lastSavedFields = Object.assign({}, fields);
-      try {
-        var result = await api("/items/" + itemId, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(fields),
-        });
-        updateCachedItemTimestamp(itemId, result.updated_at);
-        if (indicator) indicator.textContent = "Saved \u2713";
-        setTimeout(function () {
-          if (indicator) indicator.textContent = "";
-        }, 2000);
-        await refreshCurrentList();
-      } catch (e) {
-        if (e.status === 409) {
-          showDetailConflict(itemId, e.body.current);
-        } else {
-          if (indicator) indicator.textContent = "Save failed";
-        }
-      }
-    }, 500);
+    }
   }
 
   function showDetailConflict(itemId, currentData) {
