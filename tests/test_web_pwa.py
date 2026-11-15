@@ -398,6 +398,61 @@ class TestOfflineQueueRules:
         assert js.count("enqueueOfflineEdit(") == 2
 
 
+class TestQueuedChangesShown:
+    """The page draws what the server last sent with the queued changes
+    applied, and marks the tasks that have one."""
+
+    def _app(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def test_list_and_board_are_drawn_through_the_queue(self):
+        js = self._app()
+        assert "QueueRules.withQueuedChanges(serverItems, queue, columns)" in js
+        # The board: when the queue changes, and when the board is loaded.
+        assert js.count("QueueRules.boardWithQueuedChanges(") == 2
+
+    def test_server_data_is_kept_apart_from_what_is_shown(self):
+        """What is stored for offline use, and what the queue is applied
+        to, is the server's answer; storing the shown items would apply
+        a queued change twice on the next visit."""
+        js = self._app()
+        assert "cacheListItems(currentListId, serverItems);" in js
+        assert "cacheListItems(currentListId, cachedItems)" not in js
+
+    def test_page_follows_a_queue_stored_by_another_copy(self):
+        """Two copies of the page share the stored queue. When one sends
+        or changes it, the other redraws its count and list, and drops
+        its undo steps, which hold the queue as it was before."""
+        js = self._app()
+        start = js.index('window.addEventListener("storage"')
+        listener = js[start : js.index("\n  });", start)]
+        assert "event.key !== OFFLINE_QUEUE_KEY" in listener
+        for call in (
+            "clearOfflineUndo();",
+            "updatePendingBadge();",
+            "updateConnectionIndicator();",
+            "if (replayRunning) return;",
+            "storedQueueLength(event.newValue) < storedQueueLength(event.oldValue)",
+            "refreshCurrentList();",
+            "showQueuedChanges();",
+        ):
+            assert call in listener
+
+    def test_every_change_to_the_queue_redraws(self):
+        js = self._app()
+        body = js.split("function saveOfflineQueue(queue, quiet) {")[1].split("\n  }\n")[0]
+        assert "if (!quiet) showQueuedChanges();" in body
+
+    def test_rows_and_cards_carry_the_label(self):
+        js = self._app()
+        assert js.count("if (item.unsent) meta.appendChild(createUnsentLabel());") == 2
+        assert 'label.textContent = "Not sent";' in js
+
+    def test_label_is_styled(self):
+        css = (STATIC_DIR / "style.css").read_text()
+        assert ".item-unsent {" in css
+
+
 class TestRevalidation:
     """The page's files are checked with the server before reuse."""
 

@@ -8,6 +8,14 @@
  * A queued change is { path, opts, timestamp }: the API path, the
  * request (method, headers, body as a JSON string), and the time it was
  * queued, which also identifies it.
+ *
+ * Two things follow from the queue. What is sent: withChange combines a
+ * new change with those already queued, and nextToSend, replyOutcome
+ * and withUpdatedAt govern the sending. What is shown: the page draws
+ * the server's last answer with the queued changes applied on top
+ * (withQueuedChanges, boardWithQueuedChanges), so that a change made
+ * without the server is visible, and stays visible when the page is
+ * opened again.
  */
 (function (root) {
   "use strict";
@@ -79,8 +87,242 @@
     return patched;
   }
 
+  // What a queued change does: "toggle", "update", "move", "delete" or
+  // "add"; null for a request the queue has no rule for.
+  function kindOf(change) {
+    var method = change.opts && change.opts.method;
+    var path = change.path || "";
+    if (itemIdOf(path)) {
+      var action = path.replace(/^\/items\/[0-9a-f-]+/, "");
+      if (method === "PATCH" && action === "/toggle") return "toggle";
+      if (method === "PATCH" && action === "/move") return "move";
+      if (method === "PUT" && action === "") return "update";
+      if (method === "DELETE" && action === "") return "delete";
+      return null;
+    }
+    if (method === "POST" && /^\/lists\/[0-9a-f-]+\/items$/.test(path)) {
+      return "add";
+    }
+    return null;
+  }
+
+  function bodyOf(change) {
+    if (!change.opts || typeof change.opts.body !== "string") return {};
+    try {
+      return JSON.parse(change.opts.body) || {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function copyOf(object) {
+    var copy = {};
+    for (var key in object) copy[key] = object[key];
+    return copy;
+  }
+
+  // The queue with a change added. The given queue is not altered.
+  //
+  // A change is combined with what is already queued for the same item,
+  // so that the queue holds what is to be done and not every step that
+  // led there:
+  //   - A tick on an item with a queued tick takes that tick back; the
+  //     two would undo each other at the server, and here nothing is
+  //     sent.
+  //   - A field update that follows a field update is merged into it,
+  //     the later value winning; a move that follows a move replaces
+  //     its column. Only when it directly follows: an update either
+  //     side of a tick stays where it was made, since a tick on a
+  //     repeating task depends on the fields at that moment.
+  //   - A delete takes every earlier change to the item with it.
+  function withChange(queue, change) {
+    var result = queue.slice();
+    var kind = kindOf(change);
+    var itemId = itemIdOf(change.path);
+    if (!kind || !itemId) {
+      result.push(change);
+      return result;
+    }
+    var i;
+    if (kind === "toggle") {
+      for (i = 0; i < result.length; i++) {
+        if (itemIdOf(result[i].path) === itemId && kindOf(result[i]) === "toggle") {
+          result.splice(i, 1);
+          return result;
+        }
+      }
+      result.push(change);
+      return result;
+    }
+    if (kind === "delete") {
+      result = result.filter(function (queued) {
+        return itemIdOf(queued.path) !== itemId;
+      });
+      result.push(change);
+      return result;
+    }
+    // update or move: the last queued change to this item, if any
+    var previous = -1;
+    for (i = result.length - 1; i >= 0; i--) {
+      if (itemIdOf(result[i].path) === itemId) {
+        previous = i;
+        break;
+      }
+    }
+    if (previous === -1 || kindOf(result[previous]) !== kind) {
+      result.push(change);
+      return result;
+    }
+    // Merged in place. The time the earlier change was based on stands:
+    // the page has seen nothing newer from the server since.
+    var merged = bodyOf(result[previous]);
+    var added = bodyOf(change);
+    for (var key in added) {
+      if (key === "updated_at" && merged.updated_at !== undefined) continue;
+      merged[key] = added[key];
+    }
+    var combined = copyOf(result[previous]);
+    combined.opts = copyOf(combined.opts);
+    combined.opts.body = JSON.stringify(merged);
+    result[previous] = combined;
+    return result;
+  }
+
+  // The column the server gives an item that stops being complete: the
+  // first, or the "in progress" one when time has been spent on it.
+  // The server also looks at completed subtasks; the true column is
+  // known once the change is sent.
+  function incompleteColumn(item, boardColumns) {
+    if (boardColumns.length >= 3 && item.time_spent > 0) {
+      var middle = boardColumns.slice(1, -1);
+      return middle.indexOf("In Progress") !== -1 ? "In Progress" : middle[0];
+    }
+    return boardColumns[0];
+  }
+
+  // The short text for how often an item repeats, as the server words it.
+  function recurrenceLabel(type, interval) {
+    if (!type) return "";
+    var count = interval || 1;
+    if (type === "minutely") return "Every " + count + " min";
+    var single = {
+      daily: "Daily",
+      weekly: "Weekly",
+      monthly: "Monthly",
+      yearly: "Yearly",
+    };
+    if (count === 1) return single[type] || type;
+    var units = {
+      daily: "days",
+      weekly: "weeks",
+      monthly: "months",
+      yearly: "years",
+    };
+    return "Every " + count + " " + (units[type] || "");
+  }
+
+  // What the page shows: the items as the server last gave them, with
+  // the queued changes applied in order. An item with a queued change
+  // carries unsent: true. The given items are not altered.
+  //
+  // boardColumns are the list's column names; the last is the one for
+  // completed items. Without columns only the item's own fields change.
+  //
+  // A tick is shown as the person made it. For a repeating task the
+  // server answers a tick by moving the task to its next date and
+  // leaving it incomplete; that is shown once the change is sent.
+  function withQueuedChanges(items, queue, boardColumns) {
+    var columns = boardColumns || [];
+    var lastColumn = columns.length > 0 ? columns[columns.length - 1] : null;
+    var shown = (items || []).map(copyOf);
+
+    function find(itemId) {
+      for (var n = 0; n < shown.length; n++) {
+        if (shown[n].id === itemId) return n;
+      }
+      return -1;
+    }
+
+    for (var i = 0; i < queue.length; i++) {
+      var change = queue[i];
+      var kind = kindOf(change);
+      var at = find(itemIdOf(change.path));
+      if (!kind || at === -1) continue;
+      var item = shown[at];
+      if (kind === "delete") {
+        shown.splice(at, 1);
+        continue;
+      }
+      if (kind === "toggle") {
+        item.complete = !item.complete;
+        if (lastColumn !== null) {
+          if (item.complete) {
+            item.board_column = lastColumn;
+          } else if (item.board_column === lastColumn) {
+            item.board_column = incompleteColumn(item, columns);
+          }
+        }
+      } else if (kind === "move") {
+        var column = bodyOf(change).column;
+        if (columns.indexOf(column) !== -1) {
+          var from = item.board_column;
+          item.board_column = column;
+          if (column === lastColumn) item.complete = true;
+          else if (from === lastColumn) item.complete = false;
+        }
+      } else if (kind === "update") {
+        var fields = bodyOf(change);
+        for (var key in fields) {
+          if (key !== "updated_at" && key !== "force") item[key] = fields[key];
+        }
+        if ("recurrence_type" in fields) {
+          item.is_recurring = Boolean(item.recurrence_type);
+          item.recurrence_display = recurrenceLabel(
+            item.recurrence_type,
+            item.recurrence_interval,
+          );
+        }
+      }
+      item.unsent = true;
+    }
+    return shown;
+  }
+
+  // The board as the page shows it: the cards of every column with the
+  // queued changes applied, each in the column it then belongs to. The
+  // given board is not altered.
+  function boardWithQueuedChanges(board, queue) {
+    if (!board || !board.columns) return board;
+    var names = board.board_columns || [];
+    var cards = [];
+    names.forEach(function (name) {
+      (board.columns[name] || []).forEach(function (card) {
+        var copy = copyOf(card);
+        copy.board_column = name;
+        cards.push(copy);
+      });
+    });
+    var columns = {};
+    names.forEach(function (name) {
+      columns[name] = [];
+    });
+    withQueuedChanges(cards, queue, names).forEach(function (card) {
+      if (card.subtasks && card.subtasks.length > 0) {
+        card.subtasks = withQueuedChanges(card.subtasks, queue, []);
+      }
+      columns[card.board_column].push(card);
+    });
+    var shown = copyOf(board);
+    shown.columns = columns;
+    return shown;
+  }
+
   var rules = {
     itemIdOf: itemIdOf,
+    kindOf: kindOf,
+    withChange: withChange,
+    withQueuedChanges: withQueuedChanges,
+    boardWithQueuedChanges: boardWithQueuedChanges,
     newTimestamp: newTimestamp,
     replyOutcome: replyOutcome,
     nextToSend: nextToSend,

@@ -12,6 +12,10 @@
 
   var currentListId = null;
   var cachedLists = [];
+  // What the server last sent for the current list, and what the page
+  // shows: the same with the queued changes applied (showQueuedChanges).
+  var serverItems = [];
+  var serverBoardData = null;
   var cachedItems = [];
   var cachedBoardData = null;
   var allTags = [];
@@ -538,10 +542,28 @@
     }
   }
 
-  function saveOfflineQueue(queue) {
+  // Stores the queue and draws the list again, since what is shown
+  // follows from it. While the queue is being sent the list is left as
+  // it is (quiet): it is reloaded when the run ends.
+  function saveOfflineQueue(queue, quiet) {
     localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
     updatePendingBadge();
     updateConnectionIndicator();
+    if (!quiet) showQueuedChanges();
+  }
+
+  // Draws the current list from what the server last sent and the
+  // queued changes.
+  function showQueuedChanges() {
+    var queue = getOfflineQueue();
+    var columns = serverBoardData ? serverBoardData.board_columns : [];
+    cachedItems = QueueRules.withQueuedChanges(serverItems, queue, columns);
+    cachedBoardData = QueueRules.boardWithQueuedChanges(serverBoardData, queue);
+    if (viewMode !== "board") {
+      renderItems(cachedItems);
+    } else if (cachedBoardData && cachedBoardData.columns) {
+      renderBoard(cachedBoardData);
+    }
   }
 
   // The rules of the queue are in offline-queue.js, loaded before this
@@ -550,19 +572,12 @@
 
   function enqueueOfflineEdit(path, opts) {
     var queue = getOfflineQueue();
-    // DELETE makes prior pending ops for the same item moot
-    if (opts.method === "DELETE") {
-      var delId = QueueRules.itemIdOf(path);
-      if (delId) {
-        queue = queue.filter(function (entry) {
-          return QueueRules.itemIdOf(entry.path) !== delId;
-        });
-      }
-    }
-    var ts = QueueRules.newTimestamp(queue, Date.now());
-    queue.push({ path: path, opts: opts, timestamp: ts });
-    saveOfflineQueue(queue);
-    return ts;
+    var change = {
+      path: path,
+      opts: opts,
+      timestamp: QueueRules.newTimestamp(queue, Date.now()),
+    };
+    saveOfflineQueue(QueueRules.withChange(queue, change));
   }
 
   function removeFromOfflineQueue(index) {
@@ -571,12 +586,47 @@
     saveOfflineQueue(queue);
   }
 
-  function removeQueuedChange(timestamp) {
+  function removeQueuedChange(timestamp, quiet) {
     saveOfflineQueue(
       getOfflineQueue().filter(function (entry) {
         return entry.timestamp !== timestamp;
       }),
+      quiet,
     );
+  }
+
+  // Another open copy of the page stored the queue: a second tab, or
+  // the page of a tab closed a moment ago, which the browser keeps for a
+  // few seconds. The browser tells every copy but the one that wrote.
+  // The count, the connection dot and the list follow the stored queue.
+  // The undo steps kept here hold the queue as it was before that write,
+  // and putting one back would undo the other copy's work, or queue
+  // again a change it has already sent; they are dropped.
+  window.addEventListener("storage", function (event) {
+    // A cleared storage has no key.
+    if (event.key !== null && event.key !== OFFLINE_QUEUE_KEY) return;
+    clearOfflineUndo();
+    updatePendingBadge();
+    updateConnectionIndicator();
+    // A run that is sending the queue reloads the list when it ends.
+    if (replayRunning) return;
+    // A queue that got shorter may have been sent, and the server then
+    // has newer data than this copy: the list is read again, and drawn
+    // from the answer or, without the server, from the stored one.
+    // Otherwise what the server last sent stands, and is drawn now.
+    if (storedQueueLength(event.newValue) < storedQueueLength(event.oldValue)) {
+      refreshCurrentList();
+    } else {
+      showQueuedChanges();
+    }
+  });
+
+  function storedQueueLength(text) {
+    try {
+      return JSON.parse(text || "[]").length || 0;
+    } catch (e) {
+      return 0;
+    }
   }
 
   // Sends a change to the server, or queues it when the server cannot
@@ -585,7 +635,7 @@
   //   "queued"    kept, to be sent when the server answers again
   //   "conflict"  the item was changed elsewhere; the list is reloaded
   //   "refused"   the server will not accept it; its reason is shown
-  async function sendOrQueue(path, opts, itemId) {
+  async function sendOrQueue(path, opts) {
     if (isOnline) {
       try {
         await api(path, opts);
@@ -593,7 +643,7 @@
       } catch (e) {
         var outcome = QueueRules.replyOutcome(e.status);
         if (outcome === "conflict") {
-          showToast("Updated elsewhere — refreshing");
+          showToast("Updated elsewhere \u2014 refreshing");
           await refreshCurrentList();
           return "conflict";
         }
@@ -604,9 +654,9 @@
         }
       }
     }
-    var snapshot = itemId ? captureItemSnapshot(itemId) : null;
-    var ts = enqueueOfflineEdit(path, opts);
-    pushOfflineUndo(snapshot, ts, path, opts);
+    var before = getOfflineQueue();
+    enqueueOfflineEdit(path, opts);
+    pushOfflineUndo(before, getOfflineQueue());
     return "queued";
   }
 
@@ -660,7 +710,7 @@
       }
       // Removed as soon as the server has answered, so that a page
       // closed during the run does not send the change a second time.
-      removeQueuedChange(entry.timestamp);
+      removeQueuedChange(entry.timestamp, true);
       if (outcome === "conflict") conflicts++;
       if (outcome === "refused") refused++;
       if (outcome === "sent" && itemId) {
@@ -720,8 +770,7 @@
     if (online) {
       // Transitioning to online — clear offline undo stacks
       // (server-side undo takes over after queue replay)
-      offlineUndoStack = [];
-      offlineRedoStack = [];
+      clearOfflineUndo();
     }
     updateConnectionIndicator();
     updatePendingBadge();
@@ -1470,7 +1519,7 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(fields),
     };
-    var outcome = await sendOrQueue(path, opts, itemId);
+    var outcome = await sendOrQueue(path, opts);
     if (outcome === "sent") await refreshCurrentList();
   }
 
@@ -1487,7 +1536,7 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(fields),
     };
-    var outcome = await sendOrQueue(path, opts, itemId);
+    var outcome = await sendOrQueue(path, opts);
     if (outcome === "sent") {
       await refreshCurrentList();
       showToast(recType ? "Recurrence set" : "Recurrence removed");
@@ -1504,7 +1553,7 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(fields),
     };
-    var outcome = await sendOrQueue(path, opts, itemId);
+    var outcome = await sendOrQueue(path, opts);
     if (outcome === "sent") {
       await refreshCurrentList();
       showToast("Moved to " + column);
@@ -2355,6 +2404,15 @@
     });
   }
 
+  // Marks a task whose change is waiting to be sent to the server.
+  function createUnsentLabel() {
+    var label = document.createElement("span");
+    label.className = "item-unsent";
+    label.textContent = "Not sent";
+    label.title = "This change is sent when the server can be reached";
+    return label;
+  }
+
   function createItemCard(item, allItems, hasChildren, isCollapsed) {
     var div = document.createElement("div");
     var pClass =
@@ -2400,6 +2458,8 @@
     // Meta row
     var meta = document.createElement("div");
     meta.className = "item-meta";
+
+    if (item.unsent) meta.appendChild(createUnsentLabel());
 
     var dueInfo = formatDueDate(
       item.due_date,
@@ -2526,7 +2586,11 @@
   async function refreshBoard(force) {
     if (!currentListId) return;
     try {
-      cachedBoardData = await api("/lists/" + currentListId + "/board");
+      serverBoardData = await api("/lists/" + currentListId + "/board");
+      cachedBoardData = QueueRules.boardWithQueuedChanges(
+        serverBoardData,
+        getOfflineQueue(),
+      );
       renderBoard(cachedBoardData, force);
     } catch (e) {
       console.error("Board load failed:", e);
@@ -2655,6 +2719,8 @@
 
     var meta = document.createElement("div");
     meta.className = "board-card-meta";
+
+    if (item.unsent) meta.appendChild(createUnsentLabel());
 
     var dueInfo = formatDueDate(
       item.due_date,
@@ -4123,7 +4189,7 @@
       };
 
       // A refused task stays in the sheet, to be corrected.
-      var outcome = await sendOrQueue(path, opts, null);
+      var outcome = await sendOrQueue(path, opts);
       if (outcome === "sent") {
         closeAddSheet();
         await refreshCurrentList();
@@ -5215,6 +5281,7 @@
       removeBtn.innerHTML = "&times;";
       removeBtn.addEventListener("click", function () {
         removeFromOfflineQueue(idx);
+        clearOfflineUndo();
         refreshSettings();
       });
       row.appendChild(removeBtn);
@@ -5229,6 +5296,7 @@
     clearQueueBtn.addEventListener("click", function () {
       if (!confirm("Discard all pending offline changes?")) return;
       saveOfflineQueue([]);
+      clearOfflineUndo();
       showToast("Offline queue cleared");
       refreshSettings();
     });
@@ -5254,7 +5322,7 @@
       opts.headers = { "Content-Type": "application/json" };
       opts.body = JSON.stringify({ updated_at: ua });
     }
-    var outcome = await sendOrQueue(path, opts, itemId);
+    var outcome = await sendOrQueue(path, opts);
     if (outcome === "sent") await refreshCurrentList();
   }
 
@@ -5266,7 +5334,7 @@
       opts.headers = { "Content-Type": "application/json" };
       opts.body = JSON.stringify({ updated_at: ua });
     }
-    var outcome = await sendOrQueue(path, opts, itemId);
+    var outcome = await sendOrQueue(path, opts);
     if (outcome === "sent") {
       await refreshCurrentList();
       showToast(
@@ -5281,39 +5349,31 @@
   // Undo / Redo (online via server, offline via client-side stack)
   // ====================================================================
 
-  function captureItemSnapshot(itemId) {
-    for (var i = 0; i < cachedItems.length; i++) {
-      if (cachedItems[i].id === itemId) {
-        return JSON.parse(JSON.stringify(cachedItems[i]));
-      }
-    }
-    if (cachedBoardData && cachedBoardData.columns) {
-      var cols = Object.keys(cachedBoardData.columns);
-      for (var c = 0; c < cols.length; c++) {
-        var items = cachedBoardData.columns[cols[c]];
-        for (var j = 0; j < items.length; j++) {
-          if (items[j].id === itemId) {
-            return JSON.parse(JSON.stringify(items[j]));
-          }
-        }
-      }
-    }
-    return null;
-  }
-
-  function pushOfflineUndo(snapshot, queueTimestamp, path, opts) {
-    offlineUndoStack.push({
-      snapshot: snapshot,
-      timestamp: queueTimestamp,
-      path: path || "",
-      opts: opts || {},
-    });
+  // Undo without the server works on the queue: each queued change
+  // records the queue before and after it, and undo and redo put one or
+  // the other back. The list follows, since it is drawn from the queue.
+  function pushOfflineUndo(before, after) {
+    offlineUndoStack.push({ before: before, after: after });
     offlineRedoStack = []; // new action invalidates redo
     updateUndoButtons();
   }
 
+  function clearOfflineUndo() {
+    offlineUndoStack = [];
+    offlineRedoStack = [];
+    updateUndoButtons();
+  }
+
+  // Changes are waiting that the server has not seen: undo and redo act
+  // on those, whether or not the browser reports the device offline.
+  function undoIsOffline() {
+    return (
+      !isOnline || offlineUndoStack.length > 0 || offlineRedoStack.length > 0
+    );
+  }
+
   function updateUndoButtons() {
-    if (!isOnline) {
+    if (undoIsOffline()) {
       if (undoBtn) {
         undoBtn.disabled = offlineUndoStack.length === 0;
         undoBtn.title = offlineUndoStack.length > 0 ? "Undo (offline)" : "Undo";
@@ -5351,38 +5411,8 @@
   function offlineUndoAction() {
     if (offlineUndoStack.length === 0) return;
     var entry = offlineUndoStack.pop();
-    // Remove matching entry from offline queue
-    var queue = getOfflineQueue();
-    queue = queue.filter(function (q) {
-      return q.timestamp !== entry.timestamp;
-    });
-    saveOfflineQueue(queue);
-
-    // Restore snapshot into cached items
-    var snapshot = entry.snapshot;
-    if (snapshot && snapshot.id) {
-      var found = false;
-      for (var i = 0; i < cachedItems.length; i++) {
-        if (cachedItems[i].id === snapshot.id) {
-          cachedItems[i] = snapshot;
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        // Item was added offline — removing it from cache
-        // Or item was deleted — re-adding the snapshot
-        cachedItems.push(snapshot);
-      }
-      // Update IndexedDB cache
-      if (currentListId) cacheListItems(currentListId, cachedItems);
-    }
-
     offlineRedoStack.push(entry);
-    // Re-render
-    lastItemsFingerprint = "";
-    lastBoardFingerprint = "";
-    renderItems(cachedItems);
+    saveOfflineQueue(entry.before);
     updateUndoButtons();
     showToast("Undone (offline)");
   }
@@ -5390,36 +5420,14 @@
   function offlineRedoAction() {
     if (offlineRedoStack.length === 0) return;
     var entry = offlineRedoStack.pop();
-    // Re-enqueue the operation
-    var queue = getOfflineQueue();
-    // Re-create a queue entry from the snapshot's corresponding operation
-    // We stored the timestamp — find what path/opts would have been
-    // Simplest: we just re-enqueue and let the snapshot be the "before" state again
-    queue.push({
-      path: entry.path || "",
-      opts: entry.opts || {},
-      timestamp: entry.timestamp,
-    });
-    saveOfflineQueue(queue);
-
     offlineUndoStack.push(entry);
-    // Re-render from cache (the queue will replay on reconnect)
-    lastItemsFingerprint = "";
-    lastBoardFingerprint = "";
-    if (currentListId) {
-      getCachedListItems(currentListId).then(function (items) {
-        if (items) {
-          cachedItems = items;
-          renderItems(cachedItems);
-        }
-      });
-    }
+    saveOfflineQueue(entry.after);
     updateUndoButtons();
     showToast("Redone (offline)");
   }
 
   async function onUndo() {
-    if (!isOnline && offlineUndoStack.length > 0) {
+    if (undoIsOffline()) {
       offlineUndoAction();
       return;
     }
@@ -5441,7 +5449,7 @@
   }
 
   async function onRedo() {
-    if (!isOnline && offlineRedoStack.length > 0) {
+    if (undoIsOffline()) {
       offlineRedoAction();
       return;
     }
@@ -5776,27 +5784,25 @@
 
   async function refreshCurrentList() {
     if (!currentListId) {
+      serverItems = [];
       cachedItems = [];
       renderItems([]);
       return;
     }
     try {
       var data = await api("/lists/" + currentListId);
-      cachedItems = data.items || [];
-      cachedBoardData = {
+      serverItems = data.items || [];
+      serverBoardData = {
         board_columns: data.board_columns || [],
         wip_limits: data.wip_limits || {},
         columns: null,
       };
 
       // Cache for offline use
-      cacheListItems(currentListId, cachedItems);
+      cacheListItems(currentListId, serverItems);
 
-      if (viewMode === "board") {
-        await refreshBoard();
-      } else {
-        renderItems(cachedItems);
-      }
+      showQueuedChanges();
+      if (viewMode === "board") await refreshBoard();
 
       // Refresh list selector counts
       await refreshLists();
@@ -5804,14 +5810,8 @@
     } catch (e) {
       console.error("Failed to load list:", e);
       // Fall back to IndexedDB cache
-      var cached = await getCachedListItems(currentListId);
-      if (cached) {
-        cachedItems = cached;
-        renderItems(cachedItems);
-      } else {
-        cachedItems = [];
-        renderItems([]);
-      }
+      serverItems = (await getCachedListItems(currentListId)) || [];
+      showQueuedChanges();
     }
   }
 

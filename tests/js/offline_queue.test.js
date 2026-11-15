@@ -114,3 +114,345 @@ test("withUpdatedAt leaves a request alone that carries no such time", () => {
   assert.equal(rules.withUpdatedAt(notJson, 250), notJson);
   assert.equal(rules.withUpdatedAt(undefined, 250), undefined);
 });
+
+// --- What is queued -------------------------------------------------------
+
+const tick = (ts, id, base) => change(ts, "/items/" + id + "/toggle", "PATCH", base === undefined ? undefined : { updated_at: base });
+const update = (ts, id, fields) => change(ts, "/items/" + id, "PUT", fields);
+const move = (ts, id, column, base) => change(ts, "/items/" + id + "/move", "PATCH", { column: column, updated_at: base });
+const remove = (ts, id) => change(ts, "/items/" + id, "DELETE", { updated_at: 100 });
+const add = (ts, text) => change(ts, "/lists/" + LIST + "/items", "POST", { reminder: text, parse_nlp: true });
+const stamps = (queue) => queue.map((queued) => queued.timestamp);
+
+test("kindOf names what a queued change does", () => {
+  assert.equal(rules.kindOf(tick(1, ITEM_A)), "toggle");
+  assert.equal(rules.kindOf(update(1, ITEM_A, { priority: 1 })), "update");
+  assert.equal(rules.kindOf(move(1, ITEM_A, "Done", 100)), "move");
+  assert.equal(rules.kindOf(remove(1, ITEM_A)), "delete");
+  assert.equal(rules.kindOf(add(1, "New")), "add");
+});
+
+test("kindOf has no name for a request the queue has no rule for", () => {
+  assert.equal(rules.kindOf(change(1, "/items/" + ITEM_A + "/restore", "PATCH")), null);
+  assert.equal(rules.kindOf(change(1, "/items/" + ITEM_A + "/parent", "PATCH", { parent_id: null })), null);
+  assert.equal(rules.kindOf(change(1, "/lists/" + LIST, "DELETE")), null);
+  assert.equal(rules.kindOf(change(1, "/lists", "POST", { name: "New" })), null);
+  assert.equal(rules.kindOf({ path: "/items/" + ITEM_A }), null);
+});
+
+test("withChange: a first tick is queued", () => {
+  const queue = rules.withChange([], tick(1, ITEM_A, 100));
+  assert.deepEqual(stamps(queue), [1]);
+});
+
+test("withChange: a second tick on the same task takes the first back", () => {
+  const queue = rules.withChange([tick(1, ITEM_A, 100)], tick(2, ITEM_A, 100));
+  assert.deepEqual(queue, []);
+});
+
+test("withChange: a third tick is queued again", () => {
+  let queue = rules.withChange([], tick(1, ITEM_A, 100));
+  queue = rules.withChange(queue, tick(2, ITEM_A, 100));
+  queue = rules.withChange(queue, tick(3, ITEM_A, 100));
+  assert.deepEqual(stamps(queue), [3]);
+});
+
+test("withChange: a tick on another task is left alone", () => {
+  const queue = rules.withChange([tick(1, ITEM_A, 100)], tick(2, ITEM_B, 100));
+  assert.deepEqual(stamps(queue), [1, 2]);
+});
+
+test("withChange: a tick takes back an earlier tick with other changes after it", () => {
+  const before = [tick(1, ITEM_A, 100), update(2, ITEM_A, { priority: 1, updated_at: 100 }), tick(3, ITEM_B, 100)];
+  const queue = rules.withChange(before, tick(4, ITEM_A, 100));
+  assert.deepEqual(stamps(queue), [2, 3]);
+});
+
+test("withChange: a field update following a field update is merged, the later value winning", () => {
+  const before = [update(1, ITEM_A, { priority: 1, updated_at: 100 })];
+  let queue = rules.withChange(before, update(2, ITEM_A, { priority: 3, updated_at: 100 }));
+  queue = rules.withChange(queue, update(3, ITEM_A, { recurrence_type: "daily", recurrence_interval: 1, updated_at: 100 }));
+  assert.deepEqual(stamps(queue), [1]);
+  assert.deepEqual(JSON.parse(queue[0].opts.body), {
+    priority: 3,
+    updated_at: 100,
+    recurrence_type: "daily",
+    recurrence_interval: 1,
+  });
+  assert.equal(queue[0].opts.method, "PUT");
+});
+
+test("withChange: a merged update keeps the time the first was based on", () => {
+  const queue = rules.withChange(
+    [update(1, ITEM_A, { priority: 1, updated_at: 100 })],
+    update(2, ITEM_A, { priority: 3, updated_at: 180 }),
+  );
+  assert.equal(JSON.parse(queue[0].opts.body).updated_at, 100);
+});
+
+test("withChange: a field update after a tick is not merged across it", () => {
+  const before = [update(1, ITEM_A, { priority: 1, updated_at: 100 }), tick(2, ITEM_A, 100)];
+  const queue = rules.withChange(before, update(3, ITEM_A, { recurrence_type: "weekly", updated_at: 100 }));
+  assert.deepEqual(stamps(queue), [1, 2, 3]);
+  assert.deepEqual(JSON.parse(queue[0].opts.body), { priority: 1, updated_at: 100 });
+});
+
+test("withChange: updates to different tasks are not merged", () => {
+  const queue = rules.withChange(
+    [update(1, ITEM_A, { priority: 1, updated_at: 100 })],
+    update(2, ITEM_B, { priority: 3, updated_at: 100 }),
+  );
+  assert.deepEqual(stamps(queue), [1, 2]);
+});
+
+test("withChange: a move following a move replaces its column", () => {
+  const queue = rules.withChange([move(1, ITEM_A, "In Progress", 100)], move(2, ITEM_A, "Done", 100));
+  assert.deepEqual(stamps(queue), [1]);
+  assert.deepEqual(JSON.parse(queue[0].opts.body), { column: "Done", updated_at: 100 });
+});
+
+test("withChange: a move and a field update are kept apart", () => {
+  const queue = rules.withChange(
+    [update(1, ITEM_A, { priority: 1, updated_at: 100 })],
+    move(2, ITEM_A, "Done", 100),
+  );
+  assert.deepEqual(stamps(queue), [1, 2]);
+});
+
+test("withChange: a delete takes the earlier changes to the task with it", () => {
+  const before = [tick(1, ITEM_A, 100), tick(2, ITEM_B, 100), update(3, ITEM_A, { priority: 1, updated_at: 100 })];
+  const queue = rules.withChange(before, remove(4, ITEM_A));
+  assert.deepEqual(stamps(queue), [2, 4]);
+});
+
+test("withChange: an added task is queued as it is, twice if added twice", () => {
+  let queue = rules.withChange([], add(1, "Milk"));
+  queue = rules.withChange(queue, add(2, "Milk"));
+  assert.deepEqual(stamps(queue), [1, 2]);
+});
+
+test("withChange leaves the given queue and its changes as they were", () => {
+  const first = update(1, ITEM_A, { priority: 1, updated_at: 100 });
+  const before = [first];
+  const frozen = JSON.stringify(before);
+  rules.withChange(before, update(2, ITEM_A, { priority: 3, updated_at: 100 }));
+  rules.withChange(before, tick(3, ITEM_A, 100));
+  rules.withChange(before, remove(4, ITEM_A));
+  assert.equal(JSON.stringify(before), frozen);
+  assert.equal(before[0], first);
+});
+
+// --- What is shown --------------------------------------------------------
+
+const COLUMNS = ["To Do", "In Progress", "Done"];
+
+function task(id, fields) {
+  return Object.assign(
+    {
+      id: id,
+      reminder: "Task " + id.slice(0, 1),
+      complete: false,
+      priority: 2,
+      board_column: "To Do",
+      time_spent: 0,
+      is_recurring: false,
+      recurrence_type: null,
+      recurrence_interval: 1,
+      recurrence_display: "",
+      updated_at: 100,
+    },
+    fields,
+  );
+}
+
+test("withQueuedChanges: with nothing queued the items are shown as sent, unmarked", () => {
+  const items = [task(ITEM_A), task(ITEM_B, { complete: true })];
+  const shown = rules.withQueuedChanges(items, [], COLUMNS);
+  assert.deepEqual(shown, items);
+  assert.equal(shown[0].unsent, undefined);
+});
+
+test("withQueuedChanges: a queued tick is shown, and marked", () => {
+  const shown = rules.withQueuedChanges([task(ITEM_A), task(ITEM_B)], [tick(1, ITEM_A, 100)], []);
+  assert.equal(shown[0].complete, true);
+  assert.equal(shown[0].unsent, true);
+  assert.equal(shown[1].complete, false);
+  assert.equal(shown[1].unsent, undefined);
+});
+
+test("withQueuedChanges: a queued tick on a complete task shows it incomplete", () => {
+  const shown = rules.withQueuedChanges([task(ITEM_A, { complete: true })], [tick(1, ITEM_A, 100)], []);
+  assert.equal(shown[0].complete, false);
+  assert.equal(shown[0].unsent, true);
+});
+
+test("withQueuedChanges: the tick taken back leaves the task as the server has it", () => {
+  let queue = rules.withChange([], tick(1, ITEM_A, 100));
+  queue = rules.withChange(queue, tick(2, ITEM_A, 100));
+  const shown = rules.withQueuedChanges([task(ITEM_A)], queue, []);
+  assert.equal(shown[0].complete, false);
+  assert.equal(shown[0].unsent, undefined);
+});
+
+test("withQueuedChanges: a ticked task goes to the last column, as at the server", () => {
+  const shown = rules.withQueuedChanges([task(ITEM_A, { board_column: "In Progress" })], [tick(1, ITEM_A, 100)], COLUMNS);
+  assert.equal(shown[0].board_column, "Done");
+});
+
+test("withQueuedChanges: an unticked task leaves the last column", () => {
+  const done = { complete: true, board_column: "Done" };
+  let shown = rules.withQueuedChanges([task(ITEM_A, done)], [tick(1, ITEM_A, 100)], COLUMNS);
+  assert.equal(shown[0].board_column, "To Do");
+  shown = rules.withQueuedChanges([task(ITEM_A, Object.assign({ time_spent: 60 }, done))], [tick(1, ITEM_A, 100)], COLUMNS);
+  assert.equal(shown[0].board_column, "In Progress");
+  shown = rules.withQueuedChanges(
+    [task(ITEM_A, Object.assign({ time_spent: 60 }, done))],
+    [tick(1, ITEM_A, 100)],
+    ["Inbox", "Doing", "Review", "Done"],
+  );
+  assert.equal(shown[0].board_column, "Doing");
+  shown = rules.withQueuedChanges([task(ITEM_A, Object.assign({ time_spent: 60 }, done))], [tick(1, ITEM_A, 100)], ["To Do", "Done"]);
+  assert.equal(shown[0].board_column, "To Do");
+});
+
+test("withQueuedChanges: queued field updates are shown", () => {
+  const queue = [update(1, ITEM_A, { priority: 1, updated_at: 100 })];
+  const shown = rules.withQueuedChanges([task(ITEM_A)], queue, []);
+  assert.equal(shown[0].priority, 1);
+  assert.equal(shown[0].unsent, true);
+  // The time the page last saw from the server is not a field of the change.
+  assert.equal(shown[0].updated_at, 100);
+});
+
+test("withQueuedChanges: a queued recurrence is shown in the server's words", () => {
+  const cases = [
+    [{ recurrence_type: "daily", recurrence_interval: 1 }, true, "Daily"],
+    [{ recurrence_type: "weekly", recurrence_interval: 1 }, true, "Weekly"],
+    [{ recurrence_type: "monthly", recurrence_interval: 3 }, true, "Every 3 months"],
+    [{ recurrence_type: "yearly", recurrence_interval: 2 }, true, "Every 2 years"],
+    [{ recurrence_type: null, recurrence_interval: 1 }, false, ""],
+  ];
+  for (const [fields, repeating, label] of cases) {
+    const before = task(ITEM_A, { is_recurring: true, recurrence_type: "daily", recurrence_display: "Daily" });
+    const shown = rules.withQueuedChanges([before], [update(1, ITEM_A, fields)], []);
+    assert.equal(shown[0].is_recurring, repeating, label);
+    assert.equal(shown[0].recurrence_display, label);
+  }
+});
+
+test("withQueuedChanges: a queued move is shown, with the completion that goes with the last column", () => {
+  let shown = rules.withQueuedChanges([task(ITEM_A)], [move(1, ITEM_A, "In Progress", 100)], COLUMNS);
+  assert.equal(shown[0].board_column, "In Progress");
+  assert.equal(shown[0].complete, false);
+  assert.equal(shown[0].unsent, true);
+  shown = rules.withQueuedChanges([task(ITEM_A)], [move(1, ITEM_A, "Done", 100)], COLUMNS);
+  assert.equal(shown[0].complete, true);
+  shown = rules.withQueuedChanges(
+    [task(ITEM_A, { complete: true, board_column: "Done" })],
+    [move(1, ITEM_A, "To Do", 100)],
+    COLUMNS,
+  );
+  assert.equal(shown[0].complete, false);
+});
+
+test("withQueuedChanges: a move to a column the list does not have is not shown", () => {
+  const shown = rules.withQueuedChanges([task(ITEM_A)], [move(1, ITEM_A, "Nowhere", 100)], COLUMNS);
+  assert.equal(shown[0].board_column, "To Do");
+});
+
+test("withQueuedChanges: a task with a queued delete is not shown", () => {
+  const shown = rules.withQueuedChanges([task(ITEM_A), task(ITEM_B)], [remove(1, ITEM_A)], []);
+  assert.deepEqual(
+    shown.map((item) => item.id),
+    [ITEM_B],
+  );
+});
+
+test("withQueuedChanges: changes are applied in the order they were made", () => {
+  const queue = [
+    update(1, ITEM_A, { priority: 1, updated_at: 100 }),
+    tick(2, ITEM_A, 100),
+    update(3, ITEM_A, { priority: 3, updated_at: 100 }),
+  ];
+  const shown = rules.withQueuedChanges([task(ITEM_A)], queue, []);
+  assert.equal(shown[0].priority, 3);
+  assert.equal(shown[0].complete, true);
+});
+
+test("withQueuedChanges: a change to a task that is not in the list is passed over", () => {
+  const queue = [tick(1, ITEM_B, 100), add(2, "New"), change(3, "/items/" + ITEM_A + "/restore", "PATCH")];
+  const items = [task(ITEM_A)];
+  assert.deepEqual(rules.withQueuedChanges(items, queue, []), items);
+});
+
+test("withQueuedChanges leaves the given items as they were", () => {
+  const items = [task(ITEM_A), task(ITEM_B)];
+  const frozen = JSON.stringify(items);
+  rules.withQueuedChanges(items, [tick(1, ITEM_A, 100), remove(2, ITEM_B)], COLUMNS);
+  assert.equal(JSON.stringify(items), frozen);
+});
+
+test("withQueuedChanges: no items, nothing shown", () => {
+  assert.deepEqual(rules.withQueuedChanges([], [tick(1, ITEM_A, 100)], COLUMNS), []);
+  assert.deepEqual(rules.withQueuedChanges(null, [], COLUMNS), []);
+});
+
+function board(columns) {
+  return { id: LIST, updated_at: 500, board_columns: COLUMNS, wip_limits: {}, columns: columns };
+}
+
+test("boardWithQueuedChanges: a ticked card is shown in the last column, marked", () => {
+  const sent = board({ "To Do": [task(ITEM_A), task(ITEM_B)], "In Progress": [], Done: [] });
+  const shown = rules.boardWithQueuedChanges(sent, [tick(1, ITEM_A, 100)]);
+  assert.deepEqual(
+    shown.columns["To Do"].map((card) => card.id),
+    [ITEM_B],
+  );
+  assert.deepEqual(
+    shown.columns.Done.map((card) => [card.id, card.complete, card.unsent]),
+    [[ITEM_A, true, true]],
+  );
+  assert.equal(shown.id, LIST);
+  assert.equal(shown.updated_at, 500);
+});
+
+test("boardWithQueuedChanges: a moved card is shown in its new column", () => {
+  const sent = board({ "To Do": [task(ITEM_A)], "In Progress": [], Done: [] });
+  const shown = rules.boardWithQueuedChanges(sent, [move(1, ITEM_A, "In Progress", 100)]);
+  assert.equal(shown.columns["To Do"].length, 0);
+  assert.equal(shown.columns["In Progress"][0].id, ITEM_A);
+});
+
+test("boardWithQueuedChanges: a deleted card is not shown", () => {
+  const sent = board({ "To Do": [task(ITEM_A), task(ITEM_B)], "In Progress": [], Done: [] });
+  const shown = rules.boardWithQueuedChanges(sent, [remove(1, ITEM_B)]);
+  assert.deepEqual(
+    shown.columns["To Do"].map((card) => card.id),
+    [ITEM_A],
+  );
+});
+
+test("boardWithQueuedChanges: a card is filed under the column it is in, whatever its own field says", () => {
+  // The server puts a card whose column no longer exists in the first one.
+  const sent = board({ "To Do": [task(ITEM_A, { board_column: "Removed" })], "In Progress": [], Done: [] });
+  const shown = rules.boardWithQueuedChanges(sent, []);
+  assert.equal(shown.columns["To Do"][0].id, ITEM_A);
+});
+
+test("boardWithQueuedChanges: a queued tick on a subtask is shown on its card", () => {
+  const parent = task(ITEM_A, { subtasks: [task(ITEM_B, { parent_id: ITEM_A })] });
+  const sent = board({ "To Do": [parent], "In Progress": [], Done: [] });
+  const shown = rules.boardWithQueuedChanges(sent, [tick(1, ITEM_B, 100)]);
+  assert.equal(shown.columns["To Do"][0].subtasks[0].complete, true);
+  assert.equal(shown.columns["To Do"][0].unsent, undefined);
+});
+
+test("boardWithQueuedChanges leaves the given board as it was, and passes on one without cards", () => {
+  const sent = board({ "To Do": [task(ITEM_A)], "In Progress": [], Done: [] });
+  const frozen = JSON.stringify(sent);
+  rules.boardWithQueuedChanges(sent, [tick(1, ITEM_A, 100)]);
+  assert.equal(JSON.stringify(sent), frozen);
+  const noCards = { board_columns: COLUMNS, wip_limits: {}, columns: null };
+  assert.equal(rules.boardWithQueuedChanges(noCards, [tick(1, ITEM_A, 100)]), noCards);
+  assert.equal(rules.boardWithQueuedChanges(null, []), null);
+});

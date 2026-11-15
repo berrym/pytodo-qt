@@ -226,6 +226,9 @@ def _web_pairs() -> list[Pair]:
             ("danger on surface", c["danger"], c["surface"]),
             ("success on bg", c["success"], c["bg"]),
             ("warning on bg", c["warning"], c["bg"]),
+            # The "Not sent" label on a task row; a ticked task that is
+            # waiting to be sent is drawn on the completed background.
+            ("warning on completed-bg", c["warning"], c["completed-bg"]),
             ("completed-text on completed-bg", c["completed-text"], c["completed-bg"]),
             ("tag-text on tag-bg", c["tag-text"], c["tag-bg"]),
             ("entity-date on bg", c["entity-date"], c["bg"]),
