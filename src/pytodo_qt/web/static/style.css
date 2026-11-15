@@ -803,6 +803,27 @@ body {
   color: var(--entity-recurrence);
 }
 
+/* A task added without the server: it exists only on this device until
+   it is sent, and can only be removed. */
+.item.queued-add,
+.board-card.queued-add {
+  border-style: dashed;
+  cursor: default;
+}
+
+.board-card.queued-add {
+  padding-right: 40px;
+}
+
+.board-card-grip.queued-add-remove {
+  border: none;
+  background: transparent;
+  font-size: 16px;
+  cursor: pointer;
+  opacity: 1;
+  touch-action: manipulation;
+}
+
 /* A change to this task is waiting to be sent to the server. */
 .item-unsent {
   display: inline-flex;

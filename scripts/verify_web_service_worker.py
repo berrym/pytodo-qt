@@ -84,7 +84,7 @@ ADDRESS_NOTES = """\
 # Added to the copy of app.js: tells this script whether the browser took
 # the service worker, so the answer does not depend on the browser's
 # developer tools.
-_REPORT_JS = """
+REPORT_JS = """
 (function () {
   function report(state) {
     fetch("/check/worker?state=" + encodeURIComponent(state)).catch(function () {});
@@ -278,7 +278,7 @@ def main() -> None:
         static_dir = Path(temporary) / "static"
         shutil.copytree(web_server._STATIC_DIR, static_dir)
         with (static_dir / "app.js").open("a", encoding="utf-8") as script:
-            script.write(_REPORT_JS)
+            script.write(REPORT_JS)
         web_server._STATIC_DIR = static_dir
         with contextlib.suppress(KeyboardInterrupt):
             asyncio.run(serve(args.port, static_dir))

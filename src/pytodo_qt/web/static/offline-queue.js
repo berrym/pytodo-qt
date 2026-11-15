@@ -13,9 +13,10 @@
  * new change with those already queued, and nextToSend, replyOutcome
  * and withUpdatedAt govern the sending. What is shown: the page draws
  * the server's last answer with the queued changes applied on top
- * (withQueuedChanges, boardWithQueuedChanges), so that a change made
- * without the server is visible, and stays visible when the page is
- * opened again.
+ * (withQueuedChanges, boardWithQueuedChanges, and queuedAdds for tasks
+ * that do not exist at the server yet), so that a change made without
+ * the server is visible, and stays visible when the page is opened
+ * again.
  */
 (function (root) {
   "use strict";
@@ -288,9 +289,32 @@
     return shown;
   }
 
+  // Rows for the tasks waiting to be added to a list, in the order they
+  // were added. A row has the text as it was typed: the dates, tags and
+  // priority written in it are read by the server when the task is sent,
+  // so until then it has no place in the list's sort and nothing can be
+  // done to it but remove it. queued_at identifies its queued change.
+  function queuedAdds(queue, listId) {
+    var rows = [];
+    for (var i = 0; i < queue.length; i++) {
+      var change = queue[i];
+      if (kindOf(change) !== "add") continue;
+      if (change.path !== "/lists/" + listId + "/items") continue;
+      rows.push({
+        id: "unsent-" + change.timestamp,
+        queued_at: change.timestamp,
+        reminder: String(bodyOf(change).reminder || ""),
+        provisional: true,
+        unsent: true,
+      });
+    }
+    return rows;
+  }
+
   // The board as the page shows it: the cards of every column with the
-  // queued changes applied, each in the column it then belongs to. The
-  // given board is not altered.
+  // queued changes applied, each in the column it then belongs to, and
+  // the tasks waiting to be added at the top of the first column, where
+  // the server puts a new task. The given board is not altered.
   function boardWithQueuedChanges(board, queue) {
     if (!board || !board.columns) return board;
     var names = board.board_columns || [];
@@ -312,6 +336,9 @@
       }
       columns[card.board_column].push(card);
     });
+    if (names.length > 0 && board.id) {
+      columns[names[0]] = queuedAdds(queue, board.id).concat(columns[names[0]]);
+    }
     var shown = copyOf(board);
     shown.columns = columns;
     return shown;
@@ -322,6 +349,7 @@
     kindOf: kindOf,
     withChange: withChange,
     withQueuedChanges: withQueuedChanges,
+    queuedAdds: queuedAdds,
     boardWithQueuedChanges: boardWithQueuedChanges,
     newTimestamp: newTimestamp,
     replyOutcome: replyOutcome,

@@ -456,3 +456,53 @@ test("boardWithQueuedChanges leaves the given board as it was, and passes on one
   assert.equal(rules.boardWithQueuedChanges(noCards, [tick(1, ITEM_A, 100)]), noCards);
   assert.equal(rules.boardWithQueuedChanges(null, []), null);
 });
+
+// --- Tasks waiting to be added --------------------------------------------
+
+const OTHER_LIST = "44444444-4444-4444-4444-444444444444";
+
+test("queuedAdds: a row for each task waiting to be added to the list, in order", () => {
+  const queue = [add(1, "Milk tomorrow !high"), tick(2, ITEM_A, 100), add(3, "Bread")];
+  assert.deepEqual(rules.queuedAdds(queue, LIST), [
+    { id: "unsent-1", queued_at: 1, reminder: "Milk tomorrow !high", provisional: true, unsent: true },
+    { id: "unsent-3", queued_at: 3, reminder: "Bread", provisional: true, unsent: true },
+  ]);
+});
+
+test("queuedAdds: tasks waiting for another list are not rows of this one", () => {
+  const elsewhere = change(1, "/lists/" + OTHER_LIST + "/items", "POST", { reminder: "Elsewhere" });
+  assert.deepEqual(rules.queuedAdds([elsewhere], LIST), []);
+  assert.equal(rules.queuedAdds([elsewhere], OTHER_LIST).length, 1);
+});
+
+test("queuedAdds: nothing waiting, no rows", () => {
+  assert.deepEqual(rules.queuedAdds([], LIST), []);
+  assert.deepEqual(rules.queuedAdds([tick(1, ITEM_A, 100), remove(2, ITEM_B)], LIST), []);
+});
+
+test("queuedAdds: a row id cannot be taken for an item's", () => {
+  const row = rules.queuedAdds([add(1700000000000, "Milk")], LIST)[0];
+  assert.equal(rules.itemIdOf("/items/" + row.id), null);
+});
+
+test("withQueuedChanges does not add rows: the items stay the server's", () => {
+  const shown = rules.withQueuedChanges([task(ITEM_A)], [add(1, "Milk")], COLUMNS);
+  assert.equal(shown.length, 1);
+});
+
+test("boardWithQueuedChanges: tasks waiting to be added head the first column", () => {
+  const sent = board({ "To Do": [task(ITEM_A)], "In Progress": [], Done: [] });
+  const shown = rules.boardWithQueuedChanges(sent, [add(1, "Milk"), add(2, "Bread")]);
+  assert.deepEqual(
+    shown.columns["To Do"].map((card) => card.id),
+    ["unsent-1", "unsent-2", ITEM_A],
+  );
+  assert.equal(shown.columns["To Do"][0].provisional, true);
+  assert.equal(shown.columns["In Progress"].length, 0);
+});
+
+test("boardWithQueuedChanges: tasks waiting for another list are not on this board", () => {
+  const sent = board({ "To Do": [task(ITEM_A)], "In Progress": [], Done: [] });
+  const elsewhere = change(1, "/lists/" + OTHER_LIST + "/items", "POST", { reminder: "Elsewhere" });
+  assert.equal(rules.boardWithQueuedChanges(sent, [elsewhere]).columns["To Do"].length, 1);
+});

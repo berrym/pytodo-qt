@@ -452,6 +452,29 @@ class TestQueuedChangesShown:
         css = (STATIC_DIR / "style.css").read_text()
         assert ".item-unsent {" in css
 
+    def test_tasks_waiting_to_be_added_are_drawn(self):
+        js = self._app()
+        assert "QueueRules.queuedAdds(getOfflineQueue(), currentListId)" in js
+        assert "item.provisional ? createQueuedAddCard(item) : createBoardCard(item)" in js
+
+    def test_a_task_waiting_to_be_added_can_only_be_removed(self):
+        """Its row has no handler but the remove button's: nothing in the
+        page can send a request about a task the server does not have."""
+        js = self._app()
+        for name in ("createQueuedAddRow", "createQueuedAddCard"):
+            body = js.split(f"function {name}(queued) {{")[1].split("\n  }\n")[0]
+            assert "addEventListener" not in body, name
+            assert "attachLongPress" not in body, name
+            assert "attachSwipe" not in body, name
+            assert "createQueuedAddRemoveButton(queued," in body, name
+        row = js.split("function createQueuedAddRow(queued) {")[1].split("\n  }\n")[0]
+        assert "cb.disabled = true;" in row
+
+    def test_waiting_rows_are_styled(self):
+        css = (STATIC_DIR / "style.css").read_text()
+        assert ".item.queued-add," in css
+        assert ".board-card.queued-add {" in css
+
 
 class TestRevalidation:
     """The page's files are checked with the server before reuse."""

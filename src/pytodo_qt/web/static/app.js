@@ -2362,17 +2362,29 @@
   function renderItems(items, force) {
     if (!itemsContainer) return;
 
+    // Tasks added without the server come first, in the order they
+    // were added: the server reads their dates and priority when they
+    // are sent, so they have no place in the sort yet.
+    var waiting = currentListId
+      ? QueueRules.queuedAdds(getOfflineQueue(), currentListId)
+      : [];
+
     // Skip re-render if data hasn't changed (eliminates poll flicker)
-    var fp = fingerprint(items);
+    var fp = fingerprint([waiting, items]);
     if (!force && fp === lastItemsFingerprint) return;
     lastItemsFingerprint = fp;
 
     itemsContainer.innerHTML = "";
-    if (!items || items.length === 0) {
+    if ((!items || items.length === 0) && waiting.length === 0) {
       if (emptyMsg) emptyMsg.classList.remove("hidden");
       return;
     }
     if (emptyMsg) emptyMsg.classList.add("hidden");
+
+    waiting.forEach(function (queued) {
+      itemsContainer.appendChild(createQueuedAddRow(queued));
+    });
+    if (!items) return;
 
     // Separate top-level and subtasks
     var topLevel = [];
@@ -2411,6 +2423,84 @@
     label.textContent = "Not sent";
     label.title = "This change is sent when the server can be reached";
     return label;
+  }
+
+  // Takes back a task that is waiting to be added.
+  function removeQueuedAdd(queued) {
+    var before = getOfflineQueue();
+    removeQueuedChange(queued.queued_at);
+    pushOfflineUndo(before, getOfflineQueue());
+    showToast('"' + queued.reminder + '" removed', function () {
+      onUndo();
+    });
+  }
+
+  function createQueuedAddRemoveButton(queued, className) {
+    var button = document.createElement("button");
+    button.className = className;
+    button.textContent = "\u00D7";
+    button.title = "Remove";
+    button.setAttribute("aria-label", "Remove " + queued.reminder);
+    button.addEventListener("click", function (e) {
+      e.stopPropagation();
+      removeQueuedAdd(queued);
+    });
+    return button;
+  }
+
+  // The row of a task added without the server: its text as typed and
+  // the "Not sent" label. It cannot be ticked, opened or edited until
+  // the server has it; it can be removed.
+  function createQueuedAddRow(queued) {
+    var div = document.createElement("div");
+    div.className = "item priority-normal queued-add";
+
+    var cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "item-checkbox";
+    cb.disabled = true;
+    cb.setAttribute("aria-label", queued.reminder + ", not sent yet");
+    div.appendChild(cb);
+
+    var content = document.createElement("div");
+    content.className = "item-content";
+    var reminder = document.createElement("div");
+    reminder.className = "item-reminder";
+    reminder.textContent = queued.reminder;
+    content.appendChild(reminder);
+    var meta = document.createElement("div");
+    meta.className = "item-meta";
+    meta.appendChild(createUnsentLabel());
+    content.appendChild(meta);
+    div.appendChild(content);
+
+    var actions = document.createElement("div");
+    actions.className = "item-actions";
+    actions.appendChild(createQueuedAddRemoveButton(queued, "delete"));
+    div.appendChild(actions);
+
+    div.classList.add("item-enter");
+    return div;
+  }
+
+  function createQueuedAddCard(queued) {
+    var card = document.createElement("div");
+    card.className = "board-card priority-normal queued-add";
+
+    var text = document.createElement("div");
+    text.className = "board-card-text";
+    text.textContent = queued.reminder;
+    card.appendChild(text);
+
+    var meta = document.createElement("div");
+    meta.className = "board-card-meta";
+    meta.appendChild(createUnsentLabel());
+    card.appendChild(meta);
+
+    card.appendChild(
+      createQueuedAddRemoveButton(queued, "board-card-grip queued-add-remove"),
+    );
+    return card;
   }
 
   function createItemCard(item, allItems, hasChildren, isCollapsed) {
@@ -2653,7 +2743,9 @@
       var itemsDiv = document.createElement("div");
       itemsDiv.className = "board-column-items";
       colItems.forEach(function (item) {
-        itemsDiv.appendChild(createBoardCard(item));
+        itemsDiv.appendChild(
+          item.provisional ? createQueuedAddCard(item) : createBoardCard(item),
+        );
       });
       col.appendChild(itemsDiv);
 
