@@ -4,7 +4,9 @@ Covers:
 - Service worker serving from root scope
 - Manifest serving and content
 - Offline banner markup in index.html
-- SW registration script in index.html
+- SW registration from app.js, and no inline script in index.html
+- The version of the page's files carried by the served worker
+- Revalidation of the page's files
 - Package-data includes .json files
 """
 
@@ -96,10 +98,17 @@ class TestIndexHtml:
         html = self._read_index()
         assert "apple-touch-icon" in html
 
-    def test_sw_registration_script(self):
-        html = self._read_index()
-        assert "serviceWorker" in html
-        assert 'register("/sw.js")' in html
+    def test_no_inline_script(self):
+        """The page's security policy allows scripts from its own origin
+        only: an inline script is blocked, without a visible error."""
+        scripts = re.findall(r"<script\b([^>]*)>(.*?)</script>", self._read_index(), re.DOTALL)
+        assert scripts
+        for attributes, body in scripts:
+            assert "src=" in attributes
+            assert body.strip() == ""
+
+    def test_no_inline_event_handlers(self):
+        assert not re.search(r"\son[a-z]+\s*=", self._read_index())
 
     def test_offline_banner(self):
         html = self._read_index()
@@ -114,6 +123,24 @@ class TestIndexHtml:
 # ===========================================================================
 # app.js offline queue tests
 # ===========================================================================
+
+
+class TestAppJsServiceWorker:
+    def _read_app_js(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def test_worker_is_registered_from_the_script(self):
+        assert 'register("/sw.js")' in self._read_app_js()
+
+    def test_worker_is_registered_over_https_only(self):
+        js = self._read_app_js()
+        guard = js.index('navigator.serviceWorker && location.protocol === "https:"')
+        assert guard < js.index('register("/sw.js")')
+
+    def test_page_reloads_for_a_new_worker(self):
+        js = self._read_app_js()
+        assert '"controllerchange"' in js
+        assert "reloadForUpdateWhenIdle" in js
 
 
 class TestAppJsOfflineQueue:
@@ -376,12 +403,12 @@ class TestIndexRoute:
             assert "manifest.json" in text
 
     @pytest.mark.asyncio
-    async def test_index_has_sw_registration(self):
+    async def test_served_script_registers_the_worker(self):
         client = await _make_client()
         async with client:
-            resp = await client.get("/")
+            resp = await client.get("/static/app.js")
             text = await resp.text()
-            assert "serviceWorker" in text
+            assert 'register("/sw.js")' in text
 
     @pytest.mark.asyncio
     async def test_index_has_offline_banner(self):

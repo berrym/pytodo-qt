@@ -6020,6 +6020,8 @@
     fetchUndoState();
     // Keep "last synced" text fresh
     setInterval(updateLastSyncedText, 15000);
+    appReady = true;
+    storeDataForOffline();
   }
 
   // Block insecure HTTP connections — require HTTPS
@@ -6055,6 +6057,83 @@
         location.reload();
       }
     });
+  }
+
+  var appReady = false;
+  var loadedUnderWorker = false;
+
+  // Register the service worker. The page's security policy allows
+  // scripts from this origin only, so this cannot be an inline script.
+  // A worker is for HTTPS: over plain HTTP sw.js removes itself.
+  if (navigator.serviceWorker && location.protocol === "https:") {
+    // A worker that controlled the page as it loaded means a later
+    // change of controller is a new version of the page. Otherwise it
+    // is the first install.
+    loadedUnderWorker = Boolean(navigator.serviceWorker.controller);
+    navigator.serviceWorker.addEventListener("controllerchange", function () {
+      if (loadedUnderWorker) reloadForUpdateWhenIdle();
+      else storeDataForOffline();
+    });
+    navigator.serviceWorker
+      .register("/sw.js")
+      .then(function (registration) {
+        // The browser looks for a new worker when the page is loaded. A
+        // page that stays open, as an installed app does, is not loaded
+        // again for days, so look whenever it comes back into view.
+        document.addEventListener("visibilitychange", function () {
+          if (document.visibilityState === "visible") {
+            registration.update().catch(function () {
+              /* offline, or the server is unreachable */
+            });
+          }
+        });
+      })
+      .catch(function (err) {
+        console.warn("SW registration failed:", err);
+      });
+  }
+
+  // What the page read before its first worker was in place went
+  // straight to the network, so the worker has stored none of it and a
+  // start without the server would have nothing to show. Read it again
+  // through the worker. Called when the worker takes control and when
+  // the page has finished starting, whichever comes last.
+  function storeDataForOffline() {
+    if (!appReady || loadedUnderWorker) return;
+    if (!navigator.serviceWorker || !navigator.serviceWorker.controller) {
+      return;
+    }
+    fetch(API + "/status", { headers: authHeaders() }).catch(function () {});
+    refreshLists()
+      .then(refreshCurrentList)
+      .catch(function () {});
+  }
+
+  // A new version of the page is running in the service worker. Load it,
+  // once nothing is open that a reload would discard.
+  var updateReloadTimer = null;
+  function reloadForUpdateWhenIdle() {
+    if (updateReloadTimer !== null) return;
+    updateReloadTimer = setInterval(function () {
+      if (!pageIsIdle()) return;
+      clearInterval(updateReloadTimer);
+      location.reload();
+    }, 1000);
+  }
+
+  function pageIsIdle() {
+    if (document.querySelector(".sheet:not(.hidden), .context-menu")) {
+      return false;
+    }
+    if (Object.keys(pendingItemFields).length > 0) return false;
+    // Text being typed, in the search field for one.
+    var focused = document.activeElement;
+    return !(
+      focused &&
+      focused.matches(
+        "textarea, input:not([type=checkbox]):not([type=radio]):not([type=button])",
+      )
+    );
   }
 
   // Check for existing token — if none, show login; if valid, init app
