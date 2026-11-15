@@ -544,27 +544,22 @@
     updateConnectionIndicator();
   }
 
-  function extractEntityId(path) {
-    // Extract item or list UUID from API paths:
-    //   /items/abc-123         → abc-123
-    //   /items/abc-123/toggle  → abc-123
-    //   /lists/abc-123/columns → abc-123
-    var match = path.match(/^\/(items|lists)\/([0-9a-f-]+)/);
-    return match ? match[2] : null;
-  }
+  // The rules of the queue are in offline-queue.js, loaded before this
+  // script.
+  var QueueRules = window.PytodoOfflineQueue;
 
   function enqueueOfflineEdit(path, opts) {
     var queue = getOfflineQueue();
-    // DELETE makes prior pending ops for the same entity moot
+    // DELETE makes prior pending ops for the same item moot
     if (opts.method === "DELETE") {
-      var delId = extractEntityId(path);
+      var delId = QueueRules.itemIdOf(path);
       if (delId) {
         queue = queue.filter(function (entry) {
-          return extractEntityId(entry.path) !== delId;
+          return QueueRules.itemIdOf(entry.path) !== delId;
         });
       }
     }
-    var ts = Date.now();
+    var ts = QueueRules.newTimestamp(queue, Date.now());
     queue.push({ path: path, opts: opts, timestamp: ts });
     saveOfflineQueue(queue);
     return ts;
@@ -576,57 +571,108 @@
     saveOfflineQueue(queue);
   }
 
-  async function replayOfflineQueue() {
-    var queue = getOfflineQueue();
-    if (queue.length === 0) return;
-    showToast(
-      "Syncing " +
-        queue.length +
-        " offline change" +
-        (queue.length > 1 ? "s" : "") +
-        "...",
+  function removeQueuedChange(timestamp) {
+    saveOfflineQueue(
+      getOfflineQueue().filter(function (entry) {
+        return entry.timestamp !== timestamp;
+      }),
     );
-    var remaining = [];
-    var conflicts = 0;
-    var chainedTs = {}; // entityId → latest updated_at from successful replays
-    for (var i = 0; i < queue.length; i++) {
-      var entry = queue[i];
-      var entityId = extractEntityId(entry.path);
-      // Chain updated_at from prior successful replay of same entity
-      if (entityId && chainedTs[entityId] && entry.opts.body) {
-        try {
-          var patchedBody = JSON.parse(entry.opts.body);
-          if (patchedBody.updated_at !== undefined) {
-            patchedBody.updated_at = chainedTs[entityId];
-            entry.opts.body = JSON.stringify(patchedBody);
-          }
-        } catch (e) {
-          /* leave body as-is */
-        }
-      }
+  }
+
+  // Sends a change to the server, or queues it when the server cannot
+  // be reached. Resolves to what became of it:
+  //   "sent"      applied by the server
+  //   "queued"    kept, to be sent when the server answers again
+  //   "conflict"  the item was changed elsewhere; the list is reloaded
+  //   "refused"   the server will not accept it; its reason is shown
+  async function sendOrQueue(path, opts, itemId) {
+    if (isOnline) {
       try {
-        entry.opts.headers = authHeaders(entry.opts.headers);
-        var resp = await fetch(API + entry.path, entry.opts);
-        if (resp.status === 409) {
-          conflicts++;
-        } else if (!resp.ok) {
-          remaining.push(entry);
-        } else if (entityId) {
-          // Capture updated_at from response for chaining to subsequent ops
-          try {
-            var data = await resp.json();
-            if (data && data.updated_at) {
-              chainedTs[entityId] = data.updated_at;
-            }
-          } catch (e) {
-            /* no parseable body */
-          }
-        }
+        await api(path, opts);
+        return "sent";
       } catch (e) {
-        remaining.push(entry);
+        var outcome = QueueRules.replyOutcome(e.status);
+        if (outcome === "conflict") {
+          showToast("Updated elsewhere — refreshing");
+          await refreshCurrentList();
+          return "conflict";
+        }
+        if (outcome === "refused") {
+          showToast(e.message || "The change could not be saved");
+          await refreshCurrentList();
+          return "refused";
+        }
       }
     }
-    saveOfflineQueue(remaining);
+    var snapshot = itemId ? captureItemSnapshot(itemId) : null;
+    var ts = enqueueOfflineEdit(path, opts);
+    pushOfflineUndo(snapshot, ts, path, opts);
+    return "queued";
+  }
+
+  var replayRunning = false;
+
+  // Sends the queued changes. One run at a time: the browser coming
+  // back online and the WebSocket reopening both ask for it.
+  async function replayOfflineQueue() {
+    if (replayRunning || getOfflineQueue().length === 0) return;
+    replayRunning = true;
+    try {
+      await sendQueuedChanges();
+    } finally {
+      replayRunning = false;
+    }
+  }
+
+  async function sendQueuedChanges() {
+    var count = getOfflineQueue().length;
+    showToast(
+      "Syncing " + count + " offline change" + (count > 1 ? "s" : "") + "...",
+    );
+    var tried = {}; // timestamps of the changes sent in this run
+    var heldItems = {}; // items with a change that stays queued
+    var latest = {}; // item id → updated_at from the replies of this run
+    var conflicts = 0;
+    var refused = 0;
+    for (;;) {
+      // Read the stored queue each time round: a change can be queued
+      // or removed while the run waits for the server.
+      var entry = QueueRules.nextToSend(getOfflineQueue(), tried, heldItems);
+      if (!entry) break;
+      tried[entry.timestamp] = true;
+      var itemId = QueueRules.itemIdOf(entry.path);
+      var opts = entry.opts || {};
+      if (itemId && latest[itemId] !== undefined) {
+        opts = QueueRules.withUpdatedAt(opts, latest[itemId]);
+      }
+      opts = Object.assign({}, opts, { headers: authHeaders(opts.headers) });
+      var resp;
+      try {
+        resp = await fetch(API + entry.path, opts);
+      } catch (e) {
+        // No answer: the rest would fail in the same way.
+        break;
+      }
+      var outcome = QueueRules.replyOutcome(resp.status);
+      if (outcome === "kept") {
+        if (itemId) heldItems[itemId] = true;
+        continue;
+      }
+      // Removed as soon as the server has answered, so that a page
+      // closed during the run does not send the change a second time.
+      removeQueuedChange(entry.timestamp);
+      if (outcome === "conflict") conflicts++;
+      if (outcome === "refused") refused++;
+      if (outcome === "sent" && itemId) {
+        try {
+          var data = await resp.json();
+          if (data && data.updated_at) latest[itemId] = data.updated_at;
+        } catch (e) {
+          /* no parseable body */
+        }
+      }
+    }
+    var remaining = getOfflineQueue().length;
     if (conflicts > 0) {
       showToast(
         conflicts +
@@ -634,16 +680,24 @@
           (conflicts > 1 ? "s" : "") +
           " conflicted (data updated elsewhere)",
       );
-    } else if (remaining.length === 0) {
-      showToast("All changes synced");
     }
-    if (remaining.length > 0) {
+    if (refused > 0) {
       showToast(
-        remaining.length +
+        refused +
           " change" +
-          (remaining.length > 1 ? "s" : "") +
+          (refused > 1 ? "s" : "") +
+          " could not be applied",
+      );
+    }
+    if (remaining > 0) {
+      showToast(
+        remaining +
+          " change" +
+          (remaining > 1 ? "s" : "") +
           " still pending",
       );
+    } else if (conflicts === 0 && refused === 0) {
+      showToast("All changes synced");
     }
     await refreshCurrentList();
   }
@@ -1416,23 +1470,8 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(fields),
     };
-    if (!isOnline) {
-      var snap = captureItemSnapshot(itemId);
-      var ts = enqueueOfflineEdit(path, opts);
-      pushOfflineUndo(snap, ts, path, opts);
-      return;
-    }
-    try {
-      await api(path, opts);
-      await refreshCurrentList();
-    } catch (e) {
-      if (e.status === 409) {
-        showToast("Updated elsewhere \u2014 refreshing");
-        await refreshCurrentList();
-      } else {
-        enqueueOfflineEdit(path, opts);
-      }
-    }
+    var outcome = await sendOrQueue(path, opts, itemId);
+    if (outcome === "sent") await refreshCurrentList();
   }
 
   async function setRecurrence(itemId, recType, recInterval) {
@@ -1448,23 +1487,10 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(fields),
     };
-    if (!isOnline) {
-      var snap = captureItemSnapshot(itemId);
-      var ts = enqueueOfflineEdit(path, opts);
-      pushOfflineUndo(snap, ts, path, opts);
-      return;
-    }
-    try {
-      await api(path, opts);
+    var outcome = await sendOrQueue(path, opts, itemId);
+    if (outcome === "sent") {
       await refreshCurrentList();
       showToast(recType ? "Recurrence set" : "Recurrence removed");
-    } catch (e) {
-      if (e.status === 409) {
-        showToast("Updated elsewhere \u2014 refreshing");
-        await refreshCurrentList();
-      } else {
-        enqueueOfflineEdit(path, opts);
-      }
     }
   }
 
@@ -1478,23 +1504,10 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(fields),
     };
-    if (!isOnline) {
-      var snap = captureItemSnapshot(itemId);
-      var ts = enqueueOfflineEdit(path, opts);
-      pushOfflineUndo(snap, ts, path, opts);
-      return;
-    }
-    try {
-      await api(path, opts);
+    var outcome = await sendOrQueue(path, opts, itemId);
+    if (outcome === "sent") {
       await refreshCurrentList();
       showToast("Moved to " + column);
-    } catch (e) {
-      if (e.status === 409) {
-        showToast("Updated elsewhere \u2014 refreshing");
-        await refreshCurrentList();
-      } else {
-        enqueueOfflineEdit(path, opts);
-      }
     }
   }
 
@@ -4109,21 +4122,13 @@
         body: JSON.stringify(body),
       };
 
-      if (!isOnline) {
-        var ts = enqueueOfflineEdit(path, opts);
-        pushOfflineUndo(null, ts, path, opts);
-        closeAddSheet();
-        showToast("Added (offline)");
-        return;
-      }
-
-      try {
-        await api(path, opts);
+      // A refused task stays in the sheet, to be corrected.
+      var outcome = await sendOrQueue(path, opts, null);
+      if (outcome === "sent") {
         closeAddSheet();
         await refreshCurrentList();
         showToast("Task added");
-      } catch (err) {
-        enqueueOfflineEdit(path, opts);
+      } else if (outcome === "queued") {
         closeAddSheet();
         showToast("Added (offline)");
       }
@@ -5249,23 +5254,8 @@
       opts.headers = { "Content-Type": "application/json" };
       opts.body = JSON.stringify({ updated_at: ua });
     }
-    if (!isOnline) {
-      var snap = captureItemSnapshot(itemId);
-      var ts = enqueueOfflineEdit(path, opts);
-      pushOfflineUndo(snap, ts, path, opts);
-      return;
-    }
-    try {
-      await api(path, opts);
-      await refreshCurrentList();
-    } catch (e) {
-      if (e.status === 409) {
-        showToast("Updated elsewhere \u2014 refreshing");
-        await refreshCurrentList();
-      } else {
-        enqueueOfflineEdit(path, opts);
-      }
-    }
+    var outcome = await sendOrQueue(path, opts, itemId);
+    if (outcome === "sent") await refreshCurrentList();
   }
 
   async function onDelete(itemId, reminderText) {
@@ -5276,26 +5266,14 @@
       opts.headers = { "Content-Type": "application/json" };
       opts.body = JSON.stringify({ updated_at: ua });
     }
-    if (!isOnline) {
-      var snap = captureItemSnapshot(itemId);
-      var ts = enqueueOfflineEdit(path, opts);
-      pushOfflineUndo(snap, ts, path, opts);
-      showToast("Deleted (offline)");
-      return;
-    }
-    try {
-      await api(path, opts);
+    var outcome = await sendOrQueue(path, opts, itemId);
+    if (outcome === "sent") {
       await refreshCurrentList();
       showToast(
         reminderText ? '"' + reminderText + '" deleted' : "Item deleted",
       );
-    } catch (e) {
-      if (e.status === 409) {
-        showToast("Updated elsewhere \u2014 refreshing");
-        await refreshCurrentList();
-      } else {
-        enqueueOfflineEdit(path, opts);
-      }
+    } else if (outcome === "queued") {
+      showToast("Deleted (offline)");
     }
   }
 

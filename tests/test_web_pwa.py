@@ -7,6 +7,7 @@ Covers:
 - SW registration from app.js, and no inline script in index.html
 - The version of the page's files carried by the served worker
 - Revalidation of the page's files
+- The rules of the offline queue, run under Node
 - Package-data includes .json files
 """
 
@@ -323,9 +324,24 @@ class TestPrecachedFiles:
             assert url.startswith("/static/"), url
             assert (STATIC_DIR / url.removeprefix("/static/")).is_file(), url
 
+    def test_every_file_the_page_loads_is_precached(self):
+        """A script or stylesheet the page loads and the worker does not
+        store is missing when the page opens without the server."""
+        content = (STATIC_DIR / "sw.js").read_text()
+        block = re.search(r"var STATIC_ASSETS = \[(.*?)\];", content, re.DOTALL)
+        assert block is not None
+        urls = re.findall(r'"([^"]+)"', block.group(1))
+        html = (STATIC_DIR / "index.html").read_text()
+        loaded = re.findall(r'<script[^>]*\ssrc="([^"]+)"', html)
+        loaded += re.findall(r'<link[^>]*rel="(?:stylesheet|manifest)"[^>]*href="([^"]+)"', html)
+        assert "/static/app.js" in loaded
+        assert "/static/style.css" in loaded
+        for url in loaded:
+            assert url in urls, url
+
 
 class TestScriptSyntax:
-    @pytest.mark.parametrize("name", ["sw.js", "app.js"])
+    @pytest.mark.parametrize("name", ["sw.js", "app.js", "offline-queue.js"])
     def test_script_parses(self, name):
         """A script that does not parse is dropped by the browser without
         a visible error; sw.js went unparsed for months that way."""
@@ -339,6 +355,47 @@ class TestScriptSyntax:
             check=False,
         )
         assert result.returncode == 0, result.stderr
+
+
+class TestOfflineQueueRules:
+    """The rules of the offline queue are plain JavaScript with no page
+    behind them; their tests are in tests/js and run under Node."""
+
+    def test_rules(self):
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("Node.js is not installed")
+        result = subprocess.run(
+            [node, "--test", str(Path(__file__).parent / "js" / "offline_queue.test.js")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_rules_load_before_the_page_script(self):
+        """app.js reads the rules when it starts."""
+        html = (STATIC_DIR / "index.html").read_text()
+        scripts = re.findall(r'<script[^>]*\ssrc="([^"]+)"', html)
+        assert scripts.index("/static/offline-queue.js") < scripts.index("/static/app.js")
+
+    def test_page_script_uses_the_rules(self):
+        js = (STATIC_DIR / "app.js").read_text()
+        assert "window.PytodoOfflineQueue" in js
+        # One rule for what a reply means, at first sending and at replay.
+        assert js.count("QueueRules.replyOutcome(") == 2
+
+    def test_one_replay_at_a_time(self):
+        js = (STATIC_DIR / "app.js").read_text()
+        assert "if (replayRunning || getOfflineQueue().length === 0) return;" in js
+
+    def test_changes_are_queued_in_one_place(self):
+        """Every change that can be queued goes through sendOrQueue, so
+        that a failed request and an offline device are handled alike."""
+        js = (STATIC_DIR / "app.js").read_text()
+        assert js.count("await sendOrQueue(") == 6
+        # enqueueOfflineEdit: its definition and its one caller.
+        assert js.count("enqueueOfflineEdit(") == 2
 
 
 class TestRevalidation:

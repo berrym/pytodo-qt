@@ -12,6 +12,7 @@ var STATIC_ASSETS = [
   "/",
   "/static/style.css",
   "/static/app.js",
+  "/static/offline-queue.js",
   "/static/manifest.json",
   "/static/icon-192.png",
   "/static/icon-512.png",
