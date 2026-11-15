@@ -1327,6 +1327,33 @@
   // Long-press detection
   // ====================================================================
 
+  // The click that ends a long press. Releasing a mouse button sends a
+  // click after the pointerup, and the browser gives it to whatever is
+  // then under the pointer: the pressed element (Firefox), or the menu
+  // the long press has just opened over it (Chrome, WebKit). It is
+  // discarded wherever it lands, before any handler sees it. A long
+  // press by touch sends no click, so the wait for one ends at the next
+  // press, and a click that belongs to something else is not taken.
+  var discardedClick = null;
+
+  function discardNextClick() {
+    stopDiscardingClick();
+    discardedClick = function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      stopDiscardingClick();
+    };
+    window.addEventListener("click", discardedClick, true);
+    window.addEventListener("pointerdown", stopDiscardingClick, true);
+  }
+
+  function stopDiscardingClick() {
+    if (!discardedClick) return;
+    window.removeEventListener("click", discardedClick, true);
+    window.removeEventListener("pointerdown", stopDiscardingClick, true);
+    discardedClick = null;
+  }
+
   /**
    * Attach long-press detection to an element.
    * @param {Element} el - Target element
@@ -1350,6 +1377,7 @@
       timer = setTimeout(function () {
         fired = true;
         el.classList.remove("long-press-active");
+        discardNextClick();
         onLongPress(e);
       }, HOLD_MS);
     }
@@ -1374,7 +1402,9 @@
 
     function onUp(e) {
       cancel();
-      // Prevent tap from firing after long-press
+      // Keep the release from the handlers above (a swipe, a drag). The
+      // click that follows a mouse release is not stopped by this; see
+      // discardNextClick.
       if (fired) {
         e.preventDefault();
         e.stopPropagation();

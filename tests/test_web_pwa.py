@@ -476,6 +476,36 @@ class TestQueuedChangesShown:
         assert ".board-card.queued-add {" in css
 
 
+class TestLongPress:
+    """A long press opens the task menu and nothing else."""
+
+    def _app(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def test_click_that_ends_a_long_press_is_discarded(self):
+        """A mouse release is followed by a click, sent to the pressed
+        task in one browser and to the menu over it in others. It is
+        taken in the capture phase, wherever it lands."""
+        js = self._app()
+        body = js.split("function discardNextClick() {")[1].split("\n  }\n")[0]
+        assert "e.preventDefault();" in body
+        assert "e.stopPropagation();" in body
+        assert 'window.addEventListener("click", discardedClick, true);' in body
+        press = js.split("function attachLongPress(el, onLongPress) {")[1].split("\n  }\n")[0]
+        fired = press.split("timer = setTimeout(function () {")[1].split("}, HOLD_MS);")[0]
+        assert fired.index("discardNextClick();") < fired.index("onLongPress(e);")
+
+    def test_wait_for_that_click_ends_at_the_next_press(self):
+        """A long press by touch sends no click; the next press must not
+        lose its own."""
+        js = self._app()
+        body = js.split("function discardNextClick() {")[1].split("\n  }\n")[0]
+        assert 'window.addEventListener("pointerdown", stopDiscardingClick, true);' in body
+        stop = js.split("function stopDiscardingClick() {")[1].split("\n  }\n")[0]
+        assert 'window.removeEventListener("click", discardedClick, true);' in stop
+        assert 'window.removeEventListener("pointerdown", stopDiscardingClick, true);' in stop
+
+
 class TestRevalidation:
     """The page's files are checked with the server before reuse."""
 
