@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 from aiohttp import web
 
 from ..core.logger import Logger
+from ..core.private_files import make_private, write_private_file
 from .device_store import PairedDevice, WebDeviceStore, parse_device_name
 
 if TYPE_CHECKING:
@@ -291,6 +292,10 @@ class WebServer:
         # Ensure CA exists
         if not ca_cert_path.exists() or not ca_key_path.exists():
             self._generate_ca(ca_cert_path, ca_key_path)
+        # Keys written by an earlier version are readable by every
+        # account on the machine.
+        make_private(ca_key_path)
+        make_private(srv_key_path)
 
         # Ensure server cert exists and covers current IPs + hostname
         from ..core.network import get_local_hostname
@@ -392,12 +397,13 @@ class WebServer:
             )
             .sign(key, hashes.SHA256())
         )
-        ca_key_path.write_bytes(
+        write_private_file(
+            ca_key_path,
             key.private_bytes(
                 serialization.Encoding.PEM,
                 serialization.PrivateFormat.TraditionalOpenSSL,
                 serialization.NoEncryption(),
-            )
+            ),
         )
         ca_cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
         logger.log.info("Generated local CA certificate (10-year validity)")
@@ -456,12 +462,13 @@ class WebServer:
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
             .sign(ca_key, hashes.SHA256())
         )
-        srv_key_path.write_bytes(
+        write_private_file(
+            srv_key_path,
             srv_key.private_bytes(
                 serialization.Encoding.PEM,
                 serialization.PrivateFormat.TraditionalOpenSSL,
                 serialization.NoEncryption(),
-            )
+            ),
         )
         srv_cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
         san_names = ["localhost"]

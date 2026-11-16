@@ -14,6 +14,7 @@ from typing import Any
 
 from . import paths
 from .logger import Logger
+from .private_files import ensure_private_dir
 
 logger = Logger(__name__)
 
@@ -698,15 +699,19 @@ class ConfigManager:
         self._config: AppConfig | None = None
 
     def ensure_directories(self) -> None:
-        """Ensure all application directories exist."""
+        """Ensure all application directories exist, for this account only.
+
+        They hold private keys, the tokens of paired devices, the task
+        database and the log. A directory created by an earlier version,
+        or by the logger before this runs, has the default permissions
+        and is restricted here.
+        """
         for dir_path in [self.config_dir, self.data_dir, self.state_dir]:
-            if not dir_path.exists():
-                try:
-                    dir_path.mkdir(parents=True)
-                    logger.log.info("Created directory: %s", dir_path)
-                except OSError as e:
-                    logger.log.exception("Error creating directory %s: %s", dir_path, e)
-                    raise
+            try:
+                ensure_private_dir(dir_path)
+            except OSError as e:
+                logger.log.exception("Error creating directory %s: %s", dir_path, e)
+                raise
 
     @property
     def config(self) -> AppConfig:

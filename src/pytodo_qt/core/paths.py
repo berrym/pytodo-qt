@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 
 from .logger import Logger
+from .private_files import ensure_private_dir
 
 logger = Logger(__name__)
 
@@ -75,12 +76,10 @@ def get_log_file() -> Path:
 
 
 def ensure_directories() -> None:
-    """Ensure all application directories exist."""
+    """Ensure all application directories exist, for this account only."""
     for dir_path in [get_config_dir(), get_data_dir(), get_state_dir()]:
-        if not dir_path.exists():
-            try:
-                dir_path.mkdir(parents=True)
-                logger.log.debug("Created directory: %s", dir_path)
-            except OSError as e:
-                logger.log.exception("Error creating directory %s: %s", dir_path, e)
-                raise
+        try:
+            ensure_private_dir(dir_path)
+        except OSError as e:
+            logger.log.exception("Error creating directory %s: %s", dir_path, e)
+            raise

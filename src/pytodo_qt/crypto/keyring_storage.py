@@ -10,12 +10,12 @@ Cross-platform support via the keyring library:
 from __future__ import annotations
 
 import base64
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ..core.logger import Logger
+from ..core.private_files import write_private_file
 from .aes_gcm import generate_key
 from .key_exchange import IdentityKeyPair
 
@@ -217,12 +217,7 @@ def _store_identity_file(keypair: IdentityKeyPair) -> StoredIdentity:
     identity_file = _get_identity_file_path()
 
     try:
-        # Write with restrictive permissions
-        private_bytes = keypair.private_bytes()
-        identity_file.touch(mode=0o600)
-        with open(identity_file, "wb") as f:
-            f.write(private_bytes)
-        os.chmod(identity_file, 0o600)
+        write_private_file(identity_file, keypair.private_bytes())
 
         fingerprint = keypair.fingerprint()
         logger.log.warning(
@@ -294,10 +289,7 @@ def _get_local_key_file_path() -> Path:
 def _store_local_key_file(key: bytes) -> None:
     """Store local key to file fallback."""
     key_file = _get_local_key_file_path()
-    key_file.touch(mode=0o600)
-    with open(key_file, "wb") as f:
-        f.write(key)
-    os.chmod(key_file, 0o600)
+    write_private_file(key_file, key)
     logger.log.warning("Stored local key in file (keyring unavailable)")
 
 

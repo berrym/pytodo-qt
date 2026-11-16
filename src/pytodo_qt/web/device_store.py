@@ -18,6 +18,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from pytodo_qt.core.logger import Logger
+from pytodo_qt.core.private_files import create_private_file, make_private
 
 logger = Logger(__name__)
 
@@ -144,7 +145,13 @@ class WebDeviceStore:
         """Open the database, creating the table if needed.
 
         If the database is corrupt, renames it and creates a fresh one.
+
+        The database holds the token of every paired device. Its file is
+        created for this account only, and SQLite gives the files it
+        keeps beside it the same permissions; files an earlier version
+        created are restricted.
         """
+        self._restrict_files()
         try:
             self._conn = sqlite3.connect(
                 str(self._db_path),
@@ -161,6 +168,7 @@ class WebDeviceStore:
             corrupt_path = self._db_path.with_suffix(".db.corrupt")
             if self._db_path.exists():
                 self._db_path.rename(corrupt_path)
+            self._restrict_files()
             self._conn = sqlite3.connect(
                 str(self._db_path),
                 check_same_thread=False,
@@ -168,6 +176,14 @@ class WebDeviceStore:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute(_CREATE_TABLE)
             self._conn.commit()
+
+    def _restrict_files(self) -> None:
+        """Create the database file private, and restrict what exists."""
+        create_private_file(self._db_path)
+        make_private(self._db_path)
+        for suffix in ("-wal", "-shm"):
+            make_private(self._db_path.with_name(self._db_path.name + suffix))
+        make_private(self._db_path.with_suffix(".db.corrupt"))
 
     def close(self) -> None:
         """Close the database connection."""
