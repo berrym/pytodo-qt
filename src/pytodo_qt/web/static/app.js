@@ -2972,10 +2972,17 @@
 
   var calSubView = "month";
   var calDate = new Date();
+  // The calendar shows today until the arrows take it to another month,
+  // week or day, and again once the arrows or Today bring it back. A
+  // page left open overnight then shows the new day; a date that was
+  // chosen is kept.
+  var calDateChosen = false;
 
   // Wire up calendar toolbar
+  var calToolbar = document.querySelector(".cal-toolbar");
   var calPrev = document.getElementById("cal-prev");
   var calNext = document.getElementById("cal-next");
+  var calToday = document.getElementById("cal-today");
   var calTitle = document.getElementById("cal-title");
   var calContainer = document.getElementById("cal-container");
   var calTabs = document.querySelectorAll(".cal-tab");
@@ -2988,6 +2995,11 @@
     calNext.addEventListener("click", function () {
       navigateCalendar(1);
     });
+  if (calToday)
+    calToday.addEventListener("click", function () {
+      calDateChosen = false;
+      renderCalendar();
+    });
   calTabs.forEach(function (tab) {
     tab.addEventListener("click", function () {
       calSubView = tab.dataset.cal;
@@ -2999,18 +3011,61 @@
   });
 
   function navigateCalendar(dir) {
+    // The Timeline is not about one date; its arrows are hidden.
+    if (calSubView === "timeline") return;
     if (calSubView === "month") {
+      // The same day of the month before or after, or that month's last
+      // day where it is shorter. setMonth alone carries the days a
+      // shorter month lacks into the month after it: from January 31
+      // the next arrow went to March.
+      var day = calDate.getDate();
+      calDate.setDate(1);
       calDate.setMonth(calDate.getMonth() + dir);
+      var lastDay = new Date(
+        calDate.getFullYear(),
+        calDate.getMonth() + 1,
+        0,
+      ).getDate();
+      calDate.setDate(Math.min(day, lastDay));
     } else if (calSubView === "week") {
       calDate.setDate(calDate.getDate() + dir * 7);
     } else {
       calDate.setDate(calDate.getDate() + dir);
     }
+    calDateChosen = !calShowsToday();
     renderCalendar();
+  }
+
+  // Whether today is in what the calendar shows: its month, week or day.
+  function calShowsToday() {
+    var today = new Date();
+    if (calSubView === "month") {
+      return (
+        calDate.getFullYear() === today.getFullYear() &&
+        calDate.getMonth() === today.getMonth()
+      );
+    }
+    if (calSubView === "week") {
+      return (
+        _startOfWeek(calDate).getTime() === _startOfWeek(today).getTime()
+      );
+    }
+    return _dayKey(calDate) === _dayKey(today);
+  }
+
+  // The calendar is on a day that has passed without having been
+  // chosen: the page was loaded, or the calendar last drawn, on an
+  // earlier day.
+  function calDateIsStale() {
+    return !calDateChosen && _dayKey(calDate) !== _dayKey(new Date());
   }
 
   function renderCalendar() {
     if (!calContainer) return;
+    if (!calDateChosen) calDate = new Date();
+    var dated = calSubView !== "timeline";
+    if (calToolbar) calToolbar.classList.toggle("cal-undated", !dated);
+    if (calToday) calToday.disabled = !dated || calShowsToday();
     if (calSubView === "month") renderMonthView();
     else if (calSubView === "week") renderWeekView();
     else if (calSubView === "timeline") renderTimelineView();
@@ -6045,6 +6100,8 @@
         connectWebSocket();
         startPolling();
       }
+      // A calendar left on screen overnight moves to the new day.
+      if (viewMode === "calendar" && calDateIsStale()) renderCalendar();
     }
   });
 

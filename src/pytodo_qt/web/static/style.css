@@ -1138,6 +1138,29 @@ body {
 .cal-nav-btn:hover {
   background: var(--hover);
 }
+.cal-today-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text);
+}
+.cal-today-btn:not(:disabled):hover {
+  background: var(--hover);
+}
+.cal-today-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* The Timeline is not about one date: the arrows and Today keep their
+   place, so that the toolbar does not move, and are not shown. */
+.cal-undated .cal-nav-btn,
+.cal-undated .cal-today-btn {
+  visibility: hidden;
+}
 .cal-title {
   font-weight: 600;
   font-size: 16px;
@@ -1162,6 +1185,25 @@ body {
   background: var(--accent);
   color: #fff;
   border-color: var(--accent);
+}
+/* Where one row cannot hold the toolbar, it has two: the arrows at
+   the ends of the first with the title between them, Today and the
+   tabs on the second. Each control then keeps its place whatever the
+   length of the title, which takes a second line when it has to. The
+   80px are the two arrows and the gaps beside them; the extra pixel
+   keeps a rounded width from pushing the second arrow off the row. */
+@media (max-width: 700px) {
+  .cal-title {
+    flex: 1 1 calc(100% - 81px);
+    min-width: 0;
+  }
+}
+/* On the narrowest phones the tabs give up some padding to fit beside
+   Today. */
+@media (max-width: 340px) {
+  .cal-tab {
+    padding: 4px 7px;
+  }
 }
 
 /* Month grid */

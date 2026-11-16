@@ -506,6 +506,62 @@ class TestLongPress:
         assert 'window.removeEventListener("pointerdown", stopDiscardingClick, true);' in stop
 
 
+class TestCalendarToolbar:
+    """The calendar's arrows and Today act on the month, week and day
+    views; the Timeline is not about one date."""
+
+    def _app(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def _function(self, name: str) -> str:
+        return self._app().split(f"function {name}(")[1].split("\n  }\n")[0]
+
+    def test_toolbar_has_a_today_button(self):
+        html = (STATIC_DIR / "index.html").read_text()
+        toolbar = html.split('<div class="cal-toolbar">')[1].split('<div id="cal-container"')[0]
+        assert toolbar.index('id="cal-next"') < toolbar.index('id="cal-today"')
+        assert toolbar.index('id="cal-today"') < toolbar.index('class="cal-sub-tabs"')
+
+    def test_arrows_do_nothing_in_the_timeline(self):
+        """They are hidden there; a press that reached the handler anyway
+        would move the date of the other views unseen."""
+        body = self._function("navigateCalendar")
+        assert body.index('if (calSubView === "timeline") return;') < body.index("calDate.set")
+
+    def test_month_arrows_do_not_skip_a_shorter_month(self):
+        """From the 31st, setMonth alone lands in the month after the
+        next. The day is set aside, and put back no later than the last
+        day of the month arrived at."""
+        body = self._function("navigateCalendar")
+        month = body.split('if (calSubView === "month") {')[1].split("} else if")[0]
+        assert month.index("calDate.setDate(1);") < month.index("calDate.setMonth(")
+        assert "calDate.setDate(Math.min(day, lastDay));" in month
+
+    def test_arrows_and_today_are_hidden_in_the_timeline_and_keep_their_place(self):
+        body = self._function("renderCalendar")
+        assert 'calToolbar.classList.toggle("cal-undated", !dated);' in body
+        css = (STATIC_DIR / "style.css").read_text()
+        rule = css.split(".cal-undated .cal-nav-btn,\n.cal-undated .cal-today-btn {")[1].split("}")[
+            0
+        ]
+        # Hidden, not removed: the tabs beside them must not move.
+        assert "visibility: hidden;" in rule
+        assert "display" not in rule
+
+    def test_today_is_disabled_where_today_is_already_shown(self):
+        body = self._function("renderCalendar")
+        assert "calToday.disabled = !dated || calShowsToday();" in body
+
+    def test_calendar_follows_the_day_until_a_date_is_chosen(self):
+        """A page left open overnight shows the new day; a month, week or
+        day reached with the arrows is kept, until they or Today bring
+        the calendar back to today."""
+        assert "if (!calDateChosen) calDate = new Date();" in self._function("renderCalendar")
+        assert "calDateChosen = !calShowsToday();" in self._function("navigateCalendar")
+        js = self._app()
+        assert 'if (viewMode === "calendar" && calDateIsStale()) renderCalendar();' in js
+
+
 class TestRevalidation:
     """The page's files are checked with the server before reuse."""
 
