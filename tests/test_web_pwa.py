@@ -562,6 +562,50 @@ class TestCalendarToolbar:
         assert 'if (viewMode === "calendar" && calDateIsStale()) renderCalendar();' in js
 
 
+class TestDeleteNotice:
+    """A delete is announced once, with Undo, when it has been kept."""
+
+    def _app(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def _delete(self) -> str:
+        return self._app().split("async function onDelete(")[1].split("\n  }\n")[0]
+
+    def test_every_delete_in_the_page_goes_the_same_way(self):
+        """The row's button, the swipe, the task menu and the item sheet."""
+        js = self._app()
+        assert "onDeleteWithUndo" not in js
+        # The definition and its four callers.
+        assert js.count("onDelete(") == 5
+        assert js.count('method: "DELETE" }') == 1
+
+    def test_row_leaves_at_once(self):
+        body = self._delete()
+        assert body.index('cardEl.classList.add("item-exit");') < body.index("await sendOrQueue(")
+
+    def test_notice_waits_for_the_delete_to_be_kept(self):
+        """Shown before, its Undo has no delete to act on, and undoes
+        whatever came before it."""
+        body = self._delete()
+        before, after = body.split("await sendOrQueue(")
+        assert "showToast(" not in before
+        assert after.count("showToast(") == 2
+
+    def test_one_notice_for_each_outcome_with_undo(self):
+        body = self._delete()
+        sent = body.split('if (outcome === "sent") {')[1].split("} else if")[0]
+        queued = body.split('} else if (outcome === "queued") {')[1].split("} else if")[0]
+        assert 'showToast(name + " deleted", function () {' in sent
+        assert 'showToast(name + " deleted (offline)", function () {' in queued
+
+    def test_row_returns_when_the_delete_is_not_kept(self):
+        """A refused delete leaves the list as it was, and a list that
+        has not changed is not drawn again."""
+        body = self._delete()
+        rest = body.split('} else if (outcome === "queued") {')[1]
+        assert 'cardEl.classList.remove("item-exit");' in rest
+
+
 class TestRevalidation:
     """The page's files are checked with the server before reuse."""
 

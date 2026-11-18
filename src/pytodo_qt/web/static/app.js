@@ -1532,7 +1532,7 @@
       danger: true,
       onTap: function () {
         var cardEl = document.querySelector('[data-id="' + item.id + '"]');
-        onDeleteWithUndo(item.id, item.reminder, cardEl);
+        onDelete(item.id, item.reminder, cardEl);
       },
     });
 
@@ -2255,7 +2255,7 @@
         onToggle(itemId);
       } else if (currentX * 0.6 < -threshold) {
         haptic(15);
-        onDeleteWithUndo(itemId, itemReminder, el);
+        onDelete(itemId, itemReminder, el);
       }
     });
 
@@ -2675,7 +2675,7 @@
     delBtn.setAttribute("aria-label", "Delete " + item.reminder);
     delBtn.addEventListener("click", function (e) {
       e.stopPropagation();
-      onDeleteWithUndo(item.id, item.reminder, div);
+      onDelete(item.id, item.reminder, div);
     });
     actions.appendChild(delBtn);
     div.appendChild(actions);
@@ -4855,7 +4855,11 @@
     delBtn.className = "detail-delete";
     delBtn.textContent = "Delete Item";
     delBtn.addEventListener("click", function () {
-      onDelete(itemId, item.reminder);
+      // The task's row or card, when the list or the board is showing.
+      var shown = document.querySelector(
+        '.item[data-id="' + itemId + '"], .board-card[data-id="' + itemId + '"]',
+      );
+      onDelete(itemId, item.reminder, shown);
       closeDetailSheet();
     });
     detailBody.appendChild(delBtn);
@@ -5503,7 +5507,13 @@
     if (outcome === "sent") await refreshCurrentList();
   }
 
-  async function onDelete(itemId, reminderText) {
+  // Deletes a task, from wherever in the page that is asked for. The
+  // row or card, when given, starts to leave at once. The notice waits
+  // until the delete is kept, applied by the server or queued, so that
+  // its Undo has that delete to act on; a delete is announced once.
+  async function onDelete(itemId, reminderText, cardEl) {
+    if (cardEl) cardEl.classList.add("item-exit");
+    haptic(10);
     var path = "/items/" + itemId;
     var ua = getItemUpdatedAt(itemId);
     var opts = { method: "DELETE" };
@@ -5511,14 +5521,21 @@
       opts.headers = { "Content-Type": "application/json" };
       opts.body = JSON.stringify({ updated_at: ua });
     }
+    var name = reminderText ? '"' + reminderText + '"' : "Item";
     var outcome = await sendOrQueue(path, opts);
     if (outcome === "sent") {
       await refreshCurrentList();
-      showToast(
-        reminderText ? '"' + reminderText + '" deleted' : "Item deleted",
-      );
+      showToast(name + " deleted", function () {
+        onUndo();
+      });
     } else if (outcome === "queued") {
-      showToast("Deleted (offline)");
+      showToast(name + " deleted (offline)", function () {
+        onUndo();
+      });
+    } else if (cardEl) {
+      // Not deleted: sendOrQueue has said why. The list is drawn again
+      // only when it has changed, so the row is put back here.
+      cardEl.classList.remove("item-exit");
     }
   }
 
@@ -5649,23 +5666,6 @@
 
   if (undoBtn) undoBtn.addEventListener("click", onUndo);
   if (redoBtn) redoBtn.addEventListener("click", onRedo);
-
-  function onDeleteWithUndo(itemId, reminderText, cardEl) {
-    // Animate card removal
-    if (cardEl) {
-      cardEl.classList.add("item-exit");
-    }
-    haptic(10);
-
-    // Delete immediately (undo available via undo button/Ctrl+Z)
-    onDelete(itemId, null);
-    showToast(
-      reminderText ? '"' + reminderText + '" deleted' : "Item deleted",
-      function () {
-        onUndo();
-      },
-    );
-  }
 
   // ====================================================================
   // Toast notifications
