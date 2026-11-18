@@ -6,16 +6,18 @@ Table widget for displaying and editing to-do items.
 from __future__ import annotations
 
 import contextlib
+from dataclasses import dataclass, field
 from datetime import date, time
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from PyQt6.QtCore import QDate, QEvent, QPoint, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QMouseEvent, QPixmap
+from PyQt6.QtCore import QDate, QEvent, QItemSelection, QPoint, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QAction, QKeyEvent, QMouseEvent, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDateEdit,
@@ -52,6 +54,9 @@ if TYPE_CHECKING:
 
 logger = Logger(__name__)
 
+# How often a refresh that is waiting for a row to be free looks again.
+_HELD_REFRESH_POLL_MS = 200
+
 
 def _sort_fragment(item: TodoItem, dimension: str, reverse: bool) -> tuple:
     """Return a comparable tuple fragment for one sort dimension."""
@@ -81,6 +86,74 @@ class ClickableLabel(QLabel):
 
     def mousePressEvent(self, ev) -> None:  # noqa: N802
         self.clicked.emit()
+
+
+class ReminderEdit(QLineEdit):
+    """The name field of a row.
+
+    It knows the task it belongs to and the name that is stored for it,
+    so that text typed and not yet saved can be told from the stored
+    name. Escape puts the stored name back.
+    """
+
+    def __init__(self, item_id: UUID, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.item_id = item_id
+        self.stored_text = text
+
+    def has_unsaved_text(self) -> bool:
+        return not self.isReadOnly() and self.text() != self.stored_text
+
+    def restore_stored_text(self) -> None:
+        """Put the stored name back, the cursor staying where it is."""
+        position = min(self.cursorPosition(), len(self.stored_text))
+        self.setText(self.stored_text)
+        self.setCursorPosition(position)
+
+    def event(self, a0) -> bool:
+        # The window has a shortcut on Escape, and a shortcut is asked
+        # for before the key reaches the field. With unsaved text the
+        # field claims the key for itself.
+        if (
+            isinstance(a0, QKeyEvent)
+            and a0.type() == QEvent.Type.ShortcutOverride
+            and a0.key() == Qt.Key.Key_Escape
+            and self.has_unsaved_text()
+        ):
+            a0.accept()
+            return True
+        return super().event(a0)
+
+    def keyPressEvent(self, a0) -> None:  # noqa: N802
+        if a0 is not None and a0.key() == Qt.Key.Key_Escape and self.has_unsaved_text():
+            self.restore_stored_text()
+            a0.accept()
+            return
+        super().keyPressEvent(a0)
+
+
+@dataclass
+class _ViewState:
+    """What a rebuild of the table has to put back."""
+
+    # The task in the row at the top of the view, that row's number, and
+    # how far the row is scrolled out of the view, in pixels.
+    top_id: UUID | None = None
+    top_row: int = -1
+    top_offset: int = 0
+    horizontal: int = 0
+    selected: list[UUID] = field(default_factory=list)
+    current: tuple[UUID, int] | None = None
+    # The cell whose widget has the keyboard focus: (task, column).
+    focus: tuple[UUID, int] | None = None
+    # The table itself has the keyboard focus.
+    table_focused: bool = False
+    focus_row_visible: bool = False
+    # Text typed into the focused name field and not yet saved.
+    unsaved_text: str | None = None
+    cursor: int = 0
+    selection_start: int = -1
+    selection_length: int = 0
 
 
 class DueDatePickerDialog(QDialog):
@@ -307,6 +380,18 @@ class TodoTableWidget(QTableWidget):
         self._collapsed_parents: set[UUID] = set()
         self._context_row_ids: set[UUID] = set()
 
+        # True while the rows are being made again: a name field that
+        # loses the focus because it is being replaced saves nothing.
+        self._rebuilding = False
+        # A refresh that arrived while a row was in use, and is waiting.
+        self._refresh_held = False
+        self._held_background = False
+        self._held_timer = QTimer(self)
+        self._held_timer.setInterval(_HELD_REFRESH_POLL_MS)
+        self._held_timer.timeout.connect(self._run_held_refresh)
+        # Names to save once the event that ended their editing is over.
+        self._names_to_save: list[tuple[UUID, str]] = []
+
         # Setup table
         self._setup_table()
 
@@ -521,10 +606,22 @@ class TodoTableWidget(QTableWidget):
                 return True
         return super().eventFilter(object, event)
 
-    def set_list(self, todo_list: TodoList | None) -> None:
-        """Set the list to display."""
+    def set_list(self, todo_list: TodoList | None, *, background: bool = False) -> None:
+        """Set the list to display.
+
+        ``background`` is for a refresh that nothing done in the window
+        asked for: the minute tick, a sync, a change from the web page.
+        Such a refresh waits while a name is being typed.
+        """
+        previous = self._current_list
+        same_list = previous is not None and todo_list is not None and previous.id == todo_list.id
         self._current_list = todo_list
-        self.refresh()
+        if same_list:
+            self.refresh(background=background)
+        else:
+            # Another list: it is shown from its top, with nothing selected.
+            self._release_held_refresh()
+            self._rebuild_keeping(None)
 
     def set_filter(self, filter_state: FilterState | None) -> None:
         """Set the current filter and refresh display."""
@@ -726,8 +823,209 @@ class TodoTableWidget(QTableWidget):
         cy = (vp_h - self._empty_state.height()) // 2
         self._empty_state.move(max(0, cx), max(0, cy))
 
-    def refresh(self) -> None:
-        """Refresh the table contents."""
+    def refresh(self, *, background: bool = False) -> None:
+        """Show the list as it now is, keeping what is on screen in place.
+
+        The rows are made again, and the scroll position, the selected
+        rows, the current cell and the keyboard focus are put back. A
+        refresh that arrives while a popup or a picker of a row is open
+        waits until it is closed. A ``background`` refresh also waits
+        while a name is being typed; any other refresh carries the typed
+        text over into the new row.
+        """
+        if self._must_wait(background):
+            if self._refresh_held:
+                self._held_background = self._held_background and background
+            else:
+                self._refresh_held = True
+                self._held_background = background
+            if not self._held_timer.isActive():
+                self._held_timer.start()
+            return
+        self._release_held_refresh()
+        self._rebuild_keeping(self._capture_view_state())
+
+    def _release_held_refresh(self) -> None:
+        self._refresh_held = False
+        self._held_background = False
+        self._held_timer.stop()
+
+    def _run_held_refresh(self) -> None:
+        """Carry out the waiting refresh as soon as the row is free."""
+        if not self._refresh_held:
+            self._held_timer.stop()
+            return
+        if not self._must_wait(self._held_background):
+            self.refresh(background=self._held_background)
+
+    def _owns(self, widget: QWidget | None) -> bool:
+        """Whether a widget, or a window opened from one, belongs to the table."""
+        while widget is not None:
+            if widget is self:
+                return True
+            widget = widget.parentWidget()
+        return False
+
+    def _focused_widget(self) -> QWidget | None:
+        """The table's widget that has, or on activation takes, the focus."""
+        window = self.window()
+        widget = window.focusWidget() if window is not None else None
+        if widget is None or widget is self or not self._owns(widget):
+            return None
+        return widget
+
+    def _must_wait(self, background: bool) -> bool:
+        for opened in (QApplication.activePopupWidget(), QApplication.activeModalWidget()):
+            if opened is not None and self._owns(opened):
+                return True
+        if background:
+            focused = self._focused_widget()
+            return isinstance(focused, ReminderEdit) and focused.has_unsaved_text()
+        return False
+
+    def _capture_view_state(self) -> _ViewState:
+        state = _ViewState()
+        if self.rowCount() == 0:
+            return state
+        top_row = self.rowAt(0)
+        if top_row >= 0:
+            state.top_row = top_row
+            state.top_id = self._item_id_map.get(top_row)
+            state.top_offset = -self.rowViewportPosition(top_row)
+        h_bar = self.horizontalScrollBar()
+        state.horizontal = h_bar.value() if h_bar is not None else 0
+        state.selected = self.get_selected_item_ids()
+        current = self.currentIndex()
+        current_id = self._item_id_map.get(current.row()) if current.isValid() else None
+        if current_id is not None:
+            state.current = (current_id, current.column())
+
+        window = self.window()
+        state.table_focused = window is not None and window.focusWidget() is self
+        focused = self._focused_widget()
+        if focused is None:
+            return state
+        if isinstance(focused, ReminderEdit):
+            state.focus = (focused.item_id, 1)
+            if focused.has_unsaved_text():
+                state.unsaved_text = focused.text()
+            state.cursor = focused.cursorPosition()
+            if focused.hasSelectedText():
+                state.selection_start = focused.selectionStart()
+                state.selection_length = len(focused.selectedText())
+        else:
+            for row, item_id in self._item_id_map.items():
+                if self.cellWidget(row, 0) is focused:
+                    state.focus = (item_id, 0)
+                    break
+        if state.focus is not None:
+            viewport = self.viewport()
+            height = viewport.height() if viewport is not None else 0
+            for row, item_id in self._item_id_map.items():
+                if item_id == state.focus[0]:
+                    top = self.rowViewportPosition(row)
+                    state.focus_row_visible = top + self.rowHeight(row) > 0 and top < height
+                    break
+        return state
+
+    def _rebuild_keeping(self, state: _ViewState | None) -> None:
+        """Make the rows again and put back what ``state`` holds."""
+        selected_before = set(self.get_selected_item_ids())
+        self._rebuilding = True
+        self.setUpdatesEnabled(False)
+        # The table's own signals are kept back: the selection is taken
+        # away and put back, and nothing has to follow that.
+        blocked = self.blockSignals(True)
+        try:
+            self._rebuild()
+            if state is not None:
+                self._restore_view_state(state)
+        finally:
+            self.blockSignals(blocked)
+            self.setUpdatesEnabled(True)
+            self._rebuilding = False
+        if set(self.get_selected_item_ids()) != selected_before:
+            self._on_selection_changed()
+
+    def _restore_view_state(self, state: _ViewState) -> None:
+        if self.rowCount() == 0:
+            return
+        row_of = {item_id: row for row, item_id in self._item_id_map.items()}
+        model = self.model()
+        selection = self.selectionModel()
+
+        # The order matters. Qt ties the keyboard focus and the current cell
+        # together: a priority box that takes the focus becomes the current
+        # cell and the only selected row, and a current cell with a priority
+        # box gives it the focus. So the focus is put back first, then the
+        # current cell where that moves no focus, then the selection; the
+        # scroll position comes last, because making a cell the current one
+        # scrolls the view to it.
+        focus_row = row_of.get(state.focus[0]) if state.focus is not None else None
+        focused: QWidget | None = None
+        if state.focus is not None and focus_row is not None:
+            focused = self.cellWidget(focus_row, state.focus[1])
+            if state.focus[1] == 1 and focused is not None:
+                focused = focused.findChild(ReminderEdit)
+        if focused is not None:
+            focused.setFocus(Qt.FocusReason.OtherFocusReason)
+            if isinstance(focused, ReminderEdit):
+                if state.unsaved_text is not None and not focused.isReadOnly():
+                    focused.setText(state.unsaved_text)
+                if state.selection_start >= 0:
+                    focused.setSelection(state.selection_start, state.selection_length)
+                else:
+                    focused.setCursorPosition(min(state.cursor, len(focused.text())))
+
+        if model is not None and selection is not None:
+            flags = selection.SelectionFlag
+            # A current cell in the priority column takes the focus, so it
+            # is put back only when the focus was in the table already.
+            if (
+                focused is None
+                and state.current is not None
+                and (state.table_focused or state.current[1] != 0)
+            ):
+                row = row_of.get(state.current[0])
+                if row is not None:
+                    selection.setCurrentIndex(model.index(row, state.current[1]), flags.NoUpdate)
+            chosen = QItemSelection()
+            for item_id in state.selected:
+                row = row_of.get(item_id)
+                if row is not None:
+                    index = model.index(row, 0)
+                    chosen.select(index, index)
+            selection.select(chosen, flags.ClearAndSelect | flags.Rows)
+
+        # Scroll position: the task that was at the top is at the top
+        # again; if it is gone, the row of the same number is.
+        self.updateGeometries()
+        if state.top_row >= 0:
+            anchor = row_of.get(state.top_id) if state.top_id is not None else None
+            offset = state.top_offset
+            if anchor is None:
+                anchor = min(state.top_row, self.rowCount() - 1)
+            v_bar = self.verticalScrollBar()
+            if v_bar is not None:
+                if self.verticalScrollMode() == QAbstractItemView.ScrollMode.ScrollPerItem:
+                    v_bar.setValue(anchor)
+                else:
+                    v_bar.setValue(v_bar.value() + self.rowViewportPosition(anchor) + offset)
+        h_bar = self.horizontalScrollBar()
+        if h_bar is not None:
+            h_bar.setValue(state.horizontal)
+
+        if (
+            focused is not None
+            and focus_row is not None
+            and state.focus_row_visible
+            and model is not None
+        ):
+            # The row being worked in stays in view when it has moved.
+            self.scrollTo(model.index(focus_row, 0), QAbstractItemView.ScrollHint.EnsureVisible)
+
+    def _rebuild(self) -> None:
+        """Make every row again from the list."""
         self.setRowCount(0)
         self._item_id_map.clear()
         self._ellipsis_pairs.clear()
@@ -867,9 +1165,14 @@ class TodoTableWidget(QTableWidget):
                 toggle_btn.clicked.connect(lambda pid=item.id: self._toggle_collapse(pid))
                 reminder_layout.addWidget(toggle_btn)
 
-            reminder_edit = QLineEdit(item.reminder)
+            reminder_edit = ReminderEdit(item.id, item.reminder)
             reminder_edit.setMinimumHeight(32)
-            reminder_edit.returnPressed.connect(lambda r=row: self._on_reminder_changed(r))
+            reminder_edit.returnPressed.connect(
+                lambda edit=reminder_edit: self._save_reminder(edit)
+            )
+            reminder_edit.editingFinished.connect(
+                lambda edit=reminder_edit: self._on_reminder_editing_finished(edit)
+            )
 
             # Style based on completion status
             if is_context:
@@ -891,7 +1194,6 @@ class TodoTableWidget(QTableWidget):
 
             reminder_layout.addWidget(reminder_edit, 1)
             reminder_edit.setCursorPosition(0)
-            reminder_edit.editingFinished.connect(lambda re=reminder_edit: re.setCursorPosition(0))
 
             # Ellipsis indicator for viewing full reminder text (shown only when truncated)
             ellipsis = ClickableLabel("…")
@@ -1063,18 +1365,60 @@ class TodoTableWidget(QTableWidget):
         priority = 3 - combo_index
         self.item_priority_changed.emit(item_id, priority)
 
-    def _on_reminder_changed(self, row: int) -> None:
-        """Handle reminder text change."""
-        item_id = self._item_id_map.get(row)
-        if item_id is None:
-            return
+    def _take_reminder(self, edit: ReminderEdit) -> str | None:
+        """The name to save from a field, or None when there is none.
 
-        container = self.cellWidget(row, 1)
-        if container is None:
+        A field emptied of its text takes the stored name back: a task
+        is not left without a name.
+        """
+        if self._rebuilding or not edit.has_unsaved_text():
+            return None
+        text = edit.text()
+        if not text.strip():
+            edit.restore_stored_text()
+            return None
+        edit.stored_text = text
+        return text
+
+    def _save_reminder(self, edit: ReminderEdit) -> None:
+        """Save the name in a field on Enter, and leave the field.
+
+        The cursor going out of the field shows that Enter was taken.
+        The focus goes to the table, with the field's row as the current
+        one, so that the arrow keys go on from there.
+        """
+        text = self._take_reminder(edit)
+        model = self.model()
+        selection = self.selectionModel()
+        row = next((r for r, i in self._item_id_map.items() if i == edit.item_id), None)
+        if row is not None and model is not None and selection is not None:
+            selection.setCurrentIndex(model.index(row, 1), selection.SelectionFlag.NoUpdate)
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
+        if text is not None:
+            self.item_reminder_changed.emit(edit.item_id, text)
+
+    def _on_reminder_editing_finished(self, edit: ReminderEdit) -> None:
+        """Save the name in a field that is left.
+
+        The saving is put off until the event that took the focus away
+        is over: it makes the rows again, and the click that ends the
+        editing may be on one of them.
+        """
+        if self._rebuilding:
             return
-        reminder_edit = container.findChild(QLineEdit)
-        if isinstance(reminder_edit, QLineEdit):
-            self.item_reminder_changed.emit(item_id, reminder_edit.text())
+        text = self._take_reminder(edit)
+        if not edit.hasFocus():
+            # A field that is left shows the start of its text. Enter
+            # ends the editing too, and leaves the cursor where it is.
+            edit.setCursorPosition(0)
+        if text is not None:
+            self._names_to_save.append((edit.item_id, text))
+            QTimer.singleShot(0, self._save_names)
+
+    def _save_names(self) -> None:
+        names, self._names_to_save = self._names_to_save, []
+        for item_id, text in names:
+            self.item_reminder_changed.emit(item_id, text)
 
     def _on_due_date_changed(self, row: int, due_date: date | None) -> None:
         """Handle due date change from inline picker."""

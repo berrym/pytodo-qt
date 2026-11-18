@@ -1844,7 +1844,7 @@ class MainWindow(QMainWindow):
 
                 advance_all_overdue_recurring(self._database)
                 self._save_database()
-                self._refresh_ui()
+                self._refresh_ui(background=True)
                 self.status_bar_widget.set_sync_status("success", auto=True)
                 logger.log.info(
                     "Auto-sync completed with %s",
@@ -2014,7 +2014,7 @@ class MainWindow(QMainWindow):
                     self._offline_queue.remove(sync.id)
                     self._track_device(device.fingerprint, f"{peer.address}:{peer.port}")
                     self._save_database()
-                    self._refresh_ui()
+                    self._refresh_ui(background=True)
                     self.status_bar_widget.set_sync_status("success", auto=True)
                     logger.log.info(
                         "Processed queued sync for %s",
@@ -2084,7 +2084,7 @@ class MainWindow(QMainWindow):
     def _web_save_and_refresh(self) -> None:
         """Save database and refresh UI after a web API write."""
         self._storage.save_database(self._database)
-        self._refresh_ui()
+        self._refresh_ui(background=True)
         self._auto_scheduler.notify_change()
 
     def _get_sync_data(self) -> bytes:
@@ -2109,7 +2109,7 @@ class MainWindow(QMainWindow):
 
                 advance_all_overdue_recurring(self._database)
                 self._save_database()
-                self._refresh_ui()
+                self._refresh_ui(background=True)
                 if self._web_server is not None:
                     self._web_server.notify_clients()
                 logger.log.info("Received and merged %d items from remote push", merged)
@@ -2273,7 +2273,7 @@ class MainWindow(QMainWindow):
         active_list = self._database.active_list
         if active_list is None:
             if count > 0 or day_changed:
-                self._refresh_ui()
+                self._refresh_ui(background=True)
             return
         needs_refresh = count > 0 or day_changed
         if not needs_refresh:
@@ -2282,7 +2282,7 @@ class MainWindow(QMainWindow):
                     needs_refresh = True
                     break
         if needs_refresh:
-            self._refresh_ui()
+            self._refresh_ui(background=True)
 
     def _arm_minute_timer(self) -> None:
         """Schedule the next tick for just after the coming minute boundary."""
@@ -2392,8 +2392,14 @@ class MainWindow(QMainWindow):
             if first_active is not None:
                 self._database.active_list_id = first_active.id
 
-    def _refresh_ui(self) -> None:
-        """Refresh all UI components."""
+    def _refresh_ui(self, *, background: bool = False) -> None:
+        """Refresh all UI components.
+
+        ``background`` marks a refresh that nothing done in the window
+        asked for: the minute tick, a sync, a change from the web page.
+        The list view puts such a refresh off while a name is being
+        typed in it.
+        """
         self._refreshing = True
         try:
             # Cover the case where sync populated the database after the
@@ -2416,7 +2422,7 @@ class MainWindow(QMainWindow):
             self.list_selector.set_unseen(self._unseen_changes)
             idx = self._view_stack.currentIndex()
             if idx == 0:
-                self.todo_table.set_list(self._database.active_list)
+                self.todo_table.set_list(self._database.active_list, background=background)
             elif idx == 1:
                 self.kanban_board.set_list(self._database.active_list)
             else:
@@ -4345,7 +4351,7 @@ class MainWindow(QMainWindow):
 
         # Save and refresh
         self._save_database()
-        self._refresh_ui()
+        self._refresh_ui(background=True)
 
         # Show result
         if fail_count == 0 and queued_count == 0:
@@ -4464,7 +4470,7 @@ class MainWindow(QMainWindow):
                     )
                     self._record_unseen_changes(changed)
                     self._save_database()
-                    self._refresh_ui()
+                    self._refresh_ui(background=True)
                     self.status_bar_widget.set_sync_status("success")
                     if merged > 0:
                         QMessageBox.information(
@@ -4578,7 +4584,7 @@ class MainWindow(QMainWindow):
 
             advance_all_overdue_recurring(self._database)
             self._save_database()
-            self._refresh_ui()
+            self._refresh_ui(background=True)
             self.status_bar_widget.set_sync_status("success")
             logger.log.info(
                 "Merged %d, local newer %d, identical %d", merged, local_newer, identical
@@ -4622,13 +4628,13 @@ class MainWindow(QMainWindow):
     def _on_peer_sync_received(self, _data: bytes) -> None:
         """Handle sync data received from peer manager."""
         self._save_database()
-        self._refresh_ui()
+        self._refresh_ui(background=True)
         self.status_bar_widget.set_sync_status("success")
 
     def _on_device_sync_received(self, _data: bytes) -> None:
         """Handle sync data received from device manager."""
         self._save_database()
-        self._refresh_ui()
+        self._refresh_ui(background=True)
         self.status_bar_widget.set_sync_status("success")
 
     def _on_settings(self) -> None:
@@ -4668,7 +4674,7 @@ class MainWindow(QMainWindow):
         if self._config.appearance.theme == "system":
             apply_current_theme()
             self._update_tray_icon_for_theme()
-            self._refresh_ui()
+            self._refresh_ui(background=True)
 
     def _on_focus_stats(self) -> None:
         """Show the Focus Statistics dialog."""

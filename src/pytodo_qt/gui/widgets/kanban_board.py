@@ -733,6 +733,16 @@ class KanbanColumnWidget(QFrame):
         self._card_layout.addStretch()
         scroll.setWidget(self._card_container)
         col_layout.addWidget(scroll, 1)
+        self._scroll = scroll
+        # A scroll position still to be reached: the cards are laid out
+        # after the column is built, and until then the scroll bar's
+        # range may be too short for it.
+        self._scroll_to_restore: int | None = None
+        self._restoring_scroll = False
+        bar = scroll.verticalScrollBar()
+        if bar is not None:
+            bar.rangeChanged.connect(lambda _low, _high: self._apply_scroll_to_restore())
+            bar.valueChanged.connect(self._on_scroll_value_changed)
 
         # Add item button
         add_btn = QPushButton(self.tr("+ Add item"))
@@ -743,6 +753,36 @@ class KanbanColumnWidget(QFrame):
         add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         add_btn.clicked.connect(lambda: self.add_item_clicked.emit(self._column_name))
         col_layout.addWidget(add_btn)
+
+    def scroll_position(self) -> int:
+        """How far the cards are scrolled."""
+        bar = self._scroll.verticalScrollBar()
+        return bar.value() if bar is not None else 0
+
+    def restore_scroll_position(self, position: int) -> None:
+        """Scroll the cards to where a column of this name was before."""
+        if position <= 0:
+            return
+        self._scroll_to_restore = position
+        self._apply_scroll_to_restore()
+
+    def _apply_scroll_to_restore(self) -> None:
+        position = self._scroll_to_restore
+        bar = self._scroll.verticalScrollBar()
+        if position is None or bar is None:
+            return
+        self._restoring_scroll = True
+        try:
+            bar.setValue(min(position, bar.maximum()))
+        finally:
+            self._restoring_scroll = False
+        if bar.maximum() >= position:
+            self._scroll_to_restore = None
+
+    def _on_scroll_value_changed(self, _value: int) -> None:
+        # Scrolled by something else: the old position is no longer wanted.
+        if not self._restoring_scroll:
+            self._scroll_to_restore = None
 
     def add_card(self, card: KanbanCardWidget) -> None:
         """Add a card to this column."""
@@ -910,6 +950,8 @@ class KanbanBoardWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._selected_item_id: UUID | None = None
+        # The list whose columns are on screen; see refresh().
+        self._shown_list_id: UUID | None = None
         self._todo_list: TodoList | None = None
         self._filter_state: FilterState | None = None
         self._columns: list[KanbanColumnWidget] = []
@@ -1063,6 +1105,14 @@ class KanbanBoardWidget(QWidget):
             self._refresh_pending = True
             return
 
+        # Where each column is scrolled to, to be put back in the column
+        # of the same name. Another list starts from the top.
+        list_id = self._todo_list.id if self._todo_list is not None else None
+        scroll_positions: dict[str, int] = {}
+        if list_id is not None and list_id == self._shown_list_id:
+            scroll_positions = {col.column_name: col.scroll_position() for col in self._columns}
+        self._shown_list_id = list_id
+
         # Clear existing columns and add-column button
         for col in self._columns:
             self._board_layout.removeWidget(col)
@@ -1138,6 +1188,7 @@ class KanbanBoardWidget(QWidget):
             # Insert before the stretch
             self._board_layout.insertWidget(self._board_layout.count() - 1, col_widget)
             self._columns.append(col_widget)
+            col_widget.restore_scroll_position(scroll_positions.get(col_name, 0))
 
         # "Board Layout" preset button
         self._layout_btn = QPushButton("\u2699 Layout")  # ⚙ Layout
