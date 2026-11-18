@@ -1942,9 +1942,20 @@ async def handle_calendar_segments(request: web.Request) -> web.Response:
 
 
 async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
-    """GET /ws — WebSocket endpoint for real-time push updates."""
+    """GET /ws — WebSocket endpoint for real-time push updates.
+
+    The first message tells the page which version of the page's files
+    the server serves. A page connects again whenever the server has
+    been restarted, which is when that version may have changed; a page
+    left open would otherwise go on running the version it was loaded
+    with, against a server that has moved on.
+    """
+    # The server module imports this one.
+    from .server import static_asset_version
+
     ws = web.WebSocketResponse(heartbeat=30.0)
     await ws.prepare(request)
+    await ws.send_json({"event": "hello", "page_version": static_asset_version()})
 
     clients = request.app.get(ws_clients_key)
     if clients is not None:

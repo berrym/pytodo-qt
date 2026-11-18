@@ -608,8 +608,19 @@ class WebServer:
         return self._app
 
     async def _serve_index(self, request: web.Request) -> web.StreamResponse:
-        """Serve index.html for the root URL."""
-        return web.FileResponse(_STATIC_DIR / "index.html")
+        """Serve index.html for the root URL, carrying the version of the
+        page's files it belongs to.
+
+        The page reads the version from itself. A page loaded from the
+        service worker's store, with the server down, then knows which
+        version it is, and can tell when the server it connects to
+        serves another.
+        """
+        page = (_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        return web.Response(
+            text=page.replace(_ASSET_VERSION_PLACEHOLDER, static_asset_version()),
+            content_type="text/html",
+        )
 
     async def _serve_sw(self, request: web.Request) -> web.StreamResponse:
         """Serve the service worker from the root scope, carrying the

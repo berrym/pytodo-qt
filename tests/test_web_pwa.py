@@ -1724,6 +1724,75 @@ class TestManifestRoute:
             assert data["icons"][0]["sizes"] == "192x192"
 
 
+class TestPageTakesUpTheServersVersion:
+    """A page left open hears, each time it connects, which version of
+    the page the server serves, and takes up one that is not its own.
+    Loaded from the service worker's store while the server was down,
+    and left in view, it otherwise went on running the old page against
+    the new server."""
+
+    def _app(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def _function(self, name: str) -> str:
+        return self._app().split(f"function {name}(")[1].split("\n  }\n")[0]
+
+    @pytest.mark.asyncio
+    async def test_served_page_carries_its_version(self):
+        from pytodo_qt.web.server import static_asset_version
+
+        client = await _make_client()
+        async with client:
+            resp = await client.get("/")
+            text = await resp.text()
+            assert resp.content_type == "text/html"
+        assert f'<meta name="page-version" content="{static_asset_version()}" />' in text
+        assert "__ASSET_VERSION__" not in text
+
+    def test_page_reads_its_version_from_itself(self):
+        """Not from the server's answer: a page out of the worker's
+        store is older than the server it then connects to."""
+        html = (STATIC_DIR / "index.html").read_text()
+        assert '<meta name="page-version" content="__ASSET_VERSION__" />' in html
+        js = self._app()
+        assert "document.querySelector('meta[name=\"page-version\"]')" in js
+        # A page served without the version put in has none.
+        assert 'return version.indexOf("__") === 0 ? "" : version;' in js
+
+    def test_the_sockets_greeting_reaches_the_check(self):
+        js = self._app()
+        assert '} else if (msg.event === "hello") {' in js
+        assert "onServerPageVersion(msg.page_version);" in js
+
+    def test_the_same_version_or_none_changes_nothing(self):
+        body = self._function("onServerPageVersion")
+        assert "if (!version || !PAGE_VERSION || version === PAGE_VERSION) return;" in body
+
+    def test_page_loads_itself_again_once_for_a_version(self):
+        """A version it cannot take up, a worker that fails to install,
+        must not make it reload without end."""
+        body = self._function("onServerPageVersion")
+        assert (
+            body.index("if (sessionStorage.getItem(PAGE_RELOAD_KEY) === version) return;")
+            < body.index("sessionStorage.setItem(PAGE_RELOAD_KEY, version);")
+            < body.index(".then(reloadForUpdateWhenIdle);")
+        )
+
+    def test_the_worker_fetches_the_new_version_before_the_page_reloads(self):
+        """Reloaded sooner, the page would come from the old worker's
+        store again."""
+        body = self._function("onServerPageVersion")
+        assert "navigator.serviceWorker.getRegistration()" in body
+        assert body.index(".update()") < body.index("return workerSettled(registration);")
+        settled = self._function("workerSettled")
+        assert "var worker = registration.installing || registration.waiting;" in settled
+        assert 'worker.state === "activated" || worker.state === "redundant"' in settled
+
+    def test_the_reload_waits_for_nothing_to_be_open(self):
+        body = self._function("reloadForUpdateWhenIdle")
+        assert "if (!pageIsIdle()) return;" in body
+
+
 class TestIndexRoute:
     @pytest.mark.asyncio
     async def test_index_has_manifest_link(self):

@@ -7010,6 +7010,8 @@
         if (msg.event === "refresh") {
           refreshCurrentList();
           fetchUndoState();
+        } else if (msg.event === "hello") {
+          onServerPageVersion(msg.page_version);
         }
       } catch (err) {
         /* ignore malformed messages */
@@ -7225,6 +7227,69 @@
     refreshLists()
       .then(refreshCurrentList)
       .catch(function () {});
+  }
+
+  // The version of the page's files this page is, written into the
+  // page by the server. Empty for a page that carries none.
+  var PAGE_VERSION = (function () {
+    var meta = document.querySelector('meta[name="page-version"]');
+    var version = meta ? meta.getAttribute("content") || "" : "";
+    return version.indexOf("__") === 0 ? "" : version;
+  })();
+  var PAGE_RELOAD_KEY = "pytodo_reloaded_for";
+
+  // The server says, each time the page connects to it, which version
+  // of the page it serves. A page looks for a new version of itself
+  // when it is loaded and when it comes back into view; one that was
+  // loaded from the service worker's store while the server was down,
+  // and then stays in view, does neither, and went on running the old
+  // page against the new server.
+  //
+  // Hearing of another version, the page takes it up: the service
+  // worker fetches it, where there is one, and the page loads itself
+  // again once nothing is open that a reload would discard. It does so
+  // once for each version of the server, so that a version it cannot
+  // take up, a worker that fails to install, does not make it reload
+  // without end.
+  function onServerPageVersion(version) {
+    if (!version || !PAGE_VERSION || version === PAGE_VERSION) return;
+    try {
+      if (sessionStorage.getItem(PAGE_RELOAD_KEY) === version) return;
+      sessionStorage.setItem(PAGE_RELOAD_KEY, version);
+    } catch (e) {
+      /* without the store, the reload below happens each time */
+    }
+    var registered =
+      navigator.serviceWorker && location.protocol === "https:"
+        ? navigator.serviceWorker.getRegistration()
+        : Promise.resolve(null);
+    registered
+      .then(function (registration) {
+        if (!registration) return null;
+        return registration
+          .update()
+          .then(function () {
+            return workerSettled(registration);
+          });
+      })
+      .catch(function () {
+        /* the worker could not be fetched; the reload is still tried */
+      })
+      .then(reloadForUpdateWhenIdle);
+  }
+
+  // Resolves when a worker that is being installed has taken over, or
+  // has failed to; at once when none is.
+  function workerSettled(registration) {
+    var worker = registration.installing || registration.waiting;
+    if (!worker) return Promise.resolve();
+    return new Promise(function (resolve) {
+      worker.addEventListener("statechange", function () {
+        if (worker.state === "activated" || worker.state === "redundant") {
+          resolve();
+        }
+      });
+    });
   }
 
   // A new version of the page is running in the service worker. Load it,

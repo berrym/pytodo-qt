@@ -4345,7 +4345,31 @@ class TestConflictGuardsEdgeCases:
 # ===========================================================================
 
 
+async def _receive_event(ws_conn, timeout: float = 2.0):
+    """The next message of a socket that is not its greeting."""
+    while True:
+        msg = await ws_conn.receive_json(timeout=timeout)
+        if msg.get("event") != "hello":
+            return msg
+
+
 class TestWebSocket:
+    @pytest.mark.asyncio
+    async def test_first_message_names_the_version_of_the_page(self):
+        """A page that connects hears which version of the page's files
+        the server serves, and can tell when it is running another."""
+        from pytodo_qt.web.server import static_asset_version
+
+        client = await _make_client(_make_db_with_data())
+        await client.start_server()
+        try:
+            async with client.ws_connect("/ws") as ws_conn:
+                msg = await ws_conn.receive_json(timeout=2.0)
+                await ws_conn.close()
+        finally:
+            await client.close()
+        assert msg == {"event": "hello", "page_version": static_asset_version()}
+
     @pytest.mark.asyncio
     async def test_ws_connect(self):
         """WebSocket endpoint accepts connections."""
@@ -4374,7 +4398,7 @@ class TestWebSocket:
                     json={"reminder": "New task"},
                 )
                 # Should receive refresh event
-                msg = await ws_conn.receive_json(timeout=2.0)
+                msg = await _receive_event(ws_conn)
                 assert msg["event"] == "refresh"
                 await ws_conn.close()
         finally:
@@ -4394,7 +4418,7 @@ class TestWebSocket:
                     f"/api/items/{item.id}",
                     json={"reminder": "Updated"},
                 )
-                msg = await ws_conn.receive_json(timeout=2.0)
+                msg = await _receive_event(ws_conn)
                 assert msg["event"] == "refresh"
                 await ws_conn.close()
         finally:
@@ -4411,7 +4435,7 @@ class TestWebSocket:
         try:
             async with client.ws_connect("/ws") as ws_conn:
                 await client.patch(f"/api/items/{item.id}/toggle")
-                msg = await ws_conn.receive_json(timeout=2.0)
+                msg = await _receive_event(ws_conn)
                 assert msg["event"] == "refresh"
                 await ws_conn.close()
         finally:
@@ -4430,8 +4454,8 @@ class TestWebSocket:
                     f"/api/lists/{lst.id}/items",
                     json={"reminder": "Broadcast test"},
                 )
-                msg1 = await ws1.receive_json(timeout=2.0)
-                msg2 = await ws2.receive_json(timeout=2.0)
+                msg1 = await _receive_event(ws1)
+                msg2 = await _receive_event(ws2)
                 assert msg1["event"] == "refresh"
                 assert msg2["event"] == "refresh"
                 await ws1.close()
@@ -4461,7 +4485,7 @@ class TestWebSocket:
                     f"/api/lists/{lst.id}/items",
                     json={"reminder": "After disconnect"},
                 )
-                msg = await ws2.receive_json(timeout=2.0)
+                msg = await _receive_event(ws2)
                 assert msg["event"] == "refresh"
                 await ws2.close()
         finally:
@@ -4478,7 +4502,7 @@ class TestWebSocket:
         try:
             async with client.ws_connect("/ws") as ws_conn:
                 ws.notify_clients()
-                msg = await ws_conn.receive_json(timeout=2.0)
+                msg = await _receive_event(ws_conn)
                 assert msg["event"] == "refresh"
                 await ws_conn.close()
         finally:
@@ -4550,7 +4574,7 @@ class TestMultiClientInterop:
                     json={"reminder": "Updated by HTTP"},
                 )
                 # WS observer gets notified
-                msg = await ws_conn.receive_json(timeout=2.0)
+                msg = await _receive_event(ws_conn)
                 assert msg["event"] == "refresh"
 
                 # Observer fetches fresh state and sees the update
@@ -4574,7 +4598,7 @@ class TestMultiClientInterop:
         try:
             async with client.ws_connect("/ws") as ws_conn:
                 await client.patch(f"/api/items/{item.id}/toggle")
-                msg = await ws_conn.receive_json(timeout=2.0)
+                msg = await _receive_event(ws_conn)
                 assert msg["event"] == "refresh"
 
                 # Item should be toggled
@@ -4624,7 +4648,7 @@ class TestMultiClientInterop:
                     f"/api/lists/{lst.id}/columns",
                     json={"action": "rename", "old_name": "In Progress", "new_name": "Review"},
                 )
-                msg = await ws_conn.receive_json(timeout=2.0)
+                msg = await _receive_event(ws_conn)
                 assert msg["event"] == "refresh"
                 await ws_conn.close()
         finally:
@@ -4701,8 +4725,8 @@ class TestMultiClientInterop:
         try:
             async with client.ws_connect("/ws") as ws1, client.ws_connect("/ws") as ws2:
                 await client.patch(f"/api/items/{item.id}/toggle")
-                msg1 = await ws1.receive_json(timeout=2.0)
-                msg2 = await ws2.receive_json(timeout=2.0)
+                msg1 = await _receive_event(ws1)
+                msg2 = await _receive_event(ws2)
                 assert msg1["event"] == "refresh"
                 assert msg2["event"] == "refresh"
                 await ws1.close()
