@@ -793,7 +793,8 @@ class TestCalendarMonth:
         assert 'var cell = document.createElement("button");' in body
         assert 'cell.setAttribute("aria-pressed", is.selected ? "true" : "false");' in body
         assert '"aria-label",' in body
-        assert "selectCalendarDay(day);" in body
+        assert "onTap(day);" in body
+        assert "selectCalendarDay," in self._function("_renderCompactMonth")
 
     def test_selected_day_is_the_calendars_date(self):
         """The Day view opens on it, and Today is offered whenever it is
@@ -803,7 +804,9 @@ class TestCalendarMonth:
         assert "calDateChosen = !calShowsToday();" in select
         assert "keepingPageScroll(renderCalendar);" in select
         shows = self._function("calShowsToday")
-        assert 'if (calSubView === "month" && !calIsNarrow()) {' in shows
+        wide = shows.split("if (!calIsNarrow()) {")[1].split("\n    }\n")[0]
+        assert 'if (calSubView === "month") {' in wide
+        assert "return _dayKey(calDate) === _dayKey(today);" in shows.split("\n    }\n")[-1]
 
     def test_tasks_of_a_day_are_listed_in_order(self):
         """To do before done, timed before untimed, by time, by priority."""
@@ -833,6 +836,137 @@ class TestCalendarMonth:
             ".cal-mini-dot.high {",
             ".cal-mini-dot.done {",
             ".cal-task.completed .cal-task-title {",
+        ):
+            assert selector in css, selector
+
+
+class TestCalendarWeek:
+    """On a wide screen the Week is the hour grid of the calendar week,
+    Monday to Sunday. Seven columns of hours do not fit a phone, and
+    most tasks have no hour: on a narrow screen the Week is seven days
+    beginning at the calendar's date, with the tasks listed day by day."""
+
+    def _app(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def _function(self, name: str) -> str:
+        return self._app().split(f"function {name}(")[1].split("\n  }\n")[0]
+
+    def test_calendar_week_begins_on_monday(self):
+        body = self._function("_startOfWeek")
+        assert "d.setDate(d.getDate() - _weekdayIndex(d));" in body
+
+    def test_week_is_laid_out_for_the_width_of_the_screen(self):
+        body = self._function("renderWeekView")
+        assert "var narrow = calIsNarrow();" in body
+        assert "? new Date(calDate.getFullYear(), calDate.getMonth(), calDate.getDate())" in body
+        assert ": _startOfWeek(calDate);" in body
+        assert "if (narrow) _renderWeekList(first);" in body
+        assert "else _renderHourGrid(first, 7);" in body
+
+    def test_narrow_week_is_drawn_from_the_lists_tasks(self):
+        """Not an hour grid: a refresh compares the tasks, and does not
+        ask the server for the grid's segments."""
+        shows = self._function("calShowsHourGrid")
+        assert 'calSubView === "day" || (calSubView === "week" && !calIsNarrow())' in shows
+        assert "if (calShowsHourGrid()) {" in self._function("refreshCalendar")
+        assert "_itemsByDate(_calItems())" in self._function("_renderWeekList")
+
+    def test_narrow_week_is_where_today_is_when_it_begins_today(self):
+        shows = self._function("calShowsToday")
+        wide = shows.split("if (!calIsNarrow()) {")[1].split("\n    }\n")[0]
+        assert 'if (calSubView === "week") {' in wide
+        assert "_startOfWeek(calDate).getTime() === _startOfWeek(today).getTime()" in wide
+
+    def test_a_section_for_each_of_seven_days(self):
+        body = self._function("_renderWeekList")
+        assert "for (var i = 0; i < 7; i++) {" in body
+        assert "var section = _dayTaskList(day, items);" in body
+        assert "sections.appendChild(section);" in body
+
+    def test_a_day_of_the_strip_moves_the_list_and_not_the_date(self):
+        body = self._function("_renderWeekList")
+        assert "_showWeekDay(section);" in body
+        assert "selectCalendarDay" not in body
+        show = self._function("_showWeekDay")
+        assert 'if (list.classList.contains("scrolls")) {' in show
+        assert "top: section.offsetTop - list.firstElementChild.offsetTop," in show
+        # Where the whole page scrolls: below the header, which stays
+        # in place.
+        assert 'section.scrollIntoView({ behavior: "smooth", block: "start" });' in show
+        assert "section.style.scrollMarginTop =" in show
+
+    def test_week_list_scrolls_under_the_toolbar_and_the_strip(self):
+        """Scrolled with the page, the toolbar and the strip slid under
+        the header, which cut off the arrows and the dates. The list has
+        the room between the strip and the bottom bar to scroll in."""
+        fit = self._function("_fitWeekList")
+        assert 'var nav = document.getElementById("bottom-nav");' in fit
+        assert "var room = Math.floor(bottom - list.getBoundingClientRect().top - 8);" in fit
+        assert 'list.classList.add("scrolls");' in fit
+        assert 'list.style.height = room + "px";' in fit
+        css = (STATIC_DIR / "style.css").read_text()
+        rule = css.split(".cal-week-days.scrolls {")[1].split("}")[0]
+        assert "overflow-y: auto;" in rule
+        assert "overscroll-behavior: contain;" in rule
+        js = self._app()
+        assert "_fitWeekList();" in self._function("_renderWeekList")
+        assert 'window.addEventListener("resize", _fitWeekList);' in js
+
+    def test_last_day_of_the_week_can_reach_the_top_of_the_list(self):
+        fit = self._function("_fitWeekList")
+        assert "Math.max(0, room - last.offsetHeight)" in fit
+
+    def test_too_little_room_leaves_the_page_to_scroll(self):
+        """A phone on its side."""
+        assert "var _WEEK_LIST_MIN_HEIGHT = 200;" in self._app()
+        fit = self._function("_fitWeekList")
+        small = fit.split("if (room < _WEEK_LIST_MIN_HEIGHT) {")[1].split("}")[0]
+        assert 'list.classList.remove("scrolls");' in small
+        assert 'list.style.height = "";' in small
+
+    def test_week_drawn_again_stays_where_its_list_was_scrolled_to(self):
+        body = self._function("_renderWeekList")
+        assert "shown && shown.dataset.first === firstKey ? shown.scrollTop : 0;" in body
+        assert body.index("var scrolled =") < body.index('calContainer.innerHTML = "";')
+        assert "sections.dataset.first = firstKey;" in body
+        assert body.index("_fitWeekList();") < body.index("sections.scrollTop = scrolled;")
+
+    def test_pull_to_refresh_is_not_started_inside_a_scrolled_part(self):
+        """A finger moving down inside a list that scrolls by itself
+        scrolls that list back; it does not ask for a refresh."""
+        js = self._app()
+        body = js.split("(function initPullToRefresh() {")[1].split("})();")[0]
+        start = body.split('"touchstart",')[1].split('"touchmove",')[0]
+        assert "for (var el = e.target; el && el !== viewHome; el = el.parentElement) {" in start
+        assert "if (el.scrollTop > 5) return;" in start
+        assert start.index("if (el.scrollTop > 5) return;") < start.index("pulling = true;")
+
+    def test_overdue_tasks_come_first_in_a_week_that_holds_today(self):
+        """Those still to do that were due before the week's first day:
+        a task of a day in the week is under its day."""
+        body = self._function("_renderWeekList")
+        assert "if (firstKey <= todayKey && todayKey <= lastKey) {" in body
+        assert "return !item.complete && item.due_date < firstKey;" in body
+        assert "if (overdue.length > 0) sections.appendChild(_overdueTaskList(overdue));" in body
+        assert body.index("_overdueTaskList(overdue)") < body.index("days.forEach(")
+
+    def test_an_overdue_task_shows_the_day_it_was_due(self):
+        body = self._function("_overdueTaskList")
+        assert 'name.textContent = "Overdue";' in body
+        assert "_calTaskRow(item, [" in body
+        assert 'weekday: "short",' in body
+
+    def test_today_and_tomorrow_are_named_in_their_headings(self):
+        body = self._function("_dayTaskList")
+        assert '(isToday ? "Today \\u00B7 " : isTomorrow ? "Tomorrow \\u00B7 " : "") +' in body
+
+    def test_week_list_is_styled(self):
+        css = (STATIC_DIR / "style.css").read_text()
+        for selector in (
+            ".cal-week-strip .cal-mini-day {",
+            ".cal-week-strip .cal-mini-day.today .cal-mini-num {",
+            ".cal-day-heading.overdue .cal-day-name {",
         ):
             assert selector in css, selector
 
@@ -867,7 +1001,7 @@ class TestCalendarFollowsData:
         every list; the current list's tasks do not tell whether it has
         changed."""
         body = self._function("refreshCalendar")
-        assert 'if (calSubView === "week" || calSubView === "day") {' in body
+        assert "if (calShowsHourGrid()) {" in body
         assert "_refreshHourGrid();" in body
         grid = self._function("_refreshHourGrid")
         assert (

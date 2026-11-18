@@ -1358,6 +1358,37 @@ body {
   color: var(--text-secondary);
 }
 
+/* Week on a narrow screen: a strip of its seven days, each under the
+   name of its weekday, and the tasks listed day by day below. */
+.cal-week-strip .cal-mini-day {
+  height: 66px;
+  padding-top: 0;
+}
+.cal-week-strip .cal-mini-dow {
+  padding: 4px 0 2px;
+}
+.cal-week-strip .cal-mini-day.today .cal-mini-num {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: none;
+}
+/* The list scrolls in the room under the strip; the height is set
+   by the page's script. The toolbar and the strip stay in place. */
+.cal-week-days.scrolls {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.cal-week-days .cal-day-tasks:first-child {
+  margin-top: 6px;
+}
+.cal-week-days .cal-day-tasks {
+  margin-top: 0;
+}
+.cal-day-heading.overdue .cal-day-name {
+  color: var(--high);
+}
+
 /* A day's tasks, listed under a heading that names the day. */
 .cal-day-tasks {
   margin: 6px 12px 0;
