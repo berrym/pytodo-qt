@@ -242,6 +242,65 @@ test("withChange leaves the given queue and its changes as they were", () => {
   assert.equal(before[0], first);
 });
 
+// --- One earlier step taken back -------------------------------------------
+
+test("withStepTakenBack: a queued delete is taken out", () => {
+  const before = [tick(1, ITEM_B, 100)];
+  const after = rules.withChange(before, remove(2, ITEM_A));
+  assert.deepEqual(stamps(rules.withStepTakenBack(after, before, after)), [1]);
+});
+
+test("withStepTakenBack: the changes a delete took with it are put back where they were", () => {
+  const before = [tick(1, ITEM_A, 100), tick(2, ITEM_B, 100), update(3, ITEM_A, { priority: 1, updated_at: 100 })];
+  const after = rules.withChange(before, remove(4, ITEM_A));
+  const queue = rules.withStepTakenBack(after, before, after);
+  assert.deepEqual(stamps(queue), [1, 2, 3]);
+  assert.equal(queue[2], before[2]);
+});
+
+test("withStepTakenBack: changes made since the step stay", () => {
+  const before = [update(1, ITEM_A, { priority: 1, updated_at: 100 })];
+  const after = rules.withChange(before, remove(2, ITEM_A));
+  let queue = rules.withChange(after, tick(3, ITEM_B, 100));
+  queue = rules.withChange(queue, add(4, "Milk"));
+  assert.deepEqual(stamps(rules.withStepTakenBack(queue, before, after)), [1, 3, 4]);
+});
+
+test("withStepTakenBack: a delete that is no longer queued cannot be taken back", () => {
+  const before = [tick(1, ITEM_B, 100)];
+  const after = rules.withChange(before, remove(2, ITEM_A));
+  // Sent, with everything before it.
+  assert.equal(rules.withStepTakenBack([], before, after), null);
+  // Sent while a later change still waits.
+  assert.equal(rules.withStepTakenBack([tick(3, ITEM_B, 100)], before, after), null);
+});
+
+test("withStepTakenBack: a removed task waiting to be added is put back in its place", () => {
+  const before = [add(1, "Milk"), add(2, "Bread"), add(3, "Eggs")];
+  const after = before.filter((queued) => queued.timestamp !== 2);
+  const queue = after.concat([tick(4, ITEM_A, 100)]);
+  const result = rules.withStepTakenBack(queue, before, after);
+  assert.deepEqual(stamps(result), [1, 2, 3, 4]);
+  assert.equal(result[1], before[1]);
+});
+
+test("withStepTakenBack: a step already taken back is not taken back twice", () => {
+  const before = [add(1, "Milk")];
+  const after = [];
+  const once = rules.withStepTakenBack(after, before, after);
+  assert.deepEqual(stamps(once), [1]);
+  assert.equal(rules.withStepTakenBack(once, before, after), null);
+});
+
+test("withStepTakenBack leaves the given queues as they were", () => {
+  const before = [update(1, ITEM_A, { priority: 1, updated_at: 100 })];
+  const after = rules.withChange(before, remove(2, ITEM_A));
+  const queue = rules.withChange(after, tick(3, ITEM_B, 100));
+  const frozen = JSON.stringify([queue, before, after]);
+  rules.withStepTakenBack(queue, before, after);
+  assert.equal(JSON.stringify([queue, before, after]), frozen);
+});
+
 // --- What is shown --------------------------------------------------------
 
 const COLUMNS = ["To Do", "In Progress", "Done"];

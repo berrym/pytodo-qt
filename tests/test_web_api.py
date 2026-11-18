@@ -3046,6 +3046,200 @@ class TestRestore:
             await client.close()
 
 
+class TestRestoreWithTheDesktopRunning:
+    """With a main window, a restore names its item and leaves the rest of
+    the undo stack alone. The subtasks its delete moved to the top
+    level come back under it, whether the delete is the latest command,
+    and is undone, or has other commands in front of it."""
+
+    @staticmethod
+    def _window(db: Database):
+        from PyQt6.QtGui import QUndoStack
+
+        class Window:
+            _database = db
+            _undo_stack = QUndoStack()
+
+            def _save_database(self) -> None:
+                pass
+
+            def _refresh_ui(self) -> None:
+                pass
+
+        return Window()
+
+    @staticmethod
+    def _parent_with_subtask(db: Database):
+        lst = next(iter(db.lists.values()))
+        parent = next(iter(lst.active_items()))
+        child = create_todo_item("Semi-skimmed")
+        child.parent_id = parent.id
+        lst.add_item(child)
+        return lst, parent, child
+
+    @pytest.mark.asyncio
+    async def test_restore_undoes_the_delete_when_it_is_the_latest_command(self, qapp):
+        from pytodo_qt.web.api import main_window_key
+
+        db = _make_db_with_data()
+        lst, parent, child = self._parent_with_subtask(db)
+        window = self._window(db)
+        stack = window._undo_stack
+        client = await _make_client(db)
+        client.server.app[main_window_key] = window
+        await client.start_server()
+        try:
+            resp = await client.delete(f"/api/items/{parent.id}")
+            assert resp.status == 200
+            # The delete moved the subtask to the top level.
+            assert parent.deleted is True
+            assert child.parent_id is None
+
+            resp = await client.patch(f"/api/items/{parent.id}/restore")
+            assert resp.status == 200
+            assert (await resp.json())["id"] == str(parent.id)
+        finally:
+            await client.close()
+        assert parent.deleted is False
+        assert child.parent_id == parent.id
+        # The delete was undone, and no command was added.
+        assert stack.count() == 1
+        assert stack.canUndo() is False
+        assert stack.canRedo() is True
+
+    @pytest.mark.asyncio
+    async def test_restore_leaves_a_later_command_in_place(self, qapp):
+        """A command made after the delete, here or in the desktop
+        window, is not the one taken back."""
+        from pytodo_qt.gui.commands import RestoreItemCommand
+        from pytodo_qt.web.api import main_window_key
+
+        db = _make_db_with_data()
+        lst, parent, child = self._parent_with_subtask(db)
+        other = next(item for item in lst.active_items() if item.id not in (parent.id, child.id))
+        was_complete = other.complete
+        window = self._window(db)
+        stack = window._undo_stack
+        client = await _make_client(db)
+        client.server.app[main_window_key] = window
+        await client.start_server()
+        try:
+            resp = await client.delete(f"/api/items/{parent.id}")
+            assert resp.status == 200
+            resp = await client.patch(f"/api/items/{other.id}/toggle")
+            assert resp.status == 200
+
+            resp = await client.patch(f"/api/items/{parent.id}/restore")
+            assert resp.status == 200
+        finally:
+            await client.close()
+        assert parent.deleted is False
+        # The later change stands.
+        assert other.complete is not was_complete
+        # The item came back with its subtask, as a command of its own.
+        assert child.parent_id == parent.id
+        assert stack.count() == 3
+        assert isinstance(stack.command(2), RestoreItemCommand)
+        assert stack.canRedo() is False
+
+        # Undoing that command leaves things as the delete left them.
+        stack.undo()
+        assert parent.deleted is True
+        assert child.parent_id is None
+        assert other.complete is not was_complete
+
+    @pytest.mark.asyncio
+    async def test_restore_leaves_a_subtask_that_has_been_given_another_place(self, qapp):
+        """A subtask made a subtask of another item, or deleted, since
+        the delete is not taken back from where it was put."""
+        from pytodo_qt.web.api import main_window_key
+
+        db = _make_db_with_data()
+        lst, parent, child = self._parent_with_subtask(db)
+        moved = create_todo_item("Skimmed")
+        moved.parent_id = parent.id
+        lst.add_item(moved)
+        gone = create_todo_item("Whole")
+        gone.parent_id = parent.id
+        lst.add_item(gone)
+        other = next(
+            item
+            for item in lst.active_items()
+            if item.id not in (parent.id, child.id, moved.id, gone.id)
+        )
+        window = self._window(db)
+        client = await _make_client(db)
+        client.server.app[main_window_key] = window
+        await client.start_server()
+        try:
+            resp = await client.delete(f"/api/items/{parent.id}")
+            assert resp.status == 200
+            resp = await client.patch(
+                f"/api/items/{moved.id}/parent", json={"parent_id": str(other.id)}
+            )
+            assert resp.status == 200
+            resp = await client.delete(f"/api/items/{gone.id}")
+            assert resp.status == 200
+
+            resp = await client.patch(f"/api/items/{parent.id}/restore")
+            assert resp.status == 200
+        finally:
+            await client.close()
+        assert parent.deleted is False
+        assert child.parent_id == parent.id
+        assert moved.parent_id == other.id
+        assert gone.deleted is True
+        assert gone.parent_id is None
+
+    @pytest.mark.asyncio
+    async def test_restore_takes_the_subtasks_from_a_delete_of_several_items(self, qapp):
+        """The desktop window deletes a selection as one command."""
+        from pytodo_qt.gui.commands import DeleteItemsCommand
+        from pytodo_qt.web.api import main_window_key
+
+        db = _make_db_with_data()
+        lst, parent, child = self._parent_with_subtask(db)
+        other = next(item for item in lst.active_items() if item.id not in (parent.id, child.id))
+        window = self._window(db)
+        window._undo_stack.push(DeleteItemsCommand(window, lst.id, [parent.id, other.id]))
+        assert child.parent_id is None
+        client = await _make_client(db)
+        client.server.app[main_window_key] = window
+        await client.start_server()
+        try:
+            resp = await client.patch(f"/api/items/{parent.id}/restore")
+            assert resp.status == 200
+        finally:
+            await client.close()
+        assert parent.deleted is False
+        assert other.deleted is True
+        assert child.parent_id == parent.id
+
+    @pytest.mark.asyncio
+    async def test_restore_does_not_undo_a_delete_of_another_item(self, qapp):
+        from pytodo_qt.web.api import main_window_key
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        first, second = list(lst.active_items())[:2]
+        window = self._window(db)
+        stack = window._undo_stack
+        client = await _make_client(db)
+        client.server.app[main_window_key] = window
+        await client.start_server()
+        try:
+            for item in (first, second):
+                resp = await client.delete(f"/api/items/{item.id}")
+                assert resp.status == 200
+            resp = await client.patch(f"/api/items/{first.id}/restore")
+            assert resp.status == 200
+        finally:
+            await client.close()
+        assert first.deleted is False
+        assert second.deleted is True
+        assert stack.count() == 3
+
+
 # ===========================================================================
 # Sort configuration API
 # ===========================================================================

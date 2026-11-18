@@ -606,6 +606,78 @@ class TestDeleteNotice:
         assert 'cardEl.classList.remove("item-exit");' in rest
 
 
+class TestNoticeUndo:
+    """Undo on a notice that names a task acts on that task's change.
+    The toolbar's Undo takes back the latest change, which may be a
+    later one, or one made in the desktop window or on another device."""
+
+    def _app(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def _function(self, name: str) -> str:
+        return self._app().split(f"function {name}(")[1].split("\n  }\n")[0]
+
+    def test_no_notice_undoes_the_latest_change(self):
+        for name in ("onDelete", "removeQueuedAdd", "undoQueuedDelete", "restoreDeletedItem"):
+            body = self._function(name)
+            assert "onUndo()" not in body, name
+            assert '"/undo"' not in body, name
+
+    def test_a_queued_change_hands_its_step_to_the_caller(self):
+        body = self._function("sendOrQueue")
+        assert "step.before = before;" in body
+        assert "step.after = after;" in body
+        assert "var outcome = await sendOrQueue(path, opts, step);" in self._function("onDelete")
+
+    def test_delete_applied_by_the_server_is_restored_by_its_id(self):
+        sent = (
+            self._function("onDelete").split('if (outcome === "sent") {')[1].split("} else if")[0]
+        )
+        assert "restoreDeletedItem(itemId, name);" in sent
+        body = self._function("restoreDeletedItem")
+        assert 'await api("/items/" + itemId + "/restore", { method: "PATCH" });' in body
+        assert 'showToast(name + " restored");' in body
+
+    def test_queued_delete_is_taken_out_of_the_queue(self):
+        delete = self._function("onDelete")
+        queued = delete.split('} else if (outcome === "queued") {')[1].split("} else if")[0]
+        assert "undoQueuedDelete(step, itemId, name);" in queued
+        body = self._function("undoQueuedDelete")
+        assert "if (takeBackQueuedStep(step)) {" in body
+        assert 'showToast(name + " restored");' in body
+
+    def test_queued_delete_that_has_been_sent_is_restored_by_the_server(self):
+        """The server answered again while the notice was showing. A run
+        that is sending the queue is waited for: the delete may be on
+        its way."""
+        body = self._function("undoQueuedDelete")
+        assert (
+            body.index("while (replayRunning) {")
+            < body.index("takeBackQueuedStep(step)")
+            < body.index("await restoreDeletedItem(itemId, name);")
+        )
+
+    def test_taking_a_step_back_keeps_later_changes_and_is_a_step_itself(self):
+        body = self._function("takeBackQueuedStep")
+        assert "QueueRules.withStepTakenBack(queue, step.before, step.after);" in body
+        assert "if (!result) return false;" in body
+        assert body.index("saveOfflineQueue(result);") < body.index(
+            "pushOfflineUndo(queue, result);"
+        )
+
+    def test_removed_task_waiting_to_be_added_is_put_back(self):
+        body = self._function("removeQueuedAdd")
+        assert "var step = { before: getOfflineQueue() };" in body
+        assert "step.after = getOfflineQueue();" in body
+        assert 'takeBackQueuedStep(step) ? name + " restored" : "Nothing to undo"' in body
+
+    def test_a_restore_that_fails_says_so(self):
+        body = self._function("restoreDeletedItem")
+        assert "if (e.status === 404) {" in body
+        assert 'showToast("Nothing to undo");' in body
+        assert "not restored \\u2014 see Recently Deleted" in body
+
+
 class TestRevalidation:
     """The page's files are checked with the server before reuse."""
 

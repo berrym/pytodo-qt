@@ -635,7 +635,9 @@
   //   "queued"    kept, to be sent when the server answers again
   //   "conflict"  the item was changed elsewhere; the list is reloaded
   //   "refused"   the server will not accept it; its reason is shown
-  async function sendOrQueue(path, opts) {
+  // step, when given, receives the queue before and after a change that
+  // is queued: what the Undo of a notice about that change takes back.
+  async function sendOrQueue(path, opts, step) {
     if (isOnline) {
       try {
         await api(path, opts);
@@ -656,7 +658,12 @@
     }
     var before = getOfflineQueue();
     enqueueOfflineEdit(path, opts);
-    pushOfflineUndo(before, getOfflineQueue());
+    var after = getOfflineQueue();
+    pushOfflineUndo(before, after);
+    if (step) {
+      step.before = before;
+      step.after = after;
+    }
     return "queued";
   }
 
@@ -2457,11 +2464,13 @@
 
   // Takes back a task that is waiting to be added.
   function removeQueuedAdd(queued) {
-    var before = getOfflineQueue();
+    var step = { before: getOfflineQueue() };
     removeQueuedChange(queued.queued_at);
-    pushOfflineUndo(before, getOfflineQueue());
-    showToast('"' + queued.reminder + '" removed', function () {
-      onUndo();
+    step.after = getOfflineQueue();
+    pushOfflineUndo(step.before, step.after);
+    var name = '"' + queued.reminder + '"';
+    showToast(name + " removed", function () {
+      showToast(takeBackQueuedStep(step) ? name + " restored" : "Nothing to undo");
     });
   }
 
@@ -5511,6 +5520,8 @@
   // row or card, when given, starts to leave at once. The notice waits
   // until the delete is kept, applied by the server or queued, so that
   // its Undo has that delete to act on; a delete is announced once.
+  // Undo on the notice brings this task back, whatever has been done
+  // since; the toolbar's Undo takes back the latest change.
   async function onDelete(itemId, reminderText, cardEl) {
     if (cardEl) cardEl.classList.add("item-exit");
     haptic(10);
@@ -5522,21 +5533,75 @@
       opts.body = JSON.stringify({ updated_at: ua });
     }
     var name = reminderText ? '"' + reminderText + '"' : "Item";
-    var outcome = await sendOrQueue(path, opts);
+    var step = {};
+    var outcome = await sendOrQueue(path, opts, step);
     if (outcome === "sent") {
       await refreshCurrentList();
       showToast(name + " deleted", function () {
-        onUndo();
+        restoreDeletedItem(itemId, name);
       });
     } else if (outcome === "queued") {
       showToast(name + " deleted (offline)", function () {
-        onUndo();
+        undoQueuedDelete(step, itemId, name);
       });
     } else if (cardEl) {
       // Not deleted: sendOrQueue has said why. The list is drawn again
       // only when it has changed, so the row is put back here.
       cardEl.classList.remove("item-exit");
     }
+  }
+
+  // Takes one earlier step of the queue back, leaving the changes made
+  // since. It is a step of its own for the toolbar's Undo and Redo.
+  // False when the step is no longer in the queue.
+  function takeBackQueuedStep(step) {
+    var queue = getOfflineQueue();
+    var result = QueueRules.withStepTakenBack(queue, step.before, step.after);
+    if (!result) return false;
+    saveOfflineQueue(result);
+    pushOfflineUndo(queue, result);
+    return true;
+  }
+
+  // Undo of a delete that was queued. While it waits, it is taken out
+  // of the queue, and the changes to the task that it replaced are put
+  // back. Once it has been sent, the server has deleted the task, and
+  // is asked to restore it.
+  async function undoQueuedDelete(step, itemId, name) {
+    // A run that is sending the queue may have the delete on its way to
+    // the server; which of the two applies is known when the run ends.
+    while (replayRunning) {
+      await new Promise(function (resolve) {
+        setTimeout(resolve, 100);
+      });
+    }
+    if (takeBackQueuedStep(step)) {
+      showToast(name + " restored");
+    } else {
+      await restoreDeletedItem(itemId, name);
+    }
+  }
+
+  // Undo of a delete the server has applied: the server restores the
+  // task by its id. The application's undo stack is shared with the
+  // desktop window and every other device, and its latest command may
+  // be someone else's.
+  async function restoreDeletedItem(itemId, name) {
+    try {
+      await api("/items/" + itemId + "/restore", { method: "PATCH" });
+    } catch (e) {
+      if (e.status === 404) {
+        // Not deleted at the server: brought back already.
+        showToast("Nothing to undo");
+        await refreshCurrentList();
+      } else {
+        showToast(name + " not restored \u2014 see Recently Deleted");
+      }
+      return;
+    }
+    showToast(name + " restored");
+    await refreshCurrentList();
+    fetchUndoState();
   }
 
   // ====================================================================

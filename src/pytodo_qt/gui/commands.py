@@ -91,6 +91,21 @@ class DeleteItemsCommand(QUndoCommand):
         # (child_id, old_parent_id, old_board_column)
         self._orphaned_children: list[tuple[UUID, UUID | None, str]] = []
 
+    def deletes_only(self, list_id: UUID, item_id: UUID) -> bool:
+        """Whether this command deleted that one item of that list and no other."""
+        return self._list_id == list_id and self._item_ids == [item_id]
+
+    def subtasks_moved_from(self, list_id: UUID, item_id: UUID) -> list[UUID] | None:
+        """The subtasks this command moved to the top level when it deleted that item.
+
+        None when the command did not delete the item.
+        """
+        if self._list_id != list_id or item_id not in self._item_ids:
+            return None
+        return [
+            child_id for child_id, parent_id, _ in self._orphaned_children if parent_id == item_id
+        ]
+
     def redo(self) -> None:
         todo_list = self._window._database.lists.get(self._list_id)
         if not todo_list:
@@ -1170,13 +1185,27 @@ class ReorderColumnsCommand(QUndoCommand):
 
 
 class RestoreItemCommand(QUndoCommand):
-    """Un-delete a soft-deleted item."""
+    """Un-delete a soft-deleted item.
 
-    def __init__(self, window: MainWindow, list_id: UUID, item_id: UUID) -> None:
+    subtasks are the items its delete moved to the top level. Those that
+    are still there are put back under the item: one that has since been
+    deleted, made a subtask of another item, or given subtasks of its
+    own is left as it is.
+    """
+
+    def __init__(
+        self,
+        window: MainWindow,
+        list_id: UUID,
+        item_id: UUID,
+        subtasks: list[UUID] | None = None,
+    ) -> None:
         super().__init__("Restore item")
         self._window = window
         self._list_id = list_id
         self._item_id = item_id
+        self._subtasks = subtasks or []
+        self._put_back: list[UUID] = []
 
     def redo(self) -> None:
         todo_list = self._window._database.lists.get(self._list_id)
@@ -1187,6 +1216,21 @@ class RestoreItemCommand(QUndoCommand):
             return
         item.deleted = False
         item.mark_updated()
+        parents = {
+            other.parent_id
+            for other in todo_list.items.values()
+            if not other.deleted and other.parent_id is not None
+        }
+        self._put_back.clear()
+        for child_id in self._subtasks:
+            child = todo_list.items.get(child_id)
+            if child is None or child.deleted or child.parent_id is not None:
+                continue
+            if child_id in parents:
+                continue
+            child.parent_id = self._item_id
+            child.mark_updated()
+            self._put_back.append(child_id)
         todo_list.mark_updated()
         self._window._save_database()
         self._window._refresh_ui()
@@ -1198,6 +1242,12 @@ class RestoreItemCommand(QUndoCommand):
         item = todo_list.items.get(self._item_id)
         if not item:
             return
+        # As the delete left them: at the top level.
+        for child_id in self._put_back:
+            child = todo_list.items.get(child_id)
+            if child is not None and child.parent_id == self._item_id:
+                child.parent_id = None
+                child.mark_updated()
         item.mark_deleted()
         self._window._save_database()
         self._window._refresh_ui()

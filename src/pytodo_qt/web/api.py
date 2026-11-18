@@ -1142,7 +1142,20 @@ async def handle_set_parent(request: web.Request) -> web.Response:
 
 
 async def handle_restore_item(request: web.Request) -> web.Response:
-    """PATCH /api/items/{item_id}/restore — Un-delete a soft-deleted item."""
+    """PATCH /api/items/{item_id}/restore — Un-delete a soft-deleted item.
+
+    The request names the item, so it brings back that item whatever has
+    been done since it was deleted; POST /api/undo takes back the latest
+    command, which may be another client's.
+
+    A delete moves the item's subtasks to the top level, and a restore
+    puts them back under it. When the latest command is the delete of
+    this one item, that command is undone. Otherwise the item is
+    restored as a command of its own, which takes the subtasks from the
+    delete's record on the undo stack and leaves the commands made since
+    in place. Without that record, after the application has been
+    started again, the item comes back alone.
+    """
     db: Database = request.app[database_key]
     try:
         item_id = UUID(request.match_info["item_id"])
@@ -1169,10 +1182,15 @@ async def handle_restore_item(request: web.Request) -> web.Response:
                 return _conflict_response(_item_to_json(item))
             window = request.app.get(main_window_key)
             if window:
-                from ..gui.commands import RestoreItemCommand
+                from ..gui.commands import DeleteItemsCommand, RestoreItemCommand
 
-                cmd = RestoreItemCommand(window, lst.id, item_id)
-                window._undo_stack.push(cmd)
+                stack = window._undo_stack
+                latest = stack.command(stack.index() - 1) if stack.canUndo() else None
+                if isinstance(latest, DeleteItemsCommand) and latest.deletes_only(lst.id, item_id):
+                    stack.undo()
+                else:
+                    subtasks = _subtasks_moved_by_delete(stack, lst.id, item_id)
+                    stack.push(RestoreItemCommand(window, lst.id, item_id, subtasks))
             else:
                 item.deleted = False
                 item.mark_updated()
@@ -1181,6 +1199,23 @@ async def handle_restore_item(request: web.Request) -> web.Response:
             return web.json_response(_item_to_json(item))
 
     return _error(404, "Deleted item not found")
+
+
+def _subtasks_moved_by_delete(stack: Any, list_id: UUID, item_id: UUID) -> list[UUID]:
+    """The subtasks an item's delete moved to the top level.
+
+    From the latest command on the undo stack that deleted the item and
+    has not been undone; none when the stack holds no such command.
+    """
+    from ..gui.commands import DeleteItemsCommand
+
+    for position in range(stack.index() - 1, -1, -1):
+        command = stack.command(position)
+        if isinstance(command, DeleteItemsCommand):
+            moved = command.subtasks_moved_from(list_id, item_id)
+            if moved is not None:
+                return moved
+    return []
 
 
 # ---------------------------------------------------------------------------

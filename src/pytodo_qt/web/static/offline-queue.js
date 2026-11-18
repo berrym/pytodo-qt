@@ -10,8 +10,9 @@
  * queued, which also identifies it.
  *
  * Two things follow from the queue. What is sent: withChange combines a
- * new change with those already queued, and nextToSend, replyOutcome
- * and withUpdatedAt govern the sending. What is shown: the page draws
+ * new change with those already queued, withStepTakenBack undoes one
+ * earlier step, and nextToSend, replyOutcome and withUpdatedAt govern
+ * the sending. What is shown: the page draws
  * the server's last answer with the queued changes applied on top
  * (withQueuedChanges, boardWithQueuedChanges, and queuedAdds for tasks
  * that do not exist at the server yet), so that a change made without
@@ -189,6 +190,52 @@
     return result;
   }
 
+  // The queue with one earlier step taken back, and the changes made
+  // since left in place. A step is the queue before it and after it.
+  // The changes the step added are removed. Those it removed are put
+  // back: a delete takes the earlier changes to its task with it, and a
+  // task waiting to be added can be removed. They go back where they
+  // were, the queue being in the order of its changes' times. The given
+  // queues are not altered.
+  //
+  // null when the step is no longer in the queue: a change it added has
+  // gone, sent to the server or taken back already, or nothing it
+  // removed is still missing.
+  //
+  // For steps that add or remove whole changes. A change merged into an
+  // earlier one keeps that one's time, and is not told apart here.
+  function withStepTakenBack(queue, before, after) {
+    function timesOf(changes) {
+      var times = {};
+      for (var n = 0; n < changes.length; n++) times[changes[n].timestamp] = true;
+      return times;
+    }
+    var inQueue = timesOf(queue);
+    var inBefore = timesOf(before);
+    var inAfter = timesOf(after);
+    var added = {};
+    var i;
+    for (i = 0; i < after.length; i++) {
+      var time = after[i].timestamp;
+      if (inBefore[time]) continue;
+      if (!inQueue[time]) return null;
+      added[time] = true;
+    }
+    var result = queue.filter(function (queued) {
+      return !added[queued.timestamp];
+    });
+    var changed = result.length !== queue.length;
+    for (i = 0; i < before.length; i++) {
+      var removed = before[i];
+      if (inAfter[removed.timestamp] || inQueue[removed.timestamp]) continue;
+      var at = 0;
+      while (at < result.length && result[at].timestamp < removed.timestamp) at++;
+      result.splice(at, 0, removed);
+      changed = true;
+    }
+    return changed ? result : null;
+  }
+
   // The column the server gives an item that stops being complete: the
   // first, or the "in progress" one when time has been spent on it.
   // The server also looks at completed subtasks; the true column is
@@ -348,6 +395,7 @@
     itemIdOf: itemIdOf,
     kindOf: kindOf,
     withChange: withChange,
+    withStepTakenBack: withStepTakenBack,
     withQueuedChanges: withQueuedChanges,
     queuedAdds: queuedAdds,
     boardWithQueuedChanges: boardWithQueuedChanges,
