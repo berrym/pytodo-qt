@@ -3936,13 +3936,31 @@
   // first answer; 0 when none is.
   var hourGridLoading = 0;
 
+  // The bars of the list chosen in the header. The Month and the
+  // narrow Week are drawn from that list's tasks; the hour grid showed
+  // those of every list, and a bar of another list could not be opened:
+  // the item sheet knows the chosen list's tasks only.
   function _fetchSegments(startDate, days) {
     return api(
       "/calendar/segments?start=" +
         encodeURIComponent(_dayKey(startDate)) +
         "&days=" +
-        days,
+        days +
+        _listQuery("&"),
     );
+  }
+
+  // The chosen list, as a part of a request's query: led by "&" after
+  // other parts, by "?" as the first. Empty when no list is chosen.
+  function _listQuery(lead) {
+    return currentListId
+      ? lead + "list_id=" + encodeURIComponent(currentListId)
+      : "";
+  }
+
+  // The days of an hour grid and the list they are of, as one key.
+  function _hourGridKey(startDate, days) {
+    return _dayKey(startDate) + "/" + days + "/" + (currentListId || "");
   }
 
   // Puts an empty hour grid on screen, in place of whatever the
@@ -4026,7 +4044,7 @@
     grid.wrap.appendChild(loading);
 
     var draw = calDraws;
-    hourGridShown = { range: _dayKey(startDate) + "/" + days, answer: null };
+    hourGridShown = { range: _hourGridKey(startDate, days), answer: null };
     hourGridLoading = draw;
     _fetchSegments(startDate, days)
       .then(function (data) {
@@ -4054,9 +4072,10 @@
     if (hourGridLoading === calDraws) return;
     if (!calDateChosen) calDate = new Date();
     var range = _hourGridRange();
-    var key = _dayKey(range.start) + "/" + range.days;
+    var key = _hourGridKey(range.start, range.days);
     if (key !== hourGridShown.range) {
-      // The day has changed under a calendar that follows today.
+      // Another list has been chosen, or the day has changed under a
+      // calendar that follows today.
       renderCalendar();
       return;
     }
@@ -4613,8 +4632,8 @@
   async function _loadCompletionTiming(chart) {
     try {
       var results = await Promise.all([
-        api("/analytics/completion_timing"),
-        api("/analytics/slip_rate"),
+        api("/analytics/completion_timing" + _listQuery("?")),
+        api("/analytics/slip_rate" + _listQuery("?")),
       ]);
       _renderCompletionTiming(chart, results[0], results[1]);
     } catch (e) {
@@ -4701,7 +4720,7 @@
 
   async function _loadCycleTime(row) {
     try {
-      var data = await api("/analytics/cycle_time");
+      var data = await api("/analytics/cycle_time" + _listQuery("?"));
       _renderCycleTime(row, data);
     } catch (e) {
       row.textContent = "Cycle time unavailable";
@@ -5268,8 +5287,13 @@
       }
     }
     if (!item) {
-      // Try fetching
+      // Not a task of the chosen list: deleted a moment ago elsewhere,
+      // or an address kept from another list. Saying nothing left a tap
+      // without effect, and the address in place, so that a second tap
+      // on the same task was not a change of address at all.
       detailSheet.classList.add("hidden");
+      if (location.hash.startsWith("#/item/")) location.hash = "#/";
+      if (appReady) showToast("That task is not in this list");
       return;
     }
 

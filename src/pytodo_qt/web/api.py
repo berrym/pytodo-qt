@@ -1831,9 +1831,14 @@ async def handle_calendar_segments(request: web.Request) -> web.Response:
     """GET /api/calendar/segments — Bar segments per viewing day.
 
     Query params:
-        start: ISO date (YYYY-MM-DD). Defaults to today.
-        days:  int, 1..31. Number of consecutive days starting at
-               start. Defaults to 7 (week view). Use 1 for day view.
+        start:   ISO date (YYYY-MM-DD). Defaults to today.
+        days:    int, 1..31. Number of consecutive days starting at
+                 start. Defaults to 7 (week view). Use 1 for day view.
+        list_id: a list's id. The bars of that list only; without it,
+                 of every list that is neither private nor deleted.
+                 The web page asks for the list chosen in its header,
+                 as its other calendar views show that list, and a bar
+                 of another list could not be opened there.
 
     Returns:
         start_date: first day in range (ISO)
@@ -1866,6 +1871,16 @@ async def handle_calendar_segments(request: web.Request) -> web.Response:
         return _error(400, "Invalid days parameter")
     days_count = max(1, min(days_count, 31))
 
+    only_list: TodoList | None = None
+    list_param = request.query.get("list_id")
+    if list_param:
+        try:
+            only_list = database.lists.get(UUID(list_param))
+        except ValueError:
+            return _error(400, "Invalid list ID")
+        if only_list is None or only_list.deleted or only_list.private:
+            return _error(404, "List not found")
+
     current_time = datetime.now()
     items_out: dict[str, dict[str, Any]] = {}
     days_out: list[dict[str, Any]] = []
@@ -1876,7 +1891,7 @@ async def handle_calendar_segments(request: web.Request) -> web.Response:
     # for subtasks render via their parent in the desktop pipeline,
     # so the web mirrors that by skipping items with a parent_id.
     all_items: list[TodoItem] = []
-    for lst in database.lists.values():
+    for lst in [only_list] if only_list is not None else database.lists.values():
         if lst.deleted or lst.private:
             continue
         for item in lst.active_items():

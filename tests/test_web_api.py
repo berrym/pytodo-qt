@@ -1224,6 +1224,75 @@ class TestCalendarSegments:
         finally:
             await client.close()
 
+    @staticmethod
+    def _two_lists_with_a_task_each():
+        """Each of the two lists has one task due on 2030-06-15."""
+        from datetime import date as _date
+
+        db = _make_db_with_data()
+        first, second = list(db.lists.values())[:2]
+        ours = next(iter(first.active_items()))
+        theirs = next(iter(second.active_items()))
+        for item in (ours, theirs):
+            item.due_date = _date(2030, 6, 15)
+        return db, first, second, ours, theirs
+
+    @pytest.mark.asyncio
+    async def test_without_a_list_the_bars_of_every_list_are_returned(self):
+        db, _first, _second, ours, theirs = self._two_lists_with_a_task_each()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/calendar/segments?start=2030-06-15&days=1")
+            data = await resp.json()
+        finally:
+            await client.close()
+        assert {str(ours.id), str(theirs.id)} <= set(data["items"])
+
+    @pytest.mark.asyncio
+    async def test_a_list_is_given_its_own_bars_only(self):
+        """The web page asks for the list chosen in its header: a bar of
+        another list could not be opened there."""
+        db, first, second, ours, theirs = self._two_lists_with_a_task_each()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get(
+                f"/api/calendar/segments?start=2030-06-15&days=1&list_id={first.id}"
+            )
+            assert resp.status == 200
+            mine = await resp.json()
+            resp = await client.get(
+                f"/api/calendar/segments?start=2030-06-15&days=1&list_id={second.id}"
+            )
+            other = await resp.json()
+        finally:
+            await client.close()
+        assert set(mine["items"]) == {str(ours.id)}
+        assert {seg["item_id"] for seg in mine["days"][0]["segments"]} == {str(ours.id)}
+        assert set(other["items"]) == {str(theirs.id)}
+
+    @pytest.mark.asyncio
+    async def test_a_list_that_is_unknown_private_or_deleted_is_not_found(self):
+        db = _make_db_with_private()
+        private = next(lst for lst in db.lists.values() if lst.private)
+        deleted = next(lst for lst in db.lists.values() if not lst.private)
+        deleted.deleted = True
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            for list_id in (
+                "00000000-0000-0000-0000-000000000099",
+                str(private.id),
+                str(deleted.id),
+            ):
+                resp = await client.get(f"/api/calendar/segments?list_id={list_id}")
+                assert resp.status == 404, list_id
+            resp = await client.get("/api/calendar/segments?list_id=not-an-id")
+            assert resp.status == 400
+        finally:
+            await client.close()
+
     @pytest.mark.asyncio
     async def test_private_list_excluded(self):
         from datetime import date as _date

@@ -1441,6 +1441,49 @@ class TestCalendarHourGrid:
         assert "_fitHourGrid();" in self._function("_buildHourGrid")
 
 
+class TestCalendarShowsTheChosenList:
+    """All four of the calendar's views are about the list chosen in the
+    header. The Week and the Day asked the server for the bars of every
+    list, and a bar of another list could not be opened: the item sheet
+    knows the chosen list's tasks only."""
+
+    def _app(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def _function(self, name: str) -> str:
+        return self._app().split(f"function {name}(")[1].split("\n  }\n")[0]
+
+    def test_hour_grid_asks_for_the_chosen_lists_bars(self):
+        assert '_listQuery("&"),' in self._function("_fetchSegments")
+        query = self._function("_listQuery")
+        assert '? lead + "list_id=" + encodeURIComponent(currentListId)' in query
+        assert ': "";' in query
+
+    def test_another_list_chosen_puts_a_new_grid_on_screen(self):
+        """The grid on screen is known by its days and its list."""
+        key = self._function("_hourGridKey")
+        assert 'return _dayKey(startDate) + "/" + days + "/" + (currentListId || "");' in key
+        assert "range: _hourGridKey(startDate, days)," in self._function("_renderHourGrid")
+        refresh = self._function("_refreshHourGrid")
+        assert "var key = _hourGridKey(range.start, range.days);" in refresh
+        assert refresh.index("if (key !== hourGridShown.range) {") < refresh.index(
+            "_fetchSegments("
+        )
+
+    def test_timelines_figures_are_the_chosen_lists(self):
+        js = self._app()
+        for path in ("completion_timing", "slip_rate", "cycle_time"):
+            assert f'api("/analytics/{path}" + _listQuery("?"))' in js, path
+
+    def test_a_task_that_cannot_be_opened_says_so(self):
+        """Saying nothing left a tap without effect, and the address in
+        place: a second tap on the same task changed nothing at all."""
+        body = self._function("openDetailSheet")
+        missing = body.split("if (!item) {")[1].split("return;")[0]
+        assert 'if (location.hash.startsWith("#/item/")) location.hash = "#/";' in missing
+        assert 'showToast("That task is not in this list");' in missing
+
+
 class TestCalendarFollowsData:
     """The calendar on screen is drawn again when a refresh, or a change
     to the queue, has changed what it shows, and only then."""
