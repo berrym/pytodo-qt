@@ -711,6 +711,47 @@ class TestCalendarToolbar:
         assert 'if (viewMode === "calendar" && calDateIsStale()) renderCalendar();' in js
 
 
+class TestCalendarViewIsRemembered:
+    """The page opens on the view last in use; within the calendar, on
+    the Month, Week, Day or Timeline last in use."""
+
+    def _app(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def test_calendars_view_is_read_from_the_browser(self):
+        js = self._app()
+        assert 'var CAL_VIEW_KEY = "pytodo_cal_view";' in js
+        assert "var calSubView = localStorage.getItem(CAL_VIEW_KEY);" in js
+
+    def test_a_stored_value_that_is_not_a_view_gives_the_month(self):
+        js = self._app()
+        assert 'var CAL_VIEWS = ["month", "week", "day", "timeline"];' in js
+        assert 'if (CAL_VIEWS.indexOf(calSubView) === -1) calSubView = "month";' in js
+
+    def test_choosing_a_tab_stores_it(self):
+        js = self._app()
+        start = js.index("  calTabs.forEach(function (tab) {")
+        tabs = js[start : js.index("\n  });\n", start)]
+        assert "localStorage.setItem(CAL_VIEW_KEY, calSubView);" in tabs
+
+    def test_the_tab_of_the_view_in_use_is_marked_when_the_page_loads(self):
+        """The page's markup marks the Month."""
+        js = self._app()
+        start = js.index("  calTabs.forEach(function (tab) {")
+        tabs = js[start : js.index("\n  });\n", start)]
+        assert 'tab.classList.toggle("active", tab.dataset.cal === calSubView);' in tabs
+        assert tabs.index("tab.dataset.cal === calSubView") < tabs.index(
+            'tab.addEventListener("click"'
+        )
+
+    def test_every_tab_of_the_page_is_a_view_that_can_be_stored(self):
+        import re
+
+        html = (STATIC_DIR / "index.html").read_text()
+        tabs = re.findall(r'class="cal-tab[^"]*" data-cal="([a-z]+)"', html)
+        assert tabs == ["month", "week", "day", "timeline"]
+
+
 class TestCalendarMonth:
     """Seven columns of a phone's screen cannot hold task titles. On a
     narrow screen the Month is a grid of day numbers with a dot for a

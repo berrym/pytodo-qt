@@ -5,6 +5,7 @@
   var API = "/api";
   var OFFLINE_QUEUE_KEY = "pytodo_offline_queue";
   var VIEW_MODE_KEY = "pytodo_view_mode";
+  var CAL_VIEW_KEY = "pytodo_cal_view";
   var INSTALL_DISMISSED_KEY = "pytodo_install_dismissed";
   var AUTH_TOKEN_KEY = "pytodo_auth_token";
   var COLLAPSED_PARENTS_KEY = "pytodo_collapsed_parents";
@@ -3129,7 +3130,14 @@
   // Calendar view
   // ====================================================================
 
-  var calSubView = "month";
+  // The calendar's view in use is kept in the browser, like the page's
+  // view, so that a page loaded again opens where it was: opened from
+  // the home screen, brought back by the browser, or reloaded by
+  // itself for a new version. The date is not kept; the calendar opens
+  // on today.
+  var CAL_VIEWS = ["month", "week", "day", "timeline"];
+  var calSubView = localStorage.getItem(CAL_VIEW_KEY);
+  if (CAL_VIEWS.indexOf(calSubView) === -1) calSubView = "month";
   var calDate = new Date();
   // The calendar shows today until the arrows take it to another month,
   // week or day, and again once the arrows or Today bring it back. A
@@ -3160,8 +3168,10 @@
       renderCalendar();
     });
   calTabs.forEach(function (tab) {
+    tab.classList.toggle("active", tab.dataset.cal === calSubView);
     tab.addEventListener("click", function () {
       calSubView = tab.dataset.cal;
+      localStorage.setItem(CAL_VIEW_KEY, calSubView);
       calTabs.forEach(function (t) {
         t.classList.toggle("active", t === tab);
       });
