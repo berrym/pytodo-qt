@@ -3796,9 +3796,16 @@
     sections.scrollTop = scrolled;
   }
 
-  // The least room worth scrolling the week's list in. A screen with
-  // less, a phone on its side, scrolls the whole page as before.
+  // The least room worth scrolling a part of the calendar in. A screen
+  // with less, a phone on its side, scrolls the whole page as before.
   var _WEEK_LIST_MIN_HEIGHT = 200;
+
+  // The height between the top of an element and the bottom bar.
+  function _roomAboveBottomBar(el) {
+    var nav = document.getElementById("bottom-nav");
+    var bottom = nav ? nav.getBoundingClientRect().top : window.innerHeight;
+    return Math.floor(bottom - el.getBoundingClientRect().top - 8);
+  }
 
   // Gives the week's list the room between the strip and the bottom
   // bar, to scroll in. Space is left after the last day, enough for it
@@ -3806,9 +3813,7 @@
   function _fitWeekList() {
     var list = calContainer && calContainer.querySelector(".cal-week-days");
     if (!list) return;
-    var nav = document.getElementById("bottom-nav");
-    var bottom = nav ? nav.getBoundingClientRect().top : window.innerHeight;
-    var room = Math.floor(bottom - list.getBoundingClientRect().top - 8);
+    var room = _roomAboveBottomBar(list);
     list.style.paddingBottom = "";
     if (room < _WEEK_LIST_MIN_HEIGHT) {
       list.classList.remove("scrolls");
@@ -3823,9 +3828,23 @@
     }
   }
 
+  // Gives the hour grid the room down to the bottom bar: its hours
+  // scroll inside it, and the page, with the toolbar, stays in place.
+  // The style sheet's own limit stands where there is too little room.
+  function _fitHourGrid() {
+    var wrap =
+      calContainer && calContainer.querySelector(".cal-hour-grid-wrap");
+    if (!wrap) return;
+    var room = _roomAboveBottomBar(wrap);
+    wrap.style.maxHeight = room < _WEEK_LIST_MIN_HEIGHT ? "" : room + "px";
+  }
+
   // The window resized, a phone turned on its side, the browser's own
   // bars shown or hidden.
-  window.addEventListener("resize", _fitWeekList);
+  window.addEventListener("resize", function () {
+    _fitWeekList();
+    _fitHourGrid();
+  });
 
   // Brings a day's section to the top of the week's list; where the
   // whole page scrolls, to the top of the page below the header that
@@ -3925,7 +3944,7 @@
   // overdue marker row; it stays visible while the user scrolls.
   // The hours canvas carries the 24-hour grid and its bars; it
   // lives inside a scrolling div so the pinned rows stay anchored.
-  function _buildHourGrid() {
+  function _buildHourGrid(days) {
     calContainer.innerHTML = "";
 
     var wrap = document.createElement("div");
@@ -3943,19 +3962,54 @@
     wrap.appendChild(scrollDiv);
 
     calContainer.appendChild(wrap);
+    _fitHourGrid();
 
-    var containerWidth = calContainer.clientWidth || 720;
+    // The width inside the wrap's padding. One day takes it as it is,
+    // however narrow. Seven columns need a least width to hold their
+    // titles, and scroll sideways where the window has less.
+    var style = getComputedStyle(wrap);
+    var room =
+      wrap.clientWidth -
+      parseFloat(style.paddingLeft) -
+      parseFloat(style.paddingRight);
+    if (!(room > 0)) room = 720;
     return {
       wrap: wrap,
       pinned: pinnedCanvas,
       hours: hoursCanvas,
       scroll: scrollDiv,
-      width: Math.max(containerWidth - 4, _GRID_CANVAS_MIN_WIDTH),
+      width: days === 1 ? room : Math.max(room, _GRID_CANVAS_MIN_WIDTH),
     };
   }
 
+  // The minute of the day the hours open at: the present time when
+  // today is among the days shown; otherwise the first bar that has a
+  // time, or 08:00 when none has.
+  function _openingMinute(data) {
+    var now = new Date();
+    var todayKey = _dayKey(now);
+    var first = null;
+    for (var d = 0; d < data.days.length; d++) {
+      if (data.days[d].date === todayKey) {
+        return now.getHours() * 60 + now.getMinutes();
+      }
+      data.days[d].segments.forEach(function (seg) {
+        if (seg.is_all_day || seg.is_marker) return;
+        if (first === null || seg.start_minute < first) first = seg.start_minute;
+      });
+    }
+    return first === null ? 8 * 60 : first;
+  }
+
+  // Scrolls the hours so that the opening minute is an hour below the
+  // top: opened at midnight, the grid showed the empty night.
+  function _openHoursAt(scrollDiv, data) {
+    var minute = Math.max(0, _openingMinute(data) - 60);
+    scrollDiv.scrollTop = Math.round((minute / 60) * _HOUR_ROW_HEIGHT);
+  }
+
   function _renderHourGrid(startDate, days) {
-    var grid = _buildHourGrid();
+    var grid = _buildHourGrid(days);
     var loading = document.createElement("div");
     loading.className = "cal-hour-grid-loading";
     loading.textContent = "Loading\u2026";
@@ -3970,6 +4024,7 @@
         if (draw !== calDraws) return;
         loading.remove();
         _paintPinnedAndHours(grid.pinned, grid.hours, data, days, grid.width);
+        _openHoursAt(grid.scroll, data);
         hourGridShown.answer = fingerprint(data);
       })
       .catch(function () {
@@ -4009,7 +4064,7 @@
         var old = calContainer.querySelector(".cal-hour-grid-scroll");
         var scrolled = old ? old.scrollTop : 0;
         keepingPageScroll(function () {
-          var grid = _buildHourGrid();
+          var grid = _buildHourGrid(range.days);
           _paintPinnedAndHours(
             grid.pinned,
             grid.hours,
@@ -4051,18 +4106,18 @@
     var pinnedH = _GRID_HEADER_HEIGHT + allDayRowH + markerRowH;
     var hoursH = 24 * _HOUR_ROW_HEIGHT;
 
-    pinned.width = W;
-    pinned.height = pinnedH;
-    pinned.style.width = W + "px";
-    pinned.style.height = pinnedH + "px";
-
-    hours.width = W;
-    hours.height = hoursH;
-    hours.style.width = W + "px";
-    hours.style.height = hoursH + "px";
+    // A canvas has as many pixels as the screen gives its size, and is
+    // painted in the page's own units. With one pixel to each unit, a
+    // phone's screen, which has two or three, showed the text blurred.
+    var ratio = window.devicePixelRatio || 1;
+    _sizeCanvas(pinned, W, pinnedH, ratio);
+    _sizeCanvas(hours, W, hoursH, ratio);
 
     var layout = {
       W: W,
+      pinnedH: pinnedH,
+      hoursH: hoursH,
+      ratio: ratio,
       days: days,
       colWidth: (W - _HOUR_LABEL_WIDTH) / days,
       todayKey: _dayKey(new Date()),
@@ -4077,10 +4132,23 @@
     _installHourGridClickHandler(hours);
   }
 
+  // Sizes a canvas in the page's units; its own pixels are ratio times
+  // as many each way. The size in units is kept for finding what a
+  // click is on.
+  function _sizeCanvas(canvas, width, height, ratio) {
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    canvas.style.width = width + "px";
+    canvas.style.height = height + "px";
+    canvas._unitWidth = width;
+    canvas._unitHeight = height;
+  }
+
   function _paintPinnedZone(canvas, data, layout) {
     var ctx = canvas.getContext("2d");
-    var W = canvas.width;
-    var H = canvas.height;
+    ctx.setTransform(layout.ratio, 0, 0, layout.ratio, 0, 0);
+    var W = layout.W;
+    var H = layout.pinnedH;
     ctx.clearRect(0, 0, W, H);
 
     var border = _themeColor("border", "#e0e0e0");
@@ -4203,8 +4271,9 @@
 
   function _paintHoursZone(canvas, data, layout) {
     var ctx = canvas.getContext("2d");
-    var W = canvas.width;
-    var H = canvas.height;
+    ctx.setTransform(layout.ratio, 0, 0, layout.ratio, 0, 0);
+    var W = layout.W;
+    var H = layout.hoursH;
     ctx.clearRect(0, 0, W, H);
 
     var border = _themeColor("border", "#e0e0e0");
@@ -4392,9 +4461,10 @@
 
   function _installHourGridClickHandler(canvas) {
     canvas.addEventListener("click", function (e) {
+      // In the units the bars were painted in.
       var rect = canvas.getBoundingClientRect();
-      var scaleX = canvas.width / rect.width;
-      var scaleY = canvas.height / rect.height;
+      var scaleX = canvas._unitWidth / rect.width;
+      var scaleY = canvas._unitHeight / rect.height;
       var x = (e.clientX - rect.left) * scaleX;
       var y = (e.clientY - rect.top) * scaleY;
       var hits = canvas._hitRects || [];

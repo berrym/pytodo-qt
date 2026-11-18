@@ -594,7 +594,7 @@ class TestPressHoldsRedraw:
         assert "if (redrawHeld()) return;" in self._function("refreshCalendar")
         # The hour grid's answer can arrive after a press has begun.
         grid = self._function("_refreshHourGrid")
-        assert grid.index("if (redrawHeld()) return;") < grid.index("_buildHourGrid();")
+        assert grid.index("if (redrawHeld()) return;") < grid.index("_buildHourGrid(range.days);")
 
     def test_a_held_redraw_is_made_when_the_press_ends(self):
         held = self._function("redrawHeld")
@@ -901,8 +901,10 @@ class TestCalendarWeek:
         the header, which cut off the arrows and the dates. The list has
         the room between the strip and the bottom bar to scroll in."""
         fit = self._function("_fitWeekList")
-        assert 'var nav = document.getElementById("bottom-nav");' in fit
-        assert "var room = Math.floor(bottom - list.getBoundingClientRect().top - 8);" in fit
+        assert "var room = _roomAboveBottomBar(list);" in fit
+        room = self._function("_roomAboveBottomBar")
+        assert 'var nav = document.getElementById("bottom-nav");' in room
+        assert "return Math.floor(bottom - el.getBoundingClientRect().top - 8);" in room
         assert 'list.classList.add("scrolls");' in fit
         assert 'list.style.height = room + "px";' in fit
         css = (STATIC_DIR / "style.css").read_text()
@@ -911,7 +913,9 @@ class TestCalendarWeek:
         assert "overscroll-behavior: contain;" in rule
         js = self._app()
         assert "_fitWeekList();" in self._function("_renderWeekList")
-        assert 'window.addEventListener("resize", _fitWeekList);' in js
+        resize = js.split('window.addEventListener("resize", function () {')[1].split("});")[0]
+        assert "_fitWeekList();" in resize
+        assert "_fitHourGrid();" in resize
 
     def test_last_day_of_the_week_can_reach_the_top_of_the_list(self):
         fit = self._function("_fitWeekList")
@@ -971,6 +975,72 @@ class TestCalendarWeek:
             assert selector in css, selector
 
 
+class TestCalendarHourGrid:
+    """The hour grid of the Day, and of the Week on a wide screen."""
+
+    def _app(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def _function(self, name: str) -> str:
+        return self._app().split(f"function {name}(")[1].split("\n  }\n")[0]
+
+    def test_one_day_takes_the_width_it_is_given(self):
+        """The least width is for seven columns. Given to one day as
+        well, it made the Day scroll sideways on a phone."""
+        body = self._function("_buildHourGrid")
+        assert "width: days === 1 ? room : Math.max(room, _GRID_CANVAS_MIN_WIDTH)," in body
+        assert "parseFloat(style.paddingLeft)" in body
+        assert "_buildHourGrid(days);" in self._function("_renderHourGrid")
+        assert "_buildHourGrid(range.days);" in self._function("_refreshHourGrid")
+
+    def test_hours_open_at_the_present_time_or_the_first_timed_task(self):
+        """Opened at midnight, the grid showed the empty night."""
+        minute = self._function("_openingMinute")
+        assert "return now.getHours() * 60 + now.getMinutes();" in minute
+        assert "if (seg.is_all_day || seg.is_marker) return;" in minute
+        assert "return first === null ? 8 * 60 : first;" in minute
+        opened = self._function("_openHoursAt")
+        assert "var minute = Math.max(0, _openingMinute(data) - 60);" in opened
+        assert "scrollDiv.scrollTop = Math.round((minute / 60) * _HOUR_ROW_HEIGHT);" in opened
+
+    def test_only_a_grid_put_on_screen_is_opened_there(self):
+        """One drawn again after a refresh stays at the hour it was
+        scrolled to."""
+        assert "_openHoursAt(grid.scroll, data);" in self._function("_renderHourGrid")
+        refresh = self._function("_refreshHourGrid")
+        assert "_openHoursAt" not in refresh
+        assert "grid.scroll.scrollTop = scrolled;" in refresh
+
+    def test_canvases_have_the_screens_pixels(self):
+        """With one pixel to each unit of the page, a phone's screen,
+        which has two or three, showed the text blurred."""
+        size = self._function("_sizeCanvas")
+        assert "canvas.width = Math.round(width * ratio);" in size
+        assert 'canvas.style.width = width + "px";' in size
+        body = self._function("_paintPinnedAndHours")
+        assert "var ratio = window.devicePixelRatio || 1;" in body
+        assert "_sizeCanvas(pinned, W, pinnedH, ratio);" in body
+        assert "_sizeCanvas(hours, W, hoursH, ratio);" in body
+        for name, height in (("_paintPinnedZone", "pinnedH"), ("_paintHoursZone", "hoursH")):
+            zone = self._function(name)
+            assert "ctx.setTransform(layout.ratio, 0, 0, layout.ratio, 0, 0);" in zone, name
+            assert "var W = layout.W;" in zone, name
+            assert f"var H = layout.{height};" in zone, name
+            assert "canvas.width" not in zone, name
+
+    def test_a_click_is_found_in_the_units_the_bars_were_painted_in(self):
+        body = self._function("_installHourGridClickHandler")
+        assert "var scaleX = canvas._unitWidth / rect.width;" in body
+        assert "var scaleY = canvas._unitHeight / rect.height;" in body
+
+    def test_hours_scroll_in_the_room_above_the_bottom_bar(self):
+        """The page, with the toolbar, stays in place."""
+        fit = self._function("_fitHourGrid")
+        assert "var room = _roomAboveBottomBar(wrap);" in fit
+        assert 'wrap.style.maxHeight = room < _WEEK_LIST_MIN_HEIGHT ? "" : room + "px";' in fit
+        assert "_fitHourGrid();" in self._function("_buildHourGrid")
+
+
 class TestCalendarFollowsData:
     """The calendar on screen is drawn again when a refresh, or a change
     to the queue, has changed what it shows, and only then."""
@@ -1007,7 +1077,7 @@ class TestCalendarFollowsData:
         assert (
             grid.index("_fetchSegments(range.start, range.days)")
             < grid.index("if (answer === hourGridShown.answer) return;")
-            < grid.index("_buildHourGrid();")
+            < grid.index("_buildHourGrid(range.days);")
         )
 
     def test_a_refreshed_grid_keeps_its_place_and_shows_no_loading(self):
