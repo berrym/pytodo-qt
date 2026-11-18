@@ -275,6 +275,111 @@ class TestAdvanceOverdueRecurring:
         assert item.due_time > time(21, 42)
 
 
+class TestMinutelyAdvanceGoesToTheNextOccurrence:
+    """A task repeating every N minutes that is missed moves on to the
+    first occurrence after the present time. A running application
+    advances it within moments of its due time; it then goes one
+    interval on, not two."""
+
+    @staticmethod
+    def _at(monkeypatch, now):
+        from datetime import datetime as real_datetime
+
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.datetime",
+            type("DT", (real_datetime,), {"now": classmethod(lambda cls: now)}),
+        )
+        monkeypatch.setattr(
+            "pytodo_qt.core.models.date",
+            type("D", (date,), {"today": classmethod(lambda cls: now.date())}),
+        )
+
+    @staticmethod
+    def _every(minutes, due_date, due_time):
+        item = create_todo_item("Task")
+        item.recurrence_type = "minutely"
+        item.recurrence_interval = minutes
+        item.due_date = due_date
+        item.due_time = due_time
+        return item
+
+    def test_advanced_a_moment_after_its_due_time(self, monkeypatch):
+        from datetime import datetime
+
+        self._at(monkeypatch, datetime(2026, 3, 23, 14, 10, 2))
+        item = self._every(25, date(2026, 3, 23), time(14, 10))
+
+        assert advance_overdue_recurring(item)
+        assert (item.due_date, item.due_time) == (date(2026, 3, 23), time(14, 35))
+        assert item.missed_recurrences == 1
+
+    def test_advanced_within_its_first_interval(self, monkeypatch):
+        from datetime import datetime
+
+        self._at(monkeypatch, datetime(2026, 3, 23, 14, 30, 0))
+        item = self._every(25, date(2026, 3, 23), time(14, 10))
+
+        assert advance_overdue_recurring(item)
+        assert item.due_time == time(14, 35)
+        assert item.missed_recurrences == 1
+
+    def test_advanced_one_interval_late(self, monkeypatch):
+        """14:25 has gone by as well; the next one is 14:50."""
+        from datetime import datetime
+
+        self._at(monkeypatch, datetime(2026, 3, 23, 14, 30, 0))
+        item = self._every(25, date(2026, 3, 23), time(14, 0))
+
+        assert advance_overdue_recurring(item)
+        assert item.due_time == time(14, 50)
+        assert item.missed_recurrences == 1
+
+    def test_advanced_at_the_moment_of_a_later_occurrence(self, monkeypatch):
+        """An occurrence at the present time is not after it."""
+        from datetime import datetime
+
+        self._at(monkeypatch, datetime(2026, 3, 23, 14, 35, 0))
+        item = self._every(25, date(2026, 3, 23), time(14, 10))
+
+        assert advance_overdue_recurring(item)
+        assert item.due_time == time(15, 0)
+
+    def test_left_alone_it_comes_due_at_every_interval(self, monkeypatch):
+        """Advanced each time just after it comes due, as a running
+        application does: no occurrence is passed over."""
+        from datetime import datetime
+
+        item = self._every(25, date(2026, 3, 23), time(14, 10))
+        due_times = []
+        for _ in range(4):
+            assert item.due_date is not None and item.due_time is not None
+            due = datetime.combine(item.due_date, item.due_time)
+            self._at(monkeypatch, due + timedelta(seconds=1))
+            assert advance_overdue_recurring(item)
+            due_times.append(item.due_time)
+
+        assert due_times == [time(14, 35), time(15, 0), time(15, 25), time(15, 50)]
+        assert item.missed_recurrences == 4
+
+    def test_goes_over_midnight(self, monkeypatch):
+        from datetime import datetime
+
+        self._at(monkeypatch, datetime(2026, 3, 23, 23, 50, 5))
+        item = self._every(25, date(2026, 3, 23), time(23, 50))
+
+        assert advance_overdue_recurring(item)
+        assert (item.due_date, item.due_time) == (date(2026, 3, 24), time(0, 15))
+
+    def test_every_minute(self, monkeypatch):
+        from datetime import datetime
+
+        self._at(monkeypatch, datetime(2026, 3, 23, 9, 0, 20))
+        item = self._every(1, date(2026, 3, 23), time(9, 0))
+
+        assert advance_overdue_recurring(item)
+        assert item.due_time == time(9, 1)
+
+
 class TestAdvanceAllOverdueRecurring:
     """Database-level scan tests."""
 

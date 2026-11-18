@@ -1053,10 +1053,16 @@ def advance_overdue_recurring(item: TodoItem) -> bool:
         )
         elapsed_minutes = (now - due_dt).total_seconds() / 60
         interval = item.recurrence_interval or 1
-        missed_count = max(1, int(elapsed_minutes / interval))
+        whole_intervals = int(elapsed_minutes / interval)
+        # The occurrence that came due is missed, however soon after
+        # it the item is advanced.
+        missed_count = max(1, whole_intervals)
 
-        # Jump to the next occurrence after now
-        next_dt = due_dt + timedelta(minutes=interval * (missed_count + 1))
+        # Jump to the next occurrence after now: one interval more than
+        # the whole intervals gone by. An item advanced within its
+        # first interval, as a running application does, goes one
+        # interval on.
+        next_dt = due_dt + timedelta(minutes=interval * (whole_intervals + 1))
         # If we're still in the past (rounding), advance one more
         while next_dt <= now:
             next_dt += timedelta(minutes=interval)
