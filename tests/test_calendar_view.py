@@ -2206,6 +2206,178 @@ class TestWeekDelegateBarPainting:
         cal._tick_now_indicators()  # should be a no-op when nothing is shown
 
 
+class TestBarTextContrast:
+    """The text on a bar and on a marker chip is black or white,
+    whichever has the higher contrast with the fill, and the fill is
+    painted opaque so that it is the colour the text was chosen for."""
+
+    # A background no bar colour is near: a fill that let it show
+    # through would not come out as the palette's colour.
+    _UNDER = "#ff00ff"
+
+    def _paint_cell(self, qtbot, item, now, theme="light"):
+        """Paint the 9 o'clock cell holding `item` as it is at `now`."""
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QColor, QImage, QPainter
+
+        from pytodo_qt.core.bar_palette import get_palette
+        from pytodo_qt.gui.widgets.calendar_view import (
+            _WeekDelegate,
+            _WeekModel,
+            _WeekTableView,
+        )
+
+        view = _WeekTableView()
+        model = _WeekModel()
+        view.setModel(model)
+        delegate = _WeekDelegate()
+        delegate._bar_palette = get_palette(theme)
+        view.setItemDelegate(delegate)
+        qtbot.addWidget(view)
+
+        today = date.today()
+        model._week_dates = [today + timedelta(days=i) for i in range(7)]
+        model.set_items({today: [item]})
+
+        img = QImage(200, 60, QImage.Format.Format_ARGB32)
+        img.fill(QColor(self._UNDER))
+        painter = QPainter(img)
+        delegate._paint_bar_segments(painter, QRect(0, 0, 200, 60), model.index(10, 0), now)
+        painter.end()
+        return img
+
+    @staticmethod
+    def _colours(img, left, top, right, bottom) -> set[str]:
+        from PyQt6.QtGui import QColor
+
+        return {
+            QColor(img.pixel(x, y)).name()
+            for y in range(top, bottom + 1)
+            for x in range(left, right + 1)
+        }
+
+    @staticmethod
+    def _task(**fields):
+        """An hour's task due at 10:00: its bar fills the 9 o'clock cell."""
+        from datetime import time
+
+        from pytodo_qt.core.models import create_todo_item
+
+        item = create_todo_item("Wwwwww")
+        item.due_date = date.today()
+        item.due_time = time(10, 0)
+        item.estimated_minutes = 60
+        for name, value in fields.items():
+            setattr(item, name, value)
+        return item
+
+    @staticmethod
+    def _at(hour, minute=0):
+        from datetime import datetime as _dt
+        from datetime import time
+
+        return _dt.combine(date.today(), time(hour, minute))
+
+    # Inside the bar's border: the label lies in rows 5 to 18 of the
+    # cell, and the bar's lower part carries no text.
+    _LABEL = (8, 6, 190, 18)
+    _BELOW = (8, 30, 190, 50)
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    @pytest.mark.parametrize("now_hour", [5, 9, 15])
+    def test_bar_is_painted_in_the_palettes_colour(self, qtbot, theme, now_hour):
+        """Before its window, within it and after it: whatever the
+        bar's state, its fill is one of the palette's colours, with
+        nothing of the background under it."""
+        from pytodo_qt.core.bar_palette import get_palette
+
+        img = self._paint_cell(qtbot, self._task(), self._at(now_hour, 10), theme)
+        fills = self._colours(img, *self._BELOW)
+        assert len(fills) == 1
+        assert fills <= {colors.base for colors in get_palette(theme).values()}
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    @pytest.mark.parametrize("now_hour", [5, 9, 15])
+    def test_label_is_the_readable_colour_for_the_fill(self, qtbot, theme, now_hour):
+        from pytodo_qt.core.bar_palette import readable_text_on
+
+        img = self._paint_cell(qtbot, self._task(), self._at(now_hour, 10), theme)
+        (fill,) = self._colours(img, *self._BELOW)
+        text = readable_text_on(fill)
+        other = "#000000" if text == "#ffffff" else "#ffffff"
+        label = self._colours(img, *self._LABEL)
+        assert text in label
+        assert other not in label
+
+    def test_light_theme_paints_both_label_colours(self, qtbot):
+        """White on the blue of a bar still to come, black on the teal
+        of one in its work window."""
+        future = self._paint_cell(qtbot, self._task(), self._at(5))
+        working = self._paint_cell(qtbot, self._task(), self._at(9, 10))
+        assert "#ffffff" in self._colours(future, *self._LABEL)
+        assert "#000000" in self._colours(working, *self._LABEL)
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_deviation_zone_is_not_painted_behind_the_label(self, qtbot, theme):
+        """A task finished five minutes into its hour: the zone of the
+        time left over covers nearly the whole bar. The label's band
+        holds what it holds on a bar without a zone, and the hatch is
+        there below it."""
+        from datetime import datetime as _dt
+
+        finished_early = int(self._at(9, 5).timestamp() * 1000)
+        on_time = int(self._at(9, 58).timestamp() * 1000)
+        now = _dt.combine(date.today(), self._at(15).time())
+        early = self._paint_cell(
+            qtbot, self._task(complete=True, completed_at=finished_early), now, theme
+        )
+        plain = self._paint_cell(qtbot, self._task(complete=True, completed_at=on_time), now, theme)
+
+        assert self._colours(early, *self._LABEL) == self._colours(plain, *self._LABEL)
+        assert len(self._colours(plain, *self._BELOW)) == 1
+        assert len(self._colours(early, *self._BELOW)) > 1
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_marker_chip_is_opaque_with_readable_text(self, qtbot, theme):
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QColor, QFontMetrics, QImage, QPainter
+
+        from pytodo_qt.core.bar_palette import get_palette, readable_text_on
+        from pytodo_qt.core.calendar_layout import BarState
+        from pytodo_qt.gui.widgets.calendar_view import _MarkerChip, _WeekDelegate
+
+        delegate = _WeekDelegate()
+        delegate._bar_palette = get_palette(theme)
+        chip = _MarkerChip(self._task(), "3d overdue", BarState.OVERDUE_ACTIVE)
+
+        img = QImage(200, 24, QImage.Format.Format_ARGB32)
+        img.fill(QColor(self._UNDER))
+        painter = QPainter(img)
+        delegate._paint_marker_chip(
+            painter,
+            chip,
+            2,
+            20,
+            QRect(0, 0, 200, 24),
+            4,
+            180,
+            QFontMetrics(painter.font()),
+            False,
+            QColor("#f0f0f0"),
+            QColor("#878787"),
+        )
+        painter.end()
+
+        fill = get_palette(theme)[BarState.OVERDUE_ACTIVE].base
+        text = readable_text_on(fill)
+        other = "#000000" if text == "#ffffff" else "#ffffff"
+        inside = self._colours(img, 6, 5, 190, 18)
+        # Clear of the text, at the chip's right end: the fill alone.
+        assert self._colours(img, 185, 5, 192, 18) == {fill}
+        assert text in inside
+        assert other not in inside
+
+
 class TestWeekViewBarHitTest:
     """Step 8: hit-test recognizes Gantt bar segments via the new geometry.
 

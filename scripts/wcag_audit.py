@@ -31,6 +31,7 @@ from dataclasses import dataclass
 ROOT = "/Users/mberry/Lab/python/pytodo-qt"
 sys.path.insert(0, f"{ROOT}/src")
 
+from pytodo_qt.core import bar_palette  # noqa: E402
 from pytodo_qt.gui.styles.themes import DARK_COLORS, LIGHT_COLORS  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -254,11 +255,17 @@ def _web_pairs() -> list[Pair]:
 
 
 def _bar_pairs() -> list[Pair]:
-    """Calendar Gantt-bar lifecycle palette — UI components, 3:1.
+    """Calendar Gantt-bar lifecycle palette.
 
-    Bars are rectangular fills against the calendar grid background;
-    they carry no in-bar text, so the threshold is the UI component
-    floor. The grid background matches `base` in each theme.
+    Bars are rectangular fills against the calendar grid background,
+    measured against it at the UI component floor, 3:1. The grid
+    background matches `base` in each theme.
+
+    A bar carries its task's name and a marker chip its label, as
+    text: each colour of `core/bar_palette.py` is also measured
+    against the text the desktop writes on it, at 4.5:1. The text is
+    the one `bar_palette.readable_text_on` chooses; the ratio is this
+    script's own.
 
     Completion-state deviation colors are paired sub-zones rendered
     inside a high-contrast base bar (early surplus, late overflow);
@@ -306,6 +313,17 @@ def _bar_pairs() -> list[Pair]:
                     THRESHOLD_UI,
                     "ui",
                     essential=essential,
+                )
+            )
+        for state, colors in bar_palette.get_palette(theme_name).items():
+            out.append(
+                Pair(
+                    f"desktop label on bar {state.name.lower()}",
+                    theme_name,
+                    bar_palette.readable_text_on(colors.base),
+                    colors.base,
+                    THRESHOLD_TEXT,
+                    "text",
                 )
             )
     return out

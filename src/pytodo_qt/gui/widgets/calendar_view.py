@@ -35,7 +35,17 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QBrush, QColor, QDrag, QFont, QFontMetrics, QPainter, QPen, QPixmap
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QDrag,
+    QFont,
+    QFontMetrics,
+    QPainter,
+    QPen,
+    QPixmap,
+    QRegion,
+)
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -54,6 +64,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from ...core.bar_palette import readable_text_on
 
 if TYPE_CHECKING:
     from ...core.models import TodoItem, TodoList
@@ -3845,9 +3857,11 @@ class _WeekDelegate(QStyledItemDelegate):
             if bot_y <= top_y:
                 continue
 
+            # The fill is opaque: the label's colour is chosen for the
+            # palette's colour, and a fill that let the grid show
+            # through would be another colour.
             colors = self._bar_palette[seg.state]
             base_qcolor = QColor(colors.base)
-            base_qcolor.setAlpha(235)
             border_color = QColor(colors.base).darker(160)
             border_color.setAlpha(255)
 
@@ -3895,6 +3909,28 @@ class _WeekDelegate(QStyledItemDelegate):
                     )
             painter.restore()
 
+            # The label's place — rendered only ONCE per bar.
+            # _slice_is_first_labelable does the cross-cell
+            # coordination: returns True only when this cell's slice is
+            # the FIRST one in the segment whose pixel height crosses
+            # the label threshold. Preserves the thin-start-sliver
+            # fallback (5-min 19:55-20:00 hands off labeling to the
+            # 20:00 body cell) while preventing every subsequent body
+            # cell from redundantly labeling. Worked out before the
+            # deviation zone is painted, which leaves the label clear.
+            label_rect: QRect | None = None
+            if (bot_y - top_y) >= 14 and _slice_is_first_labelable(
+                seg, cell_minute_start, cell_minute_width, rect.height()
+            ):
+                label_width = slot_right_edge - slot_left - 8
+                if label_width >= _MIN_LABEL_WIDTH:
+                    label_rect = QRect(
+                        int(slot_left + 4),
+                        int(top_y + 1),
+                        int(label_width),
+                        min(int(bot_y - top_y - 2), 14),
+                    )
+
             # Two-zone deviation overlay for completed bars
             if seg.state in (BarState.COMPLETED_EARLY, BarState.COMPLETED_LATE):
                 self._paint_deviation_overlay(
@@ -3907,6 +3943,7 @@ class _WeekDelegate(QStyledItemDelegate):
                     cell_minute_end,
                     slot_left,
                     slot_right_edge - slot_left,
+                    label_rect,
                 )
 
             # Selection highlight
@@ -3917,45 +3954,27 @@ class _WeekDelegate(QStyledItemDelegate):
                 painter.drawRoundedRect(bar_rect.adjusted(-1, -1, 1, 1), 4, 4)
                 painter.restore()
 
-            # Label — rendered only ONCE per bar. _slice_is_first_labelable
-            # does the cross-cell coordination: returns True only when
-            # this cell's slice is the FIRST one in the segment whose
-            # pixel height crosses the label threshold. Preserves the
-            # thin-start-sliver fallback (5-min 19:55-20:00 hands off
-            # labeling to the 20:00 body cell) while preventing every
-            # subsequent body cell from redundantly labeling.
-            this_cell_is_first_labelable = _slice_is_first_labelable(
-                seg, cell_minute_start, cell_minute_width, rect.height()
-            )
-            if (bot_y - top_y) >= 14 and this_cell_is_first_labelable:
-                label_width = slot_right_edge - slot_left - 8
-                if label_width >= _MIN_LABEL_WIDTH:
-                    painter.save()
-                    text_font = QFont(painter.font())
-                    text_font.setPixelSize(10)
-                    text_font.setBold(True)
-                    painter.setFont(text_font)
-                    fm = QFontMetrics(text_font)
-                    label = fm.elidedText(
-                        item.reminder or "",
-                        Qt.TextElideMode.ElideRight,
-                        label_width,
-                    )
-                    base_c = QColor(colors.base)
-                    luminance = (
-                        0.299 * base_c.red() + 0.587 * base_c.green() + 0.114 * base_c.blue()
-                    )
-                    text_color = QColor("white") if luminance < 140 else QColor("#111827")
-                    painter.setPen(text_color)
-                    painter.drawText(
-                        int(slot_left + 4),
-                        int(top_y + 1),
-                        int(label_width),
-                        min(int(bot_y - top_y - 2), 14),
-                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                        label,
-                    )
-                    painter.restore()
+            # Label: black or white, whichever has the higher contrast
+            # with the bar's colour.
+            if label_rect is not None:
+                painter.save()
+                text_font = QFont(painter.font())
+                text_font.setPixelSize(10)
+                text_font.setBold(True)
+                painter.setFont(text_font)
+                fm = QFontMetrics(text_font)
+                label = fm.elidedText(
+                    item.reminder or "",
+                    Qt.TextElideMode.ElideRight,
+                    label_rect.width(),
+                )
+                painter.setPen(QColor(readable_text_on(colors.base)))
+                painter.drawText(
+                    label_rect,
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                    label,
+                )
+                painter.restore()
 
         # ------------------------------------------------------------------
         # Overflow badge. Drawn in the top-right corner of the cell so
@@ -3992,11 +4011,16 @@ class _WeekDelegate(QStyledItemDelegate):
         cell_minute_end: int,
         bar_left: int,
         bar_width: int,
+        label_rect: QRect | None = None,
     ) -> None:
         """Paint the deviation zone for a COMPLETED_EARLY or COMPLETED_LATE bar.
 
         Both rely on item.completed_at being set (the BarState classification
         guarantees this for EARLY/LATE — UNKNOWN doesn't trigger this path).
+
+        The zone is not painted behind the bar's label (`label_rect`,
+        when this cell carries it): the label's colour is chosen for
+        the bar's base colour, and the zone's hatch is of another.
         """
         from ...core.calendar_layout import BarState
 
@@ -4050,7 +4074,17 @@ class _WeekDelegate(QStyledItemDelegate):
             deviation_color.setAlpha(220)
             pattern = Qt.BrushStyle.FDiagPattern
         brush = QBrush(deviation_color, pattern)
+        zone = QRegion(QRect(bar_left, zone_top, bar_width, zone_bot - zone_top))
+        if label_rect is not None:
+            # A band across the bar, a pixel taller than the label on
+            # each side.
+            zone = zone.subtracted(
+                QRegion(QRect(bar_left, label_rect.top() - 1, bar_width, label_rect.height() + 2))
+            )
+        painter.save()
+        painter.setClipRegion(zone, Qt.ClipOperation.IntersectClip)
         painter.fillRect(bar_left, zone_top, bar_width, zone_bot - zone_top, brush)
+        painter.restore()
 
     def _paint_now_line(
         self,
@@ -4101,8 +4135,9 @@ class _WeekDelegate(QStyledItemDelegate):
         Distinct visual treatment from regular all-day chips:
           - Filled background in the OVERDUE_ACTIVE palette color
             (same red the now-line and overdue bars use, so the visual
-            language is consistent)
-          - White text for WCAG contrast against the red background
+            language is consistent), painted opaque
+          - Black or white text, whichever has the higher contrast
+            with the background
           - The marker_label ("3d overdue", "~2w overdue") is the
             primary signal, followed by " · <reminder>" so the user
             can also identify which task is overdue
@@ -4114,9 +4149,9 @@ class _WeekDelegate(QStyledItemDelegate):
         from ...core.calendar_layout import BarState
 
         marker_state = getattr(marker, "marker_state", BarState.OVERDUE_ACTIVE)
-        bg = QColor(self._bar_palette[marker_state].base)
-        bg.setAlpha(235)
-        border = QColor(self._bar_palette[marker_state].base).darker(160)
+        fill = self._bar_palette[marker_state].base
+        bg = QColor(fill)
+        border = QColor(fill).darker(160)
 
         chip_rect = rect.adjusted(2, 0, -2, 0)
         chip_rect.setTop(chip_y)
@@ -4132,8 +4167,7 @@ class _WeekDelegate(QStyledItemDelegate):
             painter.setPen(QPen(col_border.lighter(150), 2))
             painter.drawRoundedRect(chip_rect.adjusted(-1, -1, 1, 1), 3, 3)
 
-        # Bold text. White on the red bg gives ~7:1 contrast (well
-        # above WCAG AA).
+        # Bold text.
         marker_font = QFont(painter.font())
         marker_font.setBold(True)
         painter.setFont(marker_font)
@@ -4144,7 +4178,7 @@ class _WeekDelegate(QStyledItemDelegate):
         full_text = f"{label} \u00b7 {reminder}" if reminder else label
         elided = bold_fm.elidedText(full_text, Qt.TextElideMode.ElideRight, text_width - 4)
 
-        painter.setPen(QColor("white"))
+        painter.setPen(QColor(readable_text_on(fill)))
         painter.drawText(
             x + 6,
             chip_y,

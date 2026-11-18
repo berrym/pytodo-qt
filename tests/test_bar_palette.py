@@ -10,10 +10,15 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from pytodo_qt.core.bar_palette import (
     BarColors,
+    contrast_ratio,
     get_colors,
     get_palette,
+    readable_text_on,
+    relative_luminance,
 )
 from pytodo_qt.core.calendar_layout import BarState
 
@@ -117,3 +122,67 @@ class TestPaletteAPI:
         assert any(light[s].base != dark[s].base for s in BarState), (
             "light and dark palettes are identical — at least one base must differ"
         )
+
+
+class TestTextOnAFill:
+    """A bar carries its task's name and a marker chip its label. The
+    text is black or white, whichever has the higher WCAG contrast with
+    the fill, and reaches the 4.5:1 that AA asks of text on any fill."""
+
+    def test_luminance_of_black_and_white(self):
+        assert relative_luminance("#000000") == 0.0
+        assert relative_luminance("#ffffff") == pytest.approx(1.0)
+
+    def test_contrast_of_black_and_white_is_twenty_one(self):
+        assert contrast_ratio("#000000", "#ffffff") == pytest.approx(21.0)
+        assert contrast_ratio("#ffffff", "#000000") == pytest.approx(21.0)
+
+    def test_contrast_of_a_colour_with_itself_is_one(self):
+        assert contrast_ratio("#2563eb", "#2563eb") == pytest.approx(1.0)
+
+    def test_contrast_matches_published_values(self):
+        """White on Tailwind blue-600 and on red-600, as the audit of
+        the theme has them."""
+        assert contrast_ratio("#ffffff", "#2563eb") == pytest.approx(5.17, abs=0.01)
+        assert contrast_ratio("#ffffff", "#dc2626") == pytest.approx(4.83, abs=0.01)
+
+    def test_hex_digits_in_either_case(self):
+        assert relative_luminance("#FBBF24") == relative_luminance("#fbbf24")
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_text_on_every_bar_colour_meets_aa(self, theme):
+        for state, colors in get_palette(theme).items():
+            text = readable_text_on(colors.base)
+            ratio = contrast_ratio(text, colors.base)
+            assert ratio >= 4.5, f"{theme} {state}: {text} on {colors.base} is {ratio:.2f}:1"
+
+    def test_text_is_the_better_of_black_and_white(self):
+        for theme in ("light", "dark"):
+            for colors in get_palette(theme).values():
+                text = readable_text_on(colors.base)
+                other = "#000000" if text == "#ffffff" else "#ffffff"
+                assert contrast_ratio(text, colors.base) >= contrast_ratio(other, colors.base)
+
+    def test_text_on_any_grey_meets_aa(self):
+        """The better of the two ratios is lowest on a fill of middling
+        lightness, where both are 4.58:1; it does not fall under that."""
+        lowest = min(
+            contrast_ratio(readable_text_on(f"#{v:02x}{v:02x}{v:02x}"), f"#{v:02x}{v:02x}{v:02x}")
+            for v in range(256)
+        )
+        assert 4.58 <= lowest < 4.7
+
+    def test_light_theme_has_white_and_black_labels(self):
+        """White stays on the blue, the red and the grey; the teal, the
+        amber and the green are too light for it."""
+        light = get_palette("light")
+        assert readable_text_on(light[BarState.FUTURE].base) == "#ffffff"
+        assert readable_text_on(light[BarState.OVERDUE_ACTIVE].base) == "#ffffff"
+        assert readable_text_on(light[BarState.COMPLETED_UNKNOWN].base) == "#ffffff"
+        assert readable_text_on(light[BarState.IN_WORK_WINDOW].base) == "#000000"
+        assert readable_text_on(light[BarState.DUE_NOW].base) == "#000000"
+        assert readable_text_on(light[BarState.COMPLETED_ONTIME].base) == "#000000"
+
+    def test_dark_theme_has_black_labels(self):
+        for colors in get_palette("dark").values():
+            assert readable_text_on(colors.base) == "#000000"

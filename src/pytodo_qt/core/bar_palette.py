@@ -28,6 +28,12 @@ the audit script (`scripts/wcag_audit.py`) flags these pairs as
 non-essential so they surface in the report without gating the run.
 See issue #38 for the design rationale.
 
+A bar carries its task's name, and a marker chip its label. The colour
+of that text is not part of the palette: `readable_text_on` gives black
+or white for any fill, whichever has the higher WCAG contrast with it.
+One of the two always reaches the 4.5:1 that WCAG SC 1.4.3 asks of
+text, so a bar colour can be changed without a text colour to match.
+
 Usage:
 
     from pytodo_qt.core.bar_palette import get_palette, BarColors
@@ -132,3 +138,49 @@ def get_palette(theme: str = "light") -> dict[BarState, BarColors]:
 def get_colors(state: BarState, theme: str = "light") -> BarColors:
     """Convenience: look up colors for a single state."""
     return get_palette(theme)[state]
+
+
+_WHITE = "#ffffff"
+_BLACK = "#000000"
+
+
+def relative_luminance(color: str) -> float:
+    """The relative luminance of a `#rrggbb` colour, as WCAG 2.1 defines it.
+
+    0.0 for black, 1.0 for white.
+    """
+
+    def channel(value: int) -> float:
+        share = value / 255
+        return share / 12.92 if share <= 0.03928 else ((share + 0.055) / 1.055) ** 2.4
+
+    red, green, blue = (int(color[i : i + 2], 16) for i in (1, 3, 5))
+    return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+
+
+def contrast_ratio(one: str, other: str) -> float:
+    """The WCAG 2.1 contrast ratio of two `#rrggbb` colours: 1.0 to 21.0."""
+    lighter, darker = sorted((relative_luminance(one), relative_luminance(other)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def readable_text_on(fill: str) -> str:
+    """Black or white, whichever has the higher contrast with the fill.
+
+    The colour of text written on a bar or a marker chip. The fill has
+    to be painted opaque for the answer to hold: a fill that lets the
+    grid show through is another colour.
+
+    The better of the two ratios is lowest on a fill of middling
+    lightness, where both are 4.58:1, so the text meets WCAG AA
+    (4.5:1) on any fill.
+
+    Args:
+        fill: The fill as `#rrggbb`.
+
+    Returns:
+        `"#ffffff"` or `"#000000"`.
+    """
+    if contrast_ratio(_WHITE, fill) >= contrast_ratio(_BLACK, fill):
+        return _WHITE
+    return _BLACK
