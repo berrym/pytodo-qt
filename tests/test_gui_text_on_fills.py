@@ -14,6 +14,7 @@ from datetime import date, time
 from pathlib import Path
 
 import pytest
+from PyQt6.QtCore import QPoint, QRect
 from PyQt6.QtGui import QColor, QImage
 from PyQt6.QtWidgets import QApplication, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
@@ -43,18 +44,70 @@ def themed(request, qtbot, monkeypatch):
     app.setStyleSheet(sheet)
 
 
-def _colours(widget: QWidget) -> set[str]:
-    """Every colour of the widget as it is painted."""
+def _colours(
+    widget: QWidget, *, thick_type: bool = False, within: QWidget | None = None
+) -> set[str]:
+    """Every colour of the widget as it is painted.
+
+    A widget without a background of its own is painted on that of a
+    widget around it. `within` names that widget: the part of it under
+    `widget` is taken, fill and all.
+
+    With `thick_type` the widget's type is made large and bold first. A
+    thin stroke may have no pixel that it covers whole, and how near its
+    pixels come to the type's colour depends on the platform's font
+    rendering; a thick stroke has whole pixels on every platform. The
+    colours of the style are left as they are.
+    """
     app = QApplication.instance()
     assert app is not None
+    if thick_type:
+        sheet = widget.styleSheet()
+        thick = "font-size: 24px; font-weight: bold;"
+        # A sheet of rules takes a rule; a sheet of bare properties, more of them.
+        widget.setStyleSheet(
+            f"{sheet} QWidget {{ {thick} }}" if "{" in sheet else f"{sheet} {thick}"
+        )
     for _ in range(3):
         app.processEvents()
-    image = widget.grab().toImage()
+    if within is None:
+        image = widget.grab().toImage()
+    else:
+        area = QRect(widget.mapTo(within, QPoint(0, 0)), widget.size())
+        image = within.grab(area).toImage()
     return {
         QColor(image.pixel(x, y)).name()
         for y in range(image.height())
         for x in range(image.width())
     }
+
+
+def _nearest(colours: set[str], wanted: str) -> tuple[int, str]:
+    """The painted colour nearest to `wanted`, and how far off it is on
+    the channel where it is furthest off."""
+    target = QColor(wanted)
+
+    def distance(name: str) -> int:
+        colour = QColor(name)
+        return max(
+            abs(colour.red() - target.red()),
+            abs(colour.green() - target.green()),
+            abs(colour.blue() - target.blue()),
+        )
+
+    name = min(colours, key=distance)
+    return distance(name), name
+
+
+def _painted_in(colours: set[str], wanted: str) -> bool:
+    """Whether type is painted in the colour `wanted`.
+
+    Type is drawn with soft edges, and the pixel nearest to its colour
+    may be a shade off it. A pixel within 16 of the colour on every
+    channel counts, which no colour the type could wrongly have comes
+    near.
+    """
+    return _nearest(colours, wanted)[0] <= 16
 
 
 class TestStylesNameNoFixedTextColourOnAFill:
@@ -120,7 +173,9 @@ class TestQtTakesTheRole:
         label.show()
         colours = _colours(label)
         assert themed["highlight"] in colours
-        assert themed["highlight_text"] in colours
+        assert _painted_in(colours, themed["highlight_text"]), _nearest(
+            colours, themed["highlight_text"]
+        )
         assert contrast_ratio(themed["highlight_text"], themed["highlight"]) >= 4.5
 
 
@@ -139,9 +194,11 @@ class TestCalendarButtons:
         widget = self._calendar(qtbot)
         checked = widget._sub_buttons[widget._sub_view]
         assert checked.isChecked()
-        colours = _colours(checked)
+        colours = _colours(checked, thick_type=True)
         assert themed["highlight"] in colours
-        assert themed["highlight_text"] in colours
+        assert _painted_in(colours, themed["highlight_text"]), _nearest(
+            colours, themed["highlight_text"]
+        )
         other = "#ffffff" if themed["highlight_text"] != "#ffffff" else "#1a1a1a"
         assert other not in colours
 
@@ -155,9 +212,11 @@ class TestCalendarButtons:
             if button.isChecked()
         ]
         assert len(checked) == 1
-        colours = _colours(checked[0])
+        colours = _colours(checked[0], thick_type=True)
         assert themed["highlight"] in colours
-        assert themed["highlight_text"] in colours
+        assert _painted_in(colours, themed["highlight_text"]), _nearest(
+            colours, themed["highlight_text"]
+        )
 
 
 class TestAgendaRow:
@@ -188,8 +247,12 @@ class TestAgendaRow:
         labels = self._text_labels(row)
         assert len(labels) == 3
         for label in labels:
-            colours = _colours(label)
-            assert themed["highlight_text"] in colours, label.text()
+            colours = _colours(label, thick_type=True, within=row)
+            assert themed["highlight"] in colours, label.text()
+            assert _painted_in(colours, themed["highlight_text"]), (
+                label.text(),
+                _nearest(colours, themed["highlight_text"]),
+            )
             assert themed["entity_tag"] not in colours, label.text()
 
     def test_completed_selected_row(self, themed, qtbot):
@@ -263,9 +326,11 @@ class TestWebConnect:
         card.show()
         ribbon = next(label for label in card.findChildren(QLabel) if label.text() == "Recommended")
         for widget in (ribbon, card._start_btn):
-            colours = _colours(widget)
+            colours = _colours(widget, thick_type=True)
             assert themed["highlight"] in colours
-            assert themed["highlight_text"] in colours
+            assert _painted_in(colours, themed["highlight_text"]), _nearest(
+                colours, themed["highlight_text"]
+            )
 
     def test_forget_button_under_the_pointer(self, themed):
         """Its fill is the theme's overdue red; the text on it is the
@@ -508,9 +573,10 @@ class TestListViewSelectedRow:
         due = table.cellWidget(0, 2)
         fill, text = colors["highlight"], colors["highlight_text"]
 
-        painted = _colours(due.label)
+        painted = _colours(due.label, thick_type=True, within=table.viewport())
 
-        assert text in painted
+        assert fill in painted
+        assert _painted_in(painted, text), _nearest(painted, text)
         lowest, highest = sorted((contrast_ratio(fill, fill), contrast_ratio(text, fill)))
         for colour in painted:
             assert lowest <= contrast_ratio(colour, fill) <= highest + 0.01, colour
