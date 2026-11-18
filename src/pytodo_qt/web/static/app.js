@@ -3190,10 +3190,12 @@
     renderCalendar();
   }
 
-  // Whether today is in what the calendar shows: its month, week or day.
+  // Whether today is in what the calendar shows: its month, week or
+  // day. The compact month has a selected day, and shows today when
+  // that day is today.
   function calShowsToday() {
     var today = new Date();
-    if (calSubView === "month") {
+    if (calSubView === "month" && !calIsNarrow()) {
       return (
         calDate.getFullYear() === today.getFullYear() &&
         calDate.getMonth() === today.getMonth()
@@ -3299,6 +3301,28 @@
     return y + "-" + m + "-" + day;
   }
 
+  // A screen as narrow as a phone's. Seven columns of it cannot hold
+  // task titles, so the calendar is laid out differently there.
+  var calNarrowScreen = window.matchMedia("(max-width: 700px)");
+
+  function calIsNarrow() {
+    return calNarrowScreen.matches;
+  }
+
+  // The window made wider or narrower across that width, or a phone
+  // turned on its side.
+  calNarrowScreen.addEventListener("change", function () {
+    if (viewMode === "calendar") renderCalendar();
+  });
+
+  // The week begins on Monday, as in the desktop application.
+  var _WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+  // A date's place in the week: 0 for Monday, 6 for Sunday.
+  function _weekdayIndex(d) {
+    return (d.getDay() + 6) % 7;
+  }
+
   function renderMonthView() {
     var year = calDate.getFullYear();
     var month = calDate.getMonth();
@@ -3318,21 +3342,25 @@
     ];
     if (calTitle) calTitle.textContent = monthNames[month] + " " + year;
 
-    var items = _calItems();
-    var byDate = _itemsByDate(items);
+    var byDate = _itemsByDate(_calItems());
+    if (calIsNarrow()) _renderCompactMonth(year, month, byDate);
+    else _renderWideMonth(year, month, byDate);
+  }
 
-    var firstDay = new Date(year, month, 1).getDay();
+  // The month on a wide screen: a cell for each day, holding the titles
+  // of its first tasks.
+  function _renderWideMonth(year, month, byDate) {
+    var leading = _weekdayIndex(new Date(year, month, 1));
     var daysInMonth = new Date(year, month + 1, 0).getDate();
     var todayKey = _dayKey(new Date());
 
     var html = '<div class="cal-month-grid">';
-    html += '<div class="cal-dow">Sun</div><div class="cal-dow">Mon</div>';
-    html += '<div class="cal-dow">Tue</div><div class="cal-dow">Wed</div>';
-    html += '<div class="cal-dow">Thu</div><div class="cal-dow">Fri</div>';
-    html += '<div class="cal-dow">Sat</div>';
+    _WEEKDAY_NAMES.forEach(function (name) {
+      html += '<div class="cal-dow">' + name + "</div>";
+    });
 
-    // Empty cells before first day
-    for (var e = 0; e < firstDay; e++) {
+    // Empty cells before the first day
+    for (var e = 0; e < leading; e++) {
       html += '<div class="cal-day empty"></div>';
     }
 
@@ -3358,7 +3386,7 @@
           '" data-id="' +
           it.id +
           '">' +
-          _escHtml(it.reminder.substring(0, 20)) +
+          _escHtml(it.reminder) +
           "</div>";
       }
       if (dayItems.length > 3) {
@@ -3369,6 +3397,12 @@
       }
       html += "</div>";
     }
+
+    // Empty cells after the last day, to the end of its week
+    var trailing = (7 - ((leading + daysInMonth) % 7)) % 7;
+    for (var t = 0; t < trailing; t++) {
+      html += '<div class="cal-day empty"></div>';
+    }
     html += "</div>";
     calContainer.innerHTML = html;
 
@@ -3378,6 +3412,207 @@
         location.hash = "#/item/" + el.dataset.id;
       });
     });
+  }
+
+  // The month on a narrow screen: a grid of day numbers, each with a
+  // dot for a task due on it, and under the grid the tasks of the day
+  // that is selected. The selected day is the calendar's date: the Day
+  // view opens on it, and the arrows carry it to the month before or
+  // after.
+  function _renderCompactMonth(year, month, byDate) {
+    calContainer.innerHTML = "";
+    var grid = document.createElement("div");
+    grid.className = "cal-mini-grid";
+    _WEEKDAY_NAMES.forEach(function (name) {
+      var head = document.createElement("div");
+      head.className = "cal-mini-dow";
+      head.textContent = name;
+      grid.appendChild(head);
+    });
+
+    // Whole weeks: the days of the months before and after that share
+    // a week with this one are shown too, dimmed.
+    var leading = _weekdayIndex(new Date(year, month, 1));
+    var daysInMonth = new Date(year, month + 1, 0).getDate();
+    var cells = Math.ceil((leading + daysInMonth) / 7) * 7;
+    var todayKey = _dayKey(new Date());
+    var selectedKey = _dayKey(calDate);
+    for (var i = 0; i < cells; i++) {
+      var day = new Date(year, month, 1 - leading + i);
+      var key = _dayKey(day);
+      grid.appendChild(
+        _compactDay(day, byDate[key] || [], {
+          other: day.getMonth() !== month,
+          today: key === todayKey,
+          selected: key === selectedKey,
+        }),
+      );
+    }
+    calContainer.appendChild(grid);
+    calContainer.appendChild(_dayTaskList(calDate, byDate[selectedKey] || []));
+  }
+
+  // The most dots a day shows; a day with more says how many more.
+  var _MAX_DAY_DOTS = 3;
+
+  function _compactDay(day, items, is) {
+    var cell = document.createElement("button");
+    cell.type = "button";
+    cell.className =
+      "cal-mini-day" +
+      (is.other ? " other" : "") +
+      (is.today ? " today" : "") +
+      (is.selected ? " selected" : "");
+    cell.setAttribute("aria-pressed", is.selected ? "true" : "false");
+    cell.setAttribute(
+      "aria-label",
+      day.toLocaleDateString(undefined, {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      }) +
+        ", " +
+        _taskCount(items.length),
+    );
+
+    var num = document.createElement("span");
+    num.className = "cal-mini-num";
+    num.textContent = String(day.getDate());
+    cell.appendChild(num);
+
+    var dots = document.createElement("span");
+    dots.className = "cal-mini-dots";
+    var sorted = _sortDayTasks(items);
+    sorted.slice(0, _MAX_DAY_DOTS).forEach(function (item) {
+      var dot = document.createElement("span");
+      dot.className =
+        "cal-mini-dot" +
+        (item.complete
+          ? " done"
+          : item.priority === 1
+            ? " high"
+            : item.priority === 3
+              ? " low"
+              : "");
+      dots.appendChild(dot);
+    });
+    if (sorted.length > _MAX_DAY_DOTS) {
+      var more = document.createElement("span");
+      more.className = "cal-mini-more";
+      more.textContent = "+" + (sorted.length - _MAX_DAY_DOTS);
+      dots.appendChild(more);
+    }
+    cell.appendChild(dots);
+
+    cell.addEventListener("click", function () {
+      selectCalendarDay(day);
+    });
+    return cell;
+  }
+
+  // Makes a day the calendar's date. A day of another month takes the
+  // month view there.
+  function selectCalendarDay(day) {
+    calDate = new Date(day.getFullYear(), day.getMonth(), day.getDate());
+    calDateChosen = !calShowsToday();
+    keepingPageScroll(renderCalendar);
+  }
+
+  function _taskCount(count) {
+    if (count === 0) return "no tasks";
+    return count + (count === 1 ? " task" : " tasks");
+  }
+
+  // The tasks of one day in the order they are listed: those still to
+  // do before those done, a task with a time before one without, then
+  // by time, then by priority.
+  function _sortDayTasks(items) {
+    return items.slice().sort(function (a, b) {
+      if (a.complete !== b.complete) return a.complete ? 1 : -1;
+      if (Boolean(a.due_time) !== Boolean(b.due_time)) return a.due_time ? -1 : 1;
+      if (a.due_time && a.due_time !== b.due_time) {
+        return a.due_time < b.due_time ? -1 : 1;
+      }
+      return a.priority - b.priority;
+    });
+  }
+
+  // When in its day a task is due, in one or two short lines: a time,
+  // the two ends of a time range, the name of a time block, or all day.
+  function _taskTimeLines(item) {
+    if (item.due_time && item.due_time_end) {
+      return [item.due_time.substring(0, 5), item.due_time_end.substring(0, 5)];
+    }
+    if (item.due_time) return [item.due_time.substring(0, 5)];
+    if (item.due_time_block) {
+      var label = item.due_time_block.replace(/_/g, " ");
+      return [label.charAt(0).toUpperCase() + label.slice(1)];
+    }
+    return ["All day"];
+  }
+
+  // A task as a row of the calendar's lists. timeLines replaces the
+  // time of day where the row stands for something else.
+  function _calTaskRow(item, timeLines) {
+    var row = document.createElement("button");
+    row.type = "button";
+    row.className =
+      "cal-task" +
+      (item.priority === 1
+        ? " priority-high"
+        : item.priority === 3
+          ? " priority-low"
+          : "") +
+      (item.complete ? " completed" : "");
+    row.dataset.id = item.id;
+
+    var time = document.createElement("span");
+    time.className = "cal-task-time";
+    (timeLines || _taskTimeLines(item)).forEach(function (line) {
+      var span = document.createElement("span");
+      span.textContent = line;
+      time.appendChild(span);
+    });
+    row.appendChild(time);
+
+    var title = document.createElement("span");
+    title.className = "cal-task-title";
+    title.textContent = item.reminder;
+    row.appendChild(title);
+
+    row.addEventListener("click", function () {
+      location.hash = "#/item/" + item.id;
+    });
+    return row;
+  }
+
+  // The tasks of one day under a heading that names it.
+  function _dayTaskList(day, items) {
+    var section = document.createElement("div");
+    section.className = "cal-day-tasks";
+
+    var isToday = _dayKey(day) === _dayKey(new Date());
+    var heading = document.createElement("div");
+    heading.className = "cal-day-heading" + (isToday ? " today" : "");
+    var name = document.createElement("span");
+    name.className = "cal-day-name";
+    name.textContent = day.toLocaleDateString(undefined, {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+    });
+    heading.appendChild(name);
+    var note = document.createElement("span");
+    note.className = "cal-day-note";
+    note.textContent =
+      (isToday ? "Today \u00B7 " : "") + _taskCount(items.length);
+    heading.appendChild(note);
+    section.appendChild(heading);
+
+    _sortDayTasks(items).forEach(function (item) {
+      section.appendChild(_calTaskRow(item));
+    });
+    return section;
   }
 
   // Hour-grid constants — shared by week and day Canvas 2D views.

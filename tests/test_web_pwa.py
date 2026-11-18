@@ -711,6 +711,132 @@ class TestCalendarToolbar:
         assert 'if (viewMode === "calendar" && calDateIsStale()) renderCalendar();' in js
 
 
+class TestCalendarMonth:
+    """Seven columns of a phone's screen cannot hold task titles. On a
+    narrow screen the Month is a grid of day numbers with a dot for a
+    task due, and the selected day's tasks listed under it; on a wide
+    one it is a cell of titles for each day."""
+
+    def _app(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def _css(self) -> str:
+        return (STATIC_DIR / "style.css").read_text()
+
+    def _function(self, name: str) -> str:
+        return self._app().split(f"function {name}(")[1].split("\n  }\n")[0]
+
+    def _rule(self, selector: str) -> str:
+        return self._css().split(selector + " {")[1].split("}")[0]
+
+    def test_month_is_laid_out_for_the_width_of_the_screen(self):
+        js = self._app()
+        assert 'var calNarrowScreen = window.matchMedia("(max-width: 700px)");' in js
+        body = self._function("renderMonthView")
+        assert "if (calIsNarrow()) _renderCompactMonth(year, month, byDate);" in body
+        assert "else _renderWideMonth(year, month, byDate);" in body
+
+    def test_calendar_is_drawn_again_when_the_screen_crosses_that_width(self):
+        js = self._app()
+        start = js.index('calNarrowScreen.addEventListener("change"')
+        listener = js[start : js.index("\n  });", start)]
+        assert 'if (viewMode === "calendar") renderCalendar();' in listener
+
+    def test_week_begins_on_monday(self):
+        """As in the desktop application."""
+        js = self._app()
+        assert 'var _WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];' in js
+        assert "return (d.getDay() + 6) % 7;" in self._function("_weekdayIndex")
+        for name in ("_renderWideMonth", "_renderCompactMonth"):
+            body = self._function(name)
+            assert "var leading = _weekdayIndex(new Date(year, month, 1));" in body, name
+            assert "_WEEKDAY_NAMES.forEach(" in body, name
+
+    def test_columns_share_the_width_equally(self):
+        """A plain 1fr column cannot be narrower than the longest title
+        in it: the grid was 678 px wide on a 412 px screen."""
+        for selector in (".cal-month-grid", ".cal-mini-grid"):
+            assert "grid-template-columns: repeat(7, minmax(0, 1fr));" in self._rule(selector)
+
+    def test_today_is_tinted_over_the_cells_own_colour(self):
+        """The translucent tint alone let the grid's border colour
+        through, and today was a grey block."""
+        rule = self._rule(".cal-day.today")
+        assert (
+            "background-image: linear-gradient(var(--accent-subtle), var(--accent-subtle));" in rule
+        )
+        assert "background:" not in rule
+
+    def test_wide_month_ends_on_a_whole_week(self):
+        body = self._function("_renderWideMonth")
+        assert "var trailing = (7 - ((leading + daysInMonth) % 7)) % 7;" in body
+        # The title is cut by the cell, not by a count of characters.
+        assert "_escHtml(it.reminder) +" in body
+        assert "substring" not in body
+
+    def test_compact_month_shows_whole_weeks_and_the_selected_days_tasks(self):
+        body = self._function("_renderCompactMonth")
+        assert "var cells = Math.ceil((leading + daysInMonth) / 7) * 7;" in body
+        assert "var day = new Date(year, month, 1 - leading + i);" in body
+        assert "other: day.getMonth() !== month," in body
+        assert "selected: key === selectedKey," in body
+        assert "_dayTaskList(calDate, byDate[selectedKey] || [])" in body
+
+    def test_a_day_shows_three_dots_at_most_and_counts_the_rest(self):
+        assert "var _MAX_DAY_DOTS = 3;" in self._app()
+        body = self._function("_compactDay")
+        assert "sorted.slice(0, _MAX_DAY_DOTS).forEach(" in body
+        assert 'more.textContent = "+" + (sorted.length - _MAX_DAY_DOTS);' in body
+
+    def test_a_day_is_a_button_that_names_itself(self):
+        body = self._function("_compactDay")
+        assert 'var cell = document.createElement("button");' in body
+        assert 'cell.setAttribute("aria-pressed", is.selected ? "true" : "false");' in body
+        assert '"aria-label",' in body
+        assert "selectCalendarDay(day);" in body
+
+    def test_selected_day_is_the_calendars_date(self):
+        """The Day view opens on it, and Today is offered whenever it is
+        not today, also within the current month."""
+        select = self._function("selectCalendarDay")
+        assert "calDate = new Date(day.getFullYear(), day.getMonth(), day.getDate());" in select
+        assert "calDateChosen = !calShowsToday();" in select
+        assert "keepingPageScroll(renderCalendar);" in select
+        shows = self._function("calShowsToday")
+        assert 'if (calSubView === "month" && !calIsNarrow()) {' in shows
+
+    def test_tasks_of_a_day_are_listed_in_order(self):
+        """To do before done, timed before untimed, by time, by priority."""
+        body = self._function("_sortDayTasks")
+        assert "return items.slice().sort(" in body
+        assert (
+            body.index("a.complete !== b.complete")
+            < body.index("Boolean(a.due_time) !== Boolean(b.due_time)")
+            < body.index("a.due_time < b.due_time")
+            < body.index("a.priority - b.priority")
+        )
+
+    def test_a_listed_task_says_when_it_is_due_and_opens(self):
+        lines = self._function("_taskTimeLines")
+        assert "[item.due_time.substring(0, 5), item.due_time_end.substring(0, 5)]" in lines
+        assert 'return ["All day"];' in lines
+        row = self._function("_calTaskRow")
+        assert 'var row = document.createElement("button");' in row
+        assert 'location.hash = "#/item/" + item.id;' in row
+
+    def test_compact_month_is_styled(self):
+        css = self._css()
+        for selector in (
+            ".cal-mini-day.selected .cal-mini-num {",
+            ".cal-mini-day.today .cal-mini-num {",
+            ".cal-mini-day.other .cal-mini-num {",
+            ".cal-mini-dot.high {",
+            ".cal-mini-dot.done {",
+            ".cal-task.completed .cal-task-title {",
+        ):
+            assert selector in css, selector
+
+
 class TestCalendarFollowsData:
     """The calendar on screen is drawn again when a refresh, or a change
     to the queue, has changed what it shows, and only then."""

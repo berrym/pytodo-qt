@@ -1206,10 +1206,12 @@ body {
   }
 }
 
-/* Month grid */
+/* Month grid, on a wide screen. The columns share the width equally
+   whatever they hold: a plain 1fr column cannot be narrower than the
+   longest title in it, and the grid outgrew the screen. */
 .cal-month-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 1px;
   background: var(--border);
   border: 1px solid var(--border);
@@ -1234,8 +1236,10 @@ body {
   background: var(--bg-secondary);
   min-height: 80px;
 }
+/* The tint is laid over the cell's own colour. By itself it let the
+   grid's border colour through, and today was a grey block. */
 .cal-day.today {
-  background: var(--accent-subtle);
+  background-image: linear-gradient(var(--accent-subtle), var(--accent-subtle));
 }
 .cal-day-num {
   font-size: 12px;
@@ -1273,6 +1277,152 @@ body {
   font-size: 10px;
   color: var(--text-secondary);
   padding: 1px 4px;
+}
+
+/* Month on a narrow screen: day numbers with a dot for a task due,
+   and the selected day's tasks listed under the grid. */
+.cal-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+.cal-mini-dow {
+  padding: 4px 0 6px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.cal-mini-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  height: 46px;
+  padding: 4px 0 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.cal-mini-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  line-height: 28px;
+  text-align: center;
+  font-size: 14px;
+}
+.cal-mini-day.other .cal-mini-num {
+  color: var(--text-secondary);
+  opacity: 0.55;
+}
+.cal-mini-day.today .cal-mini-num {
+  color: var(--accent);
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.cal-mini-day.selected .cal-mini-num {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  opacity: 1;
+  box-shadow: none;
+}
+.cal-mini-dots {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 6px;
+}
+.cal-mini-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--normal);
+}
+.cal-mini-dot.high {
+  background: var(--high);
+}
+.cal-mini-dot.low {
+  background: var(--low);
+}
+.cal-mini-dot.done {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--text-secondary);
+}
+.cal-mini-more {
+  font-size: 9px;
+  line-height: 6px;
+  color: var(--text-secondary);
+}
+
+/* A day's tasks, listed under a heading that names the day. */
+.cal-day-tasks {
+  margin: 6px 12px 0;
+  border-top: 1px solid var(--border);
+}
+.cal-day-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 12px 4px 8px;
+}
+.cal-day-name {
+  font-size: 14px;
+  font-weight: 700;
+}
+.cal-day-heading.today .cal-day-name {
+  color: var(--accent);
+}
+.cal-day-note {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.cal-task {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--normal);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.cal-task.priority-high {
+  border-left-color: var(--high);
+}
+.cal-task.priority-low {
+  border-left-color: var(--low);
+}
+.cal-task-time {
+  display: flex;
+  flex: 0 0 56px;
+  flex-direction: column;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  color: var(--text-secondary);
+}
+.cal-task-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cal-task.completed .cal-task-title {
+  color: var(--completed-text);
+  text-decoration: line-through;
 }
 
 /* Week and day hour-grid calendar — Canvas 2D, split into two
