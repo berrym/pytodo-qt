@@ -3849,12 +3849,32 @@
     wrap.style.maxHeight = room < _WEEK_LIST_MIN_HEIGHT ? "" : room + "px";
   }
 
-  // The window resized, a phone turned on its side, the browser's own
-  // bars shown or hidden.
-  window.addEventListener("resize", function () {
+  function _fitCalendar() {
     _fitWeekList();
     _fitHourGrid();
-  });
+  }
+
+  // The window resized, a phone turned on its side, the browser's own
+  // bars shown or hidden.
+  window.addEventListener("resize", _fitCalendar);
+
+  // An element above the calendar changed its height: a banner shown
+  // or dismissed, the header's or the toolbar's buttons wrapped onto
+  // another line. The calendar moved with it, and the room down to the
+  // bottom bar is no longer the room it was fitted to.
+  var _ABOVE_THE_CALENDAR = [
+    "#offline-banner",
+    "#install-banner",
+    "#header",
+    "#calendar-view .cal-toolbar",
+  ];
+  if (typeof ResizeObserver === "function") {
+    var calendarMoved = new ResizeObserver(_fitCalendar);
+    _ABOVE_THE_CALENDAR.forEach(function (selector) {
+      var el = document.querySelector(selector);
+      if (el) calendarMoved.observe(el);
+    });
+  }
 
   // Brings a day's section to the top of the week's list; where the
   // whole page scrolls, to the top of the page below the header that

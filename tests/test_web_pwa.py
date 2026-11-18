@@ -954,9 +954,51 @@ class TestCalendarWeek:
         assert "overscroll-behavior: contain;" in rule
         js = self._app()
         assert "_fitWeekList();" in self._function("_renderWeekList")
-        resize = js.split('window.addEventListener("resize", function () {')[1].split("});")[0]
-        assert "_fitWeekList();" in resize
-        assert "_fitHourGrid();" in resize
+        fit_both = self._function("_fitCalendar")
+        assert "_fitWeekList();" in fit_both
+        assert "_fitHourGrid();" in fit_both
+        assert 'window.addEventListener("resize", _fitCalendar);' in js
+
+    def test_calendar_is_fitted_again_when_what_is_above_it_changes_height(self):
+        """The install banner is shown half a second after the page
+        loads, and the offline banner comes and goes with the
+        connection. Each moves the calendar down or up by its own
+        height; the part that scrolls is given the new room down to the
+        bottom bar."""
+        import re
+
+        js = self._app()
+        assert "var calendarMoved = new ResizeObserver(_fitCalendar);" in js
+        start = js.index("var _ABOVE_THE_CALENDAR = [")
+        watched = re.findall(r'"([^"]+)"', js[start : js.index("];", start)])
+        assert watched == [
+            "#offline-banner",
+            "#install-banner",
+            "#header",
+            "#calendar-view .cal-toolbar",
+        ]
+        observing = js[js.index("var calendarMoved") :]
+        observing = observing[: observing.index("\n  }\n")]
+        assert "_ABOVE_THE_CALENDAR.forEach(function (selector) {" in observing
+        assert "if (el) calendarMoved.observe(el);" in observing
+
+    def test_every_element_watched_above_the_calendar_is_in_the_page(self):
+        """In the order of the page: each of them lies above the
+        calendar's container."""
+        html = (STATIC_DIR / "index.html").read_text()
+        places = [
+            html.index('<div id="offline-banner"'),
+            html.index('<div id="install-banner"'),
+            html.index('<header id="header">'),
+            html.index('<div id="calendar-view"'),
+            html.index('<div class="cal-toolbar">'),
+            html.index('id="cal-container"'),
+        ]
+        assert places == sorted(places)
+
+    def test_a_browser_without_resize_observer_keeps_the_page(self):
+        js = self._app()
+        assert 'if (typeof ResizeObserver === "function") {' in js
 
     def test_last_day_of_the_week_can_reach_the_top_of_the_list(self):
         fit = self._function("_fitWeekList")
