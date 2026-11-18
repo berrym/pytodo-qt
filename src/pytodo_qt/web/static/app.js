@@ -564,6 +564,7 @@
     } else if (cachedBoardData && cachedBoardData.columns) {
       renderBoard(cachedBoardData);
     }
+    if (viewMode === "calendar") refreshCalendar();
   }
 
   // The rules of the queue are in offline-queue.js, loaded before this
@@ -3069,8 +3070,14 @@
     return !calDateChosen && _dayKey(calDate) !== _dayKey(new Date());
   }
 
+  // Counts the times the calendar has been drawn. An answer from the
+  // server that arrives after a later draw is for a calendar that is no
+  // longer on screen, and is dropped.
+  var calDraws = 0;
+
   function renderCalendar() {
     if (!calContainer) return;
+    calDraws++;
     if (!calDateChosen) calDate = new Date();
     var dated = calSubView !== "timeline";
     if (calToolbar) calToolbar.classList.toggle("cal-undated", !dated);
@@ -3079,6 +3086,49 @@
     else if (calSubView === "week") renderWeekView();
     else if (calSubView === "timeline") renderTimelineView();
     else renderDayView();
+    calDrawnFrom = calShownFrom();
+  }
+
+  // What the Month and the Timeline were last drawn from, to tell
+  // whether a refresh has anything new for them.
+  var calDrawnFrom = "";
+
+  // What the Month and the Timeline show: the view, its date, and the
+  // current list's dated tasks, queued changes included.
+  function calShownFrom() {
+    return fingerprint([calSubView, _dayKey(calDate), _calItems()]);
+  }
+
+  // The calendar after a refresh, or a change to the queue: it is drawn
+  // again when what it shows has changed, and left alone otherwise. The
+  // hour grids and the Timeline's charts are costly to draw, and the
+  // Timeline asks the server for its figures each time.
+  //
+  // The Month and the Timeline are drawn from the current list's tasks.
+  // The Week and the Day are drawn from the server's answer, which
+  // covers every list, so that answer is what is compared.
+  function refreshCalendar() {
+    if (!calContainer) return;
+    if (calSubView === "week" || calSubView === "day") {
+      _refreshHourGrid();
+      return;
+    }
+    if (!calDateChosen) calDate = new Date();
+    if (calShownFrom() === calDrawnFrom) return;
+    keepingPageScroll(renderCalendar);
+  }
+
+  // Draws with the page left where it was scrolled to. A calendar that
+  // is emptied and filled again is for a moment shorter than the
+  // screen, and the page would jump to its top. The page scrolls as a
+  // whole, or inside the main area, depending on the layout.
+  function keepingPageScroll(draw) {
+    var main = document.getElementById("main");
+    var inMain = main ? main.scrollTop : 0;
+    var inPage = window.scrollY;
+    draw();
+    if (main && main.scrollTop !== inMain) main.scrollTop = inMain;
+    if (window.scrollY !== inPage) window.scrollTo(window.scrollX, inPage);
   }
 
   function _calItems() {
@@ -3224,6 +3274,14 @@
     return v || fallback;
   }
 
+  // The first day and the number of days of the hour grid on screen.
+  function _hourGridRange() {
+    if (calSubView === "week") return { start: _startOfWeek(calDate), days: 7 };
+    var start = new Date(calDate);
+    start.setHours(0, 0, 0, 0);
+    return { start: start, days: 1 };
+  }
+
   function renderWeekView() {
     var startOfWeek = _startOfWeek(calDate);
     var endLabel = new Date(startOfWeek);
@@ -3258,15 +3316,38 @@
     _renderHourGrid(start, 1);
   }
 
-  function _renderHourGrid(startDate, days) {
+  // The hour grid on screen: the days it was asked for, and the
+  // server's answer it was painted from. answer is null until the first
+  // one arrives, and after a request that failed.
+  var hourGridShown = { range: "", answer: null };
+  // Counts the refreshes asked for: of two answers on their way, the
+  // later request's is the one used.
+  var hourGridRefreshes = 0;
+  // The draw whose grid is on screen with "Loading", waiting for its
+  // first answer; 0 when none is.
+  var hourGridLoading = 0;
+
+  function _fetchSegments(startDate, days) {
+    return api(
+      "/calendar/segments?start=" +
+        encodeURIComponent(_dayKey(startDate)) +
+        "&days=" +
+        days,
+    );
+  }
+
+  // Puts an empty hour grid on screen, in place of whatever the
+  // calendar showed.
+  //
+  // The hour-grid view is two stacked canvases sharing the same
+  // width so their day columns line up pixel-for-pixel. The pinned
+  // canvas carries the header row, the all-day chip row, and the
+  // overdue marker row; it stays visible while the user scrolls.
+  // The hours canvas carries the 24-hour grid and its bars; it
+  // lives inside a scrolling div so the pinned rows stay anchored.
+  function _buildHourGrid() {
     calContainer.innerHTML = "";
 
-    // The hour-grid view is two stacked canvases sharing the same
-    // width so their day columns line up pixel-for-pixel. The pinned
-    // canvas carries the header row, the all-day chip row, and the
-    // overdue marker row; it stays visible while the user scrolls.
-    // The hours canvas carries the 24-hour grid and its bars; it
-    // lives inside a scrolling div so the pinned rows stay anchored.
     var wrap = document.createElement("div");
     wrap.className = "cal-hour-grid-wrap";
 
@@ -3283,28 +3364,83 @@
 
     calContainer.appendChild(wrap);
 
+    var containerWidth = calContainer.clientWidth || 720;
+    return {
+      wrap: wrap,
+      pinned: pinnedCanvas,
+      hours: hoursCanvas,
+      scroll: scrollDiv,
+      width: Math.max(containerWidth - 4, _GRID_CANVAS_MIN_WIDTH),
+    };
+  }
+
+  function _renderHourGrid(startDate, days) {
+    var grid = _buildHourGrid();
     var loading = document.createElement("div");
     loading.className = "cal-hour-grid-loading";
     loading.textContent = "Loading\u2026";
-    wrap.appendChild(loading);
+    grid.wrap.appendChild(loading);
 
-    var containerWidth = calContainer.clientWidth || 720;
-    var canvasWidth = Math.max(containerWidth - 4, _GRID_CANVAS_MIN_WIDTH);
-
-    var startIso = _dayKey(startDate);
-
-    api(
-      "/calendar/segments?start=" +
-        encodeURIComponent(startIso) +
-        "&days=" +
-        days,
-    )
+    var draw = calDraws;
+    hourGridShown = { range: _dayKey(startDate) + "/" + days, answer: null };
+    hourGridLoading = draw;
+    _fetchSegments(startDate, days)
       .then(function (data) {
+        if (hourGridLoading === draw) hourGridLoading = 0;
+        if (draw !== calDraws) return;
         loading.remove();
-        _paintPinnedAndHours(pinnedCanvas, hoursCanvas, data, days, canvasWidth);
+        _paintPinnedAndHours(grid.pinned, grid.hours, data, days, grid.width);
+        hourGridShown.answer = fingerprint(data);
       })
       .catch(function () {
+        if (hourGridLoading === draw) hourGridLoading = 0;
+        if (draw !== calDraws) return;
         loading.textContent = "Failed to load calendar data";
+      });
+  }
+
+  // The Week or Day grid after a refresh. The server is asked again,
+  // and the grid is replaced only when its answer differs from the one
+  // on screen: with the answer in hand, so nothing says "Loading", and
+  // scrolled to the hour it was at. A request that fails leaves the
+  // grid as it is. A grid that is waiting for its first answer is left
+  // to it.
+  function _refreshHourGrid() {
+    if (hourGridLoading === calDraws) return;
+    if (!calDateChosen) calDate = new Date();
+    var range = _hourGridRange();
+    var key = _dayKey(range.start) + "/" + range.days;
+    if (key !== hourGridShown.range) {
+      // The day has changed under a calendar that follows today.
+      renderCalendar();
+      return;
+    }
+    var draw = calDraws;
+    var refresh = ++hourGridRefreshes;
+    _fetchSegments(range.start, range.days)
+      .then(function (data) {
+        // The calendar has been drawn again, or left, since.
+        if (draw !== calDraws || refresh !== hourGridRefreshes) return;
+        if (viewMode !== "calendar") return;
+        var answer = fingerprint(data);
+        if (answer === hourGridShown.answer) return;
+        var old = calContainer.querySelector(".cal-hour-grid-scroll");
+        var scrolled = old ? old.scrollTop : 0;
+        keepingPageScroll(function () {
+          var grid = _buildHourGrid();
+          _paintPinnedAndHours(
+            grid.pinned,
+            grid.hours,
+            data,
+            range.days,
+            grid.width,
+          );
+          grid.scroll.scrollTop = scrolled;
+        });
+        hourGridShown.answer = answer;
+      })
+      .catch(function () {
+        /* the grid on screen stands */
       });
   }
 

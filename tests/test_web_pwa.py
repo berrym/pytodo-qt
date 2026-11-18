@@ -562,6 +562,79 @@ class TestCalendarToolbar:
         assert 'if (viewMode === "calendar" && calDateIsStale()) renderCalendar();' in js
 
 
+class TestCalendarFollowsData:
+    """The calendar on screen is drawn again when a refresh, or a change
+    to the queue, has changed what it shows, and only then."""
+
+    def _app(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def _function(self, name: str) -> str:
+        return self._app().split(f"function {name}(")[1].split("\n  }\n")[0]
+
+    def test_every_refresh_reaches_the_calendar(self):
+        """Refreshes and queue changes end in showQueuedChanges, which
+        drew the list or the board and never the calendar."""
+        body = self._function("showQueuedChanges")
+        assert 'if (viewMode === "calendar") refreshCalendar();' in body
+
+    def test_month_and_timeline_are_drawn_again_only_when_changed(self):
+        body = self._function("refreshCalendar")
+        assert body.index("if (calShownFrom() === calDrawnFrom) return;") < body.index(
+            "keepingPageScroll(renderCalendar);"
+        )
+        assert "calDrawnFrom = calShownFrom();" in self._function("renderCalendar")
+        shown = self._function("calShownFrom")
+        assert "fingerprint([calSubView, _dayKey(calDate), _calItems()])" in shown
+
+    def test_week_and_day_compare_the_servers_answer(self):
+        """Their grid is drawn from the server's answer, which covers
+        every list; the current list's tasks do not tell whether it has
+        changed."""
+        body = self._function("refreshCalendar")
+        assert 'if (calSubView === "week" || calSubView === "day") {' in body
+        assert "_refreshHourGrid();" in body
+        grid = self._function("_refreshHourGrid")
+        assert (
+            grid.index("_fetchSegments(range.start, range.days)")
+            < grid.index("if (answer === hourGridShown.answer) return;")
+            < grid.index("_buildHourGrid();")
+        )
+
+    def test_a_refreshed_grid_keeps_its_place_and_shows_no_loading(self):
+        grid = self._function("_refreshHourGrid")
+        assert "var scrolled = old ? old.scrollTop : 0;" in grid
+        assert "grid.scroll.scrollTop = scrolled;" in grid
+        assert "keepingPageScroll(function () {" in grid
+        assert "cal-hour-grid-loading" not in grid
+        # The first draw of a grid has nothing to show yet, and says so.
+        assert "cal-hour-grid-loading" in self._function("_renderHourGrid")
+
+    def test_a_refresh_that_fails_leaves_the_grid(self):
+        grid = self._function("_refreshHourGrid")
+        failed = grid.split(".catch(function () {")[1]
+        assert "Failed" not in failed
+        assert "innerHTML" not in failed
+
+    def test_an_answer_for_a_calendar_no_longer_on_screen_is_dropped(self):
+        """A tab, an arrow or another view chosen while the answer was
+        on its way."""
+        assert "calDraws++;" in self._function("renderCalendar")
+        first = self._function("_renderHourGrid")
+        assert first.count("if (draw !== calDraws) return;") == 2
+        grid = self._function("_refreshHourGrid")
+        assert "if (draw !== calDraws || refresh !== hourGridRefreshes) return;" in grid
+        assert 'if (viewMode !== "calendar") return;' in grid
+        # A grid waiting for its first answer is left to it.
+        assert "if (hourGridLoading === calDraws) return;" in grid
+
+    def test_page_scroll_is_kept_across_a_redraw(self):
+        body = self._function("keepingPageScroll")
+        assert body.index("var inPage = window.scrollY;") < body.index("draw();")
+        assert "window.scrollTo(window.scrollX, inPage);" in body
+        assert "main.scrollTop = inMain;" in body
+
+
 class TestDeleteNotice:
     """A delete is announced once, with Undo, when it has been kept."""
 
