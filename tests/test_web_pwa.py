@@ -506,6 +506,64 @@ class TestLongPress:
         assert 'window.removeEventListener("pointerdown", stopDiscardingClick, true);' in stop
 
 
+class TestRowEntryAnimation:
+    """A redraw of the list builds every row anew. The entry animation,
+    from transparent to opaque, is for the rows that are new or have
+    changed; given to every row, it made the whole list dip each time a
+    change arrived."""
+
+    def _app(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def _function(self, name: str) -> str:
+        return self._app().split(f"function {name}(")[1].split("\n  }\n")[0]
+
+    def test_rows_are_not_built_with_the_animation(self):
+        for name in ("createItemCard", "createQueuedAddRow"):
+            assert "item-enter" not in self._function(name), name
+
+    def test_a_row_comes_in_when_it_is_new_or_changed(self):
+        body = self._function("renderItems")
+        assert "var drawnFrom = fingerprint(source);" in body
+        assert 'if (before[source.id] !== drawnFrom) el.classList.add("item-enter");' in body
+        assert "rows[source.id] = drawnFrom;" in body
+
+    def test_every_row_of_the_list_is_placed_that_way(self):
+        """Tasks, subtasks and the tasks waiting to be added."""
+        body = self._function("renderItems")
+        assert body.count("itemsContainer.appendChild(") == 1
+        assert "place(createQueuedAddRow(queued), queued);" in body
+        assert "place(createItemCard(item, items, hasChildren, isCollapsed), item);" in body
+        assert "place(el, child);" in body
+
+    def test_rows_of_another_list_are_all_new(self):
+        body = self._function("renderItems")
+        assert "var before = drawnRows.list === currentListId ? drawnRows.rows : {};" in body
+        assert "drawnRows = { list: currentListId, rows: rows };" in body
+
+    def test_what_was_drawn_is_recorded_before_an_empty_list_returns(self):
+        """A list emptied and filled again shows its rows as new."""
+        body = self._function("renderItems")
+        assert body.index("drawnRows = { list: currentListId, rows: rows };") < body.index(
+            'if (emptyMsg) emptyMsg.classList.remove("hidden");'
+        )
+
+    def test_first_appearance_of_the_list_keeps_the_animation(self):
+        """The page draws the list twice as it starts; the second draw
+        would find every row unchanged."""
+        body = self._app().split("async function init() {")[1].split("\n  }\n")[0]
+        assert body.index("await refreshCurrentList();") < body.index(
+            "drawnRows = { list: null, rows: {} };"
+        )
+        assert body.index("drawnRows = { list: null, rows: {} };") < body.index(
+            "setViewMode(viewMode);"
+        )
+
+    def test_search_results_keep_the_animation(self):
+        body = self._app().split("results.forEach(function (group) {")[1].split("\n    });\n")[0]
+        assert 'row.classList.add("item-enter");' in body
+
+
 class TestPressHoldsRedraw:
     """A redraw replaces every row and card. One that came while a row
     was pressed left the release with a new element: the tap opened

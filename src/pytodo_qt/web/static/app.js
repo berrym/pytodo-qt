@@ -2525,6 +2525,14 @@
   // Render: list view items
   // ====================================================================
 
+  // The rows of the last draw of the list: the list they were of, and
+  // for each row what it was drawn from. A redraw builds every row
+  // anew, and a row comes in with the entry animation only when it was
+  // not there before, or its task has changed since. Given to every
+  // row, the animation made the whole list dip to transparent each time
+  // a change arrived.
+  var drawnRows = { list: null, rows: {} };
+
   function renderItems(items, force) {
     if (!itemsContainer) return;
 
@@ -2541,6 +2549,18 @@
     if (!force && redrawHeld()) return;
     lastItemsFingerprint = fp;
 
+    // Another list's rows are all new to this one.
+    var before = drawnRows.list === currentListId ? drawnRows.rows : {};
+    var rows = {};
+    drawnRows = { list: currentListId, rows: rows };
+
+    function place(el, source) {
+      var drawnFrom = fingerprint(source);
+      if (before[source.id] !== drawnFrom) el.classList.add("item-enter");
+      rows[source.id] = drawnFrom;
+      itemsContainer.appendChild(el);
+    }
+
     itemsContainer.innerHTML = "";
     if ((!items || items.length === 0) && waiting.length === 0) {
       if (emptyMsg) emptyMsg.classList.remove("hidden");
@@ -2549,7 +2569,7 @@
     if (emptyMsg) emptyMsg.classList.add("hidden");
 
     waiting.forEach(function (queued) {
-      itemsContainer.appendChild(createQueuedAddRow(queued));
+      place(createQueuedAddRow(queued), queued);
     });
     if (!items) return;
 
@@ -2570,14 +2590,12 @@
     topLevel.forEach(function (item) {
       var hasChildren = childMap[item.id] && childMap[item.id].length > 0;
       var isCollapsed = hasChildren && collapsedParents[item.id];
-      itemsContainer.appendChild(
-        createItemCard(item, items, hasChildren, isCollapsed),
-      );
+      place(createItemCard(item, items, hasChildren, isCollapsed), item);
       if (hasChildren && !isCollapsed) {
         sortItems(childMap[item.id]).forEach(function (child) {
           var el = createItemCard(child, items, false, false);
           el.classList.add("subtask");
-          itemsContainer.appendChild(el);
+          place(el, child);
         });
       }
     });
@@ -2648,7 +2666,6 @@
     actions.appendChild(createQueuedAddRemoveButton(queued, "delete"));
     div.appendChild(actions);
 
-    div.classList.add("item-enter");
     return div;
   }
 
@@ -2831,9 +2848,6 @@
 
     // Swipe gestures
     attachSwipe(div, item.id, item.reminder);
-
-    // Enter animation
-    div.classList.add("item-enter");
 
     return div;
   }
@@ -5564,7 +5578,10 @@
       groupDiv.appendChild(nameDiv);
 
       group.items.forEach(function (item) {
-        groupDiv.appendChild(createItemCard(item, null));
+        // The results of a search are all new.
+        var row = createItemCard(item, null);
+        row.classList.add("item-enter");
+        groupDiv.appendChild(row);
       });
       searchResults.appendChild(groupDiv);
     });
@@ -6505,6 +6522,9 @@
     await refreshLists();
     await refreshCurrentList();
     onRouteChange();
+    // Setting the view draws the list a second time, in the same
+    // moment as the first: its rows are still new to the person.
+    drawnRows = { list: null, rows: {} };
     setViewMode(viewMode);
     connectWebSocket();
     startPolling(); // Fallback until WS connects
