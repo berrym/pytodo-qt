@@ -1067,6 +1067,211 @@ class TestCalendarContrast:
                     assert ratio >= 3.0, (theme, mark, ground, round(ratio, 2))
 
 
+class TestTextOnFills:
+    """Text and icons written on a fill of one of the theme's colours
+    reach WCAG AA in both themes. The dark theme's colours are light
+    tints; white on them is 1.7:1 to 2.2:1."""
+
+    FILLS = ("accent", "danger", "success", "warning")
+
+    def _css(self) -> str:
+        return (STATIC_DIR / "style.css").read_text()
+
+    def _rules(self) -> list[tuple[str, str]]:
+        import re
+
+        css = re.sub(r"/\*.*?\*/", "", self._css(), flags=re.S)
+        return [
+            (" ".join(selector.split()), body)
+            for selector, body in re.findall(r"([^{}@]+)\{([^{}]*)\}", css)
+        ]
+
+    def _themes(self) -> dict[str, dict[str, str]]:
+        """Every variable of the light theme, and of the dark one as the
+        light theme with the dark block's values over it."""
+        import re
+
+        css = self._css()
+        variable = re.compile(r"--([a-z-]+):\s*([^;]+);")
+        light = dict(variable.findall(css.split(":root {")[1].split("\n}\n")[0]))
+        dark_block = css.split(':root[data-theme="dark"] {')[1].split("\n}\n")[0]
+        return {"light": light, "dark": {**light, **dict(variable.findall(dark_block))}}
+
+    @staticmethod
+    def _rgba(colour: str) -> tuple[float, float, float, float]:
+        import re
+
+        colour = colour.strip()
+        if colour.startswith("#"):
+            r, g, b = (int(colour[i : i + 2], 16) for i in (1, 3, 5))
+            return (r, g, b, 1.0)
+        parts = [float(v) for v in re.findall(r"[\d.]+", colour)]
+        return (parts[0], parts[1], parts[2], parts[3] if len(parts) > 3 else 1.0)
+
+    @classmethod
+    def _over(cls, top: str | tuple, under: str | tuple) -> tuple[float, float, float, float]:
+        """One colour laid over another that is opaque."""
+        t = cls._rgba(top) if isinstance(top, str) else top
+        u = cls._rgba(under) if isinstance(under, str) else under
+        return (
+            t[0] * t[3] + u[0] * (1 - t[3]),
+            t[1] * t[3] + u[1] * (1 - t[3]),
+            t[2] * t[3] + u[2] * (1 - t[3]),
+            1.0,
+        )
+
+    @classmethod
+    def _contrast(cls, a: str | tuple, b: str | tuple) -> float:
+        def luminance(colour: str | tuple) -> float:
+            rgb = cls._rgba(colour) if isinstance(colour, str) else colour
+
+            def channel(value: float) -> float:
+                c = value / 255
+                return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+            return 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2])
+
+        la, lb = luminance(a), luminance(b)
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+    def test_each_fill_colour_has_a_text_colour_that_reaches_aa(self):
+        for theme, v in self._themes().items():
+            for fill in self.FILLS:
+                ratio = self._contrast(v["on-" + fill], v[fill])
+                assert ratio >= 4.5, (theme, fill, round(ratio, 2))
+            # A pressed or hovered accent button.
+            ratio = self._contrast(v["on-accent"], v["accent-hover"])
+            assert ratio >= 4.5, (theme, "accent-hover", round(ratio, 2))
+
+    def test_a_rule_that_fills_with_a_theme_colour_takes_its_text_from_that_colours_token(self):
+        """Every rule of the style sheet. A fill with no text colour of
+        its own is a mark, or takes the colour of what it lies in."""
+        import re
+
+        checked = 0
+        for selector, body in self._rules():
+            fill = re.search(
+                r"background(?:-color)?:\s*var\(--(accent|accent-hover|danger|success|warning)\)",
+                body,
+            )
+            colour = re.search(r"(?<![-\w])color:\s*([^;]+);", body)
+            if not fill or not colour:
+                continue
+            token = "on-accent" if fill.group(1) == "accent-hover" else "on-" + fill.group(1)
+            assert colour.group(1).strip() == f"var(--{token})", selector
+            checked += 1
+        assert checked >= 14
+
+    def test_no_rule_writes_white_by_name_or_lays_white_over_a_fill(self):
+        """White text is right on the light theme's fills only, and a
+        white overlay lightens a fill towards white text."""
+        import re
+
+        for selector, body in self._rules():
+            if selector.startswith(":root"):
+                continue
+            assert not re.search(r"(?<![-\w])color:\s*(#fff|#ffffff|white)\s*;", body), selector
+            assert not re.search(r"(?<![-\w])color:\s*rgba\(255", body), selector
+            assert not re.search(r"background(?:-color)?:\s*rgba\(255,\s*255,\s*255", body), (
+                selector
+            )
+
+    def test_controls_on_the_accent_colour(self):
+        """The list picker and the view buttons in the header, the move
+        banner's Cancel: their fills go away from the text's colour."""
+        css = self._css()
+        for selector, fill in (
+            (".list-picker-btn", "accent-overlay"),
+            (".view-toggle", "accent-overlay"),
+            (".view-btn.active", "accent-overlay-strong"),
+            (".move-banner-cancel", "accent-overlay"),
+        ):
+            rule = css.split("\n" + selector + " {")[1].split("}")[0]
+            assert f"background: var(--{fill});" in rule, selector
+        for theme, v in self._themes().items():
+            for overlay in ("accent-overlay", "accent-overlay-strong"):
+                ground = self._over(v[overlay], v["accent"])
+                ratio = self._contrast(v["on-accent"], ground)
+                assert ratio >= 4.5, (theme, overlay, round(ratio, 2))
+                # The text contrasts more on the overlay than on the accent itself.
+                assert ratio > self._contrast(v["on-accent"], v["accent"]), (theme, overlay)
+
+    def test_an_icon_that_is_not_the_selected_one_reaches_3_to_1(self):
+        """A graphic. On the accent colour, and on the fill the view
+        buttons lie on."""
+        rule = self._css().split("\n.view-btn {")[1].split("}")[0]
+        assert "color: var(--on-accent-dim);" in rule
+        for theme, v in self._themes().items():
+            for ground in (v["accent"], self._over(v["accent-overlay"], v["accent"])):
+                icon = self._over(v["on-accent-dim"], ground)
+                ratio = self._contrast(icon, ground)
+                assert ratio >= 3.0, (theme, round(ratio, 2))
+
+    def test_small_text_on_the_accent_colour_is_not_made_fainter(self):
+        """White on the light theme's accent is 4.6:1; at 80% it was
+        3.5:1."""
+        css = self._css()
+        assert "opacity" not in css.split("\n#last-synced {")[1].split("}")[0]
+        for selector in ("#install-dismiss", ".undo-btn"):
+            rule = css.split("\n" + selector + " {")[1].split("}")[0]
+            assert "color: var(--on-accent);" in rule, selector
+
+    def test_connection_dot_has_a_ring_in_the_headers_text_colour(self):
+        """Its green is 1.6:1 against the dark theme's header."""
+        rule = self._css().split("\n.dot {")[1].split("}")[0]
+        assert "box-shadow: 0 0 0 1.5px var(--on-accent);" in rule
+
+    def test_a_chip_writes_its_colour_darkened_on_a_tint_of_it(self):
+        """Written straight on the tint, the light theme's priority and
+        recurrence chips were 4.3:1."""
+        css = self._css()
+        rule = css.split("\n.entity-chip {\n  --chip-ink")[1].split("}")[0]
+        assert "background: color-mix(in srgb, var(--chip-ink) 12%, transparent);" in rule
+        assert "color: color-mix(in srgb, var(--chip-ink), #000 var(--chip-shade));" in rule
+        inks = (
+            "entity-date",
+            "entity-priority",
+            "entity-tag",
+            "entity-recurrence",
+            "entity-pomodoro",
+            "danger",
+        )
+        for ink in inks:
+            assert (
+                f"var(--{ink})"
+                in css.split("\n.entity-chip {\n  --chip-ink")[1].split(".add-meta-row")[0]
+            ), ink
+        for theme, v in self._themes().items():
+            shade = float(v["chip-shade"].rstrip("%")) / 100
+            for ink in inks:
+                r, g, b, _ = self._rgba(v[ink])
+                text = (r * (1 - shade), g * (1 - shade), b * (1 - shade), 1.0)
+                for ground in ("bg", "bg-secondary", "bg-card"):
+                    fill = self._over((r, g, b, 0.12), v[ground])
+                    ratio = self._contrast(text, fill)
+                    assert ratio >= 4.5, (theme, ink, ground, round(ratio, 2))
+
+    def test_selected_row_of_the_list_picker(self):
+        """On its tint the secondary colour falls to 4.3:1."""
+        css = self._css()
+        assert (
+            ".list-row.active .list-row-stats,\n.list-row.active .list-action-btn {\n  color: var(--text);"
+            in css
+        )
+        for theme, v in self._themes().items():
+            r, g, b, _ = self._rgba(v["accent"])
+            for ground in ("bg", "bg-card"):
+                row = self._over((r, g, b, 0.15), v[ground])
+                ratio = self._contrast(v["text"], row)
+                assert ratio >= 4.5, (theme, ground, round(ratio, 2))
+
+    def test_board_cards_grip_is_not_faded(self):
+        """A control; at half strength its glyph was 2:1."""
+        rule = self._css().split("\n.board-card-grip {")[1].split("}")[0]
+        assert "color: var(--text-secondary);" in rule
+        assert "opacity" not in rule
+
+
 class TestCalendarHourGrid:
     """The hour grid of the Day, and of the Week on a wide screen."""
 

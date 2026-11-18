@@ -341,8 +341,95 @@ def _inline_pairs() -> list[Pair]:
     return out
 
 
+def readable_text_on(fill: str) -> str:
+    """Black or white, whichever has the higher contrast with the fill.
+
+    The rule the web page uses for a label on a calendar bar. One of the
+    two always reaches the text threshold: the lower of the best ratios,
+    on a fill of middling lightness, is 4.58:1.
+    """
+    white, black = "#ffffff", "#000000"
+    return white if contrast_ratio(white, fill) >= contrast_ratio(black, fill) else black
+
+
+def _web_fill_pairs() -> list[Pair]:
+    """Text the web page writes on a fill of one of the theme's colours.
+
+    The `--on-*` variables of `web/static/style.css` are the colours of
+    text on the accent, danger, success and warning fills (the header,
+    buttons, banners, the pending count, the swipe's two sides). The
+    labels on the calendar's bars take their colour from the fill, by
+    `readable_text_on`.
+    """
+    fills = {
+        "light": {
+            "accent": "#1976d2",
+            "accent-hover": "#1565c0",
+            "danger": "#c62828",
+            "success": "#2e7d32",
+            "warning": "#b45309",
+        },
+        "dark": {
+            "accent": "#64b5f6",
+            "accent-hover": "#42a5f5",
+            "danger": "#ef9a9a",
+            "success": "#81c784",
+            "warning": "#ffb74d",
+        },
+    }
+    on_fill = {"light": "#ffffff", "dark": "#000000"}
+    bars = {
+        "light": {
+            "bar-future": "#2563eb",
+            "bar-in-work-window": "#0d9488",
+            "bar-due-now": "#d97706",
+            "bar-overdue-active": "#dc2626",
+            "bar-completed": "#059669",
+            "bar-completed-early-deviation": "#a7f3d0",
+            "bar-completed-late-deviation": "#fca5a5",
+            "bar-completed-unknown": "#6b7280",
+        },
+        "dark": {
+            "bar-future": "#93c5fd",
+            "bar-in-work-window": "#5eead4",
+            "bar-due-now": "#fbbf24",
+            "bar-overdue-active": "#f87171",
+            "bar-completed": "#34d399",
+            "bar-completed-early-deviation": "#064e3b",
+            "bar-completed-late-deviation": "#7f1d1d",
+            "bar-completed-unknown": "#9ca3af",
+        },
+    }
+    out: list[Pair] = []
+    for theme in ("light", "dark"):
+        for name, fill in fills[theme].items():
+            out.append(
+                Pair(
+                    f"web text on {name} fill", theme, on_fill[theme], fill, THRESHOLD_TEXT, "text"
+                )
+            )
+        for name, fill in bars[theme].items():
+            out.append(
+                Pair(
+                    f"web label on {name}",
+                    theme,
+                    readable_text_on(fill),
+                    fill,
+                    THRESHOLD_TEXT,
+                    "text",
+                )
+            )
+    return out
+
+
 def collect_pairs() -> list[Pair]:
-    return [*_desktop_pairs(), *_web_pairs(), *_bar_pairs(), *_inline_pairs()]
+    return [
+        *_desktop_pairs(),
+        *_web_pairs(),
+        *_web_fill_pairs(),
+        *_bar_pairs(),
+        *_inline_pairs(),
+    ]
 
 
 # ---------------------------------------------------------------------------

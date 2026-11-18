@@ -16,10 +16,27 @@
   --text-secondary: #6c6c6c;
   --border: #878787;
   --accent: #1976d2;
-  /* Text written on the accent colour: white reaches 4.6:1 on the
-     light theme's accent, and 2.2:1 on the dark theme's, which is a
-     light blue and takes black (9.5:1). */
+  /* Text written on a fill of one of the theme's colours. The dark
+     theme's colours are light tints, readable as text on its dark
+     background; as fills they take black. White on them is 1.7:1 to
+     2.2:1. On the light theme's accent, white is 4.6:1, with nothing
+     to spare: text on it is not made fainter. */
   --on-accent: #ffffff;
+  --on-danger: #ffffff;
+  --on-success: #ffffff;
+  --on-warning: #ffffff;
+  /* An icon on the accent colour that is not the selected one. A
+     graphic, which WCAG asks 3:1 of. */
+  --on-accent-dim: rgba(255, 255, 255, 0.8);
+  /* The fill of a control that lies on the accent colour, and of one
+     that is selected or pressed. They darken the light theme's accent
+     and lighten the dark theme's, away from the colour of the text. */
+  --accent-overlay: rgba(0, 0, 0, 0.15);
+  --accent-overlay-strong: rgba(0, 0, 0, 0.28);
+  /* How far a chip's colour is darkened for its text. A chip's fill is
+     a tint of its own colour, which takes some of the contrast the
+     colour has against the page. */
+  --chip-shade: 25%;
   --accent-hover: #1565c0;
   --accent-subtle: rgba(25, 118, 210, 0.08);
   --danger: #c62828;
@@ -91,6 +108,13 @@
     --border: #787878;
     --accent: #64b5f6;
     --on-accent: #000000;
+    --on-danger: #000000;
+    --on-success: #000000;
+    --on-warning: #000000;
+    --on-accent-dim: rgba(0, 0, 0, 0.65);
+    --accent-overlay: rgba(255, 255, 255, 0.25);
+    --accent-overlay-strong: rgba(255, 255, 255, 0.4);
+    --chip-shade: 0%;
     --accent-hover: #42a5f5;
     --accent-subtle: rgba(100, 181, 246, 0.08);
     --danger: #ef9a9a;
@@ -147,6 +171,13 @@
   --border: #787878;
   --accent: #64b5f6;
   --on-accent: #000000;
+  --on-danger: #000000;
+  --on-success: #000000;
+  --on-warning: #000000;
+  --on-accent-dim: rgba(0, 0, 0, 0.65);
+  --accent-overlay: rgba(255, 255, 255, 0.25);
+  --accent-overlay-strong: rgba(255, 255, 255, 0.4);
+  --chip-shade: 0%;
   --accent-hover: #42a5f5;
   --accent-subtle: rgba(100, 181, 246, 0.08);
   --danger: #ef9a9a;
@@ -271,7 +302,7 @@ body {
   width: 100%;
   padding: 10px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border: none;
   border-radius: var(--radius);
   font-size: 15px;
@@ -292,7 +323,7 @@ body {
 
 #offline-banner {
   background: var(--warning);
-  color: #fff;
+  color: var(--on-warning);
   text-align: center;
   padding: 8px 16px;
   font-size: 13px;
@@ -301,7 +332,7 @@ body {
 
 #install-banner {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -317,7 +348,7 @@ body {
 #install-dismiss {
   background: transparent;
   border: none;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--on-accent);
   font-size: 20px;
   cursor: pointer;
   padding: 0 4px;
@@ -333,7 +364,7 @@ body {
 
 #header {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   padding: calc(8px + var(--safe-top)) 16px 8px;
   position: sticky;
   top: 0;
@@ -373,8 +404,8 @@ body {
   padding: 8px 12px;
   border: none;
   border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.2);
-  color: #fff;
+  background: var(--accent-overlay);
+  color: var(--on-accent);
   font-size: 14px;
   cursor: pointer;
   min-width: 0;
@@ -406,6 +437,12 @@ body {
 
 .list-row.active {
   background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+/* On the selected row's tint the secondary colour falls to 4.3:1. */
+.list-row.active .list-row-stats,
+.list-row.active .list-action-btn {
+  color: var(--text);
 }
 
 .list-row-info {
@@ -501,15 +538,19 @@ body {
 
 #last-synced {
   font-size: 11px;
-  opacity: 0.8;
   white-space: nowrap;
 }
 
+/* The dot's colours tell the state of the connection; they are bright
+   on any header, and against the dark theme's header the green is
+   1.6:1. The ring, in the header's text colour, is what makes the dot
+   out. */
 .dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  box-shadow: 0 0 0 1.5px var(--on-accent);
 }
 .dot.online {
   background: #69f0ae;
@@ -524,7 +565,7 @@ body {
 /* View toggle (list/board segmented control) */
 .view-toggle {
   display: flex;
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--accent-overlay);
   border-radius: var(--radius-sm);
   overflow: hidden;
   flex-shrink: 0;
@@ -533,7 +574,7 @@ body {
 .view-btn {
   background: transparent;
   border: none;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--on-accent-dim);
   padding: 6px 10px;
   cursor: pointer;
   display: flex;
@@ -545,8 +586,8 @@ body {
 }
 
 .view-btn.active {
-  background: rgba(255, 255, 255, 0.25);
-  color: #fff;
+  background: var(--accent-overlay-strong);
+  color: var(--on-accent);
 }
 
 /* Undo/redo buttons */
@@ -559,7 +600,7 @@ body {
 .undo-btn {
   background: transparent;
   border: none;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--on-accent);
   padding: 6px 8px;
   cursor: pointer;
   display: flex;
@@ -572,7 +613,7 @@ body {
 }
 
 .undo-btn:not(:disabled):hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--accent-overlay);
 }
 
 .undo-btn:disabled {
@@ -581,7 +622,7 @@ body {
 }
 
 .view-btn:hover {
-  color: #fff;
+  color: var(--on-accent);
 }
 
 /* ============================================================
@@ -1647,7 +1688,7 @@ body {
 
 .chip.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 
@@ -1963,45 +2004,29 @@ body {
   font-weight: 500;
 }
 
-.entity-chip.date {
-  background: rgba(21, 101, 192, 0.12);
-  color: var(--entity-date);
-}
-.entity-chip.time {
-  background: rgba(21, 101, 192, 0.12);
-  color: var(--entity-date);
+/* A chip names its colour; its text is that colour, darkened in the
+   light theme, on a tint of the same colour. Written straight on the
+   tint, the light theme's priority and recurrence chips were 4.3:1. */
+.entity-chip {
+  --chip-ink: var(--entity-date);
+  background: color-mix(in srgb, var(--chip-ink) 12%, transparent);
+  color: color-mix(in srgb, var(--chip-ink), #000 var(--chip-shade));
 }
 .entity-chip.priority {
-  background: rgba(230, 81, 0, 0.12);
-  color: var(--entity-priority);
+  --chip-ink: var(--entity-priority);
 }
 .entity-chip.tag {
-  background: rgba(0, 105, 92, 0.12);
-  color: var(--entity-tag);
+  --chip-ink: var(--entity-tag);
 }
 .entity-chip.recurrence {
-  background: rgba(46, 125, 50, 0.12);
-  color: var(--entity-recurrence);
+  --chip-ink: var(--entity-recurrence);
 }
-.entity-chip.pomodoro {
-  background: rgba(106, 27, 154, 0.12);
-  color: var(--entity-pomodoro);
-}
-.entity-chip.time_block {
-  background: rgba(21, 101, 192, 0.12);
-  color: var(--entity-date);
-}
+.entity-chip.pomodoro,
 .entity-chip.event_date {
-  background: rgba(124, 58, 237, 0.12);
-  color: #7c3aed;
-}
-.entity-chip.advance_reminder {
-  background: rgba(21, 101, 192, 0.12);
-  color: var(--entity-date);
+  --chip-ink: var(--entity-pomodoro);
 }
 .entity-chip.condition {
-  background: rgba(220, 38, 38, 0.12);
-  color: #dc2626;
+  --chip-ink: var(--danger);
 }
 
 .add-meta-row {
@@ -2025,7 +2050,7 @@ body {
   border: none;
   border-radius: var(--radius);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
@@ -2147,7 +2172,7 @@ body {
 
 .btn-toggle.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 
@@ -2278,7 +2303,7 @@ body {
   border: 1px solid var(--accent);
   border-radius: var(--radius);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
@@ -2458,7 +2483,7 @@ body {
 
 .nav-btn.add-btn {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-radius: 50%;
   width: 48px;
   height: 48px;
@@ -2493,7 +2518,7 @@ body {
   padding: 0 4px;
   border-radius: 8px;
   background: var(--danger);
-  color: #fff;
+  color: var(--on-danger);
   font-size: 10px;
   font-weight: 700;
   line-height: 16px;
@@ -2554,7 +2579,6 @@ body {
   padding: 0 20px;
   font-size: 20px;
   font-weight: 600;
-  color: #fff;
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.15s;
@@ -2567,11 +2591,13 @@ body {
 .swipe-action-left {
   left: 0;
   background: var(--success);
+  color: var(--on-success);
 }
 
 .swipe-action-right {
   right: 0;
   background: var(--danger);
+  color: var(--on-danger);
 }
 
 /* ============================================================
@@ -2873,9 +2899,8 @@ body {
   font-size: 16px;
   cursor: grab;
   border-radius: var(--radius-sm);
-  opacity: 0.5;
   transition:
-    opacity 0.15s,
+    color 0.15s,
     background 0.15s;
   touch-action: none;
   -webkit-user-select: none;
@@ -2883,8 +2908,8 @@ body {
 }
 
 .board-card-grip:hover {
-  opacity: 1;
   background: var(--hover);
+  color: var(--text);
 }
 
 .board-card.held {
@@ -2905,7 +2930,7 @@ body {
   gap: 8px;
   padding: 10px 16px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 14px;
   font-weight: 500;
   position: sticky;
@@ -2922,9 +2947,9 @@ body {
 }
 
 .move-banner-cancel {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--accent-overlay);
   border: none;
-  color: #fff;
+  color: var(--on-accent);
   padding: 4px 12px;
   border-radius: var(--radius-sm);
   font-size: 13px;
@@ -2934,7 +2959,7 @@ body {
 }
 
 .move-banner-cancel:active {
-  background: rgba(255, 255, 255, 0.35);
+  background: var(--accent-overlay-strong);
 }
 
 /* Drop zones */
