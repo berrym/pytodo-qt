@@ -1332,6 +1332,129 @@
   }
 
   // ====================================================================
+  // A press in progress holds the redraw
+  // ====================================================================
+
+  // The list, the board and the calendar are drawn again when their
+  // data changes, and a redraw replaces every row and card. One that
+  // came while a row was pressed left the release with a new element:
+  // the tap opened nothing, since a click needs its press and release
+  // on the same element, a swipe or a drag lost what it was moving, and
+  // the long-press timer of the old row, never cancelled, opened the
+  // task menu.
+  //
+  // While a pointer is down in one of the views, a redraw that is not
+  // forced waits, and is made when the press is over. A press that did
+  // not move ends with a click, by mouse and by a tap; the redraw waits
+  // for it, so that the click finds the element that was pressed. A
+  // long press by touch sends none, and the wait for it is bounded.
+  var pressHeld = false;
+  var pressByMouse = false;
+  var pressMoved = false;
+  var pressStartX = 0;
+  var pressStartY = 0;
+  var pressEndTimer = null;
+  var redrawWaiting = false;
+  var PRESS_MOVE_THRESHOLD = 10;
+  var PRESS_CLICK_WAIT_MS = 300;
+
+  // Whether a redraw must wait for a press to end. One that must is
+  // remembered, and made by endPress.
+  function redrawHeld() {
+    if (!pressHeld) return false;
+    redrawWaiting = true;
+    return true;
+  }
+
+  function endPress() {
+    clearTimeout(pressEndTimer);
+    pressEndTimer = null;
+    if (!pressHeld) return;
+    pressHeld = false;
+    if (redrawWaiting) {
+      redrawWaiting = false;
+      showQueuedChanges();
+    }
+  }
+
+  window.addEventListener(
+    "pointerdown",
+    function (e) {
+      // The primary button, a finger or a pen; the release of another
+      // button can go to the browser's own menu.
+      if (e.button !== 0) return;
+      if (!e.target || !e.target.closest) return;
+      if (!e.target.closest("#list-view, #board-view, #calendar-view")) return;
+      clearTimeout(pressEndTimer);
+      pressEndTimer = null;
+      pressHeld = true;
+      pressByMouse = e.pointerType === "mouse";
+      pressMoved = false;
+      pressStartX = e.clientX;
+      pressStartY = e.clientY;
+    },
+    true,
+  );
+
+  window.addEventListener(
+    "pointermove",
+    function (e) {
+      if (!pressHeld || pressMoved) return;
+      if (
+        Math.abs(e.clientX - pressStartX) > PRESS_MOVE_THRESHOLD ||
+        Math.abs(e.clientY - pressStartY) > PRESS_MOVE_THRESHOLD
+      ) {
+        pressMoved = true;
+      }
+    },
+    true,
+  );
+
+  window.addEventListener(
+    "pointerup",
+    function () {
+      if (!pressHeld) return;
+      // After the handlers of the release itself; and, for a press that
+      // did not move, after the click that follows it.
+      clearTimeout(pressEndTimer);
+      pressEndTimer = setTimeout(
+        endPress,
+        pressMoved ? 0 : PRESS_CLICK_WAIT_MS,
+      );
+    },
+    true,
+  );
+
+  window.addEventListener(
+    "click",
+    function () {
+      if (!pressEndTimer) return;
+      // The click the press was waiting for: after its handlers.
+      clearTimeout(pressEndTimer);
+      pressEndTimer = setTimeout(endPress, 0);
+    },
+    true,
+  );
+
+  // A press the browser takes over (a scroll, its own menu) has no
+  // release for the page; nor has one on a page that is put away.
+  window.addEventListener("pointercancel", endPress, true);
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) endPress();
+  });
+  // The browser's menu takes the release of a mouse press that opens
+  // it. A finger held down sends the same event, on a phone before the
+  // long press here is due, and its press goes on: ending it there
+  // would redraw the row a moment before its menu was to open.
+  window.addEventListener(
+    "contextmenu",
+    function () {
+      if (pressByMouse) endPress();
+    },
+    true,
+  );
+
+  // ====================================================================
   // Long-press detection
   // ====================================================================
 
@@ -1383,8 +1506,13 @@
       startY = point.clientY;
       el.classList.add("long-press-active");
       timer = setTimeout(function () {
-        fired = true;
+        timer = null;
         el.classList.remove("long-press-active");
+        // Drawn again while it was pressed, by a redraw that does not
+        // wait: the release went to the element that took its place,
+        // and this one never heard of it.
+        if (!el.isConnected) return;
+        fired = true;
         discardNextClick();
         onLongPress(e);
       }, HOLD_MS);
@@ -2410,6 +2538,7 @@
     // Skip re-render if data hasn't changed (eliminates poll flicker)
     var fp = fingerprint([waiting, items]);
     if (!force && fp === lastItemsFingerprint) return;
+    if (!force && redrawHeld()) return;
     lastItemsFingerprint = fp;
 
     itemsContainer.innerHTML = "";
@@ -2733,6 +2862,7 @@
     // Skip re-render if data hasn't changed (eliminates poll flicker)
     var fp = fingerprint(data);
     if (!force && fp === lastBoardFingerprint) return;
+    if (!force && redrawHeld()) return;
     lastBoardFingerprint = fp;
 
     boardContainer.innerHTML = "";
@@ -3109,6 +3239,7 @@
   // covers every list, so that answer is what is compared.
   function refreshCalendar() {
     if (!calContainer) return;
+    if (redrawHeld()) return;
     if (calSubView === "week" || calSubView === "day") {
       _refreshHourGrid();
       return;
@@ -3424,6 +3555,8 @@
         if (viewMode !== "calendar") return;
         var answer = fingerprint(data);
         if (answer === hourGridShown.answer) return;
+        // A press that began while the answer was on its way.
+        if (redrawHeld()) return;
         var old = calContainer.querySelector(".cal-hour-grid-scroll");
         var scrolled = old ? old.scrollTop : 0;
         keepingPageScroll(function () {

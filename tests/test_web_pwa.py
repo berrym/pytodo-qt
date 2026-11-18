@@ -506,6 +506,97 @@ class TestLongPress:
         assert 'window.removeEventListener("pointerdown", stopDiscardingClick, true);' in stop
 
 
+class TestPressHoldsRedraw:
+    """A redraw replaces every row and card. One that came while a row
+    was pressed left the release with a new element: the tap opened
+    nothing, and the old row's long-press timer opened the task menu."""
+
+    def _app(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def _function(self, name: str) -> str:
+        return self._app().split(f"function {name}(")[1].split("\n  }\n")[0]
+
+    def test_list_board_and_calendar_wait_for_the_press_to_end(self):
+        """After the check for unchanged data, so that a refresh with
+        nothing new leaves nothing waiting; a forced redraw does not
+        wait."""
+        items = self._function("renderItems")
+        assert (
+            items.index("if (!force && fp === lastItemsFingerprint) return;")
+            < items.index("if (!force && redrawHeld()) return;")
+            < items.index("lastItemsFingerprint = fp;")
+        )
+        board = self._function("renderBoard")
+        assert (
+            board.index("if (!force && fp === lastBoardFingerprint) return;")
+            < board.index("if (!force && redrawHeld()) return;")
+            < board.index("lastBoardFingerprint = fp;")
+        )
+        assert "if (redrawHeld()) return;" in self._function("refreshCalendar")
+        # The hour grid's answer can arrive after a press has begun.
+        grid = self._function("_refreshHourGrid")
+        assert grid.index("if (redrawHeld()) return;") < grid.index("_buildHourGrid();")
+
+    def test_a_held_redraw_is_made_when_the_press_ends(self):
+        held = self._function("redrawHeld")
+        assert "if (!pressHeld) return false;" in held
+        assert "redrawWaiting = true;" in held
+        end = self._function("endPress")
+        assert "pressHeld = false;" in end
+        assert end.index("redrawWaiting = false;") < end.index("showQueuedChanges();")
+
+    def test_press_is_followed_from_the_window(self):
+        """Before any handler of the pressed element, which may stop the
+        event; in the three views only."""
+        js = self._app()
+        start = js.index('  window.addEventListener(\n    "pointerdown",')
+        down = js[start : js.index("    true,\n  );", start)]
+        assert 'e.target.closest("#list-view, #board-view, #calendar-view")' in down
+        assert "if (e.button !== 0) return;" in down
+        assert "pressHeld = true;" in down
+
+    def test_release_waits_for_its_handlers_and_for_the_click(self):
+        """A redraw at the release itself would replace the row before
+        its click, or under the handler of a swipe or a drag."""
+        js = self._app()
+        start = js.index('  window.addEventListener(\n    "pointerup",')
+        up = js[start : js.index("    true,\n  );", start)]
+        assert "pressMoved ? 0 : PRESS_CLICK_WAIT_MS," in up
+        assert "endPress();" not in up
+        start = js.index('  window.addEventListener(\n    "click",')
+        click = js[start : js.index("    true,\n  );", start)]
+        assert "if (!pressEndTimer) return;" in click
+        assert "pressEndTimer = setTimeout(endPress, 0);" in click
+
+    def test_a_press_without_a_release_does_not_hold_the_page(self):
+        js = self._app()
+        assert 'window.addEventListener("pointercancel", endPress, true);' in js
+        assert "if (document.hidden) endPress();" in js
+
+    def test_a_finger_held_down_is_not_ended_by_the_browsers_menu_event(self):
+        """A phone sends contextmenu for a finger held down, before the
+        long press here is due. Ending the press there drew the row
+        again, and its menu never opened. A mouse press that opens the
+        browser's menu loses its release to it, and is ended."""
+        js = self._app()
+        assert 'window.addEventListener("contextmenu", endPress, true);' not in js
+        start = js.index('  window.addEventListener(\n    "contextmenu",')
+        menu = js[start : js.index("    true,\n  );", start)]
+        assert "if (pressByMouse) endPress();" in menu
+        assert 'pressByMouse = e.pointerType === "mouse";' in js
+
+    def test_timer_of_a_replaced_row_does_nothing(self):
+        """A redraw that does not wait can still replace a pressed row."""
+        body = self._function("attachLongPress")
+        timer = body.split("timer = setTimeout(function () {")[1].split("}, HOLD_MS);")[0]
+        assert (
+            timer.index('el.classList.remove("long-press-active");')
+            < timer.index("if (!el.isConnected) return;")
+            < timer.index("onLongPress(e);")
+        )
+
+
 class TestCalendarToolbar:
     """The calendar's arrows and Today act on the month, week and day
     views; the Timeline is not about one date."""
