@@ -975,6 +975,98 @@ class TestCalendarWeek:
             assert selector in css, selector
 
 
+class TestCalendarContrast:
+    """Text in the calendar reaches the 4.5:1 that WCAG AA asks of it,
+    in the light theme and in the dark one."""
+
+    def _css(self) -> str:
+        return (STATIC_DIR / "style.css").read_text()
+
+    def _themes(self) -> dict[str, dict[str, str]]:
+        """The colour variables of the light theme, and of the dark one
+        as the light theme with the dark block's values over it."""
+        import re
+
+        css = self._css()
+        light_block = css.split(":root {")[1].split("\n}\n")[0]
+        dark_block = css.split(':root[data-theme="dark"] {')[1].split("\n}\n")[0]
+        variable = re.compile(r"--([a-z-]+):\s*(#[0-9a-fA-F]{6});")
+        light = dict(variable.findall(light_block))
+        return {"light": light, "dark": {**light, **dict(variable.findall(dark_block))}}
+
+    @staticmethod
+    def _contrast(a: str, b: str) -> float:
+        def luminance(colour: str) -> float:
+            def channel(value: int) -> float:
+                c = value / 255
+                return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+            r, g, b_ = (int(colour[i : i + 2], 16) for i in (1, 3, 5))
+            return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b_)
+
+        la, lb = luminance(a), luminance(b)
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+    def test_both_dark_blocks_set_the_same_colours(self):
+        """The dark theme is written twice, for the system's setting and
+        for the page's own switch."""
+        import re
+
+        css = self._css()
+        by_system = css.split(':root:not([data-theme="light"]) {')[1].split("\n  }\n")[0]
+        by_switch = css.split(':root[data-theme="dark"] {')[1].split("\n}\n")[0]
+        variable = re.compile(
+            r"--(on-accent|accent|text-secondary|completed-text):\s*(#[0-9a-fA-F]{6});"
+        )
+        assert dict(variable.findall(by_system)) == dict(variable.findall(by_switch))
+
+    def test_text_on_the_accent_colour(self):
+        """The selected day, today in the week's strip, the active tab.
+        White on the dark theme's accent, a light blue, is 2.2:1."""
+        for theme, colours in self._themes().items():
+            ratio = self._contrast(colours["on-accent"], colours["accent"])
+            assert ratio >= 4.5, (theme, round(ratio, 2))
+        css = self._css()
+        for selector in (
+            ".cal-tab.active",
+            ".cal-mini-day.selected .cal-mini-num",
+            ".cal-week-strip .cal-mini-day.today .cal-mini-num",
+        ):
+            rule = css.split(selector + " {")[1].split("}")[0]
+            assert "background: var(--accent);" in rule, selector
+            assert "color: var(--on-accent);" in rule, selector
+
+    def test_text_of_the_month_and_the_week_list(self):
+        pairs = (
+            ("day number", "text", "bg"),
+            ("day of another month, weekday names, notes", "text-secondary", "bg"),
+            ("today's number and heading", "accent", "bg"),
+            ("the Overdue heading", "high", "bg"),
+            ("a task's title", "text", "bg-card"),
+            ("a task's time", "text-secondary", "bg-card"),
+            ("a done task's title", "completed-text", "bg-card"),
+        )
+        for theme, colours in self._themes().items():
+            for what, fg, bg in pairs:
+                ratio = self._contrast(colours[fg], colours[bg])
+                assert ratio >= 4.5, (theme, what, round(ratio, 2))
+
+    def test_a_day_of_another_month_is_dimmed_by_colour_alone(self):
+        """Faded as well, its number fell to 2.2:1 in the light theme
+        and 2.9:1 in the dark one. It is a button like the others."""
+        rule = self._css().split(".cal-mini-day.other .cal-mini-num {")[1].split("}")[0]
+        assert "color: var(--text-secondary);" in rule
+        assert "opacity" not in rule
+
+    def test_dots_and_task_edges_stand_out_as_graphics(self):
+        """WCAG asks 3:1 of a graphic that carries meaning."""
+        for theme, colours in self._themes().items():
+            for mark in ("normal", "high", "low", "text-secondary"):
+                for ground in ("bg", "bg-card"):
+                    ratio = self._contrast(colours[mark], colours[ground])
+                    assert ratio >= 3.0, (theme, mark, ground, round(ratio, 2))
+
+
 class TestCalendarHourGrid:
     """The hour grid of the Day, and of the Week on a wide screen."""
 
@@ -1032,6 +1124,68 @@ class TestCalendarHourGrid:
         body = self._function("_installHourGridClickHandler")
         assert "var scaleX = canvas._unitWidth / rect.width;" in body
         assert "var scaleY = canvas._unitHeight / rect.height;" in body
+
+    @staticmethod
+    def _luminance(colour: str) -> float:
+        """WCAG relative luminance of a #rrggbb colour."""
+
+        def channel(value: int) -> float:
+            c = value / 255
+            return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+        r, g, b = (int(colour[i : i + 2], 16) for i in (1, 3, 5))
+        return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+    def test_a_label_is_black_or_white_whichever_the_fill_sets_off(self):
+        """The page's own text colour is chosen for the page's
+        background. On the dark theme's bars it measured 1.1:1 to 2.1:1,
+        and on four of the light theme's six, under 4.5:1."""
+        body = self._function("_barTextColor")
+        assert "var onWhite = 1.05 / (lum + 0.05);" in body
+        assert "var onBlack = (lum + 0.05) / 0.05;" in body
+        assert 'return onWhite >= onBlack ? "#ffffff" : "#000000";' in body
+        luminance = self._function("_luminance")
+        assert "return 0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2];" in luminance
+        assert "c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)" in luminance
+
+    def test_every_bar_colour_of_both_themes_gives_its_label_aa_contrast(self):
+        """WCAG AA asks 4.5:1 of text. The rule above, worked here for
+        every fill in the style sheet."""
+        import re
+
+        css = (STATIC_DIR / "style.css").read_text()
+        fills = set(re.findall(r"--bar-[a-z-]+:\s*(#[0-9a-fA-F]{6});", css))
+        assert len(fills) >= 12
+        for fill in sorted(fills):
+            lum = self._luminance(fill)
+            best = max(1.05 / (lum + 0.05), (lum + 0.05) / 0.05)
+            assert best >= 4.5, (fill, round(best, 2))
+
+    def test_no_fill_can_leave_both_black_and_white_short_of_aa(self):
+        """The two contrasts cross at 4.58:1, their lowest."""
+        worst = min(max(1.05 / (n / 1000 + 0.05), (n / 1000 + 0.05) / 0.05) for n in range(1001))
+        assert worst >= 4.5
+
+    def test_no_label_on_a_bar_uses_the_pages_text_colour(self):
+        for name in ("_paintHourBar", "_paintAllDayChip", "_paintMarkerChip"):
+            body = self._function(name)
+            assert '_themeColor("text"' not in body, name
+            assert 'ctx.fillStyle = "#ffffff";' not in body, name
+            assert "_paintLabelOn(ctx, text," in body, name
+
+    def test_a_bar_of_two_colours_has_its_label_written_on_each(self):
+        """Each part of the label is on the colour it was chosen for."""
+        bar = self._function("_paintHourBar")
+        assert "{ x: x, y: y, w: splitX - x, h: h, fill: base }," in bar
+        assert "{ x: splitX, y: y, w: x + w - splitX, h: h, fill: deviation }," in bar
+        assert "zones.forEach(function (zone) {" in bar
+        label = self._function("_paintLabelOn")
+        assert (
+            label.index("ctx.rect(zone.x, zone.y, zone.w, zone.h);")
+            < label.index("ctx.clip();")
+            < label.index("ctx.fillStyle = _barTextColor(zone.fill);")
+            < label.index("ctx.fillText(text, tx, ty);")
+        )
 
     def test_hours_scroll_in_the_room_above_the_bottom_bar(self):
         """The page, with the toolbar, stays in place."""

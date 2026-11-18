@@ -4356,10 +4356,64 @@
     }
   }
 
+  // A canvas used to read a colour in one form, whatever form the
+  // style sheet gives it in.
+  var _colorProbe = document.createElement("canvas").getContext("2d");
+
+  // The relative luminance of a colour, as WCAG defines it: 0 for
+  // black, 1 for white. null for a colour that is not opaque or cannot
+  // be read.
+  function _luminance(color) {
+    _colorProbe.fillStyle = "#000000";
+    _colorProbe.fillStyle = color;
+    var match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(
+      _colorProbe.fillStyle,
+    );
+    if (!match) return null;
+    var parts = [1, 2, 3].map(function (n) {
+      var c = parseInt(match[n], 16) / 255;
+      return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2];
+  }
+
+  // The colour of text written on a filled bar or chip: black or
+  // white, whichever stands out more from the fill by WCAG's contrast
+  // ratio. One of the two always reaches the 4.5:1 asked of text; the
+  // worst fill, of middling lightness, gives 4.58:1 to both.
+  //
+  // The page's own text colour does not: it is chosen for the page's
+  // background, and the bars are light in the dark theme and saturated
+  // in the light one. On the dark theme's bars it measured 1.1:1 to
+  // 2.1:1, and on four of the light theme's six, under 4.5:1.
+  function _barTextColor(fill) {
+    var lum = _luminance(fill);
+    if (lum === null) return _themeColor("text", "#333");
+    var onWhite = 1.05 / (lum + 0.05);
+    var onBlack = (lum + 0.05) / 0.05;
+    return onWhite >= onBlack ? "#ffffff" : "#000000";
+  }
+
+  // Writes a label on a fill, in the colour that fill calls for, and
+  // only inside the fill's own rectangle. A bar of two colours has its
+  // label written once for each, so that every part of it is on the
+  // colour it was chosen for.
+  function _paintLabelOn(ctx, text, tx, ty, zone) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(zone.x, zone.y, zone.w, zone.h);
+    ctx.clip();
+    ctx.fillStyle = _barTextColor(zone.fill);
+    ctx.fillText(text, tx, ty);
+    ctx.restore();
+  }
+
   function _paintHourBar(ctx, hitRects, item, seg, x, y, w, h) {
     var base = _paletteColor(seg.state);
     var deviation = _paletteDeviation(seg.state);
-    var labelColor = _themeColor("text", "#333");
+    var labelColor = _barTextColor(base);
+    // The parts of the bar by colour, for its label.
+    var zones = [{ x: x, y: y, w: w, h: h, fill: base }];
 
     // Two-zone overlay for completed bars: base color for the
     // relevant span, deviation color for the surplus or overflow.
@@ -4386,6 +4440,10 @@
           ctx.fillRect(x, y, splitX - x, h);
           ctx.fillStyle = deviation;
           ctx.fillRect(splitX, y, x + w - splitX, h);
+          zones = [
+            { x: x, y: y, w: splitX - x, h: h, fill: base },
+            { x: splitX, y: y, w: x + w - splitX, h: h, fill: deviation },
+          ];
           paintedTwoZone = true;
         } else if (seg.state === "completed_late" && completed > end) {
           // Planned span fills the bar; overflow can't be drawn
@@ -4420,10 +4478,11 @@
 
     // Label — only when the bar is tall enough for text to fit.
     if (h >= 14) {
-      ctx.fillStyle = labelColor;
       ctx.font = "11px sans-serif";
       var text = (item.reminder || "").substring(0, Math.floor(w / 7));
-      ctx.fillText(text, x + 4, y + 12);
+      zones.forEach(function (zone) {
+        _paintLabelOn(ctx, text, x + 4, y + 12, zone);
+      });
     }
 
     hitRects.push({ x: x, y: y, w: w, h: h, item_id: seg.item_id });
@@ -4432,15 +4491,19 @@
   function _paintAllDayChip(ctx, hitRects, item, seg, x, y, w) {
     var h = _CHIP_HEIGHT;
     var color = _paletteColor(seg.state);
-    var labelColor = _themeColor("text", "#333");
 
     ctx.fillStyle = color;
     ctx.fillRect(x, y, w, h);
 
-    ctx.fillStyle = labelColor;
     ctx.font = "11px sans-serif";
     var text = (item.reminder || "").substring(0, Math.floor(w / 7));
-    ctx.fillText(text, x + 4, y + h - 6);
+    _paintLabelOn(ctx, text, x + 4, y + h - 6, {
+      x: x,
+      y: y,
+      w: w,
+      h: h,
+      fill: color,
+    });
 
     hitRects.push({ x: x, y: y, w: w, h: h, item_id: seg.item_id });
   }
@@ -4451,10 +4514,15 @@
     ctx.fillStyle = color;
     ctx.fillRect(x, y, w, h);
 
-    ctx.fillStyle = "#ffffff";
     ctx.font = "bold 10px sans-serif";
     var text = seg.marker_label || (item.reminder || "").substring(0, 14);
-    ctx.fillText(text, x + 4, y + h - 5);
+    _paintLabelOn(ctx, text, x + 4, y + h - 5, {
+      x: x,
+      y: y,
+      w: w,
+      h: h,
+      fill: color,
+    });
 
     hitRects.push({ x: x, y: y, w: w, h: h, item_id: seg.item_id });
   }

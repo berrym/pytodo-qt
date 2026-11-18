@@ -16,6 +16,10 @@
   --text-secondary: #6c6c6c;
   --border: #878787;
   --accent: #1976d2;
+  /* Text written on the accent colour: white reaches 4.6:1 on the
+     light theme's accent, and 2.2:1 on the dark theme's, which is a
+     light blue and takes black (9.5:1). */
+  --on-accent: #ffffff;
   --accent-hover: #1565c0;
   --accent-subtle: rgba(25, 118, 210, 0.08);
   --danger: #c62828;
@@ -86,6 +90,7 @@
     --text-secondary: #9e9e9e;
     --border: #787878;
     --accent: #64b5f6;
+    --on-accent: #000000;
     --accent-hover: #42a5f5;
     --accent-subtle: rgba(100, 181, 246, 0.08);
     --danger: #ef9a9a;
@@ -141,6 +146,7 @@
   --text-secondary: #9e9e9e;
   --border: #787878;
   --accent: #64b5f6;
+  --on-accent: #000000;
   --accent-hover: #42a5f5;
   --accent-subtle: rgba(100, 181, 246, 0.08);
   --danger: #ef9a9a;
@@ -1183,7 +1189,7 @@ body {
 }
 .cal-tab.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 /* Where one row cannot hold the toolbar, it has two: the arrows at
@@ -1314,9 +1320,9 @@ body {
   text-align: center;
   font-size: 14px;
 }
+/* Dimmed by colour alone: faded as well, the number fell to 2.2:1. */
 .cal-mini-day.other .cal-mini-num {
   color: var(--text-secondary);
-  opacity: 0.55;
 }
 .cal-mini-day.today .cal-mini-num {
   color: var(--accent);
@@ -1325,9 +1331,8 @@ body {
 }
 .cal-mini-day.selected .cal-mini-num {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 700;
-  opacity: 1;
   box-shadow: none;
 }
 .cal-mini-dots {
@@ -1369,7 +1374,7 @@ body {
 }
 .cal-week-strip .cal-mini-day.today .cal-mini-num {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   box-shadow: none;
 }
 /* The list scrolls in the room under the strip; the height is set
