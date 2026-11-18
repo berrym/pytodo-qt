@@ -886,7 +886,7 @@ class AddTodoDialog(QDialog):
         btn.setStyleSheet(
             "QToolButton { padding: 4px 10px; border: 1px solid palette(mid);"
             " border-radius: 4px; background: palette(base); font-size: 11px; }"
-            " QToolButton:hover { background: palette(midlight); }"
+            " QToolButton:hover { background: palette(button); }"
             " QToolButton::menu-indicator { image: none; width: 0; }"
         )
         return btn

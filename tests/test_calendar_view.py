@@ -4866,6 +4866,7 @@ def _agenda_test_colors() -> dict[str, str]:
         "completed_text": "#888888",
         "border": "#cccccc",
         "highlight": "#0078d4",
+        "highlight_text": "#ffffff",
         "priority_high": "#b12f25",
         "priority_normal": "#1b5f98",
         "priority_low": "#95a5a6",
@@ -5078,6 +5079,7 @@ class TestAgendaRowDragInitiation:
         colors = {
             "text": QColor("black").name(),
             "completed_text": QColor("gray").name(),
+            "highlight_text": "#ffffff",
             "priority_high": "#ff0000",
             "priority_normal": "#999999",
             "priority_low": "#00cc00",

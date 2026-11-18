@@ -73,7 +73,7 @@ LIGHT_COLORS = {
     "priority_low": "#757575",
     "due_overdue": "#b12f25",
     "due_today": "#92611f",
-    "due_soon": "#2a7e4d",
+    "due_soon": "#297a4b",
     # Smart-input entity highlight palette — applied as foreground
     # color on parsed entity spans. Tuned for >= 4.5:1 contrast on the
     # light base background; values picked from Tailwind 700 /

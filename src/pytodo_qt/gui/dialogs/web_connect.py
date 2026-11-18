@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ...core.bar_palette import readable_text_on
 from ..styles.themes import get_colors
 
 if TYPE_CHECKING:
@@ -162,12 +163,15 @@ def _step_row(number: int, title: str, description: str, widget: QWidget | None 
 
 
 def _security_badge(text: str, color: str) -> QLabel:
+    """A pill of `color` (`#rrggbb`) with `text` in black or white,
+    whichever has the higher contrast with it."""
     lbl = QLabel(text)
     lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
     lbl.setFixedHeight(22)
     lbl.setStyleSheet(
-        f"background: {color}; color: white; font-size: 10px; font-weight: bold;"
-        f" border-radius: 11px; padding: 0 10px;"
+        f"background: {color}; color: {readable_text_on(color)};"
+        " font-size: 10px; font-weight: bold;"
+        " border-radius: 11px; padding: 0 10px;"
     )
     return lbl
 
@@ -291,7 +295,8 @@ class _MethodCard(QFrame):
         if recommended:
             ribbon = QLabel(self.tr("Recommended"))
             ribbon.setStyleSheet(
-                "background: palette(highlight); color: white; font-size: 9px;"
+                "background: palette(highlight); color: palette(highlighted-text);"
+                " font-size: 9px;"
                 " font-weight: bold; border-radius: 4px; padding: 2px 8px;"
             )
             ribbon.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -326,7 +331,8 @@ class _MethodCard(QFrame):
 
         btn = QPushButton(self.tr("Start \u2192"))
         btn.setStyleSheet(
-            "QPushButton { background: palette(highlight); color: white; border: none;"
+            "QPushButton { background: palette(highlight);"
+            " color: palette(highlighted-text); border: none;"
             " border-radius: 6px; padding: 8px 16px; font-weight: bold; font-size: 13px; }"
         )
         self._start_btn = btn
@@ -420,7 +426,8 @@ class _DeviceRow(QFrame):
                 "QPushButton { color: palette(highlight); font-size: 11px;"
                 " border: 1px solid palette(highlight);"
                 " border-radius: 4px; padding: 4px 8px; background: none; }"
-                " QPushButton:hover { background: palette(highlight); color: white; }"
+                " QPushButton:hover { background: palette(highlight);"
+                " color: palette(highlighted-text); }"
             )
             reconnect_btn.clicked.connect(on_reconnect)
             btn_col.addWidget(reconnect_btn)
@@ -433,7 +440,8 @@ class _DeviceRow(QFrame):
                 "QPushButton { color: palette(text); font-size: 11px;"
                 " border: 1px solid palette(mid);"
                 " border-radius: 4px; padding: 4px 8px; background: none; }"
-                " QPushButton:hover { background: palette(mid); color: palette(text); }"
+                " QPushButton:hover { background: palette(button);"
+                " color: palette(button-text); }"
             )
             rename_btn.clicked.connect(on_rename)
             btn_col.addWidget(rename_btn)
@@ -445,7 +453,8 @@ class _DeviceRow(QFrame):
             f"QPushButton {{ color: {_danger}; font-size: 11px; "
             f"border: 1px solid {_danger};"
             " border-radius: 4px; padding: 4px 8px; background: none; }"
-            f" QPushButton:hover {{ background: {_danger}; color: white; }}"
+            f" QPushButton:hover {{ background: {_danger};"
+            f" color: {readable_text_on(_danger)}; }}"
         )
         forget_btn.clicked.connect(on_forget)
         btn_col.addWidget(forget_btn)
@@ -664,7 +673,8 @@ class MobileAccessWizard(QDialog):
         # Add another device button
         add_btn = QPushButton(self.tr("+ Add another device"))
         add_btn.setStyleSheet(
-            "QPushButton { background: palette(highlight); color: white; border: none;"
+            "QPushButton { background: palette(highlight);"
+            " color: palette(highlighted-text); border: none;"
             " border-radius: 6px; padding: 10px 20px; font-weight: bold; font-size: 13px; }"
         )
         add_btn.clicked.connect(lambda: self._go_to_page(self.PAGE_CHOOSE))
@@ -730,7 +740,7 @@ class MobileAccessWizard(QDialog):
                 " All traffic is still fully encrypted."
             ),
             badge_text=self.tr("\U0001f512 Encrypted"),
-            badge_color="#4CAF50",
+            badge_color=get_colors()["due_soon"],
         )
         quick_card.start_button.clicked.connect(lambda: self._go_to_page(self.PAGE_QUICK))
         cards_row.addWidget(quick_card)
@@ -745,7 +755,7 @@ class MobileAccessWizard(QDialog):
                 " or certificate changes."
             ),
             badge_text=self.tr("\U0001f512 Encrypted + Trusted"),
-            badge_color="#1976D2",
+            badge_color=get_colors()["highlight"],
             recommended=True,
         )
         trusted_card.start_button.clicked.connect(lambda: self._go_to_page(self.PAGE_TRUSTED))
@@ -1065,8 +1075,8 @@ class MobileAccessWizard(QDialog):
             # Action buttons
             reinstall_btn = QPushButton(self.tr("Show certificate install steps"))
             reinstall_btn.setStyleSheet(
-                f"QPushButton {{ background: {get_colors()['highlight']}; "
-                "color: white; border: none;"
+                "QPushButton { background: palette(highlight);"
+                " color: palette(highlighted-text); border: none;"
                 " border-radius: 6px; padding: 10px 20px; font-weight: bold; }"
             )
             reinstall_btn.clicked.connect(lambda: self._go_to_page(self.PAGE_TRUSTED))

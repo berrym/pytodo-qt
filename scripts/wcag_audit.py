@@ -27,9 +27,10 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
-ROOT = "/Users/mberry/Lab/python/pytodo-qt"
-sys.path.insert(0, f"{ROOT}/src")
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
 
 from pytodo_qt.core import bar_palette  # noqa: E402
 from pytodo_qt.gui.styles.themes import DARK_COLORS, LIGHT_COLORS  # noqa: E402
@@ -440,14 +441,104 @@ def _web_fill_pairs() -> list[Pair]:
     return out
 
 
+def _desktop_fill_pairs() -> list[Pair]:
+    """Text the desktop's widgets write on a fill of one of the theme's colours.
+
+    Text on the highlight fill takes the palette's highlighted-text
+    colour, which `_desktop_pairs` measures. Text on a fill of another
+    theme colour is the one `bar_palette.readable_text_on` chooses
+    (`_inline_pairs` has the overlay colour). The button colour and the
+    alternate base lie under text in its ordinary colours where a row
+    or a button is under the pointer.
+    """
+    out: list[Pair] = []
+    readable_on = (
+        ("due_overdue", "Forget under the pointer"),
+        ("due_soon", "Encrypted badge"),
+        ("highlight", "Encrypted + Trusted badge"),
+    )
+    ordinary_on = (
+        ("button", ("text", "button_text"), "button under the pointer, tag chip"),
+        (
+            "alternate_base",
+            ("text", "completed_text", "entity_tag"),
+            "Agenda row under the pointer",
+        ),
+        (
+            "alternate_base",
+            ("due_overdue", "due_today", "due_soon"),
+            "list view, Due text on an alternate row",
+        ),
+    )
+    for theme, colors in (("light", LIGHT_COLORS), ("dark", DARK_COLORS)):
+        for key, where in readable_on:
+            fill = colors[key]
+            out.append(
+                Pair(
+                    f"readable text on {key} ({where})",
+                    theme,
+                    bar_palette.readable_text_on(fill),
+                    fill,
+                    THRESHOLD_TEXT,
+                    "text",
+                )
+            )
+        # The list view's recurrence icon, on a row and on an alternate row.
+        for icon_key in ("highlight", "completed_text"):
+            for row_key in ("base", "alternate_base"):
+                out.append(
+                    Pair(
+                        f"recurrence icon in {icon_key} on {row_key}",
+                        theme,
+                        colors[icon_key],
+                        colors[row_key],
+                        THRESHOLD_UI,
+                        "ui",
+                    )
+                )
+        for fill_key, text_keys, where in ordinary_on:
+            for text_key in text_keys:
+                out.append(
+                    Pair(
+                        f"{text_key} on {fill_key} ({where})",
+                        theme,
+                        colors[text_key],
+                        colors[fill_key],
+                        THRESHOLD_TEXT,
+                        "text",
+                    )
+                )
+    out.append(
+        Pair(
+            "white on the step circle (Mobile Access)",
+            "both",
+            "#ffffff",
+            "#1976d2",
+            THRESHOLD_TEXT,
+            "text",
+        )
+    )
+    return out
+
+
+def sections() -> dict[str, list[Pair]]:
+    """Every pair of the audit, under the heading it is reported under.
+
+    The one list of what is measured: a group left out of it is
+    neither reported nor counted.
+    """
+    return {
+        "Desktop (themes.py)": _desktop_pairs(),
+        "Desktop text on fills": _desktop_fill_pairs(),
+        "Web (style.css)": _web_pairs(),
+        "Web text on fills": _web_fill_pairs(),
+        "Calendar bar palette": _bar_pairs(),
+        "Inline literals": _inline_pairs(),
+    }
+
+
 def collect_pairs() -> list[Pair]:
-    return [
-        *_desktop_pairs(),
-        *_web_pairs(),
-        *_web_fill_pairs(),
-        *_bar_pairs(),
-        *_inline_pairs(),
-    ]
+    return [pair for group in sections().values() for pair in group]
 
 
 # ---------------------------------------------------------------------------
@@ -473,16 +564,10 @@ def _fmt_row(
 
 
 def main() -> int:
-    pairs = collect_pairs()
+    groups = sections()
+    pairs = [pair for group in groups.values() for pair in group]
     failed_essential: list[Pair] = []
     failed_exempt: list[Pair] = []
-
-    sections: dict[str, list[Pair]] = {
-        "Desktop (themes.py)": _desktop_pairs(),
-        "Web (style.css)": _web_pairs(),
-        "Calendar bar palette": _bar_pairs(),
-        "Inline literals": _inline_pairs(),
-    }
 
     print("=" * 78)
     print("WCAG 2.1 AA contrast audit — pytodo-qt")
@@ -491,7 +576,7 @@ def main() -> int:
     print(f"  Total pairs: {len(pairs)}")
     print("=" * 78)
 
-    for section, group in sections.items():
+    for section, group in groups.items():
         print(f"\n[{section}]  ({len(group)} pairs)")
         for p in group:
             r = contrast_ratio(p.fg, p.bg)

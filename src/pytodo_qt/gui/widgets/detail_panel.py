@@ -238,7 +238,7 @@ class TaskDetailPanel(QDockWidget):
             "QToolButton { font-size: 16px; padding: 2px 4px;"
             " color: palette(highlight); border: none; }"
             "QToolButton:checked { background: palette(highlight);"
-            " color: palette(highlightedText); border-radius: 3px; }"
+            " color: palette(highlighted-text); border-radius: 3px; }"
         )
         self._edit_toggle_btn.toggled.connect(self._set_edit_mode)
         header_row.addWidget(self._edit_toggle_btn, 0)
@@ -253,7 +253,7 @@ class TaskDetailPanel(QDockWidget):
         self._join_meeting_btn.setStyleSheet(
             "QPushButton { text-align: left; padding: 6px 10px;"
             " border: 1px solid palette(highlight); border-radius: 4px;"
-            " color: palette(highlightedText);"
+            " color: palette(highlighted-text);"
             " background: palette(highlight); font-weight: bold; }"
             "QPushButton:hover { padding: 6px 10px; }"
         )
@@ -902,7 +902,7 @@ class TaskDetailPanel(QDockWidget):
         # Tags
         if item.tags:
             chips = " ".join(
-                f"<span style='background: palette(mid); padding: 1px 6px; "
+                f"<span style='background: palette(button); padding: 1px 6px; "
                 f"border-radius: 3px;'>{tag}</span>"
                 for tag in item.tags
             )

@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QStandardItemModel
-from PyQt6.QtWidgets import QComboBox, QGraphicsOpacityEffect, QLabel, QLineEdit
+from PyQt6.QtWidgets import QComboBox, QLabel, QLineEdit
 
 from pytodo_qt.core.models import (
     Database,
@@ -878,8 +878,10 @@ class TestDueDateLabel:
         qtbot.addWidget(w)
         assert "Overdue" not in w.label.text()
 
-    def test_label_completed_recurring_dims_icon(self, qtbot):
-        """Completed recurring DueDateLabel should have opacity effect on icon."""
+    def test_label_completed_recurring_icon_is_not_faded(self, qtbot):
+        """A finished task's recurrence icon is drawn in the muted text
+        colour. Faded to 40% it gave 1.49:1 to 1.84:1 on a row, where a
+        graphic needs 3:1 (tests/test_gui_text_on_fills.py has the colours)."""
         w = DueDateLabel(date.today(), complete=True, recurring=True)
         qtbot.addWidget(w)
         # Find the icon label (first QLabel child that has a pixmap)
@@ -888,11 +890,8 @@ class TestDueDateLabel:
             for child in w.findChildren(QLabel)
             if child is not w.label and child.pixmap() and not child.pixmap().isNull()
         ]
-        if icon_labels:  # Icon may not exist if repeat.svg is missing
-            effect = icon_labels[0].graphicsEffect()
-            assert effect is not None
-            assert isinstance(effect, QGraphicsOpacityEffect)
-            assert abs(effect.opacity() - 0.4) < 0.01
+        assert len(icon_labels) == 1
+        assert icon_labels[0].graphicsEffect() is None
 
     def test_label_non_completed_recurring_no_opacity(self, qtbot):
         """Non-completed recurring DueDateLabel should not have opacity effect."""

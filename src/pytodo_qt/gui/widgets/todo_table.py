@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from PyQt6.QtCore import QDate, QEvent, QItemSelection, QPoint, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QKeyEvent, QMouseEvent, QPixmap
+from PyQt6.QtGui import QAction, QColor, QKeyEvent, QMouseEvent, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QDateEdit,
     QDialog,
     QFrame,
-    QGraphicsOpacityEffect,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -77,6 +76,24 @@ def _sort_fragment(item: TodoItem, dimension: str, reverse: bool) -> tuple:
         val = item.priority
         return (-val,) if reverse else (val,)
     return ()
+
+
+def _in_one_colour(pixmap: QPixmap, color: str) -> QPixmap:
+    """The shape of a pixmap, drawn in one colour."""
+    drawn = QPixmap(pixmap.size())
+    drawn.setDevicePixelRatio(pixmap.devicePixelRatio())
+    drawn.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(drawn)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    painter.fillRect(drawn.rect(), QColor(color))
+    painter.end()
+    return drawn
+
+
+def _with_color(style: str, color: str) -> str:
+    """A label's style with its text colour replaced."""
+    return f"{style} color: {color};"
 
 
 class ClickableLabel(QLabel):
@@ -268,7 +285,29 @@ class DueDateLabel(QWidget):
         self._complete = complete
         self._recurring = recurring
         self._time_format = time_format
+        self._icon_label: QLabel | None = None
+        self._icon_pixmap: QPixmap | None = None
+        self._text_style = ""
         self._setup_ui()
+
+    def set_text_style(self, style: str) -> None:
+        """The style of the text on an ordinary row."""
+        self._text_style = style
+        self.label.setStyleSheet(style)
+
+    def set_on_highlight(self, color: str | None) -> None:
+        """Draw the text and the icon for a row filled with the highlight
+        colour, in the colour given, or for an ordinary row (None)."""
+        if color is None:
+            self.label.setStyleSheet(self._text_style)
+        else:
+            self.label.setStyleSheet(_with_color(self._text_style, color))
+        if self._icon_label is None or self._icon_pixmap is None:
+            return
+        if color is None:
+            self._icon_label.setPixmap(self._icon_pixmap)
+        else:
+            self._icon_label.setPixmap(_in_one_colour(self._icon_pixmap, color))
 
     def _setup_ui(self) -> None:
         layout = QHBoxLayout(self)
@@ -287,11 +326,16 @@ class DueDateLabel(QWidget):
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 )
+                # The icon's own blue is one colour for both themes and
+                # every row background. It is drawn in the accent colour,
+                # and in the muted text colour on a finished task.
+                colors = get_colors()
+                pixmap = _in_one_colour(
+                    pixmap, colors["completed_text" if self._complete else "highlight"]
+                )
                 icon_label.setPixmap(pixmap)
-                if self._complete:
-                    opacity = QGraphicsOpacityEffect(icon_label)
-                    opacity.setOpacity(0.4)
-                    icon_label.setGraphicsEffect(opacity)
+                self._icon_label = icon_label
+                self._icon_pixmap = pixmap
                 layout.addWidget(icon_label)
 
         self.label = QLabel(
@@ -391,6 +435,15 @@ class TodoTableWidget(QTableWidget):
         self._held_timer.timeout.connect(self._run_held_refresh)
         # Names to save once the event that ended their editing is over.
         self._names_to_save: list[tuple[UUID, str]] = []
+
+        # What a row writes and draws straight on its own background, to
+        # be recoloured when the row is selected and filled with the
+        # highlight colour: labels and tag chips with the style they
+        # have on an ordinary row, icons with their pixmap.
+        self._row_labels: dict[int, list[tuple[QLabel, str]]] = {}
+        self._row_chips: dict[int, list[tuple[QLabel, str]]] = {}
+        self._row_icons: dict[int, list[tuple[QLabel, QPixmap]]] = {}
+        self._rows_drawn_selected: set[int] = set()
 
         # Setup table
         self._setup_table()
@@ -940,6 +993,7 @@ class TodoTableWidget(QTableWidget):
             self._rebuild()
             if state is not None:
                 self._restore_view_state(state)
+            self._draw_selected_rows()
         finally:
             self.blockSignals(blocked)
             self.setUpdatesEnabled(True)
@@ -1030,6 +1084,10 @@ class TodoTableWidget(QTableWidget):
         self._item_id_map.clear()
         self._ellipsis_pairs.clear()
         self._context_row_ids.clear()
+        self._row_labels.clear()
+        self._row_chips.clear()
+        self._row_icons.clear()
+        self._rows_drawn_selected.clear()
 
         if self._current_list is None:
             # No active list — most often this means the database has
@@ -1109,6 +1167,12 @@ class TodoTableWidget(QTableWidget):
             self.insertRow(row)
             self.setRowHeight(row, 42)
             self._item_id_map[row] = item.id
+            on_the_row = self._row_labels.setdefault(row, [])
+
+            def write(label: QLabel, style: str, labels=on_the_row) -> None:
+                """Style a label that stands on the row's own background."""
+                label.setStyleSheet(style)
+                labels.append((label, style))
 
             # Priority combo box
             priority_combo = QComboBox()
@@ -1147,7 +1211,7 @@ class TodoTableWidget(QTableWidget):
                 indent.setFixedWidth(24)
                 reminder_layout.addWidget(indent)
                 prefix = QLabel("\u203a")  # Single right-pointing angle quotation mark
-                prefix.setStyleSheet(f"color: {colors['completed_text']}; font-size: 14px;")
+                write(prefix, f"color: {colors['completed_text']}; font-size: 14px;")
                 prefix.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
                 reminder_layout.addWidget(prefix)
 
@@ -1157,8 +1221,9 @@ class TodoTableWidget(QTableWidget):
                 collapsed = item.id in self._collapsed_parents
                 toggle_char = "\u25b6" if collapsed else "\u25bc"  # ▶ or ▼
                 toggle_btn = ClickableLabel(toggle_char)
-                toggle_btn.setStyleSheet(
-                    f"color: {colors['completed_text']}; font-size: 10px; padding: 0 2px;"
+                write(
+                    toggle_btn,
+                    f"color: {colors['completed_text']}; font-size: 10px; padding: 0 2px;",
                 )
                 toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
                 toggle_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -1197,7 +1262,7 @@ class TodoTableWidget(QTableWidget):
 
             # Ellipsis indicator for viewing full reminder text (shown only when truncated)
             ellipsis = ClickableLabel("…")
-            ellipsis.setStyleSheet(f"color: {colors['completed_text']}; font-size: 10px;")
+            write(ellipsis, f"color: {colors['completed_text']}; font-size: 10px;")
             ellipsis.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             ellipsis.setCursor(Qt.CursorShape.PointingHandCursor)
             ellipsis.clicked.connect(
@@ -1213,7 +1278,7 @@ class TodoTableWidget(QTableWidget):
 
                 time_text = PomodoroWidget.format_time_spent(item.time_spent)
                 time_label = QLabel(time_text)
-                time_label.setStyleSheet(f"color: {colors['completed_text']}; font-size: 10px;")
+                write(time_label, f"color: {colors['completed_text']}; font-size: 10px;")
                 time_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
                 reminder_layout.addWidget(time_label)
 
@@ -1233,6 +1298,7 @@ class TodoTableWidget(QTableWidget):
                         Qt.TransformationMode.SmoothTransformation,
                     )
                     pomo_icon.setPixmap(pomo_pixmap)
+                    self._row_icons.setdefault(row, []).append((pomo_icon, pomo_pixmap))
                     pomo_icon.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
                     pomo_container.addWidget(pomo_icon)
 
@@ -1241,7 +1307,7 @@ class TodoTableWidget(QTableWidget):
                 else:
                     pomo_text = str(item.pomodoro_count)
                 pomo_label = QLabel(pomo_text)
-                pomo_label.setStyleSheet(f"color: {colors['completed_text']}; font-size: 10px;")
+                write(pomo_label, f"color: {colors['completed_text']}; font-size: 10px;")
                 pomo_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
                 pomo_container.addWidget(pomo_label)
 
@@ -1262,9 +1328,7 @@ class TodoTableWidget(QTableWidget):
                     if completed == total
                     else colors["completed_text"]
                 )
-                badge_label.setStyleSheet(
-                    f"color: {badge_color}; font-size: 10px; font-weight: bold;"
-                )
+                write(badge_label, f"color: {badge_color}; font-size: 10px; font-weight: bold;")
                 badge_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
                 reminder_layout.addWidget(badge_label)
 
@@ -1281,6 +1345,7 @@ class TodoTableWidget(QTableWidget):
                     chip.setStyleSheet(chip_style)
                     chip.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
                     reminder_layout.addWidget(chip)
+                    self._row_chips.setdefault(row, []).append((chip, chip_style))
                 overflow = len(item.tags) - _MAX_VISIBLE_TAGS
                 if overflow > 0:
                     badge = ClickableLabel(f"+{overflow}")
@@ -1312,17 +1377,13 @@ class TodoTableWidget(QTableWidget):
             # Apply styling based on due date status
             if not item.complete:
                 if is_overdue(item.due_date, item.due_time):
-                    due_widget.label.setStyleSheet(
-                        f"color: {colors['due_overdue']}; font-weight: bold;"
-                    )
+                    due_widget.set_text_style(f"color: {colors['due_overdue']}; font-weight: bold;")
                 elif is_due_today(item.due_date):
-                    due_widget.label.setStyleSheet(
-                        f"color: {colors['due_today']}; font-weight: bold;"
-                    )
+                    due_widget.set_text_style(f"color: {colors['due_today']}; font-weight: bold;")
                 elif item.due_date and is_due_this_week(item.due_date):
-                    due_widget.label.setStyleSheet(f"color: {colors['due_soon']};")
+                    due_widget.set_text_style(f"color: {colors['due_soon']};")
             elif item.due_date:
-                due_widget.label.setStyleSheet(f"color: {colors['completed_text']};")
+                due_widget.set_text_style(f"color: {colors['completed_text']};")
 
             due_widget.setToolTip(build_rich_tooltip(item, theme_colors=colors))
 
@@ -1497,8 +1558,39 @@ class TodoTableWidget(QTableWidget):
         popup.close()
         self.edit_tags_requested.emit(item_id)
 
+    def _draw_selected_rows(self) -> None:
+        """Recolour what stands on the rows whose selection has changed.
+
+        A selected row is filled with the highlight colour, and the
+        colours its labels have on the ordinary background do not read
+        on that. Every label takes the highlight's text colour there, a
+        tag chip gets an outline in it, as its fill is the highlight
+        colour too, and an icon is drawn in it.
+        """
+        selected = {index.row() for index in self.selectedIndexes()}
+        on_highlight = get_colors()["highlight_text"]
+        for row in selected ^ self._rows_drawn_selected:
+            color = on_highlight if row in selected else None
+            for label, style in self._row_labels.get(row, []):
+                label.setStyleSheet(style if color is None else _with_color(style, color))
+            for chip, style in self._row_chips.get(row, []):
+                chip.setStyleSheet(
+                    style
+                    if color is None
+                    # The padding gives the outline its room, so that the
+                    # chip keeps its size.
+                    else f"{style} border: 1px solid {color}; padding: 0px 5px;"
+                )
+            for icon, pixmap in self._row_icons.get(row, []):
+                icon.setPixmap(pixmap if color is None else _in_one_colour(pixmap, color))
+            due_widget = self.cellWidget(row, 2)
+            if isinstance(due_widget, DueDateLabel):
+                due_widget.set_on_highlight(color)
+        self._rows_drawn_selected = selected
+
     def _on_selection_changed(self) -> None:
         """Handle selection change."""
+        self._draw_selected_rows()
         selected = self.get_selected_item_ids()
         if len(selected) == 1:
             self.item_selected.emit(selected[0])

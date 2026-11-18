@@ -4727,7 +4727,7 @@ class _WeekTableView(QTableView):
             Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
         )
         self._drag_preview_label.setStyleSheet(
-            f"QLabel {{ background: {_overlay}; color: white; "
+            f"QLabel {{ background: {_overlay}; color: {readable_text_on(_overlay)}; "
             "padding: 6px 10px; font-size: 12px; font-weight: bold; }"
         )
         self._drag_preview_label.hide()
@@ -4753,7 +4753,7 @@ class _WeekTableView(QTableView):
             Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
         )
         self._resize_snap_label.setStyleSheet(
-            f"QLabel {{ background: {_overlay}; color: white; "
+            f"QLabel {{ background: {_overlay}; color: {readable_text_on(_overlay)}; "
             "padding: 4px 8px; font-size: 11px; font-weight: bold; }"
         )
         self._resize_snap_label.hide()
@@ -6260,6 +6260,12 @@ class _AgendaRow(QFrame):
         self._colors = colors
         self._selected = False
         self._drag_start_pos: QPoint | None = None
+        # Each text label with its colour on a row that is not selected
+        # and the rest of its style. A label's own style sheet is what
+        # colours it, so the row's style sheet cannot.
+        self._text_labels: list[tuple[QLabel, str, str]] = []
+        self._dot: QLabel | None = None
+        self._dot_color = ""
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -6289,7 +6295,7 @@ class _AgendaRow(QFrame):
         time_label = QLabel(time_text)
         # Wide enough for the longest block name, "Early Afternoon".
         time_label.setFixedWidth(96)
-        time_label.setStyleSheet(f"color: {colors['text']}; font-size: 11px; border: none;")
+        self._text_labels.append((time_label, colors["text"], "font-size: 11px; border: none;"))
         layout.addWidget(time_label)
 
         # Priority dot
@@ -6300,7 +6306,8 @@ class _AgendaRow(QFrame):
         }.get(item.priority, colors["priority_normal"])
         dot = QLabel()
         dot.setFixedSize(8, 8)
-        dot.setStyleSheet(f"background: {priority_color}; border-radius: 4px; border: none;")
+        self._dot = dot
+        self._dot_color = priority_color
         layout.addWidget(dot)
 
         # Reminder
@@ -6309,13 +6316,17 @@ class _AgendaRow(QFrame):
         reminder_label.setWordWrap(False)
         reminder_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         if item.complete:
-            reminder_label.setStyleSheet(
-                f"color: {colors['completed_text']};"
-                " text-decoration: line-through;"
-                " font-size: 12px; border: none;"
+            self._text_labels.append(
+                (
+                    reminder_label,
+                    colors["completed_text"],
+                    "text-decoration: line-through; font-size: 12px; border: none;",
+                )
             )
         else:
-            reminder_label.setStyleSheet(f"color: {colors['text']}; font-size: 12px; border: none;")
+            self._text_labels.append(
+                (reminder_label, colors["text"], "font-size: 12px; border: none;")
+            )
         layout.addWidget(reminder_label, 1)
 
         # Tag chips — compact, capped at 3 + overflow count.
@@ -6325,10 +6336,12 @@ class _AgendaRow(QFrame):
             if len(item.tags) > 3:
                 tags_text += f" +{len(item.tags) - 3}"
             tag_label = QLabel(tags_text)
-            tag_label.setStyleSheet(
-                f"color: {colors['entity_tag']}; font-size: 11px; border: none;"
+            self._text_labels.append(
+                (tag_label, colors["entity_tag"], "font-size: 11px; border: none;")
             )
             layout.addWidget(tag_label)
+
+        self._apply_row_style()
 
     def set_selected(self, selected: bool) -> None:
         """Toggle the selected visual state. The selected row paints with a
@@ -6347,17 +6360,29 @@ class _AgendaRow(QFrame):
         highlight tint so the row reads as "the one you clicked" without
         competing with the detail panel's own selection indicators.
         """
+        # On the highlight fill every text takes the theme's text colour
+        # for it: the colours of a row that is not selected were chosen
+        # for the list's background. The priority dot gets a ring of
+        # the same colour, to stand clear of the fill.
+        on_highlight = self._colors["highlight_text"]
+        for label, color, rest in self._text_labels:
+            label.setStyleSheet(f"color: {on_highlight if self._selected else color}; {rest}")
+        if self._dot is not None:
+            ring = f"1px solid {on_highlight}" if self._selected else "none"
+            self._dot.setStyleSheet(
+                f"background: {self._dot_color}; border-radius: 4px; border: {ring};"
+            )
         if self._selected:
             self.setStyleSheet(
                 "_AgendaRow { background: palette(highlight);"
                 " border-radius: 4px; border: 1px solid palette(highlight); }"
-                "_AgendaRow QLabel { color: palette(highlightedText); }"
             )
         else:
             self.setStyleSheet(
                 "_AgendaRow { background: transparent; border-radius: 4px;"
                 " border: 1px solid transparent; }"
-                "_AgendaRow:hover { background: palette(midlight); }"
+                "_AgendaRow:hover { background: palette(alternate-base);"
+                " border: 1px solid palette(highlight); }"
             )
 
     def mousePressEvent(self, a0) -> None:  # noqa: N802
@@ -6818,8 +6843,8 @@ class CalendarViewWidget(QWidget):
             btn.setStyleSheet(
                 "QPushButton { border: none; padding: 4px 12px; font-size: 11px;"
                 " border-radius: 3px; }"
-                " QPushButton:checked { background: palette(highlight); color: white;"
-                " font-weight: bold; }"
+                " QPushButton:checked { background: palette(highlight);"
+                " color: palette(highlighted-text); font-weight: bold; }"
             )
             btn.clicked.connect(lambda checked, idx=i: self._set_sub_view(idx))
             pill_layout.addWidget(btn)
@@ -6895,8 +6920,8 @@ class CalendarViewWidget(QWidget):
             btn.setStyleSheet(
                 "QPushButton { border: none; padding: 4px 10px; font-size: 10px;"
                 " border-radius: 3px; }"
-                " QPushButton:checked { background: palette(highlight); color: white;"
-                " font-weight: bold; }"
+                " QPushButton:checked { background: palette(highlight);"
+                " color: palette(highlighted-text); font-weight: bold; }"
             )
             btn.clicked.connect(lambda checked, idx=i: self._set_timeline_sub_view(idx))
             tl_pill_layout.addWidget(btn)
