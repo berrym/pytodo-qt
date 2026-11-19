@@ -1224,6 +1224,58 @@ class TestCalendarSegments:
         finally:
             await client.close()
 
+    @pytest.mark.asyncio
+    async def test_a_bar_finished_late_carries_its_zone(self):
+        """The page draws the zone from the minutes the layout gives:
+        a bar due at 15:00 and finished at 16:20 runs on to 16:20, and
+        its zone is that stretch."""
+        from datetime import date as _date
+        from datetime import datetime as _datetime
+        from datetime import time as _time
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_date = _date(2020, 6, 15)
+        item.due_time = _time(15, 0)
+        item.estimated_minutes = 60
+        item.complete = True
+        item.completed_at = int(_datetime(2020, 6, 15, 16, 20).timestamp() * 1000)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/calendar/segments?start=2020-06-15&days=1")
+            data = await resp.json()
+        finally:
+            await client.close()
+        seg = next(s for s in data["days"][0]["segments"] if s["item_id"] == str(item.id))
+        assert seg["state"] == "completed_late"
+        assert (seg["start_minute"], seg["end_minute"]) == (14 * 60, 16 * 60 + 20)
+        assert (seg["zone_start_minute"], seg["zone_end_minute"]) == (15 * 60, 16 * 60 + 20)
+
+    @pytest.mark.asyncio
+    async def test_a_bar_without_a_zone_has_null_for_it(self):
+        from datetime import date as _date
+        from datetime import time as _time
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        item = next(iter(lst.active_items()))
+        item.due_date = _date(2030, 6, 15)
+        item.due_time = _time(15, 0)
+        item.estimated_minutes = 60
+        item.complete = False
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/calendar/segments?start=2030-06-15&days=1")
+            data = await resp.json()
+        finally:
+            await client.close()
+        seg = next(s for s in data["days"][0]["segments"] if s["item_id"] == str(item.id))
+        assert seg["zone_start_minute"] is None
+        assert seg["zone_end_minute"] is None
+
     @staticmethod
     def _two_lists_with_a_task_each():
         """Each of the two lists has one task due on 2030-06-15."""

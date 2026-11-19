@@ -4457,57 +4457,68 @@
     ctx.restore();
   }
 
-  function _paintHourBar(ctx, hitRects, item, seg, x, y, w, h) {
-    var base = _paletteColor(seg.state);
-    var deviation = _paletteDeviation(seg.state);
-    var labelColor = _barTextColor(base);
-    // The parts of the bar by color, for its label.
-    var zones = [{ x: x, y: y, w: w, h: h, fill: base }];
-
-    // Two-zone overlay for completed bars: base color for the
-    // relevant span, deviation color for the surplus or overflow.
-    // Zone boundary math uses the item's full bar window (ms
-    // timestamps) mapped back into this cell's start_minute/end_minute
-    // coordinate system — the server-computed fractions stay exact
-    // when the bar is fully within one day.
-    var paintedTwoZone = false;
-    if (
-      (seg.state === "completed_early" || seg.state === "completed_late") &&
-      item.completed_at != null &&
-      item.bar_origin_ms != null &&
-      item.bar_end_ms != null
-    ) {
-      var origin = item.bar_origin_ms;
-      var end = item.bar_end_ms;
-      var completed = item.completed_at;
-      var totalSpan = end - origin;
-      if (totalSpan > 0) {
-        if (seg.state === "completed_early" && completed < end) {
-          var frac = Math.max(0, Math.min(1, (completed - origin) / totalSpan));
-          var splitX = x + frac * w;
-          ctx.fillStyle = base;
-          ctx.fillRect(x, y, splitX - x, h);
-          ctx.fillStyle = deviation;
-          ctx.fillRect(splitX, y, x + w - splitX, h);
-          zones = [
-            { x: x, y: y, w: splitX - x, h: h, fill: base },
-            { x: splitX, y: y, w: x + w - splitX, h: h, fill: deviation },
-          ];
-          paintedTwoZone = true;
-        } else if (seg.state === "completed_late" && completed > end) {
-          // Planned span fills the bar; overflow can't be drawn
-          // inside this cell (it's on a later day's marker row),
-          // so we paint the base color across the whole cell and
-          // let the marker on the completion day carry the overflow.
-          ctx.fillStyle = base;
-          ctx.fillRect(x, y, w, h);
-          paintedTwoZone = true;
-        }
+  // Hatches a rectangle with slanted lines of one color: rising to the
+  // right for the early zone of a completed bar, falling for the late
+  // one, so the two differ by more than their colors.
+  function _paintHatch(ctx, x, y, w, h, color, falling) {
+    if (w <= 0 || h <= 0) return;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (var d = -h; d < w; d += 8) {
+      if (falling) {
+        ctx.moveTo(x + d, y);
+        ctx.lineTo(x + d + h, y + h);
+      } else {
+        ctx.moveTo(x + d, y + h);
+        ctx.lineTo(x + d + h, y);
       }
     }
-    if (!paintedTwoZone) {
-      ctx.fillStyle = base;
-      ctx.fillRect(x, y, w, h);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // The height a bar keeps clear of the hatch for its label.
+  var _BAR_LABEL_BAND = 16;
+
+  function _paintHourBar(ctx, hitRects, item, seg, x, y, w, h) {
+    var base = _paletteColor(seg.state);
+    var labelColor = _barTextColor(base);
+    var labeled = h >= 14;
+
+    ctx.fillStyle = base;
+    ctx.fillRect(x, y, w, h);
+
+    // The deviation zone of a completed bar: the stretch between its
+    // completion and its planned end, hatched over the bar's color.
+    // The server gives the zone in the minutes of the day, as it gives
+    // the bar, and the zone lies within the bar. No hatch is drawn
+    // behind the label, whose color is chosen for the bar's own.
+    var span = seg.end_minute - seg.start_minute;
+    if (
+      seg.zone_start_minute != null &&
+      seg.zone_end_minute != null &&
+      span > 0
+    ) {
+      var perMinute = h / span;
+      var zoneTop = y + (seg.zone_start_minute - seg.start_minute) * perMinute;
+      var zoneBottom = y + (seg.zone_end_minute - seg.start_minute) * perMinute;
+      if (labeled) zoneTop = Math.max(zoneTop, y + _BAR_LABEL_BAND);
+      zoneTop = Math.max(zoneTop, y);
+      zoneBottom = Math.min(zoneBottom, y + h);
+      _paintHatch(
+        ctx,
+        x,
+        zoneTop,
+        w,
+        zoneBottom - zoneTop,
+        _paletteDeviation(seg.state),
+        seg.state === "completed_late",
+      );
     }
 
     // Clipped-edge marks for multi-day bars: a thin contrasting
@@ -4526,11 +4537,15 @@
     }
 
     // Label — only when the bar is tall enough for text to fit.
-    if (h >= 14) {
+    if (labeled) {
       ctx.font = "11px sans-serif";
       var text = (item.reminder || "").substring(0, Math.floor(w / 7));
-      zones.forEach(function (zone) {
-        _paintLabelOn(ctx, text, x + 4, y + 12, zone);
+      _paintLabelOn(ctx, text, x + 4, y + 12, {
+        x: x,
+        y: y,
+        w: w,
+        h: h,
+        fill: base,
       });
     }
 
@@ -4961,25 +4976,22 @@
         item.bar_state === "completed_early" &&
         item.completed_at != null
       ) {
-        // Actual work from origin to completed_at, then a translucent
-        // deviation zone for the unused planned span running to the
-        // original deadline.
-        var xMidE = xPos(item.completed_at);
+        // The planned span, with the stretch from the completion to
+        // the deadline hatched: the time planned and not used.
+        var xMidE = Math.max(xPos(item.completed_at), x1);
         ctx.fillStyle = colors.base;
-        ctx.fillRect(x1, y, Math.max(xMidE - x1, 2), barH);
-        ctx.fillStyle = colors.deviation;
-        ctx.fillRect(xMidE, y, Math.max(xEnd - xMidE, 2), barH);
+        ctx.fillRect(x1, y, Math.max(xEnd - x1, 3), barH);
+        _paintHatch(ctx, xMidE, y, xEnd - xMidE, barH, colors.deviation, false);
       } else if (
         item.bar_state === "completed_late" &&
         item.completed_at != null
       ) {
-        // Planned span in base, overflow past the deadline in
-        // deviation to communicate that the task ran long.
-        var xOverflow = xPos(item.completed_at);
+        // The bar runs on past the deadline to the completion, and
+        // that stretch is hatched: the task ran long.
+        var xOverflow = Math.max(xPos(item.completed_at), xEnd + 2);
         ctx.fillStyle = colors.base;
-        ctx.fillRect(x1, y, Math.max(xEnd - x1, 2), barH);
-        ctx.fillStyle = colors.deviation;
-        ctx.fillRect(xEnd, y, Math.max(xOverflow - xEnd, 2), barH);
+        ctx.fillRect(x1, y, xOverflow - x1, barH);
+        _paintHatch(ctx, xEnd, y, xOverflow - xEnd, barH, colors.deviation, true);
       } else {
         ctx.fillStyle = colors.base;
         ctx.fillRect(x1, y, Math.max(xEnd - x1, 3), barH);

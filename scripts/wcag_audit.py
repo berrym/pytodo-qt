@@ -408,8 +408,6 @@ def _web_fill_pairs() -> list[Pair]:
             "bar-due-now": "#d97706",
             "bar-overdue-active": "#dc2626",
             "bar-completed": "#059669",
-            "bar-completed-early-deviation": "#a7f3d0",
-            "bar-completed-late-deviation": "#fca5a5",
             "bar-completed-unknown": "#6b7280",
         },
         "dark": {
@@ -418,8 +416,6 @@ def _web_fill_pairs() -> list[Pair]:
             "bar-due-now": "#fbbf24",
             "bar-overdue-active": "#f87171",
             "bar-completed": "#34d399",
-            "bar-completed-early-deviation": "#064e3b",
-            "bar-completed-late-deviation": "#7f1d1d",
             "bar-completed-unknown": "#9ca3af",
         },
     }

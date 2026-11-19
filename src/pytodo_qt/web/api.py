@@ -1850,7 +1850,10 @@ async def handle_calendar_segments(request: web.Request) -> web.Response:
                     order, one entry per viewing day. Segments are
                     the raw output of compute_bar_segments and carry
                     start_minute/end_minute/state/clipping/marker
-                    metadata ready for Canvas 2D rendering.
+                    metadata ready for Canvas 2D rendering, with the
+                    minutes of a completed bar's deviation zone
+                    (zone_start_minute/zone_end_minute, null without
+                    one).
     """
     from .. import core  # noqa: F401 — ensure core is importable
     from ..core.calendar_layout import compute_bar_segments, compute_bar_window
@@ -1927,6 +1930,8 @@ async def handle_calendar_segments(request: web.Request) -> web.Response:
                         "is_marker": seg.is_marker,
                         "marker_label": seg.marker_label,
                         "is_all_day": seg.is_all_day,
+                        "zone_start_minute": seg.zone_start_minute,
+                        "zone_end_minute": seg.zone_end_minute,
                     }
                 )
         days_out.append({"date": day.isoformat(), "segments": day_segments})

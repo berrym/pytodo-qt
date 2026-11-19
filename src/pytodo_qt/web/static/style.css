@@ -89,11 +89,11 @@
   --bar-overdue-active: #dc2626;
   --bar-overdue-active-deviation: #dc2626;
   --bar-completed-early: #059669;
-  --bar-completed-early-deviation: #a7f3d0;
+  --bar-completed-early-deviation: #d1fae5;
   --bar-completed-ontime: #059669;
   --bar-completed-ontime-deviation: #059669;
   --bar-completed-late: #059669;
-  --bar-completed-late-deviation: #fca5a5;
+  --bar-completed-late-deviation: #450a0a;
   --bar-completed-unknown: #6b7280;
   --bar-completed-unknown-deviation: #6b7280;
 }

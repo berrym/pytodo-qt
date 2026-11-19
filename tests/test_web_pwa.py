@@ -1461,12 +1461,15 @@ class TestCalendarHourGrid:
             assert 'ctx.fillStyle = "#ffffff";' not in body, name
             assert "_paintLabelOn(ctx, text," in body, name
 
-    def test_a_bar_of_two_colors_has_its_label_written_on_each(self):
-        """Each part of the label is on the color it was chosen for."""
+    def test_a_bars_label_is_written_on_the_bars_color(self):
+        """The label's color is chosen for the fill it is written on,
+        and written inside that fill only. A deviation zone is hatched
+        over the bar's color and not behind the label, so the label is
+        on one color."""
         bar = self._function("_paintHourBar")
-        assert "{ x: x, y: y, w: splitX - x, h: h, fill: base }," in bar
-        assert "{ x: splitX, y: y, w: x + w - splitX, h: h, fill: deviation }," in bar
-        assert "zones.forEach(function (zone) {" in bar
+        assert "fill: base," in bar
+        assert "fill: deviation" not in bar
+        assert "if (labeled) zoneTop = Math.max(zoneTop, y + _BAR_LABEL_BAND);" in bar
         label = self._function("_paintLabelOn")
         assert (
             label.index("ctx.rect(zone.x, zone.y, zone.w, zone.h);")
@@ -1474,6 +1477,40 @@ class TestCalendarHourGrid:
             < label.index("ctx.fillStyle = _barTextColor(zone.fill);")
             < label.index("ctx.fillText(text, tx, ty);")
         )
+
+    def test_the_zone_of_a_completed_bar_is_drawn_from_the_servers_minutes(self):
+        """What is drawn for a bar and its zone: tests/js/hour_bar.test.js,
+        run under Node."""
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("Node.js is not installed")
+        result = subprocess.run(
+            [node, "--test", str(Path(__file__).parent / "js" / "hour_bar.test.js")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_the_page_works_no_zone_out_for_itself(self):
+        """The layout decides where a zone is. The page split an early
+        bar's width by the share of its window that was used, whatever
+        the time, and drew no late zone."""
+        bar = self._function("_paintHourBar")
+        for own_arithmetic in ("bar_origin_ms", "bar_end_ms", "completed_at", "splitX"):
+            assert own_arithmetic not in bar, own_arithmetic
+        assert "seg.zone_start_minute" in bar
+        assert "seg.zone_end_minute" in bar
+
+    def test_the_gantt_chart_hatches_a_zone_over_its_bar(self):
+        """As the Week and the Day draw it: the zone's color alone is
+        pale on the page in one theme and dark on it in the other."""
+        chart = (
+            self._app().split('_chartCanvas("Tasks / Gantt"')[1].split("return ch.container;")[1]
+        )
+        assert "_paintHatch(ctx, xMidE, y, xEnd - xMidE, barH, colors.deviation, false);" in chart
+        assert "_paintHatch(ctx, xEnd, y, xOverflow - xEnd, barH, colors.deviation, true);" in chart
+        assert "ctx.fillStyle = colors.deviation;" not in chart
 
     def test_hours_scroll_in_the_room_above_the_bottom_bar(self):
         """The page, with the toolbar, stays in place."""
