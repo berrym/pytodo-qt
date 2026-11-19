@@ -300,7 +300,20 @@ class SettingsDialog(QDialog):
         view' is checked, since the dropdown has no effect in that
         mode — the runtime's last-selected view always wins."""
         checked = state == Qt.CheckState.Checked.value
-        self._view_mode_combo.setEnabled(not checked)
+        self._set_view_mode_enabled(not checked)
+
+    def _set_view_mode_enabled(self, enabled: bool) -> None:
+        """Enable the Default View dropdown, or disable it and say why.
+
+        A disabled dropdown does not open, and the check box that
+        disables it does not look like its cause.
+        """
+        self._view_mode_combo.setEnabled(enabled)
+        self._view_mode_combo.setToolTip(
+            ""
+            if enabled
+            else self.tr("Uncheck 'Remember last view between sessions' to choose a default view.")
+        )
 
     def _on_sort_tier_changed(self, changed_combo: QComboBox) -> None:
         """Enforce no-duplicate constraint by swapping dimensions."""
@@ -1144,7 +1157,7 @@ class SettingsDialog(QDialog):
         # _on_remember_view_toggled which enables/disables the combo
         # to match the current behavior mode.
         self._remember_view_check.setChecked(config.database.remember_last_view)
-        self._view_mode_combo.setEnabled(not config.database.remember_last_view)
+        self._set_view_mode_enabled(not config.database.remember_last_view)
 
         # Network
         self.server_enabled_check.setChecked(config.server.enabled)

@@ -440,15 +440,17 @@ def font_px(size: int) -> int:
     return max(size, MIN_FONT_PX)
 
 
-def arrow_icon_path(direction: str, theme: Theme) -> str:
+def arrow_icon_path(direction: str, theme: Theme, *, muted: bool = False) -> str:
     """The arrow image a style sheet names for the theme.
 
     A box with a border and padding from the style sheet is drawn by
     Qt's own style-sheet style, whose arrows are three pixels wide in
-    a color no theme chose. These are drawn in the theme's text color.
+    a color no theme chose. These are drawn in the theme's text color,
+    and the muted ones, for a disabled box, in its muted text color.
     """
     variant = "dark" if theme == Theme.DARK else "light"
-    return (Path(__file__).parent.parent / "icons" / f"arrow-{direction}-{variant}.svg").as_posix()
+    name = f"arrow-{direction}-{variant}{'-muted' if muted else ''}.svg"
+    return (Path(__file__).parent.parent / "icons" / name).as_posix()
 
 
 def border_color() -> str:
@@ -507,6 +509,8 @@ def get_stylesheet(theme: Theme | None = None) -> str:
     colors = DARK_COLORS if theme == Theme.DARK else LIGHT_COLORS
     arrow_up = arrow_icon_path("up", theme)
     arrow_down = arrow_icon_path("down", theme)
+    arrow_up_muted = arrow_icon_path("up", theme, muted=True)
+    arrow_down_muted = arrow_icon_path("down", theme, muted=True)
 
     return f"""
 /* Global styles */
@@ -881,6 +885,48 @@ QDateEdit::down-arrow, QTimeEdit::down-arrow {{
 /* Labels */
 QLabel {{
     color: {colors["text"]};
+}}
+
+/* A disabled control. Without these rules it had the border, the fill
+   and the text color of an enabled one, and nothing said that it would
+   not answer. It takes the window's color as its fill, so that it lies
+   flat in the dialog, the muted text color, and a muted arrow. The
+   muted text keeps 4.5:1 on the window's color: what a disabled
+   control shows is still read. */
+QLineEdit:disabled, QTextEdit:disabled, QPlainTextEdit:disabled,
+QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled,
+QDateEdit:disabled, QTimeEdit:disabled {{
+    background-color: {colors["window"]};
+    color: {colors["completed_text"]};
+}}
+
+QPushButton:disabled {{
+    background-color: {colors["window"]};
+    color: {colors["completed_text"]};
+}}
+
+QToolButton:disabled, QCheckBox:disabled, QRadioButton:disabled, QLabel:disabled {{
+    color: {colors["completed_text"]};
+}}
+
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{
+    background-color: {colors["window"]};
+}}
+
+QCheckBox::indicator:checked:disabled, QRadioButton::indicator:checked:disabled {{
+    background-color: {colors["completed_text"]};
+    border-color: {colors["completed_text"]};
+}}
+
+QComboBox::down-arrow:disabled, QSpinBox::down-arrow:disabled,
+QDoubleSpinBox::down-arrow:disabled, QDateEdit::down-arrow:disabled,
+QTimeEdit::down-arrow:disabled {{
+    image: url("{arrow_down_muted}");
+}}
+
+QSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:disabled,
+QDateEdit::up-arrow:disabled, QTimeEdit::up-arrow:disabled {{
+    image: url("{arrow_up_muted}");
 }}
 
 /* List + tree views — share hover/selected treatment so dropdown
