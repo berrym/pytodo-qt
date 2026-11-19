@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
 
 from ...core.logger import Logger
 from ...core.models import TodoItem, TodoList
-from ..styles.themes import get_colors
+from ..styles.themes import FINISHED_BORDER_PX, get_colors
 
 
 class ClickableLabel(QLabel):
@@ -205,9 +205,16 @@ class KanbanCardWidget(QFrame):
         bg = colors["completed_bg"] if item.complete else colors["base"]
         text_color = colors["completed_text"] if item.complete else colors["text"]
 
+        # A finished task's fill is too near the card's own colour to mark
+        # it by itself, so its card has a border in the theme's green.
+        outline = (
+            f"{FINISHED_BORDER_PX}px solid {colors['due_soon']}"
+            if item.complete
+            else f"1px solid {colors['border']}"
+        )
         self._style_normal = (
             f"KanbanCardWidget {{ background: {bg};"
-            f" border: 1px solid {colors['border']};"
+            f" border: {outline};"
             f" border-left: 4px solid {border_color};"
             " border-radius: 8px; padding: 0px; }"
         )

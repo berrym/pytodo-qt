@@ -44,7 +44,7 @@ from ...core.models import (
     is_due_today,
     is_overdue,
 )
-from ..styles.themes import get_colors, make_font
+from ..styles.themes import FINISHED_BORDER_PX, get_colors, make_font
 from .time_combo import TimeComboBox
 
 if TYPE_CHECKING:
@@ -1246,9 +1246,16 @@ class TodoTableWidget(QTableWidget):
                 reminder_edit.setReadOnly(True)
             elif item.complete:
                 reminder_edit.setFont(self._completed_font)
+                # The fill is too near the row's own colour to mark the
+                # finished task by itself (1.08:1 in the light theme), so
+                # the box has a border in the theme's green as well. The
+                # field's own sheet comes before the application's, and
+                # so names the border of the focused field itself.
                 reminder_edit.setStyleSheet(
-                    f"color: {colors['completed_text']}; "
-                    f"background-color: {colors['completed_bg']};"
+                    f"QLineEdit {{ color: {colors['completed_text']};"
+                    f" background-color: {colors['completed_bg']};"
+                    f" border: {FINISHED_BORDER_PX}px solid {colors['due_soon']}; }}"
+                    f" QLineEdit:focus {{ border: 2px solid {colors['highlight']}; }}"
                 )
             else:
                 reminder_edit.setFont(self._normal_font)

@@ -54,6 +54,11 @@ class Theme(Enum):
 # Modern color schemes — semantic colors tuned per-theme for WCAG AA contrast
 # Light: darker, slightly desaturated accents on white (CR >= 4.5:1)
 # Dark: lighter, more desaturated accents on dark surface (CR >= 4.5:1)
+# Width of the border, in the theme's `due_soon` green, that marks a
+# finished task's Reminder box in the list view and its card on the
+# board. The `completed_bg` fill alone is 1.08:1 against the row.
+FINISHED_BORDER_PX = 2
+
 LIGHT_COLORS = {
     "window": "#f5f5f5",
     "window_text": "#1a1a1a",

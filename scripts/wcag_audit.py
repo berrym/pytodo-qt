@@ -483,6 +483,20 @@ def _desktop_fill_pairs() -> list[Pair]:
                     "text",
                 )
             )
+        # The border of a finished task's box and card: against the row
+        # and the alternate row, which is the board's column too, and
+        # against the fill inside it.
+        for around in ("base", "alternate_base", "completed_bg"):
+            out.append(
+                Pair(
+                    f"finished task's border (due_soon) on {around}",
+                    theme,
+                    colors["due_soon"],
+                    colors[around],
+                    THRESHOLD_UI,
+                    "ui",
+                )
+            )
         # The list view's recurrence icon, on a row and on an alternate row.
         for icon_key in ("highlight", "completed_text"):
             for row_key in ("base", "alternate_base"):
