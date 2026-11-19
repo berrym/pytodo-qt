@@ -15,7 +15,16 @@ const { test } = require("node:test");
 // Windows git writes the file with a carriage return before each.
 const source = fs
   .readFileSync(
-    path.join(__dirname, "..", "..", "src", "pytodo_qt", "web", "static", "app.js"),
+    path.join(
+      __dirname,
+      "..",
+      "..",
+      "src",
+      "pytodo_qt",
+      "web",
+      "static",
+      "app.js",
+    ),
     "utf8",
   )
   .replace(/\r\n/g, "\n");
@@ -135,7 +144,13 @@ function segment(fields) {
 
 test("a bar without a zone is its color and no hatch", () => {
   const drawn = draw(segment({}));
-  assert.deepEqual(drawn.ctx.fills[0], { x: 100, y: 360, w: 80, h: 60, color: BASE });
+  assert.deepEqual(drawn.ctx.fills[0], {
+    x: 100,
+    y: 360,
+    w: 80,
+    h: 60,
+    color: BASE,
+  });
   assert.equal(drawn.ctx.hatches.length, 0);
 });
 
@@ -149,7 +164,13 @@ test("a bar finished late is hatched from its planned end to its end", () => {
     }),
   );
   // The whole bar in its color, to the completion.
-  assert.deepEqual(drawn.ctx.fills[0], { x: 100, y: 360, w: 80, h: 100, color: BASE });
+  assert.deepEqual(drawn.ctx.fills[0], {
+    x: 100,
+    y: 360,
+    w: 80,
+    h: 100,
+    color: BASE,
+  });
   assert.equal(drawn.ctx.hatches.length, 1);
   const hatch = drawn.ctx.hatches[0];
   assert.equal(hatch.color, HATCH);
@@ -233,7 +254,9 @@ test("the whole bar opens the task, its zone with it", () => {
       zone_end_minute: 460,
     }),
   );
-  assert.deepEqual(drawn.hits, [{ x: 100, y: 360, w: 80, h: 100, item_id: "a" }]);
+  assert.deepEqual(drawn.hits, [
+    { x: 100, y: 360, w: 80, h: 100, item_id: "a" },
+  ]);
 });
 
 test("a segment from a server that sends no zone is drawn as before", () => {

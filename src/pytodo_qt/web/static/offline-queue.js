@@ -148,7 +148,10 @@
     var i;
     if (kind === "toggle") {
       for (i = 0; i < result.length; i++) {
-        if (itemIdOf(result[i].path) === itemId && kindOf(result[i]) === "toggle") {
+        if (
+          itemIdOf(result[i].path) === itemId &&
+          kindOf(result[i]) === "toggle"
+        ) {
           result.splice(i, 1);
           return result;
         }
@@ -207,7 +210,8 @@
   function withStepTakenBack(queue, before, after) {
     function timesOf(changes) {
       var times = {};
-      for (var n = 0; n < changes.length; n++) times[changes[n].timestamp] = true;
+      for (var n = 0; n < changes.length; n++)
+        times[changes[n].timestamp] = true;
       return times;
     }
     var inQueue = timesOf(queue);
@@ -229,7 +233,8 @@
       var removed = before[i];
       if (inAfter[removed.timestamp] || inQueue[removed.timestamp]) continue;
       var at = 0;
-      while (at < result.length && result[at].timestamp < removed.timestamp) at++;
+      while (at < result.length && result[at].timestamp < removed.timestamp)
+        at++;
       result.splice(at, 0, removed);
       changed = true;
     }

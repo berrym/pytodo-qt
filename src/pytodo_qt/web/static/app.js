@@ -750,10 +750,7 @@
     }
     if (remaining > 0) {
       showToast(
-        remaining +
-          " change" +
-          (remaining > 1 ? "s" : "") +
-          " still pending",
+        remaining + " change" + (remaining > 1 ? "s" : "") + " still pending",
       );
     } else if (conflicts === 0 && refused === 0) {
       showToast("All changes synced");
@@ -2624,7 +2621,9 @@
     pushOfflineUndo(step.before, step.after);
     var name = '"' + queued.reminder + '"';
     showToast(name + " removed", function () {
-      showToast(takeBackQueuedStep(step) ? name + " restored" : "Nothing to undo");
+      showToast(
+        takeBackQueuedStep(step) ? name + " restored" : "Nothing to undo",
+      );
     });
   }
 
@@ -3566,7 +3565,8 @@
   function _sortDayTasks(items) {
     return items.slice().sort(function (a, b) {
       if (a.complete !== b.complete) return a.complete ? 1 : -1;
-      if (Boolean(a.due_time) !== Boolean(b.due_time)) return a.due_time ? -1 : 1;
+      if (Boolean(a.due_time) !== Boolean(b.due_time))
+        return a.due_time ? -1 : 1;
       if (a.due_time && a.due_time !== b.due_time) {
         return a.due_time < b.due_time ? -1 : 1;
       }
@@ -3761,7 +3761,9 @@
 
     var days = [];
     for (var i = 0; i < 7; i++) {
-      days.push(new Date(first.getFullYear(), first.getMonth(), first.getDate() + i));
+      days.push(
+        new Date(first.getFullYear(), first.getMonth(), first.getDate() + i),
+      );
     }
     var lastKey = _dayKey(days[6]);
 
@@ -4043,7 +4045,8 @@
       }
       data.days[d].segments.forEach(function (seg) {
         if (seg.is_all_day || seg.is_marker) return;
-        if (first === null || seg.start_minute < first) first = seg.start_minute;
+        if (first === null || seg.start_minute < first)
+          first = seg.start_minute;
       });
     }
     return first === null ? 8 * 60 : first;
@@ -4147,10 +4150,8 @@
     }
 
     var chipSlot = _CHIP_HEIGHT + _CHIP_SPACING;
-    var allDayRowH =
-      maxAllDay > 0 ? maxAllDay * chipSlot + _ROW_PADDING : 0;
-    var markerRowH =
-      maxMarkers > 0 ? maxMarkers * chipSlot + _ROW_PADDING : 0;
+    var allDayRowH = maxAllDay > 0 ? maxAllDay * chipSlot + _ROW_PADDING : 0;
+    var markerRowH = maxMarkers > 0 ? maxMarkers * chipSlot + _ROW_PADDING : 0;
 
     var pinnedH = _GRID_HEADER_HEIGHT + allDayRowH + markerRowH;
     var hoursH = 24 * _HOUR_ROW_HEIGHT;
@@ -4737,7 +4738,12 @@
       ctx.font = "13px sans-serif";
       ctx.fillText(row.label, 10, y + barH - 6);
       ctx.fillStyle = row.color || mutedColor;
-      ctx.fillRect(labelW, y, Math.max(frac * chartW, row.count > 0 ? 3 : 0), barH);
+      ctx.fillRect(
+        labelW,
+        y,
+        Math.max(frac * chartW, row.count > 0 ? 3 : 0),
+        barH,
+      );
       ctx.fillStyle = labelColor;
       ctx.fillText(String(row.count), labelW + chartW + 5, y + barH - 6);
     });
@@ -4850,7 +4856,11 @@
       document.body.appendChild(pop);
       var rect = btn.getBoundingClientRect();
       var top = rect.bottom + window.scrollY + 6;
-      var maxLeft = window.scrollX + document.documentElement.clientWidth - pop.offsetWidth - 8;
+      var maxLeft =
+        window.scrollX +
+        document.documentElement.clientWidth -
+        pop.offsetWidth -
+        8;
       var left = Math.min(rect.left + window.scrollX, maxLeft);
       pop.style.top = top + "px";
       pop.style.left = Math.max(8, left) + "px";
@@ -4935,7 +4945,9 @@
     function palette(state) {
       var key = (state || "future").replace(/_/g, "-");
       var base = rootStyle.getPropertyValue("--bar-" + key).trim();
-      var dev = rootStyle.getPropertyValue("--bar-" + key + "-deviation").trim();
+      var dev = rootStyle
+        .getPropertyValue("--bar-" + key + "-deviation")
+        .trim();
       return {
         base: base || "#60a5fa",
         deviation: dev || base || "#60a5fa",
@@ -4972,10 +4984,7 @@
       var x1 = xPos(origin);
       var xEnd = xPos(end);
 
-      if (
-        item.bar_state === "completed_early" &&
-        item.completed_at != null
-      ) {
+      if (item.bar_state === "completed_early" && item.completed_at != null) {
         // The planned span, with the stretch from the completion to
         // the deadline hatched: the time planned and not used.
         var xMidE = Math.max(xPos(item.completed_at), x1);
@@ -4991,7 +5000,15 @@
         var xOverflow = Math.max(xPos(item.completed_at), xEnd + 2);
         ctx.fillStyle = colors.base;
         ctx.fillRect(x1, y, xOverflow - x1, barH);
-        _paintHatch(ctx, xEnd, y, xOverflow - xEnd, barH, colors.deviation, true);
+        _paintHatch(
+          ctx,
+          xEnd,
+          y,
+          xOverflow - xEnd,
+          barH,
+          colors.deviation,
+          true,
+        );
       } else {
         ctx.fillStyle = colors.base;
         ctx.fillRect(x1, y, Math.max(xEnd - x1, 3), barH);
@@ -5073,7 +5090,10 @@
       }
 
       if (idx % 5 === 0) {
-        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary") || "#888";
+        ctx.fillStyle =
+          getComputedStyle(document.documentElement).getPropertyValue(
+            "--text-secondary",
+          ) || "#888";
         ctx.font = "9px sans-serif";
         ctx.fillText(k.substring(5), x, H - 5);
       }
@@ -5088,19 +5108,37 @@
     var ctx = ch.ctx;
 
     var blocks = [
-      "early_morning", "morning", "late_morning", "noon",
-      "early_afternoon", "afternoon", "late_afternoon",
-      "early_evening", "evening", "late_evening",
-      "night", "late_night",
+      "early_morning",
+      "morning",
+      "late_morning",
+      "noon",
+      "early_afternoon",
+      "afternoon",
+      "late_afternoon",
+      "early_evening",
+      "evening",
+      "late_evening",
+      "night",
+      "late_night",
     ];
     var labels = [
-      "Early AM", "Morning", "Late AM", "Noon",
-      "Early PM", "Afternoon", "Late PM",
-      "Early Eve", "Evening", "Late Eve",
-      "Night", "Late Night",
+      "Early AM",
+      "Morning",
+      "Late AM",
+      "Noon",
+      "Early PM",
+      "Afternoon",
+      "Late PM",
+      "Early Eve",
+      "Evening",
+      "Late Eve",
+      "Night",
+      "Late Night",
     ];
     var counts = {};
-    blocks.forEach(function (b) { counts[b] = 0; });
+    blocks.forEach(function (b) {
+      counts[b] = 0;
+    });
 
     items.forEach(function (i) {
       var block = i.effective_time_block;
@@ -5110,12 +5148,26 @@
     });
 
     var maxVal = 1;
-    blocks.forEach(function (b) { if (counts[b] > maxVal) maxVal = counts[b]; });
+    blocks.forEach(function (b) {
+      if (counts[b] > maxVal) maxVal = counts[b];
+    });
 
     var barW = Math.floor((W - 60) / blocks.length);
     var chartH = H - 40;
-    var gradient = ["#1e3a5f", "#1e4d7a", "#2563a0", "#3b82f6", "#60a5fa", "#93c5fd",
-                    "#fbbf24", "#f59e0b", "#d97706", "#7c3aed", "#4c1d95", "#1e1b4b"];
+    var gradient = [
+      "#1e3a5f",
+      "#1e4d7a",
+      "#2563a0",
+      "#3b82f6",
+      "#60a5fa",
+      "#93c5fd",
+      "#fbbf24",
+      "#f59e0b",
+      "#d97706",
+      "#7c3aed",
+      "#4c1d95",
+      "#1e1b4b",
+    ];
 
     blocks.forEach(function (b, idx) {
       var x = 40 + idx * barW;
@@ -5124,7 +5176,10 @@
       ctx.fillRect(x + 1, H - 20 - h, barW - 2, h);
 
       ctx.save();
-      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary") || "#888";
+      ctx.fillStyle =
+        getComputedStyle(document.documentElement).getPropertyValue(
+          "--text-secondary",
+        ) || "#888";
       ctx.font = "8px sans-serif";
       ctx.translate(x + barW / 2, H - 5);
       ctx.rotate(-Math.PI / 4);
@@ -5148,7 +5203,10 @@
     });
 
     if (pts.length === 0) {
-      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary") || "#888";
+      ctx.fillStyle =
+        getComputedStyle(document.documentElement).getPropertyValue(
+          "--text-secondary",
+        ) || "#888";
       ctx.font = "13px sans-serif";
       ctx.fillText("No items with both estimate and tracked time", 20, 30);
       return ch.container;
@@ -5166,7 +5224,9 @@
     var cH = H - pad * 2;
 
     // Reference line (perfect accuracy)
-    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--border") || "#ccc";
+    ctx.strokeStyle =
+      getComputedStyle(document.documentElement).getPropertyValue("--border") ||
+      "#ccc";
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
     ctx.moveTo(pad, H - pad);
@@ -5185,7 +5245,10 @@
     });
 
     // Axis labels
-    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--text-secondary") || "#888";
+    ctx.fillStyle =
+      getComputedStyle(document.documentElement).getPropertyValue(
+        "--text-secondary",
+      ) || "#888";
     ctx.font = "11px sans-serif";
     ctx.fillText("Estimated (min)", W / 2 - 40, H - 8);
     ctx.save();
@@ -5610,9 +5673,14 @@
       ["midnight", "Midnight"],
     ];
     detailBody.appendChild(
-      makeSelect("Time Block", timeBlockOptions, item.due_time_block || "", function (val) {
-        saveItemField(itemId, { due_time_block: val || null });
-      }),
+      makeSelect(
+        "Time Block",
+        timeBlockOptions,
+        item.due_time_block || "",
+        function (val) {
+          saveItemField(itemId, { due_time_block: val || null });
+        },
+      ),
     );
 
     // Event Date
@@ -5788,7 +5856,11 @@
     delBtn.addEventListener("click", function () {
       // The task's row or card, when the list or the board is showing.
       var shown = document.querySelector(
-        '.item[data-id="' + itemId + '"], .board-card[data-id="' + itemId + '"]',
+        '.item[data-id="' +
+          itemId +
+          '"], .board-card[data-id="' +
+          itemId +
+          '"]',
       );
       onDelete(itemId, item.reminder, shown);
       closeDetailSheet();
@@ -7298,11 +7370,9 @@
     registered
       .then(function (registration) {
         if (!registration) return null;
-        return registration
-          .update()
-          .then(function () {
-            return workerSettled(registration);
-          });
+        return registration.update().then(function () {
+          return workerSettled(registration);
+        });
       })
       .catch(function () {
         /* the worker could not be fetched; the reload is still tried */

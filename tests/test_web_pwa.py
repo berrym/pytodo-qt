@@ -1508,9 +1508,12 @@ class TestCalendarHourGrid:
         chart = (
             self._app().split('_chartCanvas("Tasks / Gantt"')[1].split("return ch.container;")[1]
         )
-        assert "_paintHatch(ctx, xMidE, y, xEnd - xMidE, barH, colors.deviation, false);" in chart
-        assert "_paintHatch(ctx, xEnd, y, xOverflow - xEnd, barH, colors.deviation, true);" in chart
-        assert "ctx.fillStyle = colors.deviation;" not in chart
+        # Read without white space or the comma before a closing
+        # bracket: where a call is broken over lines is the formatter's.
+        calls = "".join(chart.split()).replace(",)", ")")
+        assert "_paintHatch(ctx,xMidE,y,xEnd-xMidE,barH,colors.deviation,false);" in calls
+        assert "_paintHatch(ctx,xEnd,y,xOverflow-xEnd,barH,colors.deviation,true);" in calls
+        assert "ctx.fillStyle=colors.deviation;" not in calls
 
     def test_hours_scroll_in_the_room_above_the_bottom_bar(self):
         """The page, with the toolbar, stays in place."""
