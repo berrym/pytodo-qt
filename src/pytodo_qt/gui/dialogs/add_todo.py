@@ -37,6 +37,7 @@ from ...core.config import get_config
 from ...core.logger import Logger
 from ...core.models import TodoItem
 from ...core.nlp_parser import EntityKind, ParseResult, replace_or_append_category
+from ..styles.themes import border_color
 from ..widgets.advance_reminder import AdvanceReminderEditor
 from ..widgets.smart_input import SmartInputWidget
 from ..widgets.time_combo import TimeComboBox
@@ -305,7 +306,7 @@ class AddTodoDialog(QDialog):
         )
         self._advance_reminder_note.setWordWrap(True)
         self._advance_reminder_note.setStyleSheet(
-            "color: palette(placeholderText); font-style: italic;"
+            "color: palette(placeholder-text); font-style: italic;"
         )
         sched_form.addRow("", self._advance_reminder_note)
         notifications = get_config().notifications
@@ -884,7 +885,7 @@ class AddTodoDialog(QDialog):
         btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         btn.setMenu(menu)
         btn.setStyleSheet(
-            "QToolButton { padding: 4px 10px; border: 1px solid palette(mid);"
+            f"QToolButton {{ padding: 4px 10px; border: 1px solid {border_color()};"
             " border-radius: 4px; background: palette(base); font-size: 11px; }"
             " QToolButton:hover { background: palette(button); }"
             " QToolButton::menu-indicator { image: none; width: 0; }"

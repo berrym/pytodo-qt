@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.bar_palette import readable_text_on
-from ..styles.themes import get_colors
+from ..styles.themes import border_color, get_colors
 
 if TYPE_CHECKING:
     from ...web.device_store import PairedDevice
@@ -138,7 +138,7 @@ def _step_circle(number: int) -> _StepCircle:
 def _step_row(number: int, title: str, description: str, widget: QWidget | None = None) -> QFrame:
     frame = QFrame()
     frame.setStyleSheet(
-        "QFrame { background: palette(base); border: 1px solid palette(mid);"
+        f"QFrame {{ background: palette(base); border: 1px solid {border_color()};"
         " border-radius: 8px; padding: 12px; }"
     )
     row = QHBoxLayout(frame)
@@ -212,7 +212,7 @@ def _browser_warning_visual(ip: str) -> QFrame:
     _tr = QApplication.translate
     frame = QFrame()
     frame.setStyleSheet(
-        "QFrame { background: palette(window); border: 1px solid palette(mid);"
+        f"QFrame {{ background: palette(window); border: 1px solid {border_color()};"
         " border-radius: 6px; padding: 8px; }"
     )
     layout = QVBoxLayout(frame)
@@ -221,7 +221,7 @@ def _browser_warning_visual(ip: str) -> QFrame:
 
     warning_bar = QLabel(_tr("MobileAccessWizard", "\u26a0 Your connection is not private"))
     warning_bar.setStyleSheet(
-        "font-weight: bold; font-size: 12px; color: palette(windowText);"
+        "font-weight: bold; font-size: 12px; color: palette(window-text);"
         " border: none; background: none;"
     )
     layout.addWidget(warning_bar)
@@ -284,7 +284,7 @@ class _MethodCard(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setGraphicsEffect(_shadow(self))
         self.setStyleSheet(
-            "QFrame { background: palette(base); border: 1px solid palette(mid);"
+            f"QFrame {{ background: palette(base); border: 1px solid {border_color()};"
             " border-radius: 12px; }"
             " QFrame:hover { border-color: palette(highlight); }"
         )
@@ -357,7 +357,7 @@ class _DeviceRow(QFrame):
     ) -> None:
         super().__init__(parent)
         self.setStyleSheet(
-            "QFrame { background: palette(base); border: 1px solid palette(mid);"
+            f"QFrame {{ background: palette(base); border: 1px solid {border_color()};"
             " border-radius: 8px; padding: 8px; }"
         )
         row = QHBoxLayout(self)
@@ -394,7 +394,7 @@ class _DeviceRow(QFrame):
         detail_parts.append(self.tr(f"last seen {_time_ago(device.last_seen)}"))
         detail_lbl = QLabel(" \u2022 ".join(detail_parts))
         detail_lbl.setStyleSheet(
-            "font-size: 10px; color: palette(placeholderText); border: none; background: none;"
+            "font-size: 10px; color: palette(placeholder-text); border: none; background: none;"
         )
         info.addWidget(detail_lbl)
 
@@ -408,7 +408,7 @@ class _DeviceRow(QFrame):
         elif not recently_seen:
             hint_lbl = QLabel(self.tr("May need to reconnect"))
             hint_lbl.setStyleSheet(
-                "font-size: 10px; color: palette(placeholderText);"
+                "font-size: 10px; color: palette(placeholder-text);"
                 " font-style: italic; border: none; background: none;"
             )
             info.addWidget(hint_lbl)
@@ -438,7 +438,7 @@ class _DeviceRow(QFrame):
             rename_btn.setObjectName("rename_btn")
             rename_btn.setStyleSheet(
                 "QPushButton { color: palette(text); font-size: 11px;"
-                " border: 1px solid palette(mid);"
+                f" border: 1px solid {border_color()};"
                 " border-radius: 4px; padding: 4px 8px; background: none; }"
                 " QPushButton:hover { background: palette(button);"
                 " color: palette(button-text); }"
@@ -564,7 +564,7 @@ class MobileAccessWizard(QDialog):
 
         # Bottom bar
         bottom = QFrame()
-        bottom.setStyleSheet("QFrame { border-top: 1px solid palette(mid); }")
+        bottom.setStyleSheet(f"QFrame {{ border-top: 1px solid {border_color()}; }}")
         bottom_layout = QHBoxLayout(bottom)
         bottom_layout.setContentsMargins(16, 8, 16, 8)
 
@@ -635,7 +635,7 @@ class MobileAccessWizard(QDialog):
         )
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("font-size: 11px; color: palette(placeholderText);")
+        subtitle.setStyleSheet("font-size: 11px; color: palette(placeholder-text);")
         layout.addWidget(subtitle)
 
         mw = self._main_window
@@ -649,7 +649,7 @@ class MobileAccessWizard(QDialog):
         if not devices:
             empty = QLabel(self.tr("No devices connected yet."))
             empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            empty.setStyleSheet("font-size: 13px; color: palette(placeholderText); padding: 20px;")
+            empty.setStyleSheet("font-size: 13px; color: palette(placeholder-text); padding: 20px;")
             layout.addWidget(empty)
         else:
             for device in devices:
@@ -1118,7 +1118,7 @@ class MobileAccessWizard(QDialog):
         instruction.setAlignment(Qt.AlignmentFlag.AlignCenter)
         instruction.setWordWrap(True)
         instruction.setStyleSheet(
-            "font-size: 12px; color: palette(placeholderText); padding: 0 12px;"
+            "font-size: 12px; color: palette(placeholder-text); padding: 0 12px;"
         )
         layout.addWidget(instruction)
 
@@ -1137,7 +1137,7 @@ class MobileAccessWizard(QDialog):
                 fallback_lbl = QLabel(self.tr(f"IP address: {self._url_ip}"))
                 fallback_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 fallback_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-                fallback_lbl.setStyleSheet("font-size: 10px; color: palette(placeholderText);")
+                fallback_lbl.setStyleSheet("font-size: 10px; color: palette(placeholder-text);")
                 layout.addWidget(fallback_lbl)
 
         layout.addStretch()

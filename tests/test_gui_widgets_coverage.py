@@ -17,6 +17,7 @@ from pytodo_qt.core.models import (
     TodoList,
     create_todo_item,
 )
+from pytodo_qt.gui.styles.themes import get_colors
 from pytodo_qt.gui.widgets.list_selector import ListSelectorWidget
 from pytodo_qt.gui.widgets.search_filter import FilterState, SearchFilterWidget
 from pytodo_qt.gui.widgets.status_bar import StatusBarWidget, _format_time_ago
@@ -418,8 +419,6 @@ class TestStatusBarSyncStatus:
 
     def test_syncing_color_is_blue(self, status_bar):
         """Syncing state should pull its blue from the theme palette."""
-        from pytodo_qt.gui.styles.themes import get_colors
-
         status_bar.set_sync_status("syncing")
         expected = get_colors()["focus_timer_stopwatch_running"]
         assert expected in status_bar.sync_status_label.styleSheet()
@@ -436,9 +435,9 @@ class TestStatusBarSyncStatus:
         assert "Auto-synced" in status_bar.sync_status_label.text()
 
     def test_success_color_is_green(self, status_bar):
-        """Success state should have green color."""
+        """Success state should have the theme's green."""
         status_bar.set_sync_status("success")
-        assert "green" in status_bar.sync_status_label.styleSheet()
+        assert get_colors()["due_soon"] in status_bar.sync_status_label.styleSheet()
 
     def test_error_state(self, status_bar):
         """Error state should show 'Sync failed'."""
@@ -448,13 +447,13 @@ class TestStatusBarSyncStatus:
     def test_error_color_is_red(self, status_bar):
         """Error state should have red color."""
         status_bar.set_sync_status("error")
-        assert "red" in status_bar.sync_status_label.styleSheet()
+        assert get_colors()["due_overdue"] in status_bar.sync_status_label.styleSheet()
 
     def test_idle_no_previous_sync(self, status_bar):
         """Idle state with no previous sync should show 'Not synced'."""
         status_bar.set_sync_status("idle")
         assert status_bar.sync_status_label.text() == "Not synced"
-        assert "gray" in status_bar.sync_status_label.styleSheet()
+        assert "palette(placeholder-text)" in status_bar.sync_status_label.styleSheet()
 
     def test_idle_with_previous_sync(self, status_bar):
         """Idle state after previous sync should show time since sync."""
@@ -470,13 +469,13 @@ class TestStatusBarServerStatus:
         """Running server should show address and port."""
         status_bar.set_server_status(True, "192.168.1.10", 8080)
         assert status_bar.server_status_label.text() == "Server: 192.168.1.10:8080"
-        assert "green" in status_bar.server_status_label.styleSheet()
+        assert get_colors()["due_soon"] in status_bar.server_status_label.styleSheet()
 
     def test_server_stopped(self, status_bar):
         """Stopped server should show 'Server: Off'."""
         status_bar.set_server_status(False)
         assert status_bar.server_status_label.text() == "Server: Off"
-        assert "gray" in status_bar.server_status_label.styleSheet()
+        assert "palette(placeholder-text)" in status_bar.server_status_label.styleSheet()
 
 
 class TestStatusBarMessage:
@@ -507,7 +506,7 @@ class TestStatusBarPendingSync:
         status_bar.set_pending_sync_count(3)
         assert not status_bar.pending_sync_label.isHidden()
         assert status_bar.pending_sync_label.text() == "Queued: 3"
-        assert "orange" in status_bar.pending_sync_label.styleSheet()
+        assert get_colors()["due_today"] in status_bar.pending_sync_label.styleSheet()
 
     def test_zero_count_hides_label(self, status_bar):
         """Zero count should hide the pending label."""

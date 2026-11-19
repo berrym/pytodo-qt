@@ -32,6 +32,10 @@ if TYPE_CHECKING:
 
 logger = Logger(__name__)
 
+# A muted text: the palette's placeholder role, which the theme sets to
+# its muted text colour and which follows a change of theme by itself.
+_MUTED_TEXT = "color: palette(placeholder-text);"
+
 
 def _format_time_ago(dt: datetime) -> str:
     """Format a datetime as 'X ago' relative to now."""
@@ -259,6 +263,8 @@ class StatusBarWidget(QStatusBar):
         # Set before any widget so resizeEvent (which Qt can fire during
         # construction) short-circuits before the overlay attrs exist.
         self._prev_pomodoro_state = "idle"
+        # The key of the theme colour each state label is written in.
+        self._state_colors: dict[QLabel, str] = {}
 
         # Build all widgets
         self.progress_bar = QProgressBar()
@@ -420,6 +426,27 @@ class StatusBarWidget(QStatusBar):
             self.progress_bar.setMaximum(1)
             self.progress_bar.setValue(0)
 
+    def _set_state_color(self, label: QLabel, key: str | None) -> None:
+        """Colour a label's text with a colour of the theme, by its key.
+
+        The key is kept, so that the label takes the other theme's
+        colour of the same name when the theme is changed. None takes
+        the colouring away.
+        """
+        if key is None:
+            self._state_colors.pop(label, None)
+            label.setStyleSheet("")
+        else:
+            self._state_colors[label] = key
+            label.setStyleSheet(f"color: {get_colors()[key]};")
+
+    def changeEvent(self, a0) -> None:  # noqa: N802
+        super().changeEvent(a0)
+        if a0 is not None and a0.type() == QEvent.Type.PaletteChange:
+            # A change of theme: the state colours are of the old one.
+            for label, key in list(getattr(self, "_state_colors", {}).items()):
+                label.setStyleSheet(f"color: {get_colors()[key]};")
+
     def set_status(self, message: str) -> None:
         """Set the status message."""
         self.status_label.setText(message)
@@ -428,10 +455,11 @@ class StatusBarWidget(QStatusBar):
         """Set the server status display."""
         if running:
             self.server_status_label.setText(self.tr(f"Server: {address}:{port}"))
-            self.server_status_label.setStyleSheet("color: green;")
+            self._set_state_color(self.server_status_label, "due_soon")
         else:
             self.server_status_label.setText(self.tr("Server: Off"))
-            self.server_status_label.setStyleSheet("color: gray;")
+            self._set_state_color(self.server_status_label, None)
+            self.server_status_label.setStyleSheet(_MUTED_TEXT)
 
     def set_web_status(self, running: bool, port: int = 0, pin: str = "") -> None:
         """Set the web server status display."""
@@ -440,12 +468,13 @@ class StatusBarWidget(QStatusBar):
             if pin:
                 text += f"  PIN: {pin}"
             self.web_status_label.setText(text)
-            self.web_status_label.setStyleSheet("color: green;")
+            self._set_state_color(self.web_status_label, "due_soon")
             self.web_status_label.setCursor(Qt.CursorShape.PointingHandCursor)
             self.web_status_label.setToolTip(self.tr("Click to show connection QR code"))
         else:
             self.web_status_label.setText(self.tr("Web: Off"))
-            self.web_status_label.setStyleSheet("color: gray;")
+            self._set_state_color(self.web_status_label, None)
+            self.web_status_label.setStyleSheet(_MUTED_TEXT)
             self.web_status_label.setToolTip("")
             self.web_status_label.unsetCursor()
 
@@ -467,24 +496,23 @@ class StatusBarWidget(QStatusBar):
         """
         if state == "syncing":
             self.sync_status_label.setText(self.tr("Syncing"))
-            self.sync_status_label.setStyleSheet(
-                f"color: {get_colors()['focus_timer_stopwatch_running']};"
-            )
+            self._set_state_color(self.sync_status_label, "focus_timer_stopwatch_running")
         elif state == "success":
             self._last_sync_time = datetime.now()
             self._last_auto_sync = auto
             self._update_sync_time_display()
-            self.sync_status_label.setStyleSheet("color: green;")
+            self._set_state_color(self.sync_status_label, "due_soon")
         elif state == "error":
             self.sync_status_label.setText(self.tr("Sync failed"))
-            self.sync_status_label.setStyleSheet("color: red;")
+            self._set_state_color(self.sync_status_label, "due_overdue")
         else:  # idle
             if self._last_sync_time:
                 self._update_sync_time_display()
-                self.sync_status_label.setStyleSheet("")
+                self._set_state_color(self.sync_status_label, None)
             else:
                 self.sync_status_label.setText(self.tr("Not synced"))
-                self.sync_status_label.setStyleSheet("color: gray;")
+                self._set_state_color(self.sync_status_label, None)
+                self.sync_status_label.setStyleSheet(_MUTED_TEXT)
 
     def _update_sync_time_display(self) -> None:
         """Update the sync time display with relative time."""
@@ -605,7 +633,7 @@ class StatusBarWidget(QStatusBar):
         """
         if count > 0:
             self.pending_sync_label.setText(self.tr(f"Queued: {count}"))
-            self.pending_sync_label.setStyleSheet("color: orange;")
+            self._set_state_color(self.pending_sync_label, "due_today")
             self.pending_sync_label.setToolTip(
                 self.tr(f"{count} sync(s) queued for offline devices")
             )

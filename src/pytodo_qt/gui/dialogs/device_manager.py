@@ -39,7 +39,7 @@ from ...core.models import Database, Device, create_device, create_sync_group
 from ...core.offline_queue import OfflineQueue
 from ...net.client import AsyncClient
 from ...net.discovery import DiscoveredPeer, get_discovery_service
-from ..styles.themes import make_font
+from ..styles.themes import get_colors, make_font
 
 if TYPE_CHECKING:
     pass
@@ -280,7 +280,9 @@ class DeviceManagerDialog(QDialog):
             )
         )
         self.devices_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.devices_empty_label.setStyleSheet("color: gray; font-style: italic; padding: 20px;")
+        self.devices_empty_label.setStyleSheet(
+            "color: palette(placeholder-text); font-style: italic; padding: 20px;"
+        )
         layout.addWidget(self.devices_empty_label)
 
         return tab
@@ -376,7 +378,9 @@ class DeviceManagerDialog(QDialog):
             )
         )
         self.groups_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.groups_empty_label.setStyleSheet("color: gray; font-style: italic; padding: 20px;")
+        self.groups_empty_label.setStyleSheet(
+            "color: palette(placeholder-text); font-style: italic; padding: 20px;"
+        )
         layout.addWidget(self.groups_empty_label)
 
         return tab
@@ -796,8 +800,9 @@ class DeviceManagerDialog(QDialog):
         elif device.last_address:
             # Extract host part from last_address (host:port)
             host_part = device.last_address.rsplit(":", 1)[0]
+            muted = get_colors()["completed_text"]
             self.device_hostname_label.setText(
-                f'{host_part} <span style="color: gray;">(last known)</span>'
+                f'{host_part} <span style="color: {muted};">(last known)</span>'
             )
         else:
             self.device_hostname_label.setText(self.tr("Unknown"))
@@ -1206,8 +1211,9 @@ class DeviceManagerDialog(QDialog):
             from datetime import datetime
 
             created = datetime.fromtimestamp(sync.created_at / 1000)
+            waiting = get_colors()["due_today"]
             self.pending_sync_label.setText(
-                f'<span style="color: orange;">Queued ({len(pending)}) - '
+                f'<span style="color: {waiting};">Queued ({len(pending)}) - '
                 f"since {created.strftime('%m/%d %H:%M')}</span>"
             )
             self.queue_sync_btn.setEnabled(False)

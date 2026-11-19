@@ -198,7 +198,7 @@ class FocusStatsDialog(QDialog):
         today_card = self._create_card(self.tr("Today"), today_sessions, today_duration)
         if self._config.daily_goal > 0:
             goal_label = QLabel(self.tr(f"Goal: {today_sessions}/{self._config.daily_goal}"))
-            goal_label.setStyleSheet("color: gray;")
+            goal_label.setStyleSheet("color: palette(placeholder-text);")
             goal_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             card_layout = today_card.layout()
             if card_layout:
@@ -312,7 +312,7 @@ class FocusStatsDialog(QDialog):
 
         duration_label = QLabel(_format_duration(duration))
         duration_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        duration_label.setStyleSheet("color: gray;")
+        duration_label.setStyleSheet("color: palette(placeholder-text);")
         card_layout.addWidget(duration_label)
 
         return card

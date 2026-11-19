@@ -1396,10 +1396,14 @@ def build_rich_tooltip(
 
     # Created date
     created_dt = _dt.fromtimestamp(item.created_at / 1000)
-    lines.append(
-        f"<span style='color:gray'>Created {created_dt.strftime('%b %d, %Y')}"
-        f" · ID: {str(item.id)[:8]}</span>"
-    )
+    # The muted colour comes from the theme, as the overdue colour does;
+    # a caller without a theme gets the line in the ordinary colour.
+    created = f"Created {created_dt.strftime('%b %d, %Y')} · ID: {str(item.id)[:8]}"
+    muted_color = (theme_colors or {}).get("completed_text")
+    if muted_color:
+        lines.append(f"<span style='color:{muted_color}'>{created}</span>")
+    else:
+        lines.append(created)
 
     return "<br>".join(lines)
 

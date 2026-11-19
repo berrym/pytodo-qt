@@ -66,6 +66,8 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.bar_palette import readable_text_on
+from ..styles.themes import border_color
+from ..styles.themes import get_colors as _theme_colors
 
 if TYPE_CHECKING:
     from ...core.models import TodoItem, TodoList
@@ -689,6 +691,20 @@ class _CalendarModel(QAbstractTableModel):
             self._weeks.append([0] * 7)
 
 
+def _persistent_tooltip_sheet() -> str:
+    """The style of the tooltips the calendar keeps open itself.
+
+    They are labels, not `QToolTip`s, so the application's rule for
+    tooltips does not reach them. They take the same background, text
+    colour and border from the theme.
+    """
+    colors = _theme_colors()
+    return (
+        f"QLabel {{ background: {colors['base']}; color: {colors['text']};"
+        f" border: 1px solid {colors['border']}; padding: 6px 8px; font-size: 12px; }}"
+    )
+
+
 def _outline_finished_chip(painter: QPainter, chip_rect: QRect, color: str) -> None:
     """A thin border around a finished task's chip in a calendar cell.
 
@@ -975,10 +991,7 @@ class _CalendarTableView(QTableView):
         self._tooltip_label.setWindowFlags(
             Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
         )
-        self._tooltip_label.setStyleSheet(
-            "QLabel { background: palette(toolTipBase); color: palette(toolTipText); "
-            "border: 1px solid palette(mid); padding: 6px 8px; font-size: 12px; }"
-        )
+        self._tooltip_label.setStyleSheet(_persistent_tooltip_sheet())
         self._tooltip_label.hide()
         self._tooltip_item_id = None
         self._drag_start_pos = None
@@ -1272,10 +1285,7 @@ class _TimelineTasksWidget(QWidget):
         self._tooltip_label.setWindowFlags(
             Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
         )
-        self._tooltip_label.setStyleSheet(
-            "QLabel { background: palette(toolTipBase); color: palette(toolTipText); "
-            "border: 1px solid palette(mid); padding: 6px 8px; font-size: 12px; }"
-        )
+        self._tooltip_label.setStyleSheet(_persistent_tooltip_sheet())
         self._tooltip_label.hide()
 
         # Plot slot; replaced with the real PlotWidget on first _rebuild_plot().
@@ -1983,10 +1993,7 @@ class _TimelineDailyWidget(QWidget):
         self._tooltip_label.setWindowFlags(
             Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
         )
-        self._tooltip_label.setStyleSheet(
-            "QLabel { background: palette(toolTipBase); color: palette(toolTipText); "
-            "border: 1px solid palette(mid); padding: 6px 8px; font-size: 12px; }"
-        )
+        self._tooltip_label.setStyleSheet(_persistent_tooltip_sheet())
         self._tooltip_label.hide()
 
         # Plot slot; replaced with the real PlotWidget on first rebuild().
@@ -2405,10 +2412,7 @@ class _TimelineProductivityWidget(QWidget):
         self._tooltip_label.setWindowFlags(
             Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
         )
-        self._tooltip_label.setStyleSheet(
-            "QLabel { background: palette(toolTipBase); color: palette(toolTipText); "
-            "border: 1px solid palette(mid); padding: 6px 8px; font-size: 12px; }"
-        )
+        self._tooltip_label.setStyleSheet(_persistent_tooltip_sheet())
         self._tooltip_label.hide()
 
         # Plot slot; replaced with the real PlotWidget on first rebuild().
@@ -2804,10 +2808,7 @@ class _TimelineAccuracyWidget(QWidget):
         self._tooltip_label.setWindowFlags(
             Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
         )
-        self._tooltip_label.setStyleSheet(
-            "QLabel { background: palette(toolTipBase); color: palette(toolTipText); "
-            "border: 1px solid palette(mid); padding: 6px 8px; font-size: 12px; }"
-        )
+        self._tooltip_label.setStyleSheet(_persistent_tooltip_sheet())
         self._tooltip_label.hide()
 
         # Plot slot; replaced with the real PlotWidget on first rebuild().
@@ -3141,7 +3142,8 @@ def _wrap_title_with_info_link(title: str) -> str:
     important because adding a peer widget under the same parent shifted
     pyqtgraph teardown ordering enough to surface a ViewBox-deletion
     race on the Ubuntu 3.12 + offscreen CI matrix only."""
-    return f"{title} <a href='info://' style='color: gray; text-decoration: none;'>ⓘ</a>"
+    muted = _theme_colors()["completed_text"]
+    return f"{title} <a href='info://' style='color: {muted}; text-decoration: none;'>ⓘ</a>"
 
 
 class _TimelineTimingWidget(QWidget):
@@ -4716,10 +4718,7 @@ class _WeekTableView(QTableView):
         self._tooltip_label.setWindowFlags(
             Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint
         )
-        self._tooltip_label.setStyleSheet(
-            "QLabel { background: palette(toolTipBase); color: palette(toolTipText); "
-            "border: 1px solid palette(mid); padding: 6px 8px; font-size: 12px; }"
-        )
+        self._tooltip_label.setStyleSheet(_persistent_tooltip_sheet())
         self._tooltip_label.hide()
         self._tooltip_item_id = None
         self._drag_start_pos = None
@@ -5614,7 +5613,7 @@ class _DayHeaders(QWidget):
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(
                 "font-size: 11px; font-weight: bold; padding: 2px;"
-                " color: palette(placeholderText); border: none;"
+                " color: palette(placeholder-text); border: none;"
             )
             lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             layout.addWidget(lbl)
@@ -5684,9 +5683,9 @@ class _UnscheduledPanel(QFrame):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setFixedWidth(200)
-        self._default_style = "QFrame { border-left: 1px solid palette(mid); }"
+        self._default_style = f"QFrame {{ border-left: 1px solid {border_color()}; }}"
         self._drag_over_style = (
-            "QFrame { border-left: 1px solid palette(mid);"
+            f"QFrame {{ border-left: 1px solid {border_color()};"
             " background-color: palette(alternate-base); }"
         )
         self.setStyleSheet(self._default_style)
@@ -5701,7 +5700,7 @@ class _UnscheduledPanel(QFrame):
         layout.addWidget(header)
 
         self._count_label = QLabel(self.tr("0 tasks"))
-        self._count_label.setStyleSheet("font-size: 10px; color: palette(placeholderText);")
+        self._count_label.setStyleSheet("font-size: 10px; color: palette(placeholder-text);")
         layout.addWidget(self._count_label)
 
         self._scroll = QScrollArea()
@@ -5919,7 +5918,7 @@ class _CalendarLegend(QWidget):
 
         # Spacer between lifecycle states and deviation markers
         spacer = QLabel("  |  ")
-        spacer.setStyleSheet("QLabel { color: palette(mid); font-size: 10px; }")
+        spacer.setStyleSheet("QLabel { color: palette(placeholder-text); font-size: 10px; }")
         self._layout.addWidget(spacer)
 
         # Deviation indicators — using the COMPLETED_EARLY and COMPLETED_LATE
@@ -5958,7 +5957,7 @@ class _CalendarLegend(QWidget):
 
         # Separator before the now-line indicator
         spacer2 = QLabel("  |  ")
-        spacer2.setStyleSheet("QLabel { color: palette(mid); font-size: 10px; }")
+        spacer2.setStyleSheet("QLabel { color: palette(placeholder-text); font-size: 10px; }")
         self._layout.addWidget(spacer2)
 
         # Now-line indicator — a small horizontal red line swatch matching
@@ -6299,7 +6298,7 @@ class _AgendaRow(QFrame):
         layout.setSpacing(8)
 
         # Time / "All Day" — fixed-width column so reminders align. Uses
-        # the theme's standard text color (rather than palette(mid))
+        # the theme's standard text color (rather than a derived grey)
         # because muted-gray fails WCAG against the dark-theme cell
         # background; the time column carries functional information
         # and must remain legible in either theme.
@@ -6831,7 +6830,9 @@ class CalendarViewWidget(QWidget):
 
         # Top bar: sub-view pills + navigation
         top_bar = QFrame()
-        top_bar.setStyleSheet("QFrame { border-bottom: 1px solid palette(mid); padding: 4px; }")
+        top_bar.setStyleSheet(
+            f"QFrame {{ border-bottom: 1px solid {border_color()}; padding: 4px; }}"
+        )
         top_layout = QHBoxLayout(top_bar)
         top_layout.setContentsMargins(8, 4, 8, 4)
         top_layout.setSpacing(8)
@@ -6839,7 +6840,7 @@ class CalendarViewWidget(QWidget):
         # Sub-view pill toggle
         pill_frame = QFrame()
         pill_frame.setStyleSheet(
-            "QFrame { background: palette(window); border: 1px solid palette(mid);"
+            f"QFrame {{ background: palette(window); border: 1px solid {border_color()};"
             " border-radius: 4px; padding: 0; }"
         )
         pill_layout = QHBoxLayout(pill_frame)
@@ -6892,7 +6893,7 @@ class CalendarViewWidget(QWidget):
 
         self._today_btn = QPushButton(self.tr("Today"))
         self._today_btn.setStyleSheet(
-            "QPushButton { border: 1px solid palette(mid); border-radius: 3px;"
+            f"QPushButton {{ border: 1px solid {border_color()}; border-radius: 3px;"
             " padding: 3px 10px; font-size: 11px; }"
         )
         self._today_btn.clicked.connect(self._navigate_today)
@@ -6906,7 +6907,7 @@ class CalendarViewWidget(QWidget):
         self._legend = _CalendarLegend()
         self._legend.setStyleSheet(
             "QWidget { background: palette(alternate-base); "
-            "border-bottom: 1px solid palette(mid); }"
+            f"border-bottom: 1px solid {border_color()}; }}"
         )
         self._legend.setVisible(self._sub_view in (self.SUB_DAY, self.SUB_WEEK))
         layout.addWidget(self._legend)
@@ -6914,7 +6915,7 @@ class CalendarViewWidget(QWidget):
         # Secondary pill row for timeline sub-views (hidden unless Timeline selected)
         self._timeline_pill_frame = QFrame()
         self._timeline_pill_frame.setStyleSheet(
-            "QFrame { background: palette(window); border: 1px solid palette(mid);"
+            f"QFrame {{ background: palette(window); border: 1px solid {border_color()};"
             " border-radius: 4px; padding: 0; }"
         )
         tl_pill_layout = QHBoxLayout(self._timeline_pill_frame)

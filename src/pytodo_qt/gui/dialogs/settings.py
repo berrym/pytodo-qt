@@ -363,7 +363,7 @@ class SettingsDialog(QDialog):
             )
         )
         note.setWordWrap(True)
-        note.setStyleSheet("color: gray; font-style: italic;")
+        note.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
         layout.addWidget(note)
 
         layout.addStretch()
@@ -402,7 +402,7 @@ class SettingsDialog(QDialog):
             )
         )
         push_label.setWordWrap(True)
-        push_label.setStyleSheet("color: gray; font-style: italic;")
+        push_label.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
         auto_layout.addRow(push_label)
 
         self.auto_sync_delay_spin = QSpinBox()
@@ -418,7 +418,7 @@ class SettingsDialog(QDialog):
             )
         )
         interval_label.setWordWrap(True)
-        interval_label.setStyleSheet("color: gray; font-style: italic;")
+        interval_label.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
         auto_layout.addRow(interval_label)
 
         self.auto_sync_interval_spin = QSpinBox()
@@ -476,7 +476,7 @@ class SettingsDialog(QDialog):
         font_hint = QLabel(
             self.tr("Some surfaces (timer digits, table rows) refresh on next app restart.")
         )
-        font_hint.setStyleSheet("color: palette(placeholderText); font-size: 11px;")
+        font_hint.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
         font_hint.setWordWrap(True)
         font_layout.addRow("", font_hint)
 
@@ -511,7 +511,7 @@ class SettingsDialog(QDialog):
 
         # Preview note
         note = QLabel(self.tr("Theme changes are applied immediately."))
-        note.setStyleSheet("color: gray; font-style: italic;")
+        note.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
         layout.addWidget(note)
 
         layout.addStretch()
@@ -681,7 +681,7 @@ class SettingsDialog(QDialog):
                 "Noon (11:30-12:30) and midnight (23:30-00:30) are fixed."
             )
         )
-        note.setStyleSheet("color: gray; font-style: italic;")
+        note.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
         layout.addWidget(note)
 
         layout.addStretch()
@@ -800,7 +800,7 @@ class SettingsDialog(QDialog):
             self.tr("Focus-session and milestone notifications are set on the Focus Timer tab.")
         )
         note.setWordWrap(True)
-        note.setStyleSheet("color: palette(placeholderText);")
+        note.setStyleSheet("color: palette(placeholder-text);")
         layout.addWidget(note)
         layout.addStretch()
 
@@ -836,7 +836,7 @@ class SettingsDialog(QDialog):
     def _make_notification_hint(self) -> QLabel:
         hint = QLabel()
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: palette(placeholderText); font-style: italic;")
+        hint.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
         return hint
 
     def _notification_time_format(self) -> str:
@@ -1017,7 +1017,7 @@ class SettingsDialog(QDialog):
         form.addRow(self.tr("Pairing PIN:"), self.web_pin_label)
 
         self.web_pin_hint = QLabel(self.tr("Enter this PIN on your phone to connect"))
-        self.web_pin_hint.setStyleSheet("font-size: 11px; color: palette(mid);")
+        self.web_pin_hint.setStyleSheet("font-size: 11px; color: palette(placeholder-text);")
         form.addRow("", self.web_pin_hint)
 
         # Device count indicator
@@ -1169,7 +1169,9 @@ class SettingsDialog(QDialog):
         else:
             self.web_device_count_label.setText(self.tr("Server not running"))
             self.web_pin_label.setText(self.tr("Start web server to generate"))
-            self.web_pin_label.setStyleSheet("font-size: 12px; color: palette(mid); padding: 8px;")
+            self.web_pin_label.setStyleSheet(
+                "font-size: 12px; color: palette(placeholder-text); padding: 8px;"
+            )
 
     def _save_settings(self) -> bool:
         """Save settings from UI to config."""

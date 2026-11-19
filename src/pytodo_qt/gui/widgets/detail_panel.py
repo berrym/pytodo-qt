@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.models import TodoItem, TodoList, format_duration
+from ..styles.themes import border_color
 from .advance_reminder import AdvanceReminderEditor
 
 _W = TypeVar("_W", bound=QWidget)
@@ -106,7 +107,7 @@ class TaskDetailPanel(QDockWidget):
         # Placeholder
         self._placeholder = QLabel(self.tr("Select a task to view details"))
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._placeholder.setStyleSheet("color: palette(mid); font-style: italic;")
+        self._placeholder.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
         self._content_layout.addWidget(self._placeholder)
 
         # Detail sections
@@ -172,7 +173,7 @@ class TaskDetailPanel(QDockWidget):
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         line.setFrameShadow(QFrame.Shadow.Sunken)
-        line.setStyleSheet("color: palette(mid);")
+        line.setStyleSheet(f"color: {border_color()};")
         layout.addWidget(line)
 
         form = QFormLayout()
@@ -514,7 +515,7 @@ class TaskDetailPanel(QDockWidget):
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         line.setFrameShadow(QFrame.Shadow.Sunken)
-        line.setStyleSheet("color: palette(mid);")
+        line.setStyleSheet(f"color: {border_color()};")
         layout.addWidget(line)
 
         self._subtasks_container = QWidget()
@@ -525,7 +526,7 @@ class TaskDetailPanel(QDockWidget):
 
         self._subtasks_empty_label = QLabel(self.tr("No subtasks. Click + Add Subtask to add one."))
         self._subtasks_empty_label.setStyleSheet(
-            "color: palette(placeholderText); font-style: italic; font-size: 10px;"
+            "color: palette(placeholder-text); font-style: italic; font-size: 10px;"
         )
         self._subtasks_empty_label.setWordWrap(True)
         self._subtasks_layout.addWidget(self._subtasks_empty_label)
@@ -540,7 +541,7 @@ class TaskDetailPanel(QDockWidget):
         self._add_subtask_btn = QPushButton(self.tr("+ Add Subtask"))
         self._add_subtask_btn.setStyleSheet(
             "QPushButton { text-align: left; padding: 4px 6px;"
-            " color: palette(highlight); border: 1px dashed palette(mid);"
+            f" color: palette(highlight); border: 1px dashed {border_color()};"
             " border-radius: 3px; background: transparent; }"
             "QPushButton:hover { background: palette(alternate-base); }"
         )
@@ -620,7 +621,7 @@ class TaskDetailPanel(QDockWidget):
         delete_btn.setFixedSize(20, 20)
         delete_btn.setToolTip(self.tr("Delete subtask"))
         delete_btn.setStyleSheet(
-            "QPushButton { border: none; color: palette(mid); background: transparent; }"
+            "QPushButton { border: none; color: palette(placeholder-text); background: transparent; }"
             "QPushButton:hover { color: palette(window-text); }"
         )
         delete_btn.clicked.connect(

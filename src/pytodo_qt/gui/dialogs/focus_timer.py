@@ -98,7 +98,7 @@ class FocusTimerDialog(QDialog):
         # Session counter (cycle position, e.g. "Session 2 of 4")
         self._session_label = QLabel()
         self._session_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._session_label.setStyleSheet("color: gray;")
+        self._session_label.setStyleSheet("color: palette(placeholder-text);")
         layout.addWidget(self._session_label)
 
         # Item pomodoro progress — row of tomato icons
@@ -114,14 +114,14 @@ class FocusTimerDialog(QDialog):
         # Daily goal progress
         self._daily_goal_label = QLabel()
         self._daily_goal_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._daily_goal_label.setStyleSheet("color: gray;")
+        self._daily_goal_label.setStyleSheet("color: palette(placeholder-text);")
         self._daily_goal_label.hide()
         layout.addWidget(self._daily_goal_label)
 
         # Streak display
         self._streak_label = QLabel()
         self._streak_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._streak_label.setStyleSheet("color: gray;")
+        self._streak_label.setStyleSheet("color: palette(placeholder-text);")
         self._streak_label.hide()
         layout.addWidget(self._streak_label)
 
@@ -136,14 +136,14 @@ class FocusTimerDialog(QDialog):
         _fs_layout.setSpacing(4)
         _fs_layout.addStretch()
         self._focus_score_label = QLabel()
-        self._focus_score_label.setStyleSheet("color: gray;")
+        self._focus_score_label.setStyleSheet("color: palette(placeholder-text);")
         _fs_layout.addWidget(self._focus_score_label)
         self._focus_score_info_btn = QPushButton("ⓘ")  # circled-i glyph
         self._focus_score_info_btn.setFlat(True)
         self._focus_score_info_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._focus_score_info_btn.setFixedWidth(20)
         self._focus_score_info_btn.setStyleSheet(
-            "QPushButton { color: gray; font-size: 14px; border: none;"
+            "QPushButton { color: palette(placeholder-text); font-size: 14px; border: none;"
             " padding: 0; background: transparent; }"
             "QPushButton:hover { color: palette(highlight); }"
         )
@@ -164,7 +164,7 @@ class FocusTimerDialog(QDialog):
         # sessions (parallel to the per-item pomodoro tomato row).
         self._item_tracked_label = QLabel()
         self._item_tracked_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._item_tracked_label.setStyleSheet("color: gray;")
+        self._item_tracked_label.setStyleSheet("color: palette(placeholder-text);")
         self._item_tracked_label.hide()
         layout.addWidget(self._item_tracked_label)
 
@@ -172,7 +172,7 @@ class FocusTimerDialog(QDialog):
         # (parallel to the daily pomodoro goal).
         self._daily_tracked_label = QLabel()
         self._daily_tracked_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._daily_tracked_label.setStyleSheet("color: gray;")
+        self._daily_tracked_label.setStyleSheet("color: palette(placeholder-text);")
         self._daily_tracked_label.hide()
         layout.addWidget(self._daily_tracked_label)
 
@@ -180,7 +180,7 @@ class FocusTimerDialog(QDialog):
         # (parallel to the pomodoro streak).
         self._tracking_streak_label = QLabel()
         self._tracking_streak_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._tracking_streak_label.setStyleSheet("color: gray;")
+        self._tracking_streak_label.setStyleSheet("color: palette(placeholder-text);")
         self._tracking_streak_label.hide()
         layout.addWidget(self._tracking_streak_label)
 
@@ -210,7 +210,7 @@ class FocusTimerDialog(QDialog):
         # Muted text for the resting state; :hover / :pressed / :focus
         # switch to highlight_text on the highlight band so the label
         # stays legible when the focus rectangle or press tint lands on
-        # it (the inline `color: gray` this replaces went unreadable on
+        # it (the inline named grey this replaces went unreadable on
         # the blue band).
         _toggle_colors = get_colors()
         self._sessions_toggle = QPushButton(self.tr("\u25b6 Today's Sessions"))
@@ -464,7 +464,9 @@ class FocusTimerDialog(QDialog):
 
         if len(sessions) > max_recent:
             more = QLabel(self.tr(f"... and {len(sessions) - max_recent} earlier"))
-            more.setStyleSheet("color: gray; font-size: 10px; font-style: italic;")
+            more.setStyleSheet(
+                "color: palette(placeholder-text); font-size: 10px; font-style: italic;"
+            )
             self._recent_layout.insertWidget(0, more)
 
         # Update toggle button text via the mode-aware helper.
@@ -493,7 +495,7 @@ class FocusTimerDialog(QDialog):
 
         text = f"{item_name}: {_format_duration(duration)}{time_range}"
         label = QLabel(text)
-        label.setStyleSheet("color: gray; font-size: 11px;")
+        label.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
         label.setFrameShape(QFrame.Shape.NoFrame)
         return label
 
@@ -563,7 +565,9 @@ class FocusTimerDialog(QDialog):
 
         if len(sessions) > max_recent:
             more = QLabel(self.tr(f"... and {len(sessions) - max_recent} earlier"))
-            more.setStyleSheet("color: gray; font-size: 10px; font-style: italic;")
+            more.setStyleSheet(
+                "color: palette(placeholder-text); font-size: 10px; font-style: italic;"
+            )
             # Insert at top
             self._recent_layout.insertWidget(0, more)
 
@@ -597,7 +601,7 @@ class FocusTimerDialog(QDialog):
 
         text = self.tr(f"Session {index}: {m:02d}:{s:02d} {mark}{time_range}")
         label = QLabel(text)
-        label.setStyleSheet("color: gray; font-size: 11px;")
+        label.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
 
         # Add separator line
         label.setFrameShape(QFrame.Shape.NoFrame)
@@ -721,7 +725,7 @@ class FocusTimerDialog(QDialog):
 
         if overflow:
             overflow_label = QLabel(f"+{pomodoro_count - max_icons}")
-            overflow_label.setStyleSheet("color: gray; font-size: 11px;")
+            overflow_label.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
             layout.insertWidget(layout.count() - 1, overflow_label)
 
         self._item_progress_container.show()

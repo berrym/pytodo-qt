@@ -305,7 +305,7 @@ class NotificationOverlay(QWidget):
         # stays a bare 22 px mark and the text keeps the banner's width.
         close_btn.setStyleSheet(
             "QPushButton { border: none; background: transparent; padding: 0;"
-            " min-width: 22px; max-width: 22px; color: palette(mid); font-size: 14px; }"
+            " min-width: 22px; max-width: 22px; color: palette(placeholder-text); font-size: 14px; }"
             "QPushButton:hover { background: transparent; color: palette(window-text); }"
         )
         close_btn.clicked.connect(self._start_dismiss)

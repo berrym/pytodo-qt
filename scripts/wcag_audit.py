@@ -535,6 +535,42 @@ def _desktop_fill_pairs() -> list[Pair]:
     return out
 
 
+def _desktop_window_pairs() -> list[Pair]:
+    """Muted and state texts on the window background.
+
+    Dialogs and the status bar have the window's colour behind them,
+    not the base's, and it is the darker of the two in the light theme.
+    The muted text is what `palette(placeholder-text)` gives; the three
+    state colours are what the status bar writes its states in. The
+    border colour is drawn on both backgrounds.
+    """
+    out: list[Pair] = []
+    for theme, colors in (("light", LIGHT_COLORS), ("dark", DARK_COLORS)):
+        for key in ("completed_text", "due_soon", "due_overdue", "due_today"):
+            out.append(
+                Pair(
+                    f"{key} on window",
+                    theme,
+                    colors[key],
+                    colors["window"],
+                    THRESHOLD_TEXT,
+                    "text",
+                )
+            )
+        for around in ("window", "base", "alternate_base"):
+            out.append(
+                Pair(
+                    f"border on {around} (frames and rules in dialogs and the calendar)",
+                    theme,
+                    colors["border"],
+                    colors[around],
+                    THRESHOLD_UI,
+                    "ui",
+                )
+            )
+    return out
+
+
 def sections() -> dict[str, list[Pair]]:
     """Every pair of the audit, under the heading it is reported under.
 
@@ -544,6 +580,7 @@ def sections() -> dict[str, list[Pair]]:
     return {
         "Desktop (themes.py)": _desktop_pairs(),
         "Desktop text on fills": _desktop_fill_pairs(),
+        "Desktop on the window background": _desktop_window_pairs(),
         "Web (style.css)": _web_pairs(),
         "Web text on fills": _web_fill_pairs(),
         "Calendar bar palette": _bar_pairs(),

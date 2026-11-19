@@ -412,6 +412,18 @@ def get_colors() -> dict[str, str]:
     return LIGHT_COLORS
 
 
+def border_color() -> str:
+    """The theme's border colour, to be written into a style sheet.
+
+    A style sheet cannot name it as a palette role: the palette has no
+    role for it. The `mid` role was written in its place, a role the
+    theme does not set, for which Qt derives the same light grey in
+    both themes: 1.82:1 on the light theme's window, and a bright line
+    on the dark theme's.
+    """
+    return get_colors()["border"]
+
+
 def create_palette(theme: Theme) -> QPalette:
     """Create a QPalette for the given theme."""
     colors = DARK_COLORS if theme == Theme.DARK else LIGHT_COLORS
@@ -428,7 +440,11 @@ def create_palette(theme: Theme) -> QPalette:
 
     # Text colors
     palette.setColor(QPalette.ColorRole.Text, QColor(colors["text"]))
-    palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(colors["text"]).darker(150))
+    # The muted text colour: for the hint in an empty field, and for every
+    # style sheet that writes `palette(placeholder-text)` for a muted
+    # text. Derived from the text colour it came out darker than the text
+    # itself in the light theme.
+    palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(colors["completed_text"]))
 
     # Button colors
     palette.setColor(QPalette.ColorRole.Button, QColor(colors["button"]))
@@ -514,9 +530,14 @@ QPushButton:default {{
 }}
 
 /* Input fields */
+/* The hint in an empty field. Without this, a field whose text colour
+   comes from a style sheet shows the hint in that colour at half
+   opacity, whatever the palette says: 3.36:1 in the light theme and
+   4.04:1 in the dark. */
 QLineEdit, QTextEdit, QPlainTextEdit {{
     background-color: {colors["base"]};
     color: {colors["text"]};
+    placeholder-text-color: {colors["completed_text"]};
     border: 1px solid {colors["border"]};
     border-radius: 8px;
     padding: 8px;

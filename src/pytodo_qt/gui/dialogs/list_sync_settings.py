@@ -151,7 +151,7 @@ class ListSyncSettingsDialog(QDialog):
 
         if not groups:
             no_groups = QLabel(self.tr("(No sync groups created)"))
-            no_groups.setStyleSheet("color: gray; font-style: italic;")
+            no_groups.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
             self._groups_layout.addWidget(no_groups)
             return
 
