@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import time
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import QSize, Qt, QTime, pyqtSignal
+from PyQt6.QtCore import QEvent, QSize, Qt, QTime, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -74,6 +74,27 @@ class _FullHeightScrollArea(QScrollArea):
             return super().sizeHint()
         frame = 2 * self.frameWidth()
         return content.sizeHint() + QSize(frame, frame)
+
+    def eventFilter(self, a0, a1) -> bool:  # noqa: N802 — Qt override
+        # The scroll area watches what it holds already. When that is laid
+        # out again, its full height is made its least height: a layout
+        # shrinks its rows to the least each can have before the area
+        # scrolls, and a field is then lower here than on a page that fits.
+        if a1 is not None and a0 is self.widget() and a1.type() == QEvent.Type.LayoutRequest:
+            self._keep_full_height()
+        return super().eventFilter(a0, a1)
+
+    def showEvent(self, a0) -> None:  # noqa: N802 — Qt override
+        self._keep_full_height()
+        super().showEvent(a0)
+
+    def _keep_full_height(self) -> None:
+        content = self.widget()
+        if content is None:
+            return
+        height = content.sizeHint().height()
+        if content.minimumHeight() != height:
+            content.setMinimumHeight(height)
 
 
 class SettingsDialog(QDialog):
@@ -141,15 +162,30 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.tabs)
 
         # Create tabs
-        self.tabs.addTab(self._create_general_tab(), self.tr("General"))
-        self.tabs.addTab(self._create_network_tab(), self.tr("Network"))
-        self.tabs.addTab(self._create_security_tab(), self.tr("Security"))
-        self.tabs.addTab(self._create_sync_tab(), self.tr("Sync"))
-        self.tabs.addTab(self._create_appearance_tab(), self.tr("Appearance"))
-        self.tabs.addTab(self._create_pomodoro_tab(), self.tr("Focus Timer"))
-        self.tabs.addTab(self._create_time_blocks_tab(), self.tr("Time Blocks"))
-        self.tabs.addTab(self._create_notifications_tab(), self.tr("Notifications"))
-        self.tabs.addTab(self._create_web_tab(), self.tr("Web UI"))
+        # Every page sits in a scroll area. A page that sits in the tab as
+        # it is has its rows squeezed into each other where the dialog is
+        # shorter than the page: the dialog's minimum height is set by
+        # hand, below what the taller pages ask for.
+        for page, title, described in (
+            (self._create_general_tab(), self.tr("General"), self.tr("General settings")),
+            (self._create_network_tab(), self.tr("Network"), self.tr("Network settings")),
+            (self._create_security_tab(), self.tr("Security"), self.tr("Security settings")),
+            (self._create_sync_tab(), self.tr("Sync"), self.tr("Sync settings")),
+            (self._create_appearance_tab(), self.tr("Appearance"), self.tr("Appearance settings")),
+            (self._create_pomodoro_tab(), self.tr("Focus Timer"), self.tr("Focus timer settings")),
+            (
+                self._create_time_blocks_tab(),
+                self.tr("Time Blocks"),
+                self.tr("Time block settings"),
+            ),
+            (
+                self._create_notifications_tab(),
+                self.tr("Notifications"),
+                self.tr("Notification settings"),
+            ),
+            (self._create_web_tab(), self.tr("Web UI"), self.tr("Web UI settings")),
+        ):
+            self.tabs.addTab(self._scrollable(page, described), title)
 
         # Button box
         button_box = QDialogButtonBox(
@@ -821,16 +857,21 @@ class SettingsDialog(QDialog):
             time_edit.timeChanged.connect(self._update_notification_controls)
         self.time_format_combo.currentIndexChanged.connect(self._update_notification_time_format)
 
-        # The tallest tab, and taller still when its hints show. In a
-        # scroll area it asks for its full height where the screen has
-        # it, and scrolls where it has not; without one its rows are
-        # squeezed into each other.
+        return widget
+
+    def _scrollable(self, page: QWidget, described: str) -> QScrollArea:
+        """A tab's page in a scroll area.
+
+        The area asks for the page's full height where the screen has
+        it, and scrolls where it has not, or when the page grows
+        afterwards, as the Notifications page does when its hints show.
+        """
         scroll = _FullHeightScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setAccessibleName(self.tr("Notification settings"))
-        scroll.setWidget(widget)
+        scroll.setAccessibleName(described)
+        scroll.setWidget(page)
         return scroll
 
     def _make_notification_hint(self) -> QLabel:

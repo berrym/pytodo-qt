@@ -10,8 +10,18 @@ from datetime import time
 from unittest.mock import MagicMock
 
 import pytest
-from PyQt6.QtCore import Qt, QTime
-from PyQt6.QtWidgets import QApplication, QFormLayout, QScrollArea
+from PyQt6.QtCore import QPoint, QRect, Qt, QTime
+from PyQt6.QtWidgets import (
+    QAbstractButton,
+    QAbstractSpinBox,
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QFormLayout,
+    QLineEdit,
+    QScrollArea,
+    QSlider,
+)
 
 from pytodo_qt.core.config import NotificationConfig
 from pytodo_qt.gui.dialogs.settings import SettingsDialog
@@ -468,3 +478,105 @@ class TestNotificationsTab:
         dialog._show_notification_settings(self.CHANGED)
         dialog.time_format_combo.setCurrentIndex(dialog.time_format_combo.findData("12h"))
         assert dialog._notification_settings_shown() == self.CHANGED
+
+
+_TABS = [
+    "General",
+    "Network",
+    "Security",
+    "Sync",
+    "Appearance",
+    "Focus Timer",
+    "Time Blocks",
+    "Notifications",
+    "Web UI",
+]
+
+
+class TestNoTabSqueezesItsRows:
+    """The dialog's minimum height is set by hand, below what the taller
+    pages ask for. A page that sat in its tab as it was had its rows
+    squeezed into each other there: on the Focus Timer tab ten pairs of
+    controls overlapped, and a spin box was 36 pixels high where it
+    asks for 41. Every page sits in a scroll area."""
+
+    @pytest.fixture
+    def shown(self, dialog, qtbot):
+        """The dialog at the least size it can have."""
+        dialog.resize(dialog.minimumSize())
+        dialog.show()
+        qtbot.waitExposed(dialog)
+        return dialog
+
+    @staticmethod
+    def _page(dialog, name: str):
+        names = [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())]
+        index = names.index(name)
+        dialog.tabs.setCurrentIndex(index)
+        for _ in range(6):
+            QApplication.processEvents()
+        return dialog.tabs.widget(index)
+
+    @staticmethod
+    def _inputs(page):
+        kinds = (QAbstractSpinBox, QCheckBox, QComboBox, QLineEdit, QSlider, QAbstractButton)
+        return [widget for widget in page.findChildren(kinds) if widget.isVisible()]
+
+    def test_the_tabs_are_the_ones_checked(self, dialog):
+        assert [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())] == _TABS
+
+    def test_the_dialog_can_be_shorter_than_its_tallest_page(self, shown):
+        """What the scroll areas are there for."""
+        tallest = max(shown.tabs.widget(i).widget().sizeHint().height() for i in range(len(_TABS)))
+        assert shown.height() < tallest
+
+    @pytest.mark.parametrize("name", _TABS)
+    def test_the_page_sits_in_a_scroll_area(self, dialog, name):
+        page = self._page(dialog, name)
+        assert isinstance(page, QScrollArea)
+        assert page.widgetResizable()
+        assert page.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        assert page.accessibleName()
+
+    @pytest.mark.parametrize("name", _TABS)
+    def test_no_two_controls_overlap(self, shown, name):
+        page = self._page(shown, name).widget()
+        placed = [
+            (widget, QRect(widget.mapTo(page, QPoint(0, 0)), widget.size()))
+            for widget in self._inputs(page)
+        ]
+        overlapping = [
+            (type(one).__name__, type(other).__name__)
+            for index, (one, where) in enumerate(placed)
+            for other, there in placed[index + 1 :]
+            if where.intersects(there)
+            and not one.isAncestorOf(other)
+            and not other.isAncestorOf(one)
+        ]
+        assert overlapping == []
+
+    @pytest.mark.parametrize("name", _TABS)
+    def test_a_field_has_the_height_it_asks_for(self, shown, name):
+        """Before a scroll area scrolls, the layout inside it shrinks its
+        rows to the least each can have. The page is kept at its full
+        height, so that a field is as high here as on a page that fits."""
+        page = self._page(shown, name).widget()
+        for box in page.findChildren(QAbstractSpinBox):
+            if box.isVisible():
+                assert box.height() >= box.sizeHint().height()
+
+    @pytest.mark.parametrize("name", _TABS)
+    def test_the_page_has_its_full_height(self, shown, name):
+        page = self._page(shown, name).widget()
+        assert page.height() >= page.sizeHint().height()
+
+    def test_a_page_that_grows_keeps_its_full_height(self, shown):
+        """The Notifications page is higher once a hint shows."""
+        page = self._page(shown, "Notifications").widget()
+        before = page.sizeHint().height()
+        shown._show_notification_settings(TestNotificationsTab.CHANGED)
+        for _ in range(6):
+            QApplication.processEvents()
+        after = page.sizeHint().height()
+        if after > before:
+            assert page.height() >= after
