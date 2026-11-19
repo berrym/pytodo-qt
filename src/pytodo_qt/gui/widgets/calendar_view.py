@@ -689,6 +689,22 @@ class _CalendarModel(QAbstractTableModel):
             self._weeks.append([0] * 7)
 
 
+def _outline_finished_chip(painter: QPainter, chip_rect: QRect, color: str) -> None:
+    """A thin border around a finished task's chip in a calendar cell.
+
+    The chip's fill is too near the cell's own colour to mark anything
+    by itself. Chips stand one right under the other, so the border is
+    drawn one pixel inside the chip at the top and the bottom, and two
+    finished chips keep a line of the fill between their borders.
+    """
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+    painter.setPen(QPen(QColor(color), 1))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawRect(chip_rect.adjusted(0, 1, -1, -2))
+    painter.restore()
+
+
 class _CalendarDelegate(QStyledItemDelegate):
     """Custom painter for month grid cells — draws day numbers, task items, overflow."""
 
@@ -801,6 +817,7 @@ class _CalendarDelegate(QStyledItemDelegate):
             # Background: completed (green) or selected (neutral) or none
             if item.complete:
                 painter.fillRect(chip_rect, QColor(c["completed_bg"]))
+                _outline_finished_chip(painter, chip_rect, c["due_soon"])
             if is_selected:
                 sel_bg = QColor(col_alt_base)
                 sel_bg.setAlpha(200)
@@ -4324,6 +4341,7 @@ class _WeekDelegate(QStyledItemDelegate):
                 chip_rect.setTop(chip_y)
                 chip_rect.setHeight(chip_height)
                 painter.fillRect(chip_rect, QColor(c["completed_bg"]))
+                _outline_finished_chip(painter, chip_rect, c["due_soon"])
 
             # Selection
             if is_selected:
@@ -5755,8 +5773,9 @@ class _UnscheduledPanel(QFrame):
             strike = "text-decoration: line-through;" if item.complete else ""
 
             row = _DraggableTaskButton(item.id)
+            outline = f" border: 1px solid {c['due_soon']};" if item.complete else ""
             row.setStyleSheet(
-                f"QPushButton {{ border-left: 3px solid {c[p_key]}; border-radius: 3px;"
+                f"QPushButton {{{outline} border-left: 3px solid {c[p_key]}; border-radius: 3px;"
                 f" padding: 3px 5px; background: {bg}; text-align: left; margin: 1px 0; }}"
                 f" QPushButton:hover {{ background: {c['alternate_base']}; }}"
             )
@@ -7870,8 +7889,9 @@ class CalendarViewWidget(QWidget):
             # the unscheduled panel without needing to close and
             # re-open the popover first.
             row = _DraggableTaskButton(item.id)
+            outline = f" border: 1px solid {c['due_soon']};" if item.complete else ""
             row.setStyleSheet(
-                f"QPushButton {{ border-left: 3px solid {p_color}; border-radius: 4px;"
+                f"QPushButton {{{outline} border-left: 3px solid {p_color}; border-radius: 4px;"
                 f" padding: 6px 8px; background: {bg}; text-align: left; }}"
                 f" QPushButton:hover {{ background: {c['alternate_base']}; }}"
             )

@@ -167,3 +167,125 @@ class TestBoardCard:
         assert f"border: 2px solid {themed['highlight']};" in card.styleSheet()
         card.set_selected(False)
         assert f"border: {FINISHED_BORDER_PX}px solid {themed['due_soon']};" in card.styleSheet()
+
+
+class TestCalendar:
+    """The calendar marks a finished task with the same fill in four
+    places: the chips of a Month cell and of the All Day row, the rows
+    of the unscheduled panel and those of the day popover. Each has a
+    border of one pixel in the same green; the chips are about fourteen
+    pixels high, which leaves no room for two."""
+
+    @pytest.fixture(autouse=True)
+    def _nothing_is_saved(self, monkeypatch):
+        """Choosing a view of the calendar saves the configuration."""
+        monkeypatch.setattr("pytodo_qt.core.config.ConfigManager.save", lambda self: None)
+
+    @staticmethod
+    def _list(*, finished: bool):
+        from datetime import date
+
+        todo_list = create_todo_list("Calendar")
+        dated = create_todo_item("due today", due_date=date.today())
+        dated.complete = finished
+        todo_list.add_item(dated)
+        undated = create_todo_item("without a date")
+        undated.complete = finished
+        todo_list.add_item(undated)
+        return todo_list
+
+    def _calendar(self, qtbot, sub_view: str, *, finished: bool):
+        from pytodo_qt.gui.widgets.calendar_view import CalendarViewWidget
+
+        widget = CalendarViewWidget()
+        qtbot.addWidget(widget)
+        widget.resize(1100, 700)
+        widget.set_list(self._list(finished=finished))
+        widget.show()
+        widget._set_sub_view(getattr(widget, sub_view))
+        for _ in range(5):
+            QApplication.processEvents()
+        return widget
+
+    def test_the_border_is_one_pixel_inside_the_chip_at_top_and_bottom(self, themed):
+        """Chips stand one right under the other: two finished ones keep
+        a line of the fill between their borders."""
+        from PyQt6.QtCore import QRect
+        from PyQt6.QtGui import QImage, QPainter
+
+        from pytodo_qt.gui.widgets.calendar_view import _outline_finished_chip
+
+        image = QImage(100, 20, QImage.Format.Format_ARGB32)
+        image.fill(QColor(themed["completed_bg"]))
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        _outline_finished_chip(painter, QRect(10, 2, 80, 16), themed["due_soon"])
+        painter.end()
+
+        def at(x: int, y: int) -> str:
+            return QColor(image.pixel(x, y)).name()
+
+        green, fill = themed["due_soon"], themed["completed_bg"]
+        assert (at(50, 2), at(50, 3), at(50, 4)) == (fill, green, fill)
+        assert (at(50, 15), at(50, 16), at(50, 17)) == (fill, green, fill)
+        assert (at(9, 10), at(10, 10), at(11, 10)) == (fill, green, fill)
+        assert (at(88, 10), at(89, 10), at(90, 10)) == (fill, green, fill)
+
+    def test_a_finished_tasks_chip_in_the_month_has_the_border(self, themed, qtbot):
+        widget = self._calendar(qtbot, "SUB_MONTH", finished=True)
+        assert themed["due_soon"] in _colours(widget._cal_table)
+
+    def test_an_open_tasks_chip_in_the_month_has_not(self, themed, qtbot):
+        widget = self._calendar(qtbot, "SUB_MONTH", finished=False)
+        assert themed["due_soon"] not in _colours(widget._cal_table)
+
+    def test_a_finished_tasks_chip_in_the_all_day_row_has_the_border(self, themed, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import _AllDayTableView
+
+        widget = self._calendar(qtbot, "SUB_WEEK", finished=True)
+        row = widget._week_container.findChild(_AllDayTableView)
+        assert themed["due_soon"] in _colours(row)
+
+    def test_an_open_tasks_chip_in_the_all_day_row_has_not(self, themed, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import _AllDayTableView
+
+        widget = self._calendar(qtbot, "SUB_WEEK", finished=False)
+        row = widget._week_container.findChild(_AllDayTableView)
+        assert themed["due_soon"] not in _colours(row)
+
+    def test_the_unscheduled_panel_gives_a_finished_tasks_row_the_border(self, themed, qtbot):
+        from pytodo_qt.gui.widgets.calendar_view import _DraggableTaskButton, _UnscheduledPanel
+
+        panel = _UnscheduledPanel()
+        qtbot.addWidget(panel)
+        finished = create_todo_item("finished")
+        finished.complete = True
+        panel.set_items([finished, create_todo_item("open")])
+
+        sheets = [row.styleSheet() for row in panel.findChildren(_DraggableTaskButton)]
+        assert len(sheets) == 2
+        outline = f"border: 1px solid {themed['due_soon']};"
+        assert sorted(outline in sheet for sheet in sheets) == [False, True]
+        assert all("border-left: 3px solid" in sheet for sheet in sheets)
+
+    def test_the_day_popover_gives_a_finished_tasks_row_the_border(self, themed, qtbot):
+        from datetime import date
+
+        from pytodo_qt.gui.widgets.calendar_view import _DraggableTaskButton
+
+        widget = self._calendar(qtbot, "SUB_MONTH", finished=False)
+        finished = create_todo_item("finished", due_date=date.today())
+        finished.complete = True
+        widget._show_day_popover(
+            date.today(), [finished, create_todo_item("open", due_date=date.today())]
+        )
+        try:
+            sheets = [
+                row.styleSheet() for row in widget._popover.findChildren(_DraggableTaskButton)
+            ]
+            assert len(sheets) == 2
+            outline = f"border: 1px solid {themed['due_soon']};"
+            assert sorted(outline in sheet for sheet in sheets) == [False, True]
+            assert all("border-left: 3px solid" in sheet for sheet in sheets)
+        finally:
+            widget._close_popover()
