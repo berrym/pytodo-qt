@@ -66,6 +66,10 @@ logger = Logger(__name__)
 _NOTE_STYLE = "color: palette(placeholder-text);"
 
 
+# The least width of the dialog where no page asks for more.
+_LEAST_WIDTH = 620
+
+
 class _FullHeightScrollArea(QScrollArea):
     """A scroll area that asks for the full size of what it holds.
 
@@ -81,6 +85,19 @@ class _FullHeightScrollArea(QScrollArea):
             return super().sizeHint()
         frame = 2 * self.frameWidth()
         return content.sizeHint() + QSize(frame, frame)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 — Qt override
+        # The area never scrolls sideways, so it is at least as wide as
+        # what it holds, with room for the scroll bar; a plain area asks
+        # for a small fixed width and lets the page be cut off.
+        least = super().minimumSizeHint()
+        content = self.widget()
+        if content is None:
+            return least
+        bar = self.verticalScrollBar()
+        bar_width = bar.sizeHint().width() if bar is not None else 0
+        width = content.minimumSizeHint().width() + 2 * self.frameWidth() + bar_width
+        return QSize(max(least.width(), width), least.height())
 
     def eventFilter(self, a0, a1) -> bool:  # noqa: N802 — Qt override
         # The scroll area watches what it holds already. When that is laid
@@ -117,7 +134,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Settings"))
         self.setAccessibleName(self.tr("Settings"))
-        self.setMinimumWidth(620)
+        self.setMinimumWidth(_LEAST_WIDTH)
         self.setMinimumHeight(460)
 
         self._apply_dialog_stylesheet()
@@ -376,9 +393,9 @@ class SettingsDialog(QDialog):
 
         self.fingerprint_edit = QLineEdit(fingerprint)
         self.fingerprint_edit.setReadOnly(True)
-        # Full SHA-256 hex is 64 chars at monospace; reserve enough
-        # width that the string is readable without horizontal scrolling.
-        self.fingerprint_edit.setMinimumWidth(540)
+        # The field takes the width the row gives it. A least width of
+        # its own was the one thing wider than the dialog at its least
+        # width, and cut the page off at the right.
         mono_css = ", ".join(f'"{f}"' for f in MONO_FONT_FAMILIES)
         self.fingerprint_edit.setStyleSheet(f"font-family: {mono_css};")
         identity_layout.addRow(self.tr("Your fingerprint:"), self.fingerprint_edit)
@@ -866,6 +883,15 @@ class SettingsDialog(QDialog):
 
         return widget
 
+    def showEvent(self, a0) -> None:  # noqa: N802 — Qt override
+        # A least width set on the dialog is also the most its layout
+        # may ask for. The widest page sets the least width instead
+        # where it needs more than the dialog's own.
+        layout = self.layout()
+        if layout is not None:
+            self.setMinimumWidth(max(_LEAST_WIDTH, layout.minimumSize().width()))
+        super().showEvent(a0)
+
     def _scrollable(self, page: QWidget, described: str) -> QScrollArea:
         """A tab's page in a scroll area.
 
@@ -1070,7 +1096,7 @@ class SettingsDialog(QDialog):
 
         # Device count indicator
         self.web_device_count_label = QLabel(self.tr("0 devices paired"))
-        self.web_device_count_label.setStyleSheet("font-size: 12px;")
+        self.web_device_count_label.setStyleSheet(f"font-size: {font_px(12)}px;")
         form.addRow(self.tr("Devices:"), self.web_device_count_label)
 
         self.web_revoke_btn = QPushButton(self.tr("Disconnect All Devices"))
@@ -1218,7 +1244,7 @@ class SettingsDialog(QDialog):
             self.web_device_count_label.setText(self.tr("Server not running"))
             self.web_pin_label.setText(self.tr("Start web server to generate"))
             self.web_pin_label.setStyleSheet(
-                "font-size: 12px; color: palette(placeholder-text); padding: 8px;"
+                f"font-size: {font_px(12)}px; color: palette(placeholder-text); padding: 8px;"
             )
 
     def _save_settings(self) -> bool:

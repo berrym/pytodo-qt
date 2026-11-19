@@ -102,10 +102,12 @@ class TestSettingsDialogFormConsistency:
         assert dlg.service_name_edit.minimumWidth() >= 300
         dlg.deleteLater()
 
-    def test_fingerprint_edit_has_min_width(self, app):
+    def test_fingerprint_edit_has_no_min_width_of_its_own(self, app):
+        """A least width of 540 made the Security page wider than the
+        dialog at its least width, 620, and cut it off at the right.
+        The field takes the width its row gives it."""
         dlg = SettingsDialog()
-        # Must fit a 64-char SHA-256 hex at monospace without scrolling
-        assert dlg.fingerprint_edit.minimumWidth() >= 500
+        assert dlg.fingerprint_edit.minimumWidth() == 0
         dlg.deleteLater()
 
     def test_dialog_stylesheet_sets_min_height(self, app):

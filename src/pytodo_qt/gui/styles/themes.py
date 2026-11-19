@@ -423,9 +423,11 @@ def get_colors() -> dict[str, str]:
 # that a point is a pixel and the application's 10 pt type is 10 px high;
 # Linux and Windows count 96, and the same type is 13.3 px. A size of
 # 10 px is the application's own size on macOS and three quarters of it
-# elsewhere: 7.5 pt. The least size is 10 pt on macOS, which is what
-# Apple's guidelines give, and 9 pt, 12 px, elsewhere.
-MIN_FONT_PX = 10 if sys.platform == "darwin" else 12
+# elsewhere: 7.5 pt. The least size is the application's own size on
+# every platform, 10 px on macOS and 13 px elsewhere: no caption is
+# smaller than the body text. A 13 inch screen at a modest scale leaves
+# the body text itself small, and a caption below it unreadable.
+MIN_FONT_PX = 10 if sys.platform == "darwin" else 13
 
 
 def font_px(size: int) -> int:
@@ -436,6 +438,17 @@ def font_px(size: int) -> int:
     has room for them.
     """
     return max(size, MIN_FONT_PX)
+
+
+def arrow_icon_path(direction: str, theme: Theme) -> str:
+    """The arrow image a style sheet names for the theme.
+
+    A box with a border and padding from the style sheet is drawn by
+    Qt's own style-sheet style, whose arrows are three pixels wide in
+    a color no theme chose. These are drawn in the theme's text color.
+    """
+    variant = "dark" if theme == Theme.DARK else "light"
+    return (Path(__file__).parent.parent / "icons" / f"arrow-{direction}-{variant}.svg").as_posix()
 
 
 def border_color() -> str:
@@ -492,6 +505,8 @@ def get_stylesheet(theme: Theme | None = None) -> str:
         theme = get_current_theme()
 
     colors = DARK_COLORS if theme == Theme.DARK else LIGHT_COLORS
+    arrow_up = arrow_icon_path("up", theme)
+    arrow_down = arrow_icon_path("down", theme)
 
     return f"""
 /* Global styles */
@@ -590,6 +605,12 @@ QComboBox:hover {{
 QComboBox::drop-down {{
     border: none;
     width: 20px;
+}}
+
+QComboBox::down-arrow {{
+    image: url("{arrow_down}");
+    width: 10px;
+    height: 6px;
 }}
 
 QComboBox QAbstractItemView {{
@@ -804,13 +825,57 @@ QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
     border-color: {colors["highlight"]};
 }}
 
-/* Spin boxes */
+/* Spin boxes. The buttons are drawn by the style-sheet style once the
+   box has a border from here; without arrows of their own they get
+   Qt's, three pixels wide. The date and time editors are spin boxes
+   too, and a date editor with a calendar has a drop-down in place of
+   the buttons. */
 QSpinBox, QDoubleSpinBox {{
     background-color: {colors["base"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
     border-radius: 8px;
     padding: 4px;
+}}
+
+QSpinBox::up-button, QDoubleSpinBox::up-button,
+QDateEdit::up-button, QTimeEdit::up-button {{
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 20px;
+    border: none;
+    background: transparent;
+}}
+
+QSpinBox::down-button, QDoubleSpinBox::down-button,
+QDateEdit::down-button, QTimeEdit::down-button {{
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 20px;
+    border: none;
+    background: transparent;
+}}
+
+QDateEdit::drop-down {{
+    subcontrol-origin: border;
+    subcontrol-position: center right;
+    width: 20px;
+    border: none;
+    background: transparent;
+}}
+
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow,
+QDateEdit::up-arrow, QTimeEdit::up-arrow {{
+    image: url("{arrow_up}");
+    width: 10px;
+    height: 6px;
+}}
+
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow,
+QDateEdit::down-arrow, QTimeEdit::down-arrow {{
+    image: url("{arrow_down}");
+    width: 10px;
+    height: 6px;
 }}
 
 /* Labels */

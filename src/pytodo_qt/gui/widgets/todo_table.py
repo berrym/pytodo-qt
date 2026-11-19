@@ -105,6 +105,15 @@ class ClickableLabel(QLabel):
         self.clicked.emit()
 
 
+# The name field is a 32 px box in a 42 px row. The application gives a
+# line edit 8 px of padding above and below its text, which the box has
+# no room for at 12 pt where 96 pixels are counted to the inch: a line
+# of 22 px was cut at the bottom. Two pixels leave room for the 3 px
+# border of a finished task's box. The field's own sheet comes before
+# the application's.
+_NAME_FIELD_PADDING = "padding: 2px 8px;"
+
+
 class ReminderEdit(QLineEdit):
     """The name field of a row.
 
@@ -1242,7 +1251,9 @@ class TodoTableWidget(QTableWidget):
             # Style based on completion status
             if is_context:
                 reminder_edit.setFont(self._normal_font)
-                reminder_edit.setStyleSheet(f"color: {colors['completed_text']};")
+                reminder_edit.setStyleSheet(
+                    f"color: {colors['completed_text']}; {_NAME_FIELD_PADDING}"
+                )
                 reminder_edit.setReadOnly(True)
             elif item.complete:
                 reminder_edit.setFont(self._completed_font)
@@ -1254,11 +1265,13 @@ class TodoTableWidget(QTableWidget):
                 reminder_edit.setStyleSheet(
                     f"QLineEdit {{ color: {colors['completed_text']};"
                     f" background-color: {colors['completed_bg']};"
-                    f" border: {FINISHED_BORDER_PX}px solid {colors['due_soon']}; }}"
+                    f" border: {FINISHED_BORDER_PX}px solid {colors['due_soon']};"
+                    f" {_NAME_FIELD_PADDING} }}"
                     f" QLineEdit:focus {{ border: 2px solid {colors['highlight']}; }}"
                 )
             else:
                 reminder_edit.setFont(self._normal_font)
+                reminder_edit.setStyleSheet(_NAME_FIELD_PADDING)
 
             from ...core.models import build_rich_tooltip
 
@@ -1519,7 +1532,7 @@ class TodoTableWidget(QTableWidget):
         label = QLabel(item.reminder)
         label.setWordWrap(True)
         label.setMaximumWidth(400)
-        label.setStyleSheet(f"color: {colors['text']}; font-size: 12px;")
+        label.setStyleSheet(f"color: {colors['text']}; font-size: {font_px(12)}px;")
         layout.addWidget(label)
 
         popup.adjustSize()

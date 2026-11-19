@@ -702,7 +702,7 @@ def _persistent_tooltip_sheet() -> str:
     colors = _theme_colors()
     return (
         f"QLabel {{ background: {colors['base']}; color: {colors['text']};"
-        f" border: 1px solid {colors['border']}; padding: 6px 8px; font-size: 12px; }}"
+        f" border: 1px solid {colors['border']}; padding: 6px 8px; font-size: {font_px(12)}px; }}"
     )
 
 
@@ -4748,7 +4748,7 @@ class _WeekTableView(QTableView):
         )
         self._drag_preview_label.setStyleSheet(
             f"QLabel {{ background: {_overlay}; color: {readable_text_on(_overlay)}; "
-            "padding: 6px 10px; font-size: 12px; font-weight: bold; }"
+            f"padding: 6px 10px; font-size: {font_px(12)}px; font-weight: bold; }}"
         )
         self._drag_preview_label.hide()
 
@@ -5733,7 +5733,7 @@ class _UnscheduledPanel(QFrame):
         layout.setSpacing(4)
 
         header = QLabel(self.tr("Unscheduled"))
-        header.setStyleSheet("font-weight: bold; font-size: 12px;")
+        header.setStyleSheet(f"font-weight: bold; font-size: {font_px(12)}px;")
         layout.addWidget(header)
 
         self._count_label = QLabel(self.tr("0 tasks"))
@@ -6387,12 +6387,12 @@ class _AgendaRow(QFrame):
                 (
                     reminder_label,
                     colors["completed_text"],
-                    "text-decoration: line-through; font-size: 12px; border: none;",
+                    f"text-decoration: line-through; font-size: {font_px(12)}px; border: none;",
                 )
             )
         else:
             self._text_labels.append(
-                (reminder_label, colors["text"], "font-size: 12px; border: none;")
+                (reminder_label, colors["text"], f"font-size: {font_px(12)}px; border: none;")
             )
         layout.addWidget(reminder_label, 1)
 
@@ -7958,7 +7958,7 @@ class CalendarViewWidget(QWidget):
             title.setWordWrap(True)
             title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             title.setStyleSheet(
-                f"font-size: 12px; {strike} color: {text_color}; border: none; background: none;"
+                f"font-size: {font_px(12)}px; {strike} color: {text_color}; border: none; background: none;"
             )
             row_layout.addWidget(title)
 

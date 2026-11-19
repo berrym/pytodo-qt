@@ -148,6 +148,14 @@ class TaskDetailPanel(QDockWidget):
         "QTimeEdit::down-button, QComboBox::drop-down {"
         "  width: 0px; border: none;"
         "}"
+        # The theme gives the buttons arrow images; at no width they
+        # would still show through.
+        "QSpinBox::up-arrow, QSpinBox::down-arrow,"
+        "QDateEdit::up-arrow, QDateEdit::down-arrow,"
+        "QTimeEdit::up-arrow, QTimeEdit::down-arrow,"
+        "QComboBox::down-arrow {"
+        "  image: none; width: 0px; height: 0px;"
+        "}"
     )
 
     _EDIT_MODE_STYLE = ""  # reset to default Qt styling
@@ -191,6 +199,34 @@ class TaskDetailPanel(QDockWidget):
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         return label
+
+    def _make_id_field(self) -> QLineEdit:
+        """A read-only field for an id.
+
+        An id is one word that no label breaks. At the least text size
+        in a monospace font it is wider than the panel at its least
+        width, and a label with it pushed the rest of the content out
+        of sight at the right. The field takes the width it is given
+        and scrolls, and its text can be selected and copied.
+        """
+        from ..styles.themes import MONO_FONT_FAMILIES
+
+        field = QLineEdit()
+        field.setReadOnly(True)
+        field.setFrame(False)
+        field.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        field.setCursor(Qt.CursorShape.IBeamCursor)
+        # The field's own sheet outranks the panel's, which gives a line
+        # edit a border in edit mode. Use the MONO_FONT_FAMILIES stack
+        # rather than the CSS generic "monospace" — the generic triggers
+        # a Qt font-alias resolution cost and a console warning on
+        # systems where it doesn't resolve to an installed family.
+        mono_css = ", ".join(f'"{f}"' for f in MONO_FONT_FAMILIES)
+        field.setStyleSheet(
+            f"QLineEdit {{ font-family: {mono_css}; font-size: {font_px(10)}px;"
+            " border: none; background: transparent; padding: 0; }"
+        )
+        return field
 
     def _track_editable(self, widget: _W) -> _W:
         """Register a widget for batch view/edit mode toggling."""
@@ -639,8 +675,8 @@ class TaskDetailPanel(QDockWidget):
         form = self._add_section(self.tr("Metadata"))
         self._created_value = self._make_value_label()
         self._updated_value = self._make_value_label()
-        self._id_value = self._make_value_label()
-        self._parent_value = self._make_value_label()
+        self._id_value = self._make_id_field()
+        self._parent_value = self._make_id_field()
         self._board_value = self._make_value_label()
         form.addRow(self.tr("Created:"), self._created_value)
         form.addRow(self.tr("Updated:"), self._updated_value)
@@ -927,21 +963,11 @@ class TaskDetailPanel(QDockWidget):
         self._created_value.setText(created.strftime("%b %d %Y %I:%M %p"))
         updated = datetime.fromtimestamp(item.updated_at / 1000)
         self._updated_value.setText(updated.strftime("%b %d %Y %I:%M %p"))
-        # Use the MONO_FONT_FAMILIES stack rather than the CSS
-        # generic "monospace" — the generic triggers a Qt font-alias
-        # resolution cost and a console warning on systems where it
-        # doesn't resolve to an installed family.
-        from ..styles.themes import MONO_FONT_FAMILIES
-
-        mono_css = ", ".join(f'"{f}"' for f in MONO_FONT_FAMILIES)
         self._id_value.setText(str(item.id))
-        self._id_value.setStyleSheet(f"font-family: {mono_css}; font-size: {font_px(10)}px;")
-        if item.parent_id:
-            self._parent_value.setText(str(item.parent_id))
-            self._parent_value.setStyleSheet(
-                f"font-family: {mono_css}; font-size: {font_px(10)}px;"
-            )
-        else:
-            self._parent_value.setText("\u2014")
-            self._parent_value.setStyleSheet("")
+        self._id_value.setCursorPosition(0)
+        self._id_value.setToolTip(str(item.id))
+        parent_id = str(item.parent_id) if item.parent_id else "\u2014"
+        self._parent_value.setText(parent_id)
+        self._parent_value.setCursorPosition(0)
+        self._parent_value.setToolTip(parent_id if item.parent_id else "")
         self._board_value.setText(item.board_column or "\u2014")

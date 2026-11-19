@@ -24,11 +24,29 @@ from PyQt6.QtWidgets import (
     QApplication,
     QLabel,
     QLineEdit,
+    QScrollArea,
     QWidget,
 )
 
 from pytodo_qt.core.models import create_todo_item, create_todo_list
-from pytodo_qt.gui.styles.themes import MIN_FONT_PX, font_px
+from pytodo_qt.gui.styles.themes import MIN_FONT_PX, apply_font_setting, font_px
+
+
+@pytest.fixture(autouse=True)
+def _the_applications_font(qapp):
+    """The application's own type, 10 pt, as the application sets it.
+
+    A test session's application has Qt's default type, 9 pt, so that
+    a text with no size of its own would count as under the least size
+    here and not in the application.
+    """
+    from PyQt6.QtGui import QFont
+
+    before = QFont(qapp.font())
+    apply_font_setting(qapp, "system")
+    yield
+    qapp.setFont(before)
+
 
 GUI_DIR = Path(__file__).resolve().parent.parent / "src" / "pytodo_qt" / "gui"
 
@@ -38,17 +56,17 @@ def _sources() -> list[tuple[Path, str]]:
 
 
 class TestTheLeastSize:
-    def test_it_is_ten_points_on_macos_and_nine_elsewhere(self):
-        """Ten points are ten pixels on macOS; nine points are twelve
-        pixels where 96 are counted to the inch."""
-        assert (10 if sys.platform == "darwin" else 12) == MIN_FONT_PX
+    def test_it_is_the_applications_own_size(self):
+        """Ten points are ten pixels on macOS and thirteen where 96 are
+        counted to the inch: no text is smaller than the body text."""
+        assert (10 if sys.platform == "darwin" else 13) == MIN_FONT_PX
 
-    @pytest.mark.parametrize("size", [1, 9, 10, 11])
+    @pytest.mark.parametrize("size", [1, 9, 10, 11, 12])
     def test_a_smaller_size_is_raised_to_it(self, size):
         assert font_px(size) == max(size, MIN_FONT_PX)
         assert font_px(size) >= MIN_FONT_PX
 
-    @pytest.mark.parametrize("size", [12, 13, 14, 18, 32])
+    @pytest.mark.parametrize("size", [13, 14, 18, 32])
     def test_a_size_above_it_is_kept(self, size):
         """The steps between a caption, a label and a heading stay."""
         assert font_px(size) == size
@@ -56,29 +74,30 @@ class TestTheLeastSize:
     def test_it_is_not_above_the_applications_own_size(self, qtbot):
         app = QApplication.instance()
         assert isinstance(app, QApplication)
-        assert QFontInfo(app.font()).pixelSize() >= MIN_FONT_PX - 2
+        assert QFontInfo(app.font()).pixelSize() >= MIN_FONT_PX
 
 
 class TestSourcesNameNoSmallerSize:
-    def test_no_style_sheet_gives_a_size_under_twelve_pixels(self):
-        """Twelve is the least size where it is highest. A smaller size
-        is written `font_px(n)`, which raises it where it has to be."""
+    def test_no_style_sheet_gives_a_size_under_thirteen_pixels(self):
+        """Thirteen is the least size where it is highest. A smaller
+        size is written `font_px(n)`, which raises it where it has to
+        be."""
         pattern = re.compile(r"font-size:\s*(\d+)px")
         found = [
             f"{path.relative_to(GUI_DIR)}: {match.group(0)}"
             for path, text in _sources()
             for match in pattern.finditer(text)
-            if int(match.group(1)) < 12
+            if int(match.group(1)) < 13
         ]
         assert found == []
 
-    def test_no_font_is_set_to_a_size_under_twelve_pixels(self):
+    def test_no_font_is_set_to_a_size_under_thirteen_pixels(self):
         pattern = re.compile(r"setPixelSize\((\d+)\)")
         found = [
             f"{path.relative_to(GUI_DIR)}: {match.group(0)}"
             for path, text in _sources()
             for match in pattern.finditer(text)
-            if int(match.group(1)) < 12
+            if int(match.group(1)) < 13
         ]
         assert found == []
 
@@ -94,7 +113,7 @@ class TestSourcesNameNoSmallerSize:
 
     def test_the_raised_sizes_are_in_use(self):
         text = "\n".join(text for _path, text in _sources())
-        assert text.count("font_px(") >= 90
+        assert text.count("font_px(") >= 110
 
 
 def _todo_list():
@@ -285,13 +304,13 @@ def _clipped(root: QWidget) -> list[str]:
 
 
 class TestTextFitsAtTheLargestLeastSize:
-    """Twelve pixels is the least size on Linux and Windows. The checks
-    run with it on every platform: a text that grows has to have the
-    room to."""
+    """Thirteen pixels is the least size on Linux and Windows. The
+    checks run with it on every platform: a text that grows has to
+    have the room to."""
 
     @pytest.fixture(autouse=True)
-    def _twelve_pixels(self, monkeypatch):
-        monkeypatch.setattr("pytodo_qt.gui.styles.themes.MIN_FONT_PX", 12)
+    def _thirteen_pixels(self, monkeypatch):
+        monkeypatch.setattr("pytodo_qt.gui.styles.themes.MIN_FONT_PX", 13)
         monkeypatch.setattr("pytodo_qt.core.config.ConfigManager.save", lambda self: None)
 
     def _shown(self, qtbot, widget: QWidget, size) -> QWidget:
@@ -323,6 +342,23 @@ class TestTextFitsAtTheLargestLeastSize:
 
         assert len(panel.findChildren(_DraggableTaskButton)) == 3
         assert _clipped(panel) == []
+
+    def test_a_list_rows_name_field_is_as_tall_as_its_text(self, qtbot):
+        """The field is a 32 px box in a 42 px row. With the application's
+        8 px of padding above and below the text, its 12 pt name was
+        cut at the bottom where 96 pixels are counted to the inch."""
+        from pytodo_qt.gui.widgets.todo_table import ReminderEdit, TodoTableWidget
+
+        table = TodoTableWidget()
+        table.set_list(_todo_list())
+        self._shown(qtbot, table, (1000, 400))
+        fields = table.findChildren(ReminderEdit)
+        assert len(fields) >= 3
+        for field in fields:
+            # The box is the field's least height; a field that asks for
+            # more is shown at the least height on the screen, and cut.
+            assert field.minimumHeight() == 32
+            assert field.sizeHint().height() <= field.minimumHeight(), field.text()
 
     def test_a_title_that_wraps_gets_its_lines(self, qtbot):
         from pytodo_qt.gui.widgets.calendar_view import _DraggableTaskButton, _UnscheduledPanel
@@ -407,3 +443,53 @@ class TestTextFitsAtTheLargestLeastSize:
             recommended=True,
         )
         assert _clipped(self._shown(qtbot, card, (320, 330))) == []
+
+
+class TestTheDetailPanelIsNoWiderThanItsDock:
+    """The task's id is written at the least size in a monospace font.
+    A label with it in one unbreakable word asked for 259 px at 12 px,
+    and the panel's content became wider than the 306 px it is shown
+    in: the Edit button of the tags row was pushed out of sight."""
+
+    @pytest.fixture(autouse=True)
+    def _nothing_is_saved(self, monkeypatch):
+        monkeypatch.setattr("pytodo_qt.core.config.ConfigManager.save", lambda self: None)
+
+    def test_the_content_fits_the_least_dock_width(self, qtbot):
+        from pytodo_qt.gui.widgets.detail_panel import TaskDetailPanel
+
+        todo_list = create_todo_list("Sizes")
+        item = create_todo_item("make fonts comply with WCAG")
+        item.board_column = "In Progress"
+        todo_list.add_item(item)
+        panel = TaskDetailPanel()
+        qtbot.addWidget(panel)
+        panel.resize(panel.minimumWidth(), 760)
+        panel.show()
+        qtbot.waitExposed(panel)
+        panel.set_item(item, todo_list)
+        for _ in range(8):
+            QApplication.processEvents()
+        area = next(a for a in panel.findChildren(QScrollArea) if a.widget() is not None)
+        content = area.widget()
+        assert content is not None
+        assert content.minimumSizeHint().width() <= area.viewport().width()
+        # A label with the id in one word asked for 137 px where Qt
+        # broke it at the hyphens and 259 where it did not.
+        assert panel._id_value.minimumSizeHint().width() < 100
+        assert panel._id_value.text() == str(item.id)
+
+    def test_the_id_can_be_selected_and_copied(self, qtbot):
+        from pytodo_qt.gui.widgets.detail_panel import TaskDetailPanel
+
+        todo_list = create_todo_list("Sizes")
+        item = create_todo_item("a task")
+        todo_list.add_item(item)
+        panel = TaskDetailPanel()
+        qtbot.addWidget(panel)
+        panel.set_item(item, todo_list)
+        field = panel._id_value
+        assert isinstance(field, QLineEdit)
+        assert field.isReadOnly()
+        field.selectAll()
+        assert field.selectedText() == str(item.id)

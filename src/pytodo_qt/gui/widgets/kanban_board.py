@@ -720,14 +720,14 @@ class KanbanColumnWidget(QFrame):
         if is_first:
             inbox_icon = QLabel("\U0001f4e5")  # 📥
             inbox_icon.setToolTip(self.tr("Inbox column — new items land here"))
-            inbox_icon.setStyleSheet(_label_only("border: none; font-size: 12px;"))
+            inbox_icon.setStyleSheet(_label_only(f"border: none; font-size: {font_px(12)}px;"))
             header.addWidget(inbox_icon)
         elif is_last:
             check_icon = QLabel("\u2705")  # ✅
             check_icon.setToolTip(
                 self.tr("Completion column — items moved here are marked complete")
             )
-            check_icon.setStyleSheet(_label_only("border: none; font-size: 12px;"))
+            check_icon.setStyleSheet(_label_only(f"border: none; font-size: {font_px(12)}px;"))
             header.addWidget(check_icon)
         self._title_label = QLabel(column_name)
         self._title_label.setStyleSheet(
@@ -737,7 +737,7 @@ class KanbanColumnWidget(QFrame):
 
         self._count_label = QLabel("0")
         self._count_label.setStyleSheet(
-            f"color: {colors['completed_text']}; font-size: 12px; border: none;"
+            f"color: {colors['completed_text']}; font-size: {font_px(12)}px; border: none;"
         )
         header.addWidget(self._count_label)
         header.addStretch()
@@ -793,7 +793,7 @@ class KanbanColumnWidget(QFrame):
         add_btn = QPushButton(self.tr("+ Add item"))
         add_btn.setStyleSheet(
             f"color: {colors['completed_text']}; border: none; "
-            "text-align: left; padding: 4px; background: transparent; font-size: 12px;"
+            f"text-align: left; padding: 4px; background: transparent; font-size: {font_px(12)}px;"
         )
         add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         add_btn.clicked.connect(lambda: self.add_item_clicked.emit(self._column_name))
@@ -865,7 +865,9 @@ class KanbanColumnWidget(QFrame):
             text = str(count)
             color = self._colors["completed_text"]
         self._count_label.setText(text)
-        self._count_label.setStyleSheet(f"color: {color}; font-size: 12px; border: none;")
+        self._count_label.setStyleSheet(
+            f"color: {color}; font-size: {font_px(12)}px; border: none;"
+        )
 
     @property
     def column_name(self) -> str:
@@ -1241,7 +1243,7 @@ class KanbanBoardWidget(QWidget):
         self._layout_btn.setFixedWidth(100)
         self._layout_btn.setStyleSheet(
             f"color: {colors['completed_text']}; border: 2px dashed {colors['border']}; "
-            f"border-radius: 8px; padding: 8px; background: transparent; font-size: 12px;"
+            f"border-radius: 8px; padding: 8px; background: transparent; font-size: {font_px(12)}px;"
         )
         self._layout_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._layout_btn.clicked.connect(self._show_layout_menu)

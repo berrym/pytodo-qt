@@ -232,7 +232,7 @@ def _browser_warning_visual(ip: str) -> QFrame:
 
     warning_bar = QLabel(_tr("MobileAccessWizard", "\u26a0 Your connection is not private"))
     warning_bar.setStyleSheet(
-        "font-weight: bold; font-size: 12px; color: palette(window-text);"
+        f"font-weight: bold; font-size: {font_px(12)}px; color: palette(window-text);"
         " border: none; background: none;"
     )
     layout.addWidget(warning_bar)
@@ -325,13 +325,14 @@ class _MethodCard(QFrame):
 
         sub_lbl = QLabel(subtitle)
         sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub_lbl.setWordWrap(True)
         sub_lbl.setStyleSheet(f"font-size: {font_px(11)}px; border: none;")
         layout.addWidget(sub_lbl)
 
         desc_lbl = QLabel(description)
         desc_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         desc_lbl.setWordWrap(True)
-        desc_lbl.setStyleSheet("font-size: 12px; border: none;")
+        desc_lbl.setStyleSheet(f"font-size: {font_px(12)}px; border: none;")
         layout.addWidget(desc_lbl)
 
         badge_row = QHBoxLayout()
@@ -473,6 +474,10 @@ class _DeviceRow(QFrame):
         row.addLayout(btn_col, 0)
 
 
+# The least width of the wizard where no page asks for more.
+_LEAST_WIDTH = 500
+
+
 class MobileAccessWizard(QDialog):
     """Guided wizard for connecting mobile devices to the web UI.
 
@@ -494,7 +499,7 @@ class MobileAccessWizard(QDialog):
         super().__init__(parent)
         self.setWindowTitle(self.tr("Mobile Access"))
         self.setAccessibleName(self.tr("Mobile Access"))
-        self.setMinimumSize(500, 580)
+        self.setMinimumSize(_LEAST_WIDTH, 580)
 
         self._main_window: MainWindow | None = parent
         self._lan_ip = _get_lan_ip()
@@ -508,6 +513,15 @@ class MobileAccessWizard(QDialog):
         self._ensure_server_running()
         self._setup_ui()
         self._navigate_to_initial_page()
+
+    def showEvent(self, a0) -> None:  # noqa: N802 — Qt override
+        # A least width set on the dialog is also the most its layout
+        # may ask for. The widest page sets the least width instead
+        # where it needs more than the dialog's own.
+        layout = self.layout()
+        if layout is not None:
+            self.setMinimumWidth(max(_LEAST_WIDTH, layout.minimumSize().width()))
+        super().showEvent(a0)
 
     def _ensure_server_running(self) -> None:
         """Start the web server and generate certs if needed."""
@@ -738,7 +752,7 @@ class MobileAccessWizard(QDialog):
         subtitle = QLabel(self.tr("Choose how to connect your phone, tablet, or other device"))
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("font-size: 12px;")
+        subtitle.setStyleSheet(f"font-size: {font_px(12)}px;")
         layout.addWidget(subtitle)
 
         layout.addSpacing(8)
@@ -1062,7 +1076,7 @@ class MobileAccessWizard(QDialog):
         )
         explanation.setWordWrap(True)
         explanation.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        explanation.setStyleSheet("font-size: 12px; padding: 0 12px;")
+        explanation.setStyleSheet(f"font-size: {font_px(12)}px; padding: 0 12px;")
         layout.addWidget(explanation)
 
         mw = self._main_window
@@ -1135,7 +1149,7 @@ class MobileAccessWizard(QDialog):
         instruction.setAlignment(Qt.AlignmentFlag.AlignCenter)
         instruction.setWordWrap(True)
         instruction.setStyleSheet(
-            "font-size: 12px; color: palette(placeholder-text); padding: 0 12px;"
+            f"font-size: {font_px(12)}px; color: palette(placeholder-text); padding: 0 12px;"
         )
         layout.addWidget(instruction)
 
