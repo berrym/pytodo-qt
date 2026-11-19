@@ -373,7 +373,7 @@ class DiscoveryService:
         timer = self._removal_timers.pop(peer.name, None)
         if timer is not None:
             timer.cancel()
-            logger.log.debug("Cancelled deferred removal for %s (TTL refresh)", peer.name)
+            logger.log.debug("Canceled deferred removal for %s (TTL refresh)", peer.name)
 
         existing = self._peers.get(peer.name)
         self._peers[peer.name] = peer
@@ -400,7 +400,7 @@ class DiscoveryService:
 
         A grace period absorbs the brief remove→add cycles caused by
         mDNS TTL refreshes.  If the peer is re-added within the window
-        the removal is cancelled (see ``_add_peer``).
+        the removal is canceled (see ``_add_peer``).
         """
         if name not in self._peers:
             return

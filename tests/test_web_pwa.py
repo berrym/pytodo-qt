@@ -799,9 +799,9 @@ class TestCalendarMonth:
         for selector in (".cal-month-grid", ".cal-mini-grid"):
             assert "grid-template-columns: repeat(7, minmax(0, 1fr));" in self._rule(selector)
 
-    def test_today_is_tinted_over_the_cells_own_colour(self):
-        """The translucent tint alone let the grid's border colour
-        through, and today was a grey block."""
+    def test_today_is_tinted_over_the_cells_own_color(self):
+        """The translucent tint alone let the grid's border color
+        through, and today was a gray block."""
         rule = self._rule(".cal-day.today")
         assert (
             "background-image: linear-gradient(var(--accent-subtle), var(--accent-subtle));" in rule
@@ -1066,7 +1066,7 @@ class TestCalendarContrast:
         return (STATIC_DIR / "style.css").read_text()
 
     def _themes(self) -> dict[str, dict[str, str]]:
-        """The colour variables of the light theme, and of the dark one
+        """The color variables of the light theme, and of the dark one
         as the light theme with the dark block's values over it."""
         import re
 
@@ -1079,18 +1079,18 @@ class TestCalendarContrast:
 
     @staticmethod
     def _contrast(a: str, b: str) -> float:
-        def luminance(colour: str) -> float:
+        def luminance(color: str) -> float:
             def channel(value: int) -> float:
                 c = value / 255
                 return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
 
-            r, g, b_ = (int(colour[i : i + 2], 16) for i in (1, 3, 5))
+            r, g, b_ = (int(color[i : i + 2], 16) for i in (1, 3, 5))
             return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b_)
 
         la, lb = luminance(a), luminance(b)
         return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
 
-    def test_both_dark_blocks_set_the_same_colours(self):
+    def test_both_dark_blocks_set_the_same_colors(self):
         """The dark theme is written twice, for the system's setting and
         for the page's own switch."""
         import re
@@ -1103,11 +1103,11 @@ class TestCalendarContrast:
         )
         assert dict(variable.findall(by_system)) == dict(variable.findall(by_switch))
 
-    def test_text_on_the_accent_colour(self):
+    def test_text_on_the_accent_color(self):
         """The selected day, today in the week's strip, the active tab.
         White on the dark theme's accent, a light blue, is 2.2:1."""
-        for theme, colours in self._themes().items():
-            ratio = self._contrast(colours["on-accent"], colours["accent"])
+        for theme, colors in self._themes().items():
+            ratio = self._contrast(colors["on-accent"], colors["accent"])
             assert ratio >= 4.5, (theme, round(ratio, 2))
         css = self._css()
         for selector in (
@@ -1129,12 +1129,12 @@ class TestCalendarContrast:
             ("a task's time", "text-secondary", "bg-card"),
             ("a done task's title", "completed-text", "bg-card"),
         )
-        for theme, colours in self._themes().items():
+        for theme, colors in self._themes().items():
             for what, fg, bg in pairs:
-                ratio = self._contrast(colours[fg], colours[bg])
+                ratio = self._contrast(colors[fg], colors[bg])
                 assert ratio >= 4.5, (theme, what, round(ratio, 2))
 
-    def test_a_day_of_another_month_is_dimmed_by_colour_alone(self):
+    def test_a_day_of_another_month_is_dimmed_by_color_alone(self):
         """Faded as well, its number fell to 2.2:1 in the light theme
         and 2.9:1 in the dark one. It is a button like the others."""
         rule = self._css().split(".cal-mini-day.other .cal-mini-num {")[1].split("}")[0]
@@ -1143,16 +1143,16 @@ class TestCalendarContrast:
 
     def test_dots_and_task_edges_stand_out_as_graphics(self):
         """WCAG asks 3:1 of a graphic that carries meaning."""
-        for theme, colours in self._themes().items():
+        for theme, colors in self._themes().items():
             for mark in ("normal", "high", "low", "text-secondary"):
                 for ground in ("bg", "bg-card"):
-                    ratio = self._contrast(colours[mark], colours[ground])
+                    ratio = self._contrast(colors[mark], colors[ground])
                     assert ratio >= 3.0, (theme, mark, ground, round(ratio, 2))
 
 
 class TestTextOnFills:
-    """Text and icons written on a fill of one of the theme's colours
-    reach WCAG AA in both themes. The dark theme's colours are light
+    """Text and icons written on a fill of one of the theme's colors
+    reach WCAG AA in both themes. The dark theme's colors are light
     tints; white on them is 1.7:1 to 2.2:1."""
 
     FILLS = ("accent", "danger", "success", "warning")
@@ -1181,19 +1181,19 @@ class TestTextOnFills:
         return {"light": light, "dark": {**light, **dict(variable.findall(dark_block))}}
 
     @staticmethod
-    def _rgba(colour: str) -> tuple[float, float, float, float]:
+    def _rgba(color: str) -> tuple[float, float, float, float]:
         import re
 
-        colour = colour.strip()
-        if colour.startswith("#"):
-            r, g, b = (int(colour[i : i + 2], 16) for i in (1, 3, 5))
+        color = color.strip()
+        if color.startswith("#"):
+            r, g, b = (int(color[i : i + 2], 16) for i in (1, 3, 5))
             return (r, g, b, 1.0)
-        parts = [float(v) for v in re.findall(r"[\d.]+", colour)]
+        parts = [float(v) for v in re.findall(r"[\d.]+", color)]
         return (parts[0], parts[1], parts[2], parts[3] if len(parts) > 3 else 1.0)
 
     @classmethod
     def _over(cls, top: str | tuple, under: str | tuple) -> tuple[float, float, float, float]:
-        """One colour laid over another that is opaque."""
+        """One color laid over another that is opaque."""
         t = cls._rgba(top) if isinstance(top, str) else top
         u = cls._rgba(under) if isinstance(under, str) else under
         return (
@@ -1205,8 +1205,8 @@ class TestTextOnFills:
 
     @classmethod
     def _contrast(cls, a: str | tuple, b: str | tuple) -> float:
-        def luminance(colour: str | tuple) -> float:
-            rgb = cls._rgba(colour) if isinstance(colour, str) else colour
+        def luminance(color: str | tuple) -> float:
+            rgb = cls._rgba(color) if isinstance(color, str) else color
 
             def channel(value: float) -> float:
                 c = value / 255
@@ -1217,7 +1217,7 @@ class TestTextOnFills:
         la, lb = luminance(a), luminance(b)
         return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
 
-    def test_each_fill_colour_has_a_text_colour_that_reaches_aa(self):
+    def test_each_fill_color_has_a_text_color_that_reaches_aa(self):
         for theme, v in self._themes().items():
             for fill in self.FILLS:
                 ratio = self._contrast(v["on-" + fill], v[fill])
@@ -1226,9 +1226,9 @@ class TestTextOnFills:
             ratio = self._contrast(v["on-accent"], v["accent-hover"])
             assert ratio >= 4.5, (theme, "accent-hover", round(ratio, 2))
 
-    def test_a_rule_that_fills_with_a_theme_colour_takes_its_text_from_that_colours_token(self):
-        """Every rule of the style sheet. A fill with no text colour of
-        its own is a mark, or takes the colour of what it lies in."""
+    def test_a_rule_that_fills_with_a_theme_color_takes_its_text_from_that_colors_token(self):
+        """Every rule of the style sheet. A fill with no text color of
+        its own is a mark, or takes the color of what it lies in."""
         import re
 
         checked = 0
@@ -1237,17 +1237,17 @@ class TestTextOnFills:
                 r"background(?:-color)?:\s*var\(--(accent|accent-hover|danger|success|warning)\)",
                 body,
             )
-            colour = re.search(r"(?<![-\w])color:\s*([^;]+);", body)
-            if not fill or not colour:
+            color = re.search(r"(?<![-\w])color:\s*([^;]+);", body)
+            if not fill or not color:
                 continue
             token = "on-accent" if fill.group(1) == "accent-hover" else "on-" + fill.group(1)
-            assert colour.group(1).strip() == f"var(--{token})", selector
+            assert color.group(1).strip() == f"var(--{token})", selector
             checked += 1
         assert checked >= 14
 
     def test_no_rule_writes_white_by_name_or_lays_white_over_a_fill(self):
         """White text is right on the light theme's fills only, and a
-        white overlay lightens a fill towards white text."""
+        white overlay lightens a fill toward white text."""
         import re
 
         for selector, body in self._rules():
@@ -1259,9 +1259,9 @@ class TestTextOnFills:
                 selector
             )
 
-    def test_controls_on_the_accent_colour(self):
+    def test_controls_on_the_accent_color(self):
         """The list picker and the view buttons in the header, the move
-        banner's Cancel: their fills go away from the text's colour."""
+        banner's Cancel: their fills go away from the text's color."""
         css = self._css()
         for selector, fill in (
             (".list-picker-btn", "accent-overlay"),
@@ -1280,7 +1280,7 @@ class TestTextOnFills:
                 assert ratio > self._contrast(v["on-accent"], v["accent"]), (theme, overlay)
 
     def test_an_icon_that_is_not_the_selected_one_reaches_3_to_1(self):
-        """A graphic. On the accent colour, and on the fill the view
+        """A graphic. On the accent color, and on the fill the view
         buttons lie on."""
         rule = self._css().split("\n.view-btn {")[1].split("}")[0]
         assert "color: var(--on-accent-dim);" in rule
@@ -1290,7 +1290,7 @@ class TestTextOnFills:
                 ratio = self._contrast(icon, ground)
                 assert ratio >= 3.0, (theme, round(ratio, 2))
 
-    def test_small_text_on_the_accent_colour_is_not_made_fainter(self):
+    def test_small_text_on_the_accent_color_is_not_made_fainter(self):
         """White on the light theme's accent is 4.6:1; at 80% it was
         3.5:1."""
         css = self._css()
@@ -1299,12 +1299,12 @@ class TestTextOnFills:
             rule = css.split("\n" + selector + " {")[1].split("}")[0]
             assert "color: var(--on-accent);" in rule, selector
 
-    def test_connection_dot_has_a_ring_in_the_headers_text_colour(self):
+    def test_connection_dot_has_a_ring_in_the_headers_text_color(self):
         """Its green is 1.6:1 against the dark theme's header."""
         rule = self._css().split("\n.dot {")[1].split("}")[0]
         assert "box-shadow: 0 0 0 1.5px var(--on-accent);" in rule
 
-    def test_a_chip_writes_its_colour_darkened_on_a_tint_of_it(self):
+    def test_a_chip_writes_its_color_darkened_on_a_tint_of_it(self):
         """Written straight on the tint, the light theme's priority and
         recurrence chips were 4.3:1."""
         css = self._css()
@@ -1335,7 +1335,7 @@ class TestTextOnFills:
                     assert ratio >= 4.5, (theme, ink, ground, round(ratio, 2))
 
     def test_selected_row_of_the_list_picker(self):
-        """On its tint the secondary colour falls to 4.3:1."""
+        """On its tint the secondary color falls to 4.3:1."""
         css = self._css()
         assert (
             ".list-row.active .list-row-stats,\n.list-row.active .list-action-btn {\n  color: var(--text);"
@@ -1414,18 +1414,18 @@ class TestCalendarHourGrid:
         assert "var scaleY = canvas._unitHeight / rect.height;" in body
 
     @staticmethod
-    def _luminance(colour: str) -> float:
-        """WCAG relative luminance of a #rrggbb colour."""
+    def _luminance(color: str) -> float:
+        """WCAG relative luminance of a #rrggbb color."""
 
         def channel(value: int) -> float:
             c = value / 255
             return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
 
-        r, g, b = (int(colour[i : i + 2], 16) for i in (1, 3, 5))
+        r, g, b = (int(color[i : i + 2], 16) for i in (1, 3, 5))
         return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
 
     def test_a_label_is_black_or_white_whichever_the_fill_sets_off(self):
-        """The page's own text colour is chosen for the page's
+        """The page's own text color is chosen for the page's
         background. On the dark theme's bars it measured 1.1:1 to 2.1:1,
         and on four of the light theme's six, under 4.5:1."""
         body = self._function("_barTextColor")
@@ -1436,7 +1436,7 @@ class TestCalendarHourGrid:
         assert "return 0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2];" in luminance
         assert "c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)" in luminance
 
-    def test_every_bar_colour_of_both_themes_gives_its_label_aa_contrast(self):
+    def test_every_bar_color_of_both_themes_gives_its_label_aa_contrast(self):
         """WCAG AA asks 4.5:1 of text. The rule above, worked here for
         every fill in the style sheet."""
         import re
@@ -1454,15 +1454,15 @@ class TestCalendarHourGrid:
         worst = min(max(1.05 / (n / 1000 + 0.05), (n / 1000 + 0.05) / 0.05) for n in range(1001))
         assert worst >= 4.5
 
-    def test_no_label_on_a_bar_uses_the_pages_text_colour(self):
+    def test_no_label_on_a_bar_uses_the_pages_text_color(self):
         for name in ("_paintHourBar", "_paintAllDayChip", "_paintMarkerChip"):
             body = self._function(name)
             assert '_themeColor("text"' not in body, name
             assert 'ctx.fillStyle = "#ffffff";' not in body, name
             assert "_paintLabelOn(ctx, text," in body, name
 
-    def test_a_bar_of_two_colours_has_its_label_written_on_each(self):
-        """Each part of the label is on the colour it was chosen for."""
+    def test_a_bar_of_two_colors_has_its_label_written_on_each(self):
+        """Each part of the label is on the color it was chosen for."""
         bar = self._function("_paintHourBar")
         assert "{ x: x, y: y, w: splitX - x, h: h, fill: base }," in bar
         assert "{ x: splitX, y: y, w: x + w - splitX, h: h, fill: deviation }," in bar

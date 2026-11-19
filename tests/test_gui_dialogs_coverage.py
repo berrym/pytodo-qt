@@ -948,7 +948,7 @@ class TestAddTodoDialogBoardColumn:
 
     def test_no_columns_hides_combo(self, app):
         """Without a columns list, the combo widget is created but
-        never added to the form — behaviour-preserving default for
+        never added to the form — behavior-preserving default for
         test / headless code paths that don't know about kanban state.
         """
         dialog = AddTodoDialog()
@@ -1206,7 +1206,7 @@ class TestEditRecurrenceDialog:
         result = dialog.get_recurrence()
         assert result == (None, 1, None, None)
 
-    def test_cancelled_returns_defaults(self, app):
+    def test_canceled_returns_defaults(self, app):
         item = TodoItem(reminder="Test", recurrence_type="daily")
         dialog = EditRecurrenceDialog(item)
         # Don't call _on_accept or _on_remove — simulate cancel

@@ -731,7 +731,7 @@ class TestBoardColumns:
 
         assert self._bar(board).value() == 0
 
-    def test_a_column_scrolled_afterwards_is_left_alone(self, qtbot, board):
+    def test_a_column_scrolled_afterward_is_left_alone(self, qtbot, board):
         """A position that could not be reached at once is given up as
         soon as the column is scrolled by something else."""
         column = board._columns[0]

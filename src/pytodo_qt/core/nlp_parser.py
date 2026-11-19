@@ -573,7 +573,7 @@ def _advance_phrase_at(tokens: list[_Token], idx: int) -> tuple[int, int, str] |
 
 
 def advance_reminder_label(days: int, cadence: str, *, has_due_date: bool = True) -> str:
-    """The text shown for a recognised advance reminder.
+    """The text shown for a recognized advance reminder.
 
     An advance reminder counts back from the due date; without one it
     cannot be kept, which the text says.

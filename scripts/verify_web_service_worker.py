@@ -64,7 +64,7 @@ body::after {{
   right: 0;
   z-index: 99999;
   padding: 3px 10px;
-  background: {colour};
+  background: {color};
   color: #fff;
   font: 600 13px sans-serif;
 }}
@@ -222,9 +222,9 @@ async def enter(text: str) -> None:
     await asyncio.get_running_loop().run_in_executor(None, sys.stdin.readline)
 
 
-def label(static_dir: Path, original_css: str, text: str, colour: str) -> None:
+def label(static_dir: Path, original_css: str, text: str, color: str) -> None:
     (static_dir / "style.css").write_text(
-        original_css + _LABEL_CSS.format(text=text, colour=colour), encoding="utf-8"
+        original_css + _LABEL_CSS.format(text=text, color=color), encoding="utf-8"
     )
     print(f"  Page version on the server: {static_asset_version()}", flush=True)
 

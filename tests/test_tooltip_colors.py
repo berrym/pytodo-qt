@@ -30,7 +30,7 @@ _THEME_COLORS = {"light": LIGHT_COLORS, "dark": DARK_COLORS}
 
 @pytest.fixture(params=["light", "dark"])
 def themed(request, qtbot, monkeypatch):
-    """The application in one of the two themes; gives the theme's colours."""
+    """The application in one of the two themes; gives the theme's colors."""
     app = QApplication.instance()
     assert isinstance(app, QApplication)
     theme = Theme(request.param)
@@ -45,7 +45,7 @@ def themed(request, qtbot, monkeypatch):
 
 def _tooltip_of(widget: QWidget) -> tuple[str, int, str]:
     """The tooltip shown for a widget: its background, the background's
-    opacity, and its text colour."""
+    opacity, and its text color."""
     app = QApplication.instance()
     assert isinstance(app, QApplication)
     QToolTip.hideText()
@@ -145,14 +145,14 @@ class TestBoard:
         _show(qtbot, widget)
         return widget
 
-    def test_a_cards_tooltip_has_the_themes_colours(self, board, themed):
+    def test_a_cards_tooltip_has_the_themes_colors(self, board, themed):
         cards = board.findChildren(KanbanCardWidget)
         assert len(cards) == 4
         for card in cards:
             assert card.toolTip()
             assert _tooltip_of(card) == (themed["base"], 255, themed["text"])
 
-    def test_every_tooltip_on_the_board_has_the_themes_colours(self, board, themed):
+    def test_every_tooltip_on_the_board_has_the_themes_colors(self, board, themed):
         """The Due text, the recurrence mark, the missed count and the
         event date of a card have tooltips of their own, and the first
         and the last column an icon with one."""
@@ -172,8 +172,8 @@ class TestBoard:
 
 class TestListView:
     def test_every_tooltip_has_the_themes_background_and_text_that_can_be_read(self, qtbot, themed):
-        """The priority box gives its tooltip its own text colour, which
-        is one of the priority colours and reads on the background."""
+        """The priority box gives its tooltip its own text color, which
+        is one of the priority colors and reads on the background."""
         table = TodoTableWidget()
         table.set_list(_todo_list())
         _show(qtbot, table)

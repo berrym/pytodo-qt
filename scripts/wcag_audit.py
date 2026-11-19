@@ -263,7 +263,7 @@ def _bar_pairs() -> list[Pair]:
     background matches `base` in each theme.
 
     A bar carries its task's name and a marker chip its label, as
-    text: each colour of `core/bar_palette.py` is also measured
+    text: each color of `core/bar_palette.py` is also measured
     against the text the desktop writes on it, at 4.5:1. The text is
     the one `bar_palette.readable_text_on` chooses; the ratio is this
     script's own.
@@ -372,12 +372,12 @@ def readable_text_on(fill: str) -> str:
 
 
 def _web_fill_pairs() -> list[Pair]:
-    """Text the web page writes on a fill of one of the theme's colours.
+    """Text the web page writes on a fill of one of the theme's colors.
 
-    The `--on-*` variables of `web/static/style.css` are the colours of
+    The `--on-*` variables of `web/static/style.css` are the colors of
     text on the accent, danger, success and warning fills (the header,
     buttons, banners, the pending count, the swipe's two sides). The
-    labels on the calendar's bars take their colour from the fill, by
+    labels on the calendar's bars take their color from the fill, by
     `readable_text_on`.
     """
     fills = {
@@ -442,13 +442,13 @@ def _web_fill_pairs() -> list[Pair]:
 
 
 def _desktop_fill_pairs() -> list[Pair]:
-    """Text the desktop's widgets write on a fill of one of the theme's colours.
+    """Text the desktop's widgets write on a fill of one of the theme's colors.
 
     Text on the highlight fill takes the palette's highlighted-text
-    colour, which `_desktop_pairs` measures. Text on a fill of another
-    theme colour is the one `bar_palette.readable_text_on` chooses
-    (`_inline_pairs` has the overlay colour). The button colour and the
-    alternate base lie under text in its ordinary colours where a row
+    color, which `_desktop_pairs` measures. Text on a fill of another
+    theme color is the one `bar_palette.readable_text_on` chooses
+    (`_inline_pairs` has the overlay color). The button color and the
+    alternate base lie under text in its ordinary colors where a row
     or a button is under the pointer.
     """
     out: list[Pair] = []
@@ -538,11 +538,11 @@ def _desktop_fill_pairs() -> list[Pair]:
 def _desktop_window_pairs() -> list[Pair]:
     """Muted and state texts on the window background.
 
-    Dialogs and the status bar have the window's colour behind them,
+    Dialogs and the status bar have the window's color behind them,
     not the base's, and it is the darker of the two in the light theme.
     The muted text is what `palette(placeholder-text)` gives; the three
-    state colours are what the status bar writes its states in. The
-    border colour is drawn on both backgrounds.
+    state colors are what the status bar writes its states in. The
+    border color is drawn on both backgrounds.
     """
     out: list[Pair] = []
     for theme, colors in (("light", LIGHT_COLORS), ("dark", DARK_COLORS)):
@@ -555,6 +555,32 @@ def _desktop_window_pairs() -> list[Pair]:
                     colors["window"],
                     THRESHOLD_TEXT,
                     "text",
+                )
+            )
+        # The accent as text is the link color: on every background text
+        # stands on, the button color included, which lies under a tool
+        # button under the pointer.
+        for around in ("window", "base", "alternate_base", "button", "completed_bg"):
+            out.append(
+                Pair(
+                    f"link on {around} (accent-colored text)",
+                    theme,
+                    colors["link"],
+                    colors[around],
+                    THRESHOLD_TEXT,
+                    "text",
+                )
+            )
+        # The focus timer's states, as the status bar writes them.
+        for key in (
+            "focus_timer_working",
+            "focus_timer_break",
+            "focus_timer_paused",
+            "focus_timer_stopwatch_running",
+        ):
+            out.append(
+                Pair(
+                    f"{key} on window", theme, colors[key], colors["window"], THRESHOLD_TEXT, "text"
                 )
             )
         for around in ("window", "base", "alternate_base"):

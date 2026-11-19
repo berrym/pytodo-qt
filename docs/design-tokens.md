@@ -86,7 +86,7 @@ Color values are theme-aware. The token system defines *roles* (accent, danger, 
 
 `#1976d2` was selected because it clears WCAG 2.1 AA on white in both roles the accent serves: as a foreground (link / accent text on `bg`, ratio 4.62:1) and as a fill carrying white text (`highlight_text` on `highlight`, ratio 4.62:1). Material 500 (`#2196f3`) was the prior canonical and remains the family the accent belongs to, but it could not carry text against either white text or white surface and would have required splitting the token into separate fill / text variants. The 700-shift produces a slightly darker but visually-recognizable Material blue on both surfaces.
 
-The companion `accent-hover` is Material Blue 800 (`#1565c0`, 6.36:1 on white). On the dark theme `highlight_text` is `#1a1a1a` (dark text on the light-blue highlight band) — `#ffffff` on `#64b5f6` failed the same way Material 500 did against white.
+The companion `accent-hover` is Material Blue 800 (`#1565c0`, 6.36:1 on white). On the desktop the accent is a fill and a border only. Text in the accent is written in the theme's `link` color, `#1461b9` in the light theme and `#90caf9` in the dark: the accent as text gives 4.22:1 on the light theme's window gray, which dialogs, the detail panel and the status bar have behind them, and 3.49:1 on the button gray, which lies under a tool button under the pointer. The link color gives 4.5:1 or more on every background text stands on (4.62:1 on the button gray, the lowest). On the dark theme `highlight_text` is `#1a1a1a` (dark text on the light-blue highlight band) — `#ffffff` on `#64b5f6` failed the same way Material 500 did against white.
 
 ### Anti-patterns to remove
 

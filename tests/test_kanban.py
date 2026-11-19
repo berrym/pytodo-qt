@@ -28,6 +28,7 @@ def _make_colors() -> dict[str, str]:
         "alternate_base": "#f0f0f0",
         "text": "#000000",
         "highlight": "#0078d4",
+        "link": "#1461b9",
         "highlight_text": "#ffffff",
         "border": "#cccccc",
         "completed_bg": "#f0f8f0",

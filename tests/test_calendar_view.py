@@ -2209,10 +2209,10 @@ class TestWeekDelegateBarPainting:
 class TestBarTextContrast:
     """The text on a bar and on a marker chip is black or white,
     whichever has the higher contrast with the fill, and the fill is
-    painted opaque so that it is the colour the text was chosen for."""
+    painted opaque so that it is the color the text was chosen for."""
 
-    # A background no bar colour is near: a fill that let it show
-    # through would not come out as the palette's colour.
+    # A background no bar color is near: a fill that let it show
+    # through would not come out as the palette's color.
     _UNDER = "#ff00ff"
 
     def _paint_cell(self, qtbot, item, now, theme="light"):
@@ -2247,7 +2247,7 @@ class TestBarTextContrast:
         return img
 
     @staticmethod
-    def _colours(img, left, top, right, bottom) -> set[str]:
+    def _colors(img, left, top, right, bottom) -> set[str]:
         from PyQt6.QtGui import QColor
 
         return {
@@ -2285,37 +2285,37 @@ class TestBarTextContrast:
 
     @pytest.mark.parametrize("theme", ["light", "dark"])
     @pytest.mark.parametrize("now_hour", [5, 9, 15])
-    def test_bar_is_painted_in_the_palettes_colour(self, qtbot, theme, now_hour):
+    def test_bar_is_painted_in_the_palettes_color(self, qtbot, theme, now_hour):
         """Before its window, within it and after it: whatever the
-        bar's state, its fill is one of the palette's colours, with
+        bar's state, its fill is one of the palette's colors, with
         nothing of the background under it."""
         from pytodo_qt.core.bar_palette import get_palette
 
         img = self._paint_cell(qtbot, self._task(), self._at(now_hour, 10), theme)
-        fills = self._colours(img, *self._BELOW)
+        fills = self._colors(img, *self._BELOW)
         assert len(fills) == 1
         assert fills <= {colors.base for colors in get_palette(theme).values()}
 
     @pytest.mark.parametrize("theme", ["light", "dark"])
     @pytest.mark.parametrize("now_hour", [5, 9, 15])
-    def test_label_is_the_readable_colour_for_the_fill(self, qtbot, theme, now_hour):
+    def test_label_is_the_readable_color_for_the_fill(self, qtbot, theme, now_hour):
         from pytodo_qt.core.bar_palette import readable_text_on
 
         img = self._paint_cell(qtbot, self._task(), self._at(now_hour, 10), theme)
-        (fill,) = self._colours(img, *self._BELOW)
+        (fill,) = self._colors(img, *self._BELOW)
         text = readable_text_on(fill)
         other = "#000000" if text == "#ffffff" else "#ffffff"
-        label = self._colours(img, *self._LABEL)
+        label = self._colors(img, *self._LABEL)
         assert text in label
         assert other not in label
 
-    def test_light_theme_paints_both_label_colours(self, qtbot):
+    def test_light_theme_paints_both_label_colors(self, qtbot):
         """White on the blue of a bar still to come, black on the teal
         of one in its work window."""
         future = self._paint_cell(qtbot, self._task(), self._at(5))
         working = self._paint_cell(qtbot, self._task(), self._at(9, 10))
-        assert "#ffffff" in self._colours(future, *self._LABEL)
-        assert "#000000" in self._colours(working, *self._LABEL)
+        assert "#ffffff" in self._colors(future, *self._LABEL)
+        assert "#000000" in self._colors(working, *self._LABEL)
 
     @pytest.mark.parametrize("theme", ["light", "dark"])
     def test_deviation_zone_is_not_painted_behind_the_label(self, qtbot, theme):
@@ -2333,9 +2333,9 @@ class TestBarTextContrast:
         )
         plain = self._paint_cell(qtbot, self._task(complete=True, completed_at=on_time), now, theme)
 
-        assert self._colours(early, *self._LABEL) == self._colours(plain, *self._LABEL)
-        assert len(self._colours(plain, *self._BELOW)) == 1
-        assert len(self._colours(early, *self._BELOW)) > 1
+        assert self._colors(early, *self._LABEL) == self._colors(plain, *self._LABEL)
+        assert len(self._colors(plain, *self._BELOW)) == 1
+        assert len(self._colors(early, *self._BELOW)) > 1
 
     @pytest.mark.parametrize("theme", ["light", "dark"])
     def test_marker_chip_is_opaque_with_readable_text(self, qtbot, theme):
@@ -2371,9 +2371,9 @@ class TestBarTextContrast:
         fill = get_palette(theme)[BarState.OVERDUE_ACTIVE].base
         text = readable_text_on(fill)
         other = "#000000" if text == "#ffffff" else "#ffffff"
-        inside = self._colours(img, 6, 5, 190, 18)
+        inside = self._colors(img, 6, 5, 190, 18)
         # Clear of the text, at the chip's right end: the fill alone.
-        assert self._colours(img, 185, 5, 192, 18) == {fill}
+        assert self._colors(img, 185, 5, 192, 18) == {fill}
         assert text in inside
         assert other not in inside
 

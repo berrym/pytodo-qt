@@ -1,7 +1,7 @@
 """The green border that marks a finished task in the list view and on the board.
 
 A finished task's Reminder box and its card are filled with the theme's
-`completed_bg`, which is too near the colour around it to mark anything
+`completed_bg`, which is too near the color around it to mark anything
 by itself: 1.08:1 against the row in the light theme. The box and the
 card have a border in the theme's `due_soon` green as well. WCAG AA asks
 3:1 of a graphic that carries a state.
@@ -30,7 +30,7 @@ _THEME_COLORS = {"light": LIGHT_COLORS, "dark": DARK_COLORS}
 
 @pytest.fixture(params=["light", "dark"])
 def themed(request, qtbot, monkeypatch):
-    """The application in one of the two themes; gives the theme's colours."""
+    """The application in one of the two themes; gives the theme's colors."""
     app = QApplication.instance()
     assert isinstance(app, QApplication)
     theme = Theme(request.param)
@@ -42,8 +42,8 @@ def themed(request, qtbot, monkeypatch):
     app.setStyleSheet(sheet)
 
 
-def _colours(widget: QWidget) -> set[str]:
-    """Every colour of the widget as it is painted."""
+def _colors(widget: QWidget) -> set[str]:
+    """Every color of the widget as it is painted."""
     app = QApplication.instance()
     assert app is not None
     for _ in range(3):
@@ -60,7 +60,7 @@ class TestTheGreenCanBeMadeOut:
     @pytest.mark.parametrize("around", ["base", "alternate_base", "completed_bg"])
     def test_the_border_has_three_to_one_against_what_is_around_it(self, themed, around):
         """The row and the alternate row outside the box, the board's
-        column, which has the alternate row's colour, and the fill inside."""
+        column, which has the alternate row's color, and the fill inside."""
         assert contrast_ratio(themed["due_soon"], themed[around]) >= 3
 
     def test_the_fill_alone_does_not(self, themed):
@@ -111,7 +111,7 @@ class TestListView:
         colors = table.themed
         field = self._field(table, "a finished task")
         assert f"border: {FINISHED_BORDER_PX}px solid {colors['due_soon']}" in field.styleSheet()
-        painted = _colours(field)
+        painted = _colors(field)
         assert colors["due_soon"] in painted
         assert colors["completed_bg"] in painted
 
@@ -119,7 +119,7 @@ class TestListView:
         colors = table.themed
         field = self._field(table, "an open task")
         assert colors["due_soon"] not in field.styleSheet()
-        assert colors["due_soon"] not in _colours(field)
+        assert colors["due_soon"] not in _colors(field)
 
     def test_the_focused_box_keeps_the_border_of_a_focused_field(self, table):
         """The field's own sheet comes before the application's, whose
@@ -128,7 +128,7 @@ class TestListView:
         sheet = self._field(table, "a finished task").styleSheet()
         assert f"QLineEdit:focus {{ border: 2px solid {colors['highlight']}; }}" in sheet
 
-    def test_the_text_keeps_its_colours(self, table):
+    def test_the_text_keeps_its_colors(self, table):
         colors = table.themed
         sheet = self._field(table, "a finished task").styleSheet()
         assert f"color: {colors['completed_text']};" in sheet
@@ -150,7 +150,7 @@ class TestBoardCard:
     def test_a_finished_tasks_card_has_the_green_border(self, themed, qtbot):
         card = self._card(qtbot, themed, complete=True)
         assert f"border: {FINISHED_BORDER_PX}px solid {themed['due_soon']};" in card.styleSheet()
-        assert themed["due_soon"] in _colours(card)
+        assert themed["due_soon"] in _colors(card)
 
     def test_an_open_tasks_card_has_not(self, themed, qtbot):
         card = self._card(qtbot, themed, complete=False)
@@ -233,25 +233,25 @@ class TestCalendar:
 
     def test_a_finished_tasks_chip_in_the_month_has_the_border(self, themed, qtbot):
         widget = self._calendar(qtbot, "SUB_MONTH", finished=True)
-        assert themed["due_soon"] in _colours(widget._cal_table)
+        assert themed["due_soon"] in _colors(widget._cal_table)
 
     def test_an_open_tasks_chip_in_the_month_has_not(self, themed, qtbot):
         widget = self._calendar(qtbot, "SUB_MONTH", finished=False)
-        assert themed["due_soon"] not in _colours(widget._cal_table)
+        assert themed["due_soon"] not in _colors(widget._cal_table)
 
     def test_a_finished_tasks_chip_in_the_all_day_row_has_the_border(self, themed, qtbot):
         from pytodo_qt.gui.widgets.calendar_view import _AllDayTableView
 
         widget = self._calendar(qtbot, "SUB_WEEK", finished=True)
         row = widget._week_container.findChild(_AllDayTableView)
-        assert themed["due_soon"] in _colours(row)
+        assert themed["due_soon"] in _colors(row)
 
     def test_an_open_tasks_chip_in_the_all_day_row_has_not(self, themed, qtbot):
         from pytodo_qt.gui.widgets.calendar_view import _AllDayTableView
 
         widget = self._calendar(qtbot, "SUB_WEEK", finished=False)
         row = widget._week_container.findChild(_AllDayTableView)
-        assert themed["due_soon"] not in _colours(row)
+        assert themed["due_soon"] not in _colors(row)
 
     def test_the_unscheduled_panel_gives_a_finished_tasks_row_the_border(self, themed, qtbot):
         from pytodo_qt.gui.widgets.calendar_view import _DraggableTaskButton, _UnscheduledPanel

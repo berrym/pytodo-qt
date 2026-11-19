@@ -97,7 +97,7 @@ def _label_only(properties: str) -> str:
 
     A sheet of bare properties applies to the widget and to everything
     below it, and a tooltip counts as below the widget it is shown for:
-    it would take the label's colour and type size and lose its own
+    it would take the label's color and type size and lose its own
     border. A label that has a tooltip is styled through this.
     """
     return f"QLabel {{ {properties} }}"
@@ -216,7 +216,7 @@ class KanbanCardWidget(QFrame):
         bg = colors["completed_bg"] if item.complete else colors["base"]
         text_color = colors["completed_text"] if item.complete else colors["text"]
 
-        # A finished task's fill is too near the card's own colour to mark
+        # A finished task's fill is too near the card's own color to mark
         # it by itself, so its card has a border in the theme's green.
         outline = (
             f"{FINISHED_BORDER_PX}px solid {colors['due_soon']}"
@@ -421,8 +421,7 @@ class KanbanCardWidget(QFrame):
             if is_focus_item:
                 focus_label = QLabel("\u23f1 Focus")  # ⏱ Focus
                 focus_label.setStyleSheet(
-                    f"color: {colors['highlight']}; font-size: 11px; "
-                    "font-weight: bold; border: none;"
+                    f"color: {colors['link']}; font-size: 11px; font-weight: bold; border: none;"
                 )
                 row2.addWidget(focus_label)
 
@@ -433,8 +432,7 @@ class KanbanCardWidget(QFrame):
             evt_label = QLabel(f"\U0001f4c5 {item.event_date.strftime('%b %d')}")
             evt_label.setStyleSheet(
                 _label_only(
-                    f"color: {colors['highlight']}; font-size: 11px;"
-                    " font-style: italic; border: none;"
+                    f"color: {colors['link']}; font-size: 11px; font-style: italic; border: none;"
                 )
             )
             evt_label.setToolTip(

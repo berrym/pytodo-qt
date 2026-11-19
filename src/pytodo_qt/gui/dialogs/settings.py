@@ -60,7 +60,7 @@ logger = Logger(__name__)
 
 
 # The one style of an explanatory note on a tab: upright, in the dialog's
-# own type size, in the muted text colour. The notes had three styles:
+# own type size, in the muted text color. The notes had three styles:
 # italic, upright, and upright in smaller type.
 _NOTE_STYLE = "color: palette(placeholder-text);"
 
@@ -71,7 +71,7 @@ class _FullHeightScrollArea(QScrollArea):
     A plain scroll area asks for a small fixed size and scrolls from
     the start. This one lets the dialog open tall enough to show
     everything where the screen allows, and scrolls only where it does
-    not, or when the content grows afterwards.
+    not, or when the content grows afterward.
     """
 
     def sizeHint(self) -> QSize:  # noqa: N802 — Qt override
@@ -278,7 +278,7 @@ class SettingsDialog(QDialog):
         return widget
 
     def _on_remember_view_toggled(self, state: int) -> None:
-        """Grey out the Default View dropdown when 'Remember last
+        """Gray out the Default View dropdown when 'Remember last
         view' is checked, since the dropdown has no effect in that
         mode — the runtime's last-selected view always wins."""
         checked = state == Qt.CheckState.Checked.value
@@ -870,7 +870,7 @@ class SettingsDialog(QDialog):
 
         The area asks for the page's full height where the screen has
         it, and scrolls where it has not, or when the page grows
-        afterwards, as the Notifications page does when its hints show.
+        afterward, as the Notifications page does when its hints show.
         """
         scroll = _FullHeightScrollArea()
         scroll.setWidgetResizable(True)
@@ -905,7 +905,7 @@ class SettingsDialog(QDialog):
         self._update_notification_controls()
 
     def _update_notification_controls(self) -> None:
-        """Grey out what a switched-off option governs, and refresh the hints."""
+        """Gray out what a switched-off option governs, and refresh the hints."""
         enabled = self._notif_enabled.isChecked()
         for group in (
             self._notif_summary_group,
@@ -1041,7 +1041,7 @@ class SettingsDialog(QDialog):
 
         # TLS is always on — no user toggle (security requirement)
         tls_label = QLabel(self.tr("\U0001f512 All connections are encrypted (TLS)"))
-        tls_label.setStyleSheet("color: palette(highlight); font-size: 11px;")
+        tls_label.setStyleSheet("color: palette(link); font-size: 11px;")
         form.addRow("", tls_label)
 
         # Pairing PIN display — 28 px font + 8 px padding needs an
@@ -1057,7 +1057,7 @@ class SettingsDialog(QDialog):
         self.web_pin_label = QLabel("------")
         self.web_pin_label.setStyleSheet(
             f"font-size: 28px; font-weight: bold; font-family: {mono_css_pin};"
-            " letter-spacing: 6px; padding: 8px; color: palette(highlight);"
+            " letter-spacing: 6px; padding: 8px; color: palette(link);"
         )
         self.web_pin_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.web_pin_label.setMinimumHeight(56)
@@ -1115,7 +1115,7 @@ class SettingsDialog(QDialog):
                 break
         # Remember-last-view: syncing the checkbox also triggers
         # _on_remember_view_toggled which enables/disables the combo
-        # to match the current behaviour mode.
+        # to match the current behavior mode.
         self._remember_view_check.setChecked(config.database.remember_last_view)
         self._view_mode_combo.setEnabled(not config.database.remember_last_view)
 

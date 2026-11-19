@@ -145,7 +145,7 @@ class FocusTimerDialog(QDialog):
         self._focus_score_info_btn.setStyleSheet(
             "QPushButton { color: palette(placeholder-text); font-size: 14px; border: none;"
             " padding: 0; background: transparent; }"
-            "QPushButton:hover { color: palette(highlight); }"
+            "QPushButton:hover { color: palette(link); }"
         )
         self._focus_score_info_btn.setToolTip(
             self.tr("What's this? Click for the full explanation.")
@@ -210,7 +210,7 @@ class FocusTimerDialog(QDialog):
         # Muted text for the resting state; :hover / :pressed / :focus
         # switch to highlight_text on the highlight band so the label
         # stays legible when the focus rectangle or press tint lands on
-        # it (the inline named grey this replaces went unreadable on
+        # it (the inline named gray this replaces went unreadable on
         # the blue band).
         _toggle_colors = get_colors()
         self._sessions_toggle = QPushButton(self.tr("\u25b6 Today's Sessions"))

@@ -73,7 +73,7 @@ class TestNotificationOverlayLogo:
         assert overlay._body_scroll.geometry().right() < logo.left()
         assert logo.right() < overlay._close_btn.geometry().left()
 
-    def test_logo_is_vertically_centred(self, qtbot):
+    def test_logo_is_vertically_centered(self, qtbot):
         overlay = NotificationOverlay("Title", "Body text")
         qtbot.addWidget(overlay)
         overlay.show()

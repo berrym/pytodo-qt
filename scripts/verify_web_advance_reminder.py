@@ -79,7 +79,7 @@ it is made: this terminal prints "Stored now:" with the new values, and
    - Type 0 in the box and leave it: it becomes 1.
 
 4. Open "4 No due date".
-   - REMIND AHEAD shows "Off", greyed, and cannot be changed.
+   - REMIND AHEAD shows "Off", grayed, and cannot be changed.
    - "Needs a due date." is written under it.
    - Set a DUE DATE: REMIND AHEAD can be changed at once, and the line
      under it now says what the reminder does.
@@ -87,7 +87,7 @@ it is made: this terminal prints "Stored now:" with the new values, and
      date and "Once" are both there.
 
 5. Open "5 Reminder stored, no due date".
-   - REMIND AHEAD shows "Once" and 5, greyed, with "Needs a due date."
+   - REMIND AHEAD shows "Once" and 5, grayed, with "Needs a due date."
    - Set a DUE DATE: it can be changed, and still shows Once and 5.
 
 On a phone the box sits under the choice; on a wide screen it sits

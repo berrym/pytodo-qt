@@ -27,7 +27,7 @@ class AdvanceReminderEditor(QWidget):
 
     ``stacked`` puts the day count under the choice, for a narrow
     column. ``hide_days_when_off`` hides the day count while the choice
-    is "Off", where a greyed "1 day before" would read as a value.
+    is "Off", where a grayed "1 day before" would read as a value.
     """
 
     changed = pyqtSignal(int, str)

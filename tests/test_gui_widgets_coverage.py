@@ -879,8 +879,8 @@ class TestDueDateLabel:
 
     def test_label_completed_recurring_icon_is_not_faded(self, qtbot):
         """A finished task's recurrence icon is drawn in the muted text
-        colour. Faded to 40% it gave 1.49:1 to 1.84:1 on a row, where a
-        graphic needs 3:1 (tests/test_gui_text_on_fills.py has the colours)."""
+        color. Faded to 40% it gave 1.49:1 to 1.84:1 on a row, where a
+        graphic needs 3:1 (tests/test_gui_text_on_fills.py has the colors)."""
         w = DueDateLabel(date.today(), complete=True, recurring=True)
         qtbot.addWidget(w)
         # Find the icon label (first QLabel child that has a pixmap)

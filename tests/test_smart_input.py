@@ -297,7 +297,7 @@ class TestAdvanceReminderChip:
         assert widget.get_text() == "pay rent tomorrow"
         assert widget.get_parse_result().remind_before_days == 0
 
-    def test_kind_has_a_colour_in_both_themes(self) -> None:
+    def test_kind_has_a_color_in_both_themes(self) -> None:
         from pytodo_qt.gui.styles.themes import DARK_COLORS, LIGHT_COLORS
         from pytodo_qt.gui.widgets.smart_input import _ENTITY_KEY_BY_KIND
 
@@ -305,7 +305,7 @@ class TestAdvanceReminderChip:
         assert LIGHT_COLORS[key] == LIGHT_COLORS["entity_date"]
         assert DARK_COLORS[key] == DARK_COLORS["entity_date"]
 
-    def test_every_kind_has_a_colour(self) -> None:
+    def test_every_kind_has_a_color(self) -> None:
         from pytodo_qt.gui.widgets.smart_input import _ENTITY_KEY_BY_KIND
 
         assert set(_ENTITY_KEY_BY_KIND) == set(EntityKind)

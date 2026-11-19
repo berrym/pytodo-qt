@@ -39,7 +39,7 @@ def advance_spans(result: ParseResult) -> list[EntitySpan]:
 
 
 # ---------------------------------------------------------------------------
-# Phrases that are recognised
+# Phrases that are recognized
 # ---------------------------------------------------------------------------
 
 
@@ -376,7 +376,7 @@ class TestLabel:
 
 
 class TestVocabulary:
-    def test_missing_section_recognises_nothing(self, monkeypatch) -> None:
+    def test_missing_section_recognizes_nothing(self, monkeypatch) -> None:
         """A dictionary written before the section existed still loads."""
         from pytodo_qt.core import intents
 

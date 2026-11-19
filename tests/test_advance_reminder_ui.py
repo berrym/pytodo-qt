@@ -154,7 +154,7 @@ def advanced_dialog(qtbot) -> AddTodoDialog:
 
 
 class TestAddTodo:
-    def test_row_is_greyed_without_a_due_date(self, qtbot):
+    def test_row_is_grayed_without_a_due_date(self, qtbot):
         dialog = advanced_dialog(qtbot)
         assert not dialog.advance_reminder_editor.isEnabled()
         assert not dialog._advance_reminder_label.isEnabled()
@@ -288,7 +288,7 @@ class TestAddTodoTyped:
         assert dialog.advance_reminder_editor.isEnabled()
         assert dialog.advance_reminder_editor.value() == (7, "once")
 
-    def test_opening_advanced_without_a_due_date_shows_it_greyed(self, qtbot):
+    def test_opening_advanced_without_a_due_date_shows_it_grayed(self, qtbot):
         dialog = typed_dialog(qtbot, "Call mom remind me 2 days before")
         dialog._advanced_toggle.setChecked(True)
         assert dialog.advance_reminder_editor.value() == (2, "once")
@@ -386,7 +386,7 @@ class TestDetailPanel:
         panel.set_edit_mode(True)
         assert panel._advance_editor.isEnabled()
 
-    def test_greyed_in_edit_mode_without_a_due_date(self, qtbot):
+    def test_grayed_in_edit_mode_without_a_due_date(self, qtbot):
         panel, _ = panel_with(qtbot)
         panel.set_edit_mode(True)
         assert not panel._advance_editor.isEnabled()

@@ -1,6 +1,6 @@
 """The contrast audit, run with the tests.
 
-`scripts/wcag_audit.py` measures the colour pairs of the desktop and
+`scripts/wcag_audit.py` measures the color pairs of the desktop and
 of the web page against WCAG 2.1 AA: 4.5:1 for text, 3:1 for a
 graphical object. A pair that falls short fails here, and so does a
 group of pairs that the audit has but does not report.
@@ -69,7 +69,7 @@ def test_every_group_of_pairs_is_reported_and_counted(audit, capsys):
 
 def test_the_audits_ratio_is_the_applications(audit):
     """Two implementations of one formula: the script's own, and the
-    one the application chooses a text colour with."""
+    one the application chooses a text color with."""
     from pytodo_qt.core import bar_palette
 
     for one, other in (("#ffffff", "#2563eb"), ("#000000", "#fbbf24"), ("#1a1a1a", "#64b5f6")):

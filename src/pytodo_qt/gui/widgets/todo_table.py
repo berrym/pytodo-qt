@@ -78,8 +78,8 @@ def _sort_fragment(item: TodoItem, dimension: str, reverse: bool) -> tuple:
     return ()
 
 
-def _in_one_colour(pixmap: QPixmap, color: str) -> QPixmap:
-    """The shape of a pixmap, drawn in one colour."""
+def _in_one_color(pixmap: QPixmap, color: str) -> QPixmap:
+    """The shape of a pixmap, drawn in one color."""
     drawn = QPixmap(pixmap.size())
     drawn.setDevicePixelRatio(pixmap.devicePixelRatio())
     drawn.fill(Qt.GlobalColor.transparent)
@@ -92,7 +92,7 @@ def _in_one_colour(pixmap: QPixmap, color: str) -> QPixmap:
 
 
 def _with_color(style: str, color: str) -> str:
-    """A label's style with its text colour replaced."""
+    """A label's style with its text color replaced."""
     return f"{style} color: {color};"
 
 
@@ -297,7 +297,7 @@ class DueDateLabel(QWidget):
 
     def set_on_highlight(self, color: str | None) -> None:
         """Draw the text and the icon for a row filled with the highlight
-        colour, in the colour given, or for an ordinary row (None)."""
+        color, in the color given, or for an ordinary row (None)."""
         if color is None:
             self.label.setStyleSheet(self._text_style)
         else:
@@ -307,7 +307,7 @@ class DueDateLabel(QWidget):
         if color is None:
             self._icon_label.setPixmap(self._icon_pixmap)
         else:
-            self._icon_label.setPixmap(_in_one_colour(self._icon_pixmap, color))
+            self._icon_label.setPixmap(_in_one_color(self._icon_pixmap, color))
 
     def _setup_ui(self) -> None:
         layout = QHBoxLayout(self)
@@ -326,11 +326,11 @@ class DueDateLabel(QWidget):
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 )
-                # The icon's own blue is one colour for both themes and
-                # every row background. It is drawn in the accent colour,
-                # and in the muted text colour on a finished task.
+                # The icon's own blue is one color for both themes and
+                # every row background. It is drawn in the accent color,
+                # and in the muted text color on a finished task.
                 colors = get_colors()
-                pixmap = _in_one_colour(
+                pixmap = _in_one_color(
                     pixmap, colors["completed_text" if self._complete else "highlight"]
                 )
                 icon_label.setPixmap(pixmap)
@@ -437,8 +437,8 @@ class TodoTableWidget(QTableWidget):
         self._names_to_save: list[tuple[UUID, str]] = []
 
         # What a row writes and draws straight on its own background, to
-        # be recoloured when the row is selected and filled with the
-        # highlight colour: labels and tag chips with the style they
+        # be recolored when the row is selected and filled with the
+        # highlight color: labels and tag chips with the style they
         # have on an ordinary row, icons with their pixmap.
         self._row_labels: dict[int, list[tuple[QLabel, str]]] = {}
         self._row_chips: dict[int, list[tuple[QLabel, str]]] = {}
@@ -1246,7 +1246,7 @@ class TodoTableWidget(QTableWidget):
                 reminder_edit.setReadOnly(True)
             elif item.complete:
                 reminder_edit.setFont(self._completed_font)
-                # The fill is too near the row's own colour to mark the
+                # The fill is too near the row's own color to mark the
                 # finished task by itself (1.08:1 in the light theme), so
                 # the box has a border in the theme's green as well. The
                 # field's own sheet comes before the application's, and
@@ -1566,13 +1566,13 @@ class TodoTableWidget(QTableWidget):
         self.edit_tags_requested.emit(item_id)
 
     def _draw_selected_rows(self) -> None:
-        """Recolour what stands on the rows whose selection has changed.
+        """Recolor what stands on the rows whose selection has changed.
 
-        A selected row is filled with the highlight colour, and the
-        colours its labels have on the ordinary background do not read
-        on that. Every label takes the highlight's text colour there, a
+        A selected row is filled with the highlight color, and the
+        colors its labels have on the ordinary background do not read
+        on that. Every label takes the highlight's text color there, a
         tag chip gets an outline in it, as its fill is the highlight
-        colour too, and an icon is drawn in it.
+        color too, and an icon is drawn in it.
         """
         selected = {index.row() for index in self.selectedIndexes()}
         on_highlight = get_colors()["highlight_text"]
@@ -1589,7 +1589,7 @@ class TodoTableWidget(QTableWidget):
                     else f"{style} border: 1px solid {color}; padding: 0px 5px;"
                 )
             for icon, pixmap in self._row_icons.get(row, []):
-                icon.setPixmap(pixmap if color is None else _in_one_colour(pixmap, color))
+                icon.setPixmap(pixmap if color is None else _in_one_color(pixmap, color))
             due_widget = self.cellWidget(row, 2)
             if isinstance(due_widget, DueDateLabel):
                 due_widget.set_on_highlight(color)

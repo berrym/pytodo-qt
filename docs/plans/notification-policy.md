@@ -190,7 +190,7 @@ so the two are not offered separately, and Off stores `0` and `none`.
     says a due date is needed, and nothing is stored. A date supplied by
     the calendar cell the dialog was opened from, or ticked in the open
     Advanced section, counts as a due date. The "Remind ahead" row shows
-    the typed reminder either way, greyed until there is a date.
+    the typed reminder either way, grayed until there is a date.
   - The vocabulary is in the intent dictionary (`advance_reminder`).
 - Web interface: quick-add stores a reminder typed this way under the same
   rule, and `/api/parse` reports both fields.
@@ -495,7 +495,7 @@ The policy module is covered by fixed-clock unit tests, including:
   summary not using it up, `daily_until_due` on every day of the window,
   rescheduling re-arming, private lists and completed items left out, and
   the cap on the summary line.
-- Advance-reminder phrases: each recognised form, the phrases left alone,
+- Advance-reminder phrases: each recognized form, the phrases left alone,
   recurrence and estimates outside the phrase, the limit on the amount, the
   phrase without a due date, and the same through Add Todo and the web
   quick-add.

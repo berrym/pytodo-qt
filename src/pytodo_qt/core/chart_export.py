@@ -549,7 +549,7 @@ def render_gantt(
             x_min = min(x_min, event_num)
             x_max = max(x_max, event_num)
 
-    # Honour an explicit user date range as a lower bound on the
+    # Honor an explicit user date range as a lower bound on the
     # x-axis extent so the chart frame matches the export dialog
     # selection even when actual task data is narrower.
     if start_date is not None:

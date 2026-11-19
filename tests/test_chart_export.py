@@ -171,7 +171,7 @@ class TestRenderGantt:
         x_range = ax.get_xlim()[1] - ax.get_xlim()[0]
         assert widest / x_range == pytest.approx(1.0, abs=0.01)
 
-    def test_xlim_honours_explicit_date_range(self):
+    def test_xlim_honors_explicit_date_range(self):
         """When the caller passes a start_date and end_date, the chart
         x-axis stretches to at least that range so the visible frame
         matches the export dialog selection."""

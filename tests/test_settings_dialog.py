@@ -58,9 +58,9 @@ class TestDefaultViewDropdown:
 
     def test_remember_checkbox_defaults_to_checked(self, app):
         dlg = SettingsDialog()
-        # Mirrors the config default (True preserves pre-overhaul behaviour)
+        # Mirrors the config default (True preserves pre-overhaul behavior)
         assert dlg._remember_view_check.isChecked() is True
-        # And the dropdown is disabled (greyed out) in that state —
+        # And the dropdown is disabled (grayed out) in that state —
         # it has no effect until the user opts out.
         assert dlg._view_mode_combo.isEnabled() is False
         dlg.deleteLater()
@@ -76,7 +76,7 @@ class TestDefaultViewDropdown:
         # Start unchecked
         dlg._remember_view_check.setChecked(False)
         assert dlg._view_mode_combo.isEnabled() is True
-        # Then check — dropdown must grey out
+        # Then check — dropdown must gray out
         dlg._remember_view_check.setChecked(True)
         assert dlg._view_mode_combo.isEnabled() is False
         dlg.deleteLater()
@@ -211,7 +211,7 @@ def dialog(app):
 
 class TestNotificationsTab:
     """The regrouped Notifications tab: what it shows, what it saves,
-    and what a switched-off option greys out. Nothing here saves."""
+    and what a switched-off option grays out. Nothing here saves."""
 
     CHANGED = NotificationConfig(
         enabled=False,
@@ -287,9 +287,9 @@ class TestNotificationsTab:
         assert dialog._config.notifications == self.CHANGED
         dialog._config_manager.save.assert_called_once_with()
 
-    # -- greying -----------------------------------------------------------
+    # -- graying -----------------------------------------------------------
 
-    def test_master_switch_greys_every_group(self, dialog):
+    def test_master_switch_grays_every_group(self, dialog):
         groups = (
             dialog._notif_summary_group,
             dialog._notif_preview_group,
@@ -302,14 +302,14 @@ class TestNotificationsTab:
         dialog._notif_enabled.setChecked(True)
         assert all(group.isEnabled() for group in groups)
 
-    def test_summary_switch_greys_its_time(self, dialog):
+    def test_summary_switch_grays_its_time(self, dialog):
         dialog._notif_summary_enabled.setChecked(False)
         assert not dialog._notif_summary_time.isEnabled()
         assert not dialog._notif_summary_time_label.isEnabled()
         dialog._notif_summary_enabled.setChecked(True)
         assert dialog._notif_summary_time.isEnabled()
 
-    def test_preview_is_off_and_its_time_greyed_by_default(self, dialog):
+    def test_preview_is_off_and_its_time_grayed_by_default(self, dialog):
         assert not dialog._notif_preview_enabled.isChecked()
         assert not dialog._notif_preview_time.isEnabled()
         assert not dialog._notif_preview_time_label.isEnabled()
@@ -346,13 +346,13 @@ class TestNotificationsTab:
         # Tall enough that the dialog need not scroll where there is room.
         assert dialog.sizeHint().height() >= page.widget().sizeHint().height()
 
-    def test_lead_switch_greys_the_lead_time_only(self, dialog):
+    def test_lead_switch_grays_the_lead_time_only(self, dialog):
         dialog._notif_lead_enabled.setChecked(False)
         assert not dialog._notif_lead_minutes.isEnabled()
         assert not dialog._notif_lead_minutes_label.isEnabled()
         assert dialog._notif_due_now.isEnabled()
 
-    def test_quiet_switch_greys_what_it_governs(self, dialog):
+    def test_quiet_switch_grays_what_it_governs(self, dialog):
         dialog._notif_quiet_enabled.setChecked(False)
         assert not dialog._notif_quiet_start.isEnabled()
         assert not dialog._notif_quiet_end.isEnabled()
@@ -363,7 +363,7 @@ class TestNotificationsTab:
         dialog._notif_quiet_enabled.setChecked(False)
         assert dialog._notif_hold_during_focus.isEnabled()
 
-    def test_greyed_values_are_still_saved(self, dialog):
+    def test_grayed_values_are_still_saved(self, dialog):
         dialog._notif_quiet_start.setTime(QTime(21, 0))
         dialog._notif_quiet_enabled.setChecked(False)
         shown = dialog._notification_settings_shown()
@@ -585,7 +585,7 @@ class TestNoTabSqueezesItsRows:
 
 class TestNotesHaveOneStyle:
     """An explanatory note on a tab is upright, in the dialog's own type
-    size, in the muted text colour. There were three styles: seven notes
+    size, in the muted text color. There were three styles: seven notes
     in italics, one upright, two upright in smaller type."""
 
     NOTE = "color: palette(placeholder-text);"

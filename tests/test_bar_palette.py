@@ -137,7 +137,7 @@ class TestTextOnAFill:
         assert contrast_ratio("#000000", "#ffffff") == pytest.approx(21.0)
         assert contrast_ratio("#ffffff", "#000000") == pytest.approx(21.0)
 
-    def test_contrast_of_a_colour_with_itself_is_one(self):
+    def test_contrast_of_a_color_with_itself_is_one(self):
         assert contrast_ratio("#2563eb", "#2563eb") == pytest.approx(1.0)
 
     def test_contrast_matches_published_values(self):
@@ -150,7 +150,7 @@ class TestTextOnAFill:
         assert relative_luminance("#FBBF24") == relative_luminance("#fbbf24")
 
     @pytest.mark.parametrize("theme", ["light", "dark"])
-    def test_text_on_every_bar_colour_meets_aa(self, theme):
+    def test_text_on_every_bar_color_meets_aa(self, theme):
         for state, colors in get_palette(theme).items():
             text = readable_text_on(colors.base)
             ratio = contrast_ratio(text, colors.base)
@@ -163,7 +163,7 @@ class TestTextOnAFill:
                 other = "#000000" if text == "#ffffff" else "#ffffff"
                 assert contrast_ratio(text, colors.base) >= contrast_ratio(other, colors.base)
 
-    def test_text_on_any_grey_meets_aa(self):
+    def test_text_on_any_gray_meets_aa(self):
         """The better of the two ratios is lowest on a fill of middling
         lightness, where both are 4.58:1; it does not fall under that."""
         lowest = min(
@@ -173,7 +173,7 @@ class TestTextOnAFill:
         assert 4.58 <= lowest < 4.7
 
     def test_light_theme_has_white_and_black_labels(self):
-        """White stays on the blue, the red and the grey; the teal, the
+        """White stays on the blue, the red and the gray; the teal, the
         amber and the green are too light for it."""
         light = get_palette("light")
         assert readable_text_on(light[BarState.FUTURE].base) == "#ffffff"

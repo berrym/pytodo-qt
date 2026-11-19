@@ -696,7 +696,7 @@ def _persistent_tooltip_sheet() -> str:
 
     They are labels, not `QToolTip`s, so the application's rule for
     tooltips does not reach them. They take the same background, text
-    colour and border from the theme.
+    color and border from the theme.
     """
     colors = _theme_colors()
     return (
@@ -708,7 +708,7 @@ def _persistent_tooltip_sheet() -> str:
 def _outline_finished_chip(painter: QPainter, chip_rect: QRect, color: str) -> None:
     """A thin border around a finished task's chip in a calendar cell.
 
-    The chip's fill is too near the cell's own colour to mark anything
+    The chip's fill is too near the cell's own color to mark anything
     by itself. Chips stand one right under the other, so the border is
     drawn one pixel inside the chip at the top and the bottom, and two
     finished chips keep a line of the fill between their borders.
@@ -3373,7 +3373,7 @@ class _TimelineCycleWidget(QWidget):
 
     `cycle_time` returns scalar statistics with no underlying
     distribution at this layer, so a stat-tile layout is the honest
-    rendering — a chart of three numbers would be theatre.
+    rendering — a chart of three numbers would be theater.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -3876,9 +3876,9 @@ class _WeekDelegate(QStyledItemDelegate):
             if bot_y <= top_y:
                 continue
 
-            # The fill is opaque: the label's colour is chosen for the
-            # palette's colour, and a fill that let the grid show
-            # through would be another colour.
+            # The fill is opaque: the label's color is chosen for the
+            # palette's color, and a fill that let the grid show
+            # through would be another color.
             colors = self._bar_palette[seg.state]
             base_qcolor = QColor(colors.base)
             border_color = QColor(colors.base).darker(160)
@@ -3974,7 +3974,7 @@ class _WeekDelegate(QStyledItemDelegate):
                 painter.restore()
 
             # Label: black or white, whichever has the higher contrast
-            # with the bar's colour.
+            # with the bar's color.
             if label_rect is not None:
                 painter.save()
                 text_font = QFont(painter.font())
@@ -4038,8 +4038,8 @@ class _WeekDelegate(QStyledItemDelegate):
         guarantees this for EARLY/LATE — UNKNOWN doesn't trigger this path).
 
         The zone is not painted behind the bar's label (`label_rect`,
-        when this cell carries it): the label's colour is chosen for
-        the bar's base colour, and the zone's hatch is of another.
+        when this cell carries it): the label's color is chosen for
+        the bar's base color, and the zone's hatch is of another.
         """
         from ...core.calendar_layout import BarState
 
@@ -6278,9 +6278,9 @@ class _AgendaRow(QFrame):
         self._colors = colors
         self._selected = False
         self._drag_start_pos: QPoint | None = None
-        # Each text label with its colour on a row that is not selected
+        # Each text label with its color on a row that is not selected
         # and the rest of its style. A label's own style sheet is what
-        # colours it, so the row's style sheet cannot.
+        # colors it, so the row's style sheet cannot.
         self._text_labels: list[tuple[QLabel, str, str]] = []
         self._dot: QLabel | None = None
         self._dot_color = ""
@@ -6298,7 +6298,7 @@ class _AgendaRow(QFrame):
         layout.setSpacing(8)
 
         # Time / "All Day" — fixed-width column so reminders align. Uses
-        # the theme's standard text color (rather than a derived grey)
+        # the theme's standard text color (rather than a derived gray)
         # because muted-gray fails WCAG against the dark-theme cell
         # background; the time column carries functional information
         # and must remain legible in either theme.
@@ -6378,10 +6378,10 @@ class _AgendaRow(QFrame):
         highlight tint so the row reads as "the one you clicked" without
         competing with the detail panel's own selection indicators.
         """
-        # On the highlight fill every text takes the theme's text colour
-        # for it: the colours of a row that is not selected were chosen
+        # On the highlight fill every text takes the theme's text color
+        # for it: the colors of a row that is not selected were chosen
         # for the list's background. The priority dot gets a ring of
-        # the same colour, to stand clear of the fill.
+        # the same color, to stand clear of the fill.
         on_highlight = self._colors["highlight_text"]
         for label, color, rest in self._text_labels:
             label.setStyleSheet(f"color: {on_highlight if self._selected else color}; {rest}")

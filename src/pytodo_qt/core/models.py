@@ -1396,8 +1396,8 @@ def build_rich_tooltip(
 
     # Created date
     created_dt = _dt.fromtimestamp(item.created_at / 1000)
-    # The muted colour comes from the theme, as the overdue colour does;
-    # a caller without a theme gets the line in the ordinary colour.
+    # The muted color comes from the theme, as the overdue color does;
+    # a caller without a theme gets the line in the ordinary color.
     created = f"Created {created_dt.strftime('%b %d, %Y')} · ID: {str(item.id)[:8]}"
     muted_color = (theme_colors or {}).get("completed_text")
     if muted_color:

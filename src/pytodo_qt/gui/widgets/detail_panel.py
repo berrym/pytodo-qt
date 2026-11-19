@@ -167,7 +167,7 @@ class TaskDetailPanel(QDockWidget):
         header_font.setBold(True)
         header_font.setPixelSize(11)
         header.setFont(header_font)
-        header.setStyleSheet("color: palette(highlight); margin-bottom: 2px;")
+        header.setStyleSheet("color: palette(link); margin-bottom: 2px;")
         layout.addWidget(header)
 
         line = QFrame()
@@ -206,7 +206,7 @@ class TaskDetailPanel(QDockWidget):
         self._parent_breadcrumb.setFlat(True)
         self._parent_breadcrumb.setCursor(Qt.CursorShape.PointingHandCursor)
         self._parent_breadcrumb.setStyleSheet(
-            "QPushButton { text-align: left; color: palette(highlight);"
+            "QPushButton { text-align: left; color: palette(link);"
             " background: transparent; border: none; padding: 0 0 4px 0;"
             " font-size: 11px; }"
             "QPushButton:hover { text-decoration: underline; }"
@@ -237,7 +237,7 @@ class TaskDetailPanel(QDockWidget):
         self._edit_toggle_btn.setToolTip(self.tr("Toggle edit mode"))
         self._edit_toggle_btn.setStyleSheet(
             "QToolButton { font-size: 16px; padding: 2px 4px;"
-            " color: palette(highlight); border: none; }"
+            " color: palette(link); border: none; }"
             "QToolButton:checked { background: palette(highlight);"
             " color: palette(highlighted-text); border-radius: 3px; }"
         )
@@ -509,7 +509,7 @@ class TaskDetailPanel(QDockWidget):
         header_font.setBold(True)
         header_font.setPixelSize(11)
         header.setFont(header_font)
-        header.setStyleSheet("color: palette(highlight); margin-bottom: 2px;")
+        header.setStyleSheet("color: palette(link); margin-bottom: 2px;")
         layout.addWidget(header)
 
         line = QFrame()
@@ -541,7 +541,7 @@ class TaskDetailPanel(QDockWidget):
         self._add_subtask_btn = QPushButton(self.tr("+ Add Subtask"))
         self._add_subtask_btn.setStyleSheet(
             "QPushButton { text-align: left; padding: 4px 6px;"
-            f" color: palette(highlight); border: 1px dashed {border_color()};"
+            f" color: palette(link); border: 1px dashed {border_color()};"
             " border-radius: 3px; background: transparent; }"
             "QPushButton:hover { background: palette(alternate-base); }"
         )

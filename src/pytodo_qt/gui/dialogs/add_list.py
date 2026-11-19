@@ -94,7 +94,7 @@ class AddListDialog(QDialog):
         self.accept()
 
     def get_list(self) -> TodoList | None:
-        """Get the created list, or None if cancelled."""
+        """Get the created list, or None if canceled."""
         return self._list
 
     @classmethod

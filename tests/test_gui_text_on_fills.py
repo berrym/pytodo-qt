@@ -1,9 +1,9 @@
-"""Text the desktop's widgets write on a coloured fill.
+"""Text the desktop's widgets write on a colored fill.
 
 A fill taken from the theme is light in one theme and dark in the
-other, so text on it cannot have one fixed colour. Text on the
-highlight fill takes the palette's highlighted-text colour; text on a
-fill of another theme colour is black or white, whichever has the
+other, so text on it cannot have one fixed color. Text on the
+highlight fill takes the palette's highlighted-text color; text on a
+fill of another theme color is black or white, whichever has the
 higher contrast with it. WCAG AA asks 4.5:1 of text.
 """
 
@@ -32,7 +32,7 @@ def _gui_sources() -> list[tuple[Path, str]]:
 
 @pytest.fixture(params=["light", "dark"])
 def themed(request, qtbot, monkeypatch):
-    """The application in one of the two themes; gives the theme's colours."""
+    """The application in one of the two themes; gives the theme's colors."""
     app = QApplication.instance()
     assert isinstance(app, QApplication)
     theme = Theme(request.param)
@@ -44,10 +44,10 @@ def themed(request, qtbot, monkeypatch):
     app.setStyleSheet(sheet)
 
 
-def _colours(
+def _colors(
     widget: QWidget, *, thick_type: bool = False, within: QWidget | None = None
 ) -> set[str]:
-    """Every colour of the widget as it is painted.
+    """Every color of the widget as it is painted.
 
     A widget without a background of its own is painted on that of a
     widget around it. `within` names that widget: the part of it under
@@ -55,9 +55,9 @@ def _colours(
 
     With `thick_type` the widget's type is made large and bold first. A
     thin stroke may have no pixel that it covers whole, and how near its
-    pixels come to the type's colour depends on the platform's font
+    pixels come to the type's color depends on the platform's font
     rendering; a thick stroke has whole pixels on every platform. The
-    colours of the style are left as they are.
+    colors of the style are left as they are.
     """
     app = QApplication.instance()
     assert app is not None
@@ -82,35 +82,35 @@ def _colours(
     }
 
 
-def _nearest(colours: set[str], wanted: str) -> tuple[int, str]:
-    """The painted colour nearest to `wanted`, and how far off it is on
+def _nearest(colors: set[str], wanted: str) -> tuple[int, str]:
+    """The painted color nearest to `wanted`, and how far off it is on
     the channel where it is furthest off."""
     target = QColor(wanted)
 
     def distance(name: str) -> int:
-        colour = QColor(name)
+        color = QColor(name)
         return max(
-            abs(colour.red() - target.red()),
-            abs(colour.green() - target.green()),
-            abs(colour.blue() - target.blue()),
+            abs(color.red() - target.red()),
+            abs(color.green() - target.green()),
+            abs(color.blue() - target.blue()),
         )
 
-    name = min(colours, key=distance)
+    name = min(colors, key=distance)
     return distance(name), name
 
 
-def _painted_in(colours: set[str], wanted: str) -> bool:
-    """Whether type is painted in the colour `wanted`.
+def _painted_in(colors: set[str], wanted: str) -> bool:
+    """Whether type is painted in the color `wanted`.
 
-    Type is drawn with soft edges, and the pixel nearest to its colour
-    may be a shade off it. A pixel within 16 of the colour on every
-    channel counts, which no colour the type could wrongly have comes
+    Type is drawn with soft edges, and the pixel nearest to its color
+    may be a shade off it. A pixel within 16 of the color on every
+    channel counts, which no color the type could wrongly have comes
     near.
     """
-    return _nearest(colours, wanted)[0] <= 16
+    return _nearest(colors, wanted)[0] <= 16
 
 
-class TestStylesNameNoFixedTextColourOnAFill:
+class TestStylesNameNoFixedTextColorOnAFill:
     """Guards over the source of the desktop's widgets."""
 
     def test_no_style_writes_white_text(self):
@@ -126,7 +126,7 @@ class TestStylesNameNoFixedTextColourOnAFill:
     def test_highlighted_text_role_is_spelled_as_qt_takes_it(self):
         """A style sheet takes `palette(highlighted-text)`. The camel
         case spelling is dropped without a word, and the text keeps
-        the ordinary text colour: 1.68:1 on the dark theme's highlight."""
+        the ordinary text color: 1.68:1 on the dark theme's highlight."""
         uses = 0
         for path, text in _gui_sources():
             assert "palette(highlightedText)" not in text, path.name
@@ -135,7 +135,7 @@ class TestStylesNameNoFixedTextColourOnAFill:
 
     def test_no_fill_is_taken_from_a_role_the_theme_does_not_set(self):
         """`mid` and `midlight` are not set by the theme: Qt derives
-        them, light grey in both themes, and the dark theme's light
+        them, light gray in both themes, and the dark theme's light
         text on them gives 1.24:1 and 1.50:1."""
         pattern = re.compile(r"background(-color)?:\s*palette\((mid|midlight|dark)\)")
         found = [
@@ -145,9 +145,9 @@ class TestStylesNameNoFixedTextColourOnAFill:
         ]
         assert found == []
 
-    def test_every_style_on_the_highlight_fill_names_its_text_colour(self):
-        """A rule that fills with the highlight colour and leaves the
-        text colour alone gets the ordinary text colour, which was
+    def test_every_style_on_the_highlight_fill_names_its_text_color(self):
+        """A rule that fills with the highlight color and leaves the
+        text color alone gets the ordinary text color, which was
         chosen for the list's background."""
         rule = re.compile(r"\{([^{}]*background(?:-color)?:\s*palette\(highlight\)[^{}]*)\}")
         for path, text in _gui_sources():
@@ -156,13 +156,13 @@ class TestStylesNameNoFixedTextColourOnAFill:
             for match in rule.finditer(joined):
                 body = match.group(1)
                 if "_AgendaRow" in joined[max(0, match.start() - 12) : match.start()]:
-                    # The row colours its labels itself, one by one.
+                    # The row colors its labels itself, one by one.
                     continue
                 assert "color: palette(highlighted-text)" in body, f"{path.name}: {body}"
 
 
 class TestQtTakesTheRole:
-    def test_text_on_the_highlight_fill_is_the_themes_colour_for_it(self, themed, qtbot):
+    def test_text_on_the_highlight_fill_is_the_themes_color_for_it(self, themed, qtbot):
         label = QLabel("MMMMMMMM")
         qtbot.addWidget(label)
         label.setStyleSheet(
@@ -171,10 +171,10 @@ class TestQtTakesTheRole:
         )
         label.resize(200, 40)
         label.show()
-        colours = _colours(label)
-        assert themed["highlight"] in colours
-        assert _painted_in(colours, themed["highlight_text"]), _nearest(
-            colours, themed["highlight_text"]
+        colors = _colors(label)
+        assert themed["highlight"] in colors
+        assert _painted_in(colors, themed["highlight_text"]), _nearest(
+            colors, themed["highlight_text"]
         )
         assert contrast_ratio(themed["highlight_text"], themed["highlight"]) >= 4.5
 
@@ -194,13 +194,13 @@ class TestCalendarButtons:
         widget = self._calendar(qtbot)
         checked = widget._sub_buttons[widget._sub_view]
         assert checked.isChecked()
-        colours = _colours(checked, thick_type=True)
-        assert themed["highlight"] in colours
-        assert _painted_in(colours, themed["highlight_text"]), _nearest(
-            colours, themed["highlight_text"]
+        colors = _colors(checked, thick_type=True)
+        assert themed["highlight"] in colors
+        assert _painted_in(colors, themed["highlight_text"]), _nearest(
+            colors, themed["highlight_text"]
         )
         other = "#ffffff" if themed["highlight_text"] != "#ffffff" else "#1a1a1a"
-        assert other not in colours
+        assert other not in colors
 
     def test_checked_timeline_button(self, themed, qtbot, monkeypatch):
         widget = self._calendar(qtbot)
@@ -212,10 +212,10 @@ class TestCalendarButtons:
             if button.isChecked()
         ]
         assert len(checked) == 1
-        colours = _colours(checked[0], thick_type=True)
-        assert themed["highlight"] in colours
-        assert _painted_in(colours, themed["highlight_text"]), _nearest(
-            colours, themed["highlight_text"]
+        colors = _colors(checked[0], thick_type=True)
+        assert themed["highlight"] in colors
+        assert _painted_in(colors, themed["highlight_text"]), _nearest(
+            colors, themed["highlight_text"]
         )
 
 
@@ -238,8 +238,8 @@ class TestAgendaRow:
     def _text_labels(row) -> list[QLabel]:
         return [label for label in row.findChildren(QLabel) if label.text()]
 
-    def test_selected_rows_text_is_the_colour_for_the_highlight_fill(self, themed, qtbot):
-        """The time, the name and the tags have colours of their own,
+    def test_selected_rows_text_is_the_color_for_the_highlight_fill(self, themed, qtbot):
+        """The time, the name and the tags have colors of their own,
         chosen for the list's background: the tag's is 1.1:1 on the
         light theme's highlight."""
         row = self._row(qtbot, themed)
@@ -247,13 +247,13 @@ class TestAgendaRow:
         labels = self._text_labels(row)
         assert len(labels) == 3
         for label in labels:
-            colours = _colours(label, thick_type=True, within=row)
-            assert themed["highlight"] in colours, label.text()
-            assert _painted_in(colours, themed["highlight_text"]), (
+            colors = _colors(label, thick_type=True, within=row)
+            assert themed["highlight"] in colors, label.text()
+            assert _painted_in(colors, themed["highlight_text"]), (
                 label.text(),
-                _nearest(colours, themed["highlight_text"]),
+                _nearest(colors, themed["highlight_text"]),
             )
-            assert themed["entity_tag"] not in colours, label.text()
+            assert themed["entity_tag"] not in colors, label.text()
 
     def test_completed_selected_row(self, themed, qtbot):
         row = self._row(qtbot, themed, complete=True)
@@ -263,7 +263,7 @@ class TestAgendaRow:
         name = self._text_labels(row)[1]
         assert "text-decoration: line-through;" in name.styleSheet()
 
-    def test_row_gets_its_own_colours_back_when_no_longer_selected(self, themed, qtbot):
+    def test_row_gets_its_own_colors_back_when_no_longer_selected(self, themed, qtbot):
         row = self._row(qtbot, themed)
         before = [label.styleSheet() for label in self._text_labels(row)]
         row.set_selected(True)
@@ -281,7 +281,7 @@ class TestAgendaRow:
 
     def test_row_under_the_pointer_keeps_every_text_readable(self, themed):
         """The fill under the pointer is the theme's alternate base,
-        with a border in the highlight colour to mark the row."""
+        with a border in the highlight color to mark the row."""
         fill = themed["alternate_base"]
         for key in ("text", "completed_text", "entity_tag"):
             assert contrast_ratio(themed[key], fill) >= 4.5, key
@@ -293,7 +293,7 @@ class TestAgendaRow:
 
 
 class TestWebConnect:
-    def test_badge_text_is_the_readable_colour_for_its_fill(self, themed, qtbot):
+    def test_badge_text_is_the_readable_color_for_its_fill(self, themed, qtbot):
         from pytodo_qt.gui.dialogs.web_connect import _security_badge
 
         for key in ("due_soon", "highlight"):
@@ -303,7 +303,7 @@ class TestWebConnect:
             assert f"background: {themed[key]}; color: {text};" in badge.styleSheet()
             assert contrast_ratio(text, themed[key]) >= 4.5
 
-    def test_cards_take_their_badge_colours_from_the_theme(self):
+    def test_cards_take_their_badge_colors_from_the_theme(self):
         source = (GUI_DIR / "dialogs" / "web_connect.py").read_text(encoding="utf-8")
         assert 'badge_color=get_colors()["due_soon"],' in source
         assert 'badge_color=get_colors()["highlight"],' in source
@@ -326,10 +326,10 @@ class TestWebConnect:
         card.show()
         ribbon = next(label for label in card.findChildren(QLabel) if label.text() == "Recommended")
         for widget in (ribbon, card._start_btn):
-            colours = _colours(widget, thick_type=True)
-            assert themed["highlight"] in colours
-            assert _painted_in(colours, themed["highlight_text"]), _nearest(
-                colours, themed["highlight_text"]
+            colors = _colors(widget, thick_type=True)
+            assert themed["highlight"] in colors
+            assert _painted_in(colors, themed["highlight_text"]), _nearest(
+                colors, themed["highlight_text"]
             )
 
     def test_forget_button_under_the_pointer(self, themed):
@@ -342,8 +342,8 @@ class TestWebConnect:
 
 
 class TestOverlayLabels:
-    def test_text_on_the_overlay_colour(self):
-        """The drag preview and the resize label; the overlay colour
+    def test_text_on_the_overlay_color(self):
+        """The drag preview and the resize label; the overlay color
         is the same in both themes."""
         assert LIGHT_COLORS["interactive_overlay"] == DARK_COLORS["interactive_overlay"]
         overlay = LIGHT_COLORS["interactive_overlay"]
@@ -353,11 +353,11 @@ class TestOverlayLabels:
 
 
 class TestFillsUnderOrdinaryText:
-    """Fills that the ordinary text colour is written on: a button
+    """Fills that the ordinary text color is written on: a button
     under the pointer, a tag's chip."""
 
     @pytest.mark.parametrize("theme", ["light", "dark"])
-    def test_button_colour_carries_the_text_colours(self, theme):
+    def test_button_color_carries_the_text_colors(self, theme):
         colors = _THEME_COLORS[theme]
         assert contrast_ratio(colors["text"], colors["button"]) >= 4.5
         assert contrast_ratio(colors["button_text"], colors["button"]) >= 4.5
@@ -373,7 +373,7 @@ class TestFillsUnderOrdinaryText:
 
 class TestListViewSelectedRow:
     """A selected row of the list view is filled with the highlight
-    colour. What the row writes straight on its background has colours
+    color. What the row writes straight on its background has colors
     chosen for the ordinary background: 1.08:1 to 3.78:1 on the fill."""
 
     @pytest.fixture()
@@ -445,7 +445,7 @@ class TestListViewSelectedRow:
         return found
 
     @staticmethod
-    def _text_colour(label: QLabel) -> str:
+    def _text_color(label: QLabel) -> str:
         label.ensurePolished()
         return label.palette().color(label.foregroundRole()).name()
 
@@ -455,39 +455,39 @@ class TestListViewSelectedRow:
         assert any(text.startswith("Overdue") for text in texts)
         assert "Today" in texts
 
-    def test_text_on_a_selected_row_takes_the_highlights_text_colour(self, table):
+    def test_text_on_a_selected_row_takes_the_highlights_text_color(self, table):
         colors = table.themed
         table.selectAll()
 
         labels = self._written_on_the_row(table)
         assert len(labels) >= 20
         for _row, label in labels:
-            colour = self._text_colour(label)
-            assert colour == colors["highlight_text"], label.text()
-            assert contrast_ratio(colour, colors["highlight"]) >= 4.5
+            color = self._text_color(label)
+            assert color == colors["highlight_text"], label.text()
+            assert contrast_ratio(color, colors["highlight"]) >= 4.5
 
-    def test_the_colours_come_back_when_the_row_is_no_longer_selected(self, table):
-        before = [self._text_colour(label) for _row, label in self._written_on_the_row(table)]
+    def test_the_colors_come_back_when_the_row_is_no_longer_selected(self, table):
+        before = [self._text_color(label) for _row, label in self._written_on_the_row(table)]
         assert len(set(before)) >= 4
 
         table.selectAll()
         table.clearSelection()
 
-        after = [self._text_colour(label) for _row, label in self._written_on_the_row(table)]
+        after = [self._text_color(label) for _row, label in self._written_on_the_row(table)]
         assert after == before
 
-    def test_only_the_selected_row_is_recoloured(self, table):
+    def test_only_the_selected_row_is_recolored(self, table):
         colors = table.themed
         before = {
-            id(label): self._text_colour(label) for _row, label in self._written_on_the_row(table)
+            id(label): self._text_color(label) for _row, label in self._written_on_the_row(table)
         }
         table.selectRow(0)
 
         for row, label in self._written_on_the_row(table):
             if row == 0:
-                assert self._text_colour(label) == colors["highlight_text"]
+                assert self._text_color(label) == colors["highlight_text"]
             else:
-                assert self._text_colour(label) == before[id(label)]
+                assert self._text_color(label) == before[id(label)]
 
     def test_the_weight_that_marks_a_state_is_kept(self, table):
         table.selectAll()
@@ -498,7 +498,7 @@ class TestListViewSelectedRow:
         )
         assert "font-weight: bold" in overdue.styleSheet()
 
-    def test_a_row_selected_before_a_refresh_is_recoloured_after_it(self, table):
+    def test_a_row_selected_before_a_refresh_is_recolored_after_it(self, table):
         colors = table.themed
         table.selectRow(0)
 
@@ -507,10 +507,10 @@ class TestListViewSelectedRow:
         assert table.selectionModel().isRowSelected(0)
         for row, label in self._written_on_the_row(table):
             if row == 0:
-                assert self._text_colour(label) == colors["highlight_text"]
+                assert self._text_color(label) == colors["highlight_text"]
 
     def test_a_tag_chip_on_a_selected_row_has_an_outline(self, table):
-        """The chip is filled with the highlight colour, as the row is."""
+        """The chip is filled with the highlight color, as the row is."""
         colors = table.themed
         chips = [chip for chips in table._row_chips.values() for chip, _style in chips]
         assert len(chips) == 2
@@ -525,7 +525,7 @@ class TestListViewSelectedRow:
         for chip in chips:
             assert "border: 1px solid" not in chip.styleSheet()
 
-    def test_the_icons_of_a_selected_row_are_drawn_in_the_highlights_text_colour(self, table):
+    def test_the_icons_of_a_selected_row_are_drawn_in_the_highlights_text_color(self, table):
         """The recurrence icon has a fixed blue, 1.38:1 and 1.51:1 on the
         highlight, where a graphic needs 3:1."""
         from pytodo_qt.gui.widgets.todo_table import DueDateLabel
@@ -539,16 +539,16 @@ class TestListViewSelectedRow:
         assert len(icons) == 2
 
         def painted(icon: QLabel) -> set[str]:
-            """The colours of the icon's strokes, their soft edges left out."""
-            # Stored with the colour multiplied by the opacity; undone here.
+            """The colors of the icon's strokes, their soft edges left out."""
+            # Stored with the color multiplied by the opacity; undone here.
             image = icon.pixmap().toImage().convertToFormat(QImage.Format.Format_ARGB32)
-            colours = set()
+            found = set()
             for y in range(image.height()):
                 for x in range(image.width()):
                     pixel = QColor.fromRgba(image.pixel(x, y))
                     if pixel.alpha() >= 200:
-                        colours.add(pixel.name())
-            return colours
+                        found.add(pixel.name())
+            return found
 
         before = [painted(icon) for icon in icons]
         assert all(before)
@@ -565,7 +565,7 @@ class TestListViewSelectedRow:
         table.clearSelection()
         assert [painted(icon) for icon in icons] == before
 
-    def test_the_selected_row_is_painted_in_two_colours_only(self, table):
+    def test_the_selected_row_is_painted_in_two_colors_only(self, table):
         """The Due cell of a selected row, as it is painted: the fill and
         the text, and between them only the blends of the text's edges."""
         colors = table.themed
@@ -573,52 +573,52 @@ class TestListViewSelectedRow:
         due = table.cellWidget(0, 2)
         fill, text = colors["highlight"], colors["highlight_text"]
 
-        painted = _colours(due.label, thick_type=True, within=table.viewport())
+        painted = _colors(due.label, thick_type=True, within=table.viewport())
 
         assert fill in painted
         assert _painted_in(painted, text), _nearest(painted, text)
         lowest, highest = sorted((contrast_ratio(fill, fill), contrast_ratio(text, fill)))
-        for colour in painted:
-            assert lowest <= contrast_ratio(colour, fill) <= highest + 0.01, colour
+        for color in painted:
+            assert lowest <= contrast_ratio(color, fill) <= highest + 0.01, color
 
 
 class TestRecurrenceIcon:
-    """The icon's own blue, `#4A90D9`, is one colour for both themes:
+    """The icon's own blue, `#4A90D9`, is one color for both themes:
     2.93:1 on the light theme's alternate rows, and 1.49:1 to 1.84:1
     where it was faded on a finished task. A graphic needs 3:1."""
 
     @staticmethod
-    def _icon_colours(complete: bool) -> set[str]:
+    def _icon_colors(complete: bool) -> set[str]:
         from pytodo_qt.gui.widgets.todo_table import DueDateLabel
 
         label = DueDateLabel(date.today(), complete, recurring=True)
         assert label._icon_label is not None
         assert label._icon_label.graphicsEffect() is None
         image = label._icon_label.pixmap().toImage().convertToFormat(QImage.Format.Format_ARGB32)
-        colours = set()
+        colors = set()
         for y in range(image.height()):
             for x in range(image.width()):
                 pixel = QColor.fromRgba(image.pixel(x, y))
                 if pixel.alpha() >= 200:
-                    colours.add(pixel.name())
-        assert colours
-        return colours
+                    colors.add(pixel.name())
+        assert colors
+        return colors
 
     @staticmethod
-    def _close_to(colours: set[str], wanted: str) -> bool:
+    def _close_to(colors: set[str], wanted: str) -> bool:
         target = QColor(wanted)
         return all(
             abs(QColor(name).red() - target.red()) <= 2
             and abs(QColor(name).green() - target.green()) <= 2
             and abs(QColor(name).blue() - target.blue()) <= 2
-            for name in colours
+            for name in colors
         )
 
-    def test_the_icon_is_drawn_in_the_accent_colour(self, themed):
-        assert self._close_to(self._icon_colours(complete=False), themed["highlight"])
+    def test_the_icon_is_drawn_in_the_accent_color(self, themed):
+        assert self._close_to(self._icon_colors(complete=False), themed["highlight"])
 
-    def test_the_icon_of_a_finished_task_is_drawn_in_the_muted_text_colour(self, themed):
-        assert self._close_to(self._icon_colours(complete=True), themed["completed_text"])
+    def test_the_icon_of_a_finished_task_is_drawn_in_the_muted_text_color(self, themed):
+        assert self._close_to(self._icon_colors(complete=True), themed["completed_text"])
 
     @pytest.mark.parametrize("key", ["highlight", "completed_text"])
     @pytest.mark.parametrize("row", ["base", "alternate_base"])
@@ -628,7 +628,7 @@ class TestRecurrenceIcon:
 
 class TestListViewOrdinaryRows:
     """The list view's rows alternate between two backgrounds, and a
-    colour chosen on the first has to read on the second as well. The
+    color chosen on the first has to read on the second as well. The
     light theme's green for a task due within the week gave 4.40:1 on
     the alternate row."""
 

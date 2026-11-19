@@ -218,8 +218,8 @@ class TestDiscoveryService:
 
         callback.assert_called_once_with("test-peer")
 
-    def test_remove_peer_cancelled_by_readd(self):
-        """Test deferred removal is cancelled when peer is re-added."""
+    def test_remove_peer_canceled_by_readd(self):
+        """Test deferred removal is canceled when peer is re-added."""
         service = DiscoveryService()
         callback = MagicMock()
         service._on_peer_added = callback
@@ -242,7 +242,7 @@ class TestDiscoveryService:
         # Re-add same peer (TTL refresh)
         service._add_peer(peer)
 
-        # Timer should be cancelled, peer still present
+        # Timer should be canceled, peer still present
         assert "test-peer" not in service._removal_timers
         assert service.get_peer("test-peer") is not None
         # Same address/port → no callback (TTL refresh)

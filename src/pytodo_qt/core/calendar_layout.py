@@ -263,7 +263,7 @@ def clamp_drop_due_time_forward(
     This lets tests pin exact inputs and assert exact outputs without
     any tolerance windows or time-of-day skips.
 
-    Behaviour:
+    Behavior:
     - ``due_time`` is ``None``           → pass-through (all-day drop).
     - ``due_date != now.date()``         → pass-through (drop onto
       another date; no "no time travel" constraint applies because

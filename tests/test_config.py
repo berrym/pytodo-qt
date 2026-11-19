@@ -97,7 +97,7 @@ class TestAppConfig:
         assert config.database.sort_tier3 == "priority"
 
     def test_remember_last_view_default_true(self):
-        """Default value preserves pre-overhaul behaviour — existing
+        """Default value preserves pre-overhaul behavior — existing
         users see no change."""
         config = AppConfig()
         assert config.database.remember_last_view is True

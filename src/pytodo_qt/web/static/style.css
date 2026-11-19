@@ -16,8 +16,8 @@
   --text-secondary: #6c6c6c;
   --border: #878787;
   --accent: #1976d2;
-  /* Text written on a fill of one of the theme's colours. The dark
-     theme's colours are light tints, readable as text on its dark
+  /* Text written on a fill of one of the theme's colors. The dark
+     theme's colors are light tints, readable as text on its dark
      background; as fills they take black. White on them is 1.7:1 to
      2.2:1. On the light theme's accent, white is 4.6:1, with nothing
      to spare: text on it is not made fainter. */
@@ -25,17 +25,17 @@
   --on-danger: #ffffff;
   --on-success: #ffffff;
   --on-warning: #ffffff;
-  /* An icon on the accent colour that is not the selected one. A
+  /* An icon on the accent color that is not the selected one. A
      graphic, which WCAG asks 3:1 of. */
   --on-accent-dim: rgba(255, 255, 255, 0.8);
-  /* The fill of a control that lies on the accent colour, and of one
+  /* The fill of a control that lies on the accent color, and of one
      that is selected or pressed. They darken the light theme's accent
-     and lighten the dark theme's, away from the colour of the text. */
+     and lighten the dark theme's, away from the color of the text. */
   --accent-overlay: rgba(0, 0, 0, 0.15);
   --accent-overlay-strong: rgba(0, 0, 0, 0.28);
-  /* How far a chip's colour is darkened for its text. A chip's fill is
-     a tint of its own colour, which takes some of the contrast the
-     colour has against the page. */
+  /* How far a chip's color is darkened for its text. A chip's fill is
+     a tint of its own color, which takes some of the contrast the
+     color has against the page. */
   --chip-shade: 25%;
   --accent-hover: #1565c0;
   --accent-subtle: rgba(25, 118, 210, 0.08);
@@ -439,7 +439,7 @@ body {
   background: color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
-/* On the selected row's tint the secondary colour falls to 4.3:1. */
+/* On the selected row's tint the secondary color falls to 4.3:1. */
 .list-row.active .list-row-stats,
 .list-row.active .list-action-btn {
   color: var(--text);
@@ -541,9 +541,9 @@ body {
   white-space: nowrap;
 }
 
-/* The dot's colours tell the state of the connection; they are bright
+/* The dot's colors tell the state of the connection; they are bright
    on any header, and against the dark theme's header the green is
-   1.6:1. The ring, in the header's text colour, is what makes the dot
+   1.6:1. The ring, in the header's text color, is what makes the dot
    out. */
 .dot {
   width: 8px;
@@ -1283,8 +1283,8 @@ body {
   background: var(--bg-secondary);
   min-height: 80px;
 }
-/* The tint is laid over the cell's own colour. By itself it let the
-   grid's border colour through, and today was a grey block. */
+/* The tint is laid over the cell's own color. By itself it let the
+   grid's border color through, and today was a gray block. */
 .cal-day.today {
   background-image: linear-gradient(var(--accent-subtle), var(--accent-subtle));
 }
@@ -1361,7 +1361,7 @@ body {
   text-align: center;
   font-size: 14px;
 }
-/* Dimmed by colour alone: faded as well, the number fell to 2.2:1. */
+/* Dimmed by color alone: faded as well, the number fell to 2.2:1. */
 .cal-mini-day.other .cal-mini-num {
   color: var(--text-secondary);
 }
@@ -2004,8 +2004,8 @@ body {
   font-weight: 500;
 }
 
-/* A chip names its colour; its text is that colour, darkened in the
-   light theme, on a tint of the same colour. Written straight on the
+/* A chip names its color; its text is that color, darkened in the
+   light theme, on a tint of the same color. Written straight on the
    tint, the light theme's priority and recurrence chips were 4.3:1. */
 .entity-chip {
   --chip-ink: var(--entity-date);

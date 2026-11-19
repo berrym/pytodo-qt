@@ -69,7 +69,11 @@ LIGHT_COLORS = {
     "button_text": "#1a1a1a",
     "highlight": "#1976d2",
     "highlight_text": "#ffffff",
-    "link": "#1565c0",
+    # The accent as a text color. The accent itself, `highlight`, is a
+    # fill: as text it gives 4.22:1 on the window. This blue gives 4.5:1
+    # on every background text stands on, the button color included
+    # (4.62:1), which lies under a tool button under the pointer.
+    "link": "#1461b9",
     "border": "#878787",
     "completed_bg": "#f0f8f0",
     "completed_text": "#6c6c6c",
@@ -104,7 +108,9 @@ LIGHT_COLORS = {
     "focus_timer_working": "#c0392b",
     "focus_timer_break": "#15803d",
     "focus_timer_paused": "#b45309",
-    "focus_timer_stopwatch_running": "#1976d2",
+    # Written as text on the status bar, which has the window's color:
+    # the link blue, not the accent, which gives 4.22:1 there.
+    "focus_timer_stopwatch_running": "#1461b9",
     # Interactive cursor-affordance overlay — used for floating
     # drag-preview / resize-snap labels that need a vivid blue
     # readable in both themes paired with white text. Tailwind
@@ -413,11 +419,11 @@ def get_colors() -> dict[str, str]:
 
 
 def border_color() -> str:
-    """The theme's border colour, to be written into a style sheet.
+    """The theme's border color, to be written into a style sheet.
 
     A style sheet cannot name it as a palette role: the palette has no
     role for it. The `mid` role was written in its place, a role the
-    theme does not set, for which Qt derives the same light grey in
+    theme does not set, for which Qt derives the same light gray in
     both themes: 1.82:1 on the light theme's window, and a bright line
     on the dark theme's.
     """
@@ -440,9 +446,9 @@ def create_palette(theme: Theme) -> QPalette:
 
     # Text colors
     palette.setColor(QPalette.ColorRole.Text, QColor(colors["text"]))
-    # The muted text colour: for the hint in an empty field, and for every
+    # The muted text color: for the hint in an empty field, and for every
     # style sheet that writes `palette(placeholder-text)` for a muted
-    # text. Derived from the text colour it came out darker than the text
+    # text. Derived from the text color it came out darker than the text
     # itself in the light theme.
     palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(colors["completed_text"]))
 
@@ -530,8 +536,8 @@ QPushButton:default {{
 }}
 
 /* Input fields */
-/* The hint in an empty field. Without this, a field whose text colour
-   comes from a style sheet shows the hint in that colour at half
+/* The hint in an empty field. Without this, a field whose text color
+   comes from a style sheet shows the hint in that color at half
    opacity, whatever the palette says: 3.36:1 in the light theme and
    4.04:1 in the dark. */
 QLineEdit, QTextEdit, QPlainTextEdit {{

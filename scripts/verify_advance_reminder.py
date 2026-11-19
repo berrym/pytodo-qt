@@ -33,14 +33,14 @@ What to check in the detail panel (press its edit toggle first):
   stored fields under the buttons follow each change.
 - "1 day before" becomes "2 days before" as the count goes up.
 - Out of edit mode the row is read-only and still reads correctly.
-- With "Sample task has a due date" unticked the row is greyed even in
+- With "Sample task has a due date" unticked the row is grayed even in
   edit mode.
 
 What to check with "Open Add Todo with Advanced open":
 
-- "Remind ahead" is greyed until "Set due date" is ticked.
+- "Remind ahead" is grayed until "Set due date" is ticked.
 - Alt+I moves to the choice.
-- The day count is greyed while the choice is "Off".
+- The day count is grayed while the choice is "Off".
 - After OK, the stored fields under the buttons show what the new task
   would carry.
 - With --summary-off, a note under the row says the daily summary is
@@ -63,7 +63,7 @@ says something new about it:
 - Add " tomorrow" to the line — the date changes to tomorrow: a date
   written in the line replaces one picked by hand.
 - Clear the line and type "Call mom remind me 2 days before" — "Remind
-  ahead" shows "Once", "2 days before", greyed, and the chip says a due
+  ahead" shows "Once", "2 days before", grayed, and the chip says a due
   date is needed. Tick "Set due date": the row goes live and the chip
   loses its note.
 
@@ -71,7 +71,7 @@ What to check with "Open Add Todo for typing" (Advanced stays closed).
 Type each line, look at the highlight and the chips, then press OK and
 read the stored fields:
 
-- "Tax return friday remind me 3 days before" — the phrase is coloured
+- "Tax return friday remind me 3 days before" — the phrase is colored
   like the date, a chip reads "Remind 3 days before", the title is "Tax
   return", and no duration or recurrence chip appears.
 - "Renew passport friday remind me daily from a week before" — the chip

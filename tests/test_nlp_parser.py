@@ -2578,7 +2578,7 @@ class TestTimeRangeEnds:
 
 class TestClausePunctuation:
     """A comma, semicolon or sentence-ending full stop after a word does
-    not stop the word being recognised, and is not left behind alone."""
+    not stop the word being recognized, and is not left behind alone."""
 
     def test_comma_after_a_date(self) -> None:
         r = parse("submit report friday, p1", today=TODAY)
@@ -3052,7 +3052,7 @@ class TestCoupleAndFewEstimates:
 
 
 class TestFuzzyPhrasesMatchWordByWord:
-    """A mistyped priority phrase is recognised only when each typed
+    """A mistyped priority phrase is recognized only when each typed
     word is one of the phrase's words, allowing for typos."""
 
     def test_wait_a_is_not_can_wait(self) -> None:

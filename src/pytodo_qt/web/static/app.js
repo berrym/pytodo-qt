@@ -1341,7 +1341,7 @@
   // came while a row was pressed left the release with a new element:
   // the tap opened nothing, since a click needs its press and release
   // on the same element, a swipe or a drag lost what it was moving, and
-  // the long-press timer of the old row, never cancelled, opened the
+  // the long-press timer of the old row, never canceled, opened the
   // task menu.
   //
   // While a pointer is down in one of the views, a redraw that is not
@@ -4405,12 +4405,12 @@
     }
   }
 
-  // A canvas used to read a colour in one form, whatever form the
+  // A canvas used to read a color in one form, whatever form the
   // style sheet gives it in.
   var _colorProbe = document.createElement("canvas").getContext("2d");
 
-  // The relative luminance of a colour, as WCAG defines it: 0 for
-  // black, 1 for white. null for a colour that is not opaque or cannot
+  // The relative luminance of a color, as WCAG defines it: 0 for
+  // black, 1 for white. null for a color that is not opaque or cannot
   // be read.
   function _luminance(color) {
     _colorProbe.fillStyle = "#000000";
@@ -4426,12 +4426,12 @@
     return 0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2];
   }
 
-  // The colour of text written on a filled bar or chip: black or
+  // The color of text written on a filled bar or chip: black or
   // white, whichever stands out more from the fill by WCAG's contrast
   // ratio. One of the two always reaches the 4.5:1 asked of text; the
   // worst fill, of middling lightness, gives 4.58:1 to both.
   //
-  // The page's own text colour does not: it is chosen for the page's
+  // The page's own text color does not: it is chosen for the page's
   // background, and the bars are light in the dark theme and saturated
   // in the light one. On the dark theme's bars it measured 1.1:1 to
   // 2.1:1, and on four of the light theme's six, under 4.5:1.
@@ -4443,10 +4443,10 @@
     return onWhite >= onBlack ? "#ffffff" : "#000000";
   }
 
-  // Writes a label on a fill, in the colour that fill calls for, and
-  // only inside the fill's own rectangle. A bar of two colours has its
+  // Writes a label on a fill, in the color that fill calls for, and
+  // only inside the fill's own rectangle. A bar of two colors has its
   // label written once for each, so that every part of it is on the
-  // colour it was chosen for.
+  // color it was chosen for.
   function _paintLabelOn(ctx, text, tx, ty, zone) {
     ctx.save();
     ctx.beginPath();
@@ -4461,7 +4461,7 @@
     var base = _paletteColor(seg.state);
     var deviation = _paletteDeviation(seg.state);
     var labelColor = _barTextColor(base);
-    // The parts of the bar by colour, for its label.
+    // The parts of the bar by color, for its label.
     var zones = [{ x: x, y: y, w: w, h: h, fill: base }];
 
     // Two-zone overlay for completed bars: base color for the

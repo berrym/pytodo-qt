@@ -774,7 +774,7 @@ class MainWindow(QMainWindow):
         self._detail_btn.setCheckable(True)
         self._detail_btn.setToolTip(self.tr("Task details (Ctrl+Shift+D)"))
         self._detail_btn.setStyleSheet(
-            "QToolButton { font-size: 14px; padding: 2px 6px; color: palette(highlight); }"
+            "QToolButton { font-size: 14px; padding: 2px 6px; color: palette(link); }"
             "QToolButton:checked { font-weight: bold; }"
         )
         self._detail_btn.toggled.connect(self._on_detail_btn_toggled)

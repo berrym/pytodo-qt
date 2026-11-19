@@ -27,15 +27,15 @@ What to check on the Notifications tab:
 - Five groups: General, Daily summary, Evening preview, Timed
   reminders, Quiet time.
 - "Show an evening preview of tomorrow" is unticked and its time field
-  (20:00) greyed. Ticking it makes the field live.
+  (20:00) grayed. Ticking it makes the field live.
 - With the preview ticked and its time set to 23:00, a hint says it is
   shown at 21:59, before quiet hours start. Changing the quiet hours
   start changes the time in the hint; unticking "Quiet hours" removes
   the hint.
 - With the default seed the summary time reads 06:00 (from
   ``check_hour = 6``) and a hint says it is delivered at 07:00.
-- Unticking "Enable task notifications" greys the three groups below it.
-- Unticking a group's own checkbox greys only what it governs; "Hold
+- Unticking "Enable task notifications" grays the three groups below it.
+- Unticking a group's own checkbox grays only what it governs; "Hold
   the summary while a focus session runs" stays live when quiet hours
   are off.
 - Setting quiet hours to start and end at the same time shows a hint.

@@ -185,7 +185,7 @@ def _build_advance_reminder(section: dict[str, Any]) -> dict[str, Any]:
     """Convert the advance-reminder vocabulary to word lists and a unit map.
 
     A dictionary without the section gives empty lists, with which no
-    phrase is recognised.
+    phrase is recognized.
     """
     return {
         "lead_ins": _word_lists(section.get("lead_ins")),

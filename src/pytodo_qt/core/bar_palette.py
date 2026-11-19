@@ -28,11 +28,11 @@ the audit script (`scripts/wcag_audit.py`) flags these pairs as
 non-essential so they surface in the report without gating the run.
 See issue #38 for the design rationale.
 
-A bar carries its task's name, and a marker chip its label. The colour
+A bar carries its task's name, and a marker chip its label. The color
 of that text is not part of the palette: `readable_text_on` gives black
 or white for any fill, whichever has the higher WCAG contrast with it.
 One of the two always reaches the 4.5:1 that WCAG SC 1.4.3 asks of
-text, so a bar colour can be changed without a text colour to match.
+text, so a bar color can be changed without a text color to match.
 
 Usage:
 
@@ -145,7 +145,7 @@ _BLACK = "#000000"
 
 
 def relative_luminance(color: str) -> float:
-    """The relative luminance of a `#rrggbb` colour, as WCAG 2.1 defines it.
+    """The relative luminance of a `#rrggbb` color, as WCAG 2.1 defines it.
 
     0.0 for black, 1.0 for white.
     """
@@ -159,7 +159,7 @@ def relative_luminance(color: str) -> float:
 
 
 def contrast_ratio(one: str, other: str) -> float:
-    """The WCAG 2.1 contrast ratio of two `#rrggbb` colours: 1.0 to 21.0."""
+    """The WCAG 2.1 contrast ratio of two `#rrggbb` colors: 1.0 to 21.0."""
     lighter, darker = sorted((relative_luminance(one), relative_luminance(other)), reverse=True)
     return (lighter + 0.05) / (darker + 0.05)
 
@@ -167,9 +167,9 @@ def contrast_ratio(one: str, other: str) -> float:
 def readable_text_on(fill: str) -> str:
     """Black or white, whichever has the higher contrast with the fill.
 
-    The colour of text written on a bar or a marker chip. The fill has
+    The color of text written on a bar or a marker chip. The fill has
     to be painted opaque for the answer to hold: a fill that lets the
-    grid show through is another colour.
+    grid show through is another color.
 
     The better of the two ratios is lowest on a fill of middling
     lightness, where both are 4.58:1, so the text meets WCAG AA

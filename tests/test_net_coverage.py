@@ -2351,7 +2351,7 @@ class TestServerHandleClient:
             await server._handle_client(mock_reader, mock_writer)
 
     @pytest.mark.asyncio
-    async def test_handle_client_cancelled(self):
+    async def test_handle_client_canceled(self):
         """Server handles CancelledError in message loop."""
         server = AsyncServer()
         mock_reader = AsyncMock()

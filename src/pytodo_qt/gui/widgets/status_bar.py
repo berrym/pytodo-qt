@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # A muted text: the palette's placeholder role, which the theme sets to
-# its muted text colour and which follows a change of theme by itself.
+# its muted text color and which follows a change of theme by itself.
 _MUTED_TEXT = "color: palette(placeholder-text);"
 
 
@@ -133,7 +133,7 @@ class _PomodoroAttentionOverlay(QWidget):
     Driven by a single QTimer parented to this widget with manual
     paint — no QGraphicsEffect, no QPropertyAnimation. That is the
     teardown-safe pattern established for floating/overlay widgets
-    in this codebase; QGraphicsEffect/QPropertyAnimation destabilise
+    in this codebase; QGraphicsEffect/QPropertyAnimation destabilize
     pytest-qt teardown. The timer runs only during the pulse burst
     and the fade-out; the steady phase is a static paint with the
     timer stopped. Mouse-transparent so clicks fall through to the
@@ -149,7 +149,7 @@ class _PomodoroAttentionOverlay(QWidget):
     _PEAK = 1.10  # pulse-crest intensity
     # (outward spread px, alpha fraction) — outer rings fainter, the
     # ring nearest the text the brightest. Stroked outlines only, so
-    # the timer digits in the centre are never washed out.
+    # the timer digits in the center are never washed out.
     _RING_LAYERS = ((8, 0.12), (5, 0.24), (3, 0.42), (1, 0.62))
 
     def __init__(self, parent: QWidget) -> None:
@@ -226,7 +226,7 @@ class _PomodoroAttentionOverlay(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         # Inner frame = the original timer region (overlay inset by the
-        # glow margin). Rings are stroked outward from it so the centre
+        # glow margin). Rings are stroked outward from it so the center
         # stays clear and the digits remain readable.
         m = self._GLOW_MARGIN
         inner = QRectF(self.rect().adjusted(m, m, -m, -m))
@@ -263,7 +263,7 @@ class StatusBarWidget(QStatusBar):
         # Set before any widget so resizeEvent (which Qt can fire during
         # construction) short-circuits before the overlay attrs exist.
         self._prev_pomodoro_state = "idle"
-        # The key of the theme colour each state label is written in.
+        # The key of the theme color each state label is written in.
         self._state_colors: dict[QLabel, str] = {}
 
         # Build all widgets
@@ -427,11 +427,11 @@ class StatusBarWidget(QStatusBar):
             self.progress_bar.setValue(0)
 
     def _set_state_color(self, label: QLabel, key: str | None) -> None:
-        """Colour a label's text with a colour of the theme, by its key.
+        """Color a label's text with a color of the theme, by its key.
 
         The key is kept, so that the label takes the other theme's
-        colour of the same name when the theme is changed. None takes
-        the colouring away.
+        color of the same name when the theme is changed. None takes
+        the coloring away.
         """
         if key is None:
             self._state_colors.pop(label, None)
@@ -443,7 +443,7 @@ class StatusBarWidget(QStatusBar):
     def changeEvent(self, a0) -> None:  # noqa: N802
         super().changeEvent(a0)
         if a0 is not None and a0.type() == QEvent.Type.PaletteChange:
-            # A change of theme: the state colours are of the old one.
+            # A change of theme: the state colors are of the old one.
             for label, key in list(getattr(self, "_state_colors", {}).items()):
                 label.setStyleSheet(f"color: {get_colors()[key]};")
 
@@ -496,7 +496,7 @@ class StatusBarWidget(QStatusBar):
         """
         if state == "syncing":
             self.sync_status_label.setText(self.tr("Syncing"))
-            self._set_state_color(self.sync_status_label, "focus_timer_stopwatch_running")
+            self._set_state_color(self.sync_status_label, "link")
         elif state == "success":
             self._last_sync_time = datetime.now()
             self._last_auto_sync = auto

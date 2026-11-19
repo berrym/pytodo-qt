@@ -178,7 +178,7 @@ class EditRecurrenceDialog(QDialog):
         self.accept()
 
     def get_recurrence(self) -> tuple[str | None, int, date | None, int | None]:
-        """Get the recurrence settings, or defaults if cancelled."""
+        """Get the recurrence settings, or defaults if canceled."""
         if self._result is not None:
             return self._result
         return (None, 1, None, None)

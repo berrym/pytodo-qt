@@ -162,6 +162,17 @@ def _step_row(number: int, title: str, description: str, widget: QWidget | None 
     return frame
 
 
+# A flat button that is written as a link. It has no fill, under the
+# pointer either: the application's rule for a button under the pointer
+# fills it with the highlight color, and a text color the button gives
+# itself stays on top of that fill, blue on blue.
+_LINK_BUTTON_STYLE = (
+    "QPushButton { color: palette(link); font-size: 11px; background: transparent;"
+    " border: none; }"
+    " QPushButton:hover { text-decoration: underline; }"
+)
+
+
 def _security_badge(text: str, color: str) -> QLabel:
     """A pill of `color` (`#rrggbb`) with `text` in black or white,
     whichever has the higher contrast with it."""
@@ -202,7 +213,7 @@ def _pin_widget(pin: str) -> QLabel:
     font.setBold(True)
     font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 8)
     lbl.setFont(font)
-    lbl.setStyleSheet("color: palette(highlight); margin: 4px 0; border: none; background: none;")
+    lbl.setStyleSheet("color: palette(link); margin: 4px 0; border: none; background: none;")
     lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     return lbl
 
@@ -423,7 +434,7 @@ class _DeviceRow(QFrame):
             reconnect_btn = QPushButton(self.tr("Reconnect"))
             reconnect_btn.setFixedWidth(72)
             reconnect_btn.setStyleSheet(
-                "QPushButton { color: palette(highlight); font-size: 11px;"
+                "QPushButton { color: palette(link); font-size: 11px;"
                 " border: 1px solid palette(highlight);"
                 " border-radius: 4px; padding: 4px 8px; background: none; }"
                 " QPushButton:hover { background: palette(highlight);"
@@ -575,7 +586,7 @@ class MobileAccessWizard(QDialog):
 
         self._change_link = QPushButton(self.tr("Change method"))
         self._change_link.setFlat(True)
-        self._change_link.setStyleSheet("color: palette(highlight); font-size: 11px;")
+        self._change_link.setStyleSheet(_LINK_BUTTON_STYLE)
         self._change_link.clicked.connect(self._on_change_method)
         self._change_link.setVisible(False)
         bottom_layout.addWidget(self._change_link)
@@ -683,8 +694,12 @@ class MobileAccessWizard(QDialog):
         if devices:
             revoke_btn = QPushButton(self.tr("Forget all devices"))
             revoke_btn.setFlat(True)
+            # A link, like the two above: no fill under the pointer, where
+            # its red would stand on the highlight color.
             revoke_btn.setStyleSheet(
-                f"color: {get_colors()['due_overdue']}; font-size: 11px; padding: 4px;"
+                f"QPushButton {{ color: {get_colors()['due_overdue']}; font-size: 11px;"
+                " padding: 4px; background: transparent; border: none; }"
+                " QPushButton:hover { text-decoration: underline; }"
             )
             revoke_btn.clicked.connect(self._on_revoke_all)
             revoke_row = QHBoxLayout()
@@ -812,7 +827,7 @@ class MobileAccessWizard(QDialog):
             if self._url_ip and self._url_ip != self._url:
                 ip_toggle = QPushButton(self.tr("QR not working? Use IP address instead"))
                 ip_toggle.setStyleSheet(
-                    "font-size: 10px; color: palette(highlight); "
+                    "font-size: 10px; color: palette(link); "
                     "border: none; background: none; text-decoration: underline;"
                 )
                 ip_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -991,7 +1006,7 @@ class MobileAccessWizard(QDialog):
             # Regenerate certificate option
             regen_btn = QPushButton(self.tr("Regenerate certificate"))
             regen_btn.setFlat(True)
-            regen_btn.setStyleSheet("color: palette(highlight); font-size: 11px;")
+            regen_btn.setStyleSheet(_LINK_BUTTON_STYLE)
             regen_btn.clicked.connect(self._on_regenerate_certs)
             regen_row = QHBoxLayout()
             regen_row.addStretch()

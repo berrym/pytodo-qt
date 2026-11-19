@@ -349,7 +349,7 @@ STEP_3 = """\
 Step 3: other changes. The server is still stopped.
 
   1. Press and hold "3 Change my priority", choose Priority, then High.
-     - Its left edge takes the colour of a high priority, and it has
+     - Its left edge takes the color of a high priority, and it has
        the label.
   2. Remove "4 Delete me" with the x at the right of its row.
      - The row goes. A notice offers Undo.

@@ -670,7 +670,7 @@ class AddTodoDialog(QDialog):
             else:
                 self.due_date_checkbox.setChecked(False)
 
-        # Shown whether or not there is a due date: the row is greyed
+        # Shown whether or not there is a due date: the row is grayed
         # without one, and the reminder is kept only alongside one.
         if "advance_reminder" in changed:
             self.advance_reminder_editor.set_value(*values["advance_reminder"])
@@ -1179,7 +1179,7 @@ class AddTodoDialog(QDialog):
         self.accept()
 
     def get_item(self) -> TodoItem | None:
-        """Get the created to-do item, or None if cancelled."""
+        """Get the created to-do item, or None if canceled."""
         return self._item
 
     def get_subtask_reminders(self) -> list[str]:
