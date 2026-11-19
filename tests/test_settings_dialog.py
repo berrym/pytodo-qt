@@ -51,8 +51,15 @@ class TestDefaultViewDropdown:
 
     def test_dropdown_has_minimum_width(self, app):
         """The dropdown needs enough width to display 'Board (Kanban)'
-        on any platform without truncation."""
+        on any platform without truncation. The theme's sheet is on the
+        dialog when the width is asked: applied, it dropped a minimum
+        set in code (tests/test_least_width.py)."""
+        from pytodo_qt.gui.styles.themes import Theme, get_stylesheet
+
         dlg = SettingsDialog()
+        dlg.setStyleSheet(get_stylesheet(Theme.LIGHT))
+        dlg.ensurePolished()
+        dlg._view_mode_combo.ensurePolished()
         assert dlg._view_mode_combo.minimumWidth() >= 200
         dlg.deleteLater()
 

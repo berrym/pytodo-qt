@@ -453,6 +453,22 @@ def arrow_icon_path(direction: str, theme: Theme, *, muted: bool = False) -> str
     return (Path(__file__).parent.parent / "icons" / name).as_posix()
 
 
+def set_least_width(widget: QWidget, width: int) -> None:
+    """Give a widget a least width that holds once the theme is applied.
+
+    The theme's style sheet has a `min-width` for combo boxes and for
+    buttons. When the sheet polishes such a widget, Qt makes that value
+    the widget's minimum width and drops one set with `setMinimumWidth`:
+    a combo box asked to be 220 px wide at least came out at 118. A rule
+    in the widget's own sheet comes before the theme's, so the width is
+    written there as well. The sheet's width is that of the content, and
+    the box around it is added to it.
+    """
+    widget.setMinimumWidth(width)
+    kind = "QComboBox" if isinstance(widget, QComboBox) else type(widget).__name__
+    widget.setStyleSheet(f"{widget.styleSheet()} {kind} {{ min-width: {width}px; }}".strip())
+
+
 def border_color() -> str:
     """The theme's border color, to be written into a style sheet.
 

@@ -51,6 +51,7 @@ from ..styles.themes import (
     apply_font_setting,
     font_px,
     get_colors,
+    set_least_width,
 )
 
 if TYPE_CHECKING:
@@ -287,7 +288,7 @@ class SettingsDialog(QDialog):
         self._view_mode_combo.addItem(self.tr("List"), "list")
         self._view_mode_combo.addItem(self.tr("Board (Kanban)"), "board")
         self._view_mode_combo.addItem(self.tr("Calendar"), "calendar")
-        self._view_mode_combo.setMinimumWidth(220)
+        set_least_width(self._view_mode_combo, 220)
         view_layout.addRow(self.tr("Default view:"), self._view_mode_combo)
         layout.addWidget(view_group)
 

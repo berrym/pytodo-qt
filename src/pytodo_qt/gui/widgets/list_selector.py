@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 
 from ...core.logger import Logger
 from ...core.models import Database, TodoList
-from ..styles.themes import get_colors
+from ..styles.themes import get_colors, set_least_width
 
 if TYPE_CHECKING:
     pass
@@ -63,7 +63,7 @@ class ListSelectorWidget(QWidget):
 
         # Combo box for list selection
         self.combo = QComboBox()
-        self.combo.setMinimumWidth(200)
+        set_least_width(self.combo, 200)
         self.combo.currentIndexChanged.connect(self._on_selection_changed)
         self.combo.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.combo.customContextMenuRequested.connect(self._show_context_menu)
