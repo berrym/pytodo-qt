@@ -1,13 +1,51 @@
 """Pytest configuration and fixtures."""
 
+import atexit
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 import pytest
+
+
+def _isolate_the_session() -> str:
+    """Point the session at a scratch directory, and return it.
+
+    The application finds its configuration, its data and its state
+    through `XDG_CONFIG_HOME`, `XDG_DATA_HOME` and `XDG_STATE_HOME`,
+    with the real `~/.config`, `~/.local/share` and `~/.local/state` as
+    defaults, and keeps its identity key in the system keyring. A test
+    that saves the configuration, such as one that chooses a view of
+    the calendar, wrote the real `config.toml` of the machine it ran
+    on; one that opens the settings dialog read the real identity key,
+    and made one where there was none.
+
+    The variables are set here, when this file is loaded, which is
+    before any test module is: the logger takes its file's place from
+    them when the package is first imported. They are set whatever
+    they were, so that a run started from a shell that points them at
+    the real directories is safe as well.
+    """
+    if "pytodo_qt" in sys.modules:
+        raise RuntimeError(
+            "pytodo_qt was imported before tests/conftest.py could point it at a scratch directory"
+        )
+    root = tempfile.mkdtemp(prefix="pytodo-qt-tests-")
+    os.environ["XDG_CONFIG_HOME"] = os.path.join(root, "config")
+    os.environ["XDG_DATA_HOME"] = os.path.join(root, "data")
+    os.environ["XDG_STATE_HOME"] = os.path.join(root, "state")
+    # Nothing is read from or written to the real system keyring; the
+    # identity falls back to a file in the configuration directory.
+    os.environ["PYTHON_KEYRING_BACKEND"] = "keyring.backends.null.Keyring"
+    atexit.register(shutil.rmtree, root, ignore_errors=True)
+    return root
+
+
+SESSION_ROOT = _isolate_the_session()
 
 _EXIT_PROBE = Path(__file__).parent / "exit_probe.py"
 _EXIT_PROBE_TIMEOUT_SECONDS = 180
