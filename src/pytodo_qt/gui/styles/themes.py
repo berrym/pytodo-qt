@@ -850,7 +850,7 @@ QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
    Qt's, three pixels wide. The date and time editors are spin boxes
    too, and a date editor with a calendar has a drop-down in place of
    the buttons. */
-QSpinBox, QDoubleSpinBox {{
+QSpinBox, QDoubleSpinBox, QDateEdit, QTimeEdit {{
     background-color: {colors["base"]};
     color: {colors["text"]};
     border: 1px solid {colors["border"]};
