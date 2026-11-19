@@ -383,3 +383,85 @@ class TestRepeatedToggleNoRatchet:
             f"Five toggle cycles drifted from {starting_width} to {current_width[0]} — "
             "the resize-event tracking is asymmetric."
         )
+
+
+class TestVisibilityChangedShowGrows:
+    """Show branch grows the window by the panel's width."""
+
+    def test_show_schedules_the_grow(self):
+        window = _make_mock_window(width=1234, panel_visible=True, no_panel_width=1100)
+        MainWindow._on_detail_panel_visibility_changed(window, True)
+        window._schedule_grow_for_panel.assert_called_once()
+        window._detail_panel_action.setChecked.assert_called_once_with(True)
+
+    def test_show_skipped_when_maximized(self):
+        window = _make_mock_window(
+            width=1234, panel_visible=True, no_panel_width=1100, is_maximized=True
+        )
+        MainWindow._on_detail_panel_visibility_changed(window, True)
+        window._schedule_grow_for_panel.assert_not_called()
+
+
+class TestGrowForPanel:
+    """Qt grows the window only to its new least width, which squeezes
+    the central views by most of the panel's width. The window is
+    grown by the whole width of the panel instead, as far as the
+    screen has room."""
+
+    @staticmethod
+    def _with_screen(window, available_width: int):
+        window.screen.return_value.availableGeometry.return_value.width.return_value = (
+            available_width
+        )
+        return window
+
+    def test_grows_by_the_panel_width(self):
+        window = self._with_screen(
+            _make_mock_window(width=1234, panel_visible=True, no_panel_width=1100), 1600
+        )
+        MainWindow._grow_window_for_panel(window)
+        window.resize.assert_called_once_with(1420, 900)
+        assert window._grow_target == 1420
+        assert window._grow_baseline == 1100
+
+    def test_the_screen_caps_the_growth(self):
+        window = self._with_screen(
+            _make_mock_window(width=1400, panel_visible=True, no_panel_width=1400), 1600
+        )
+        MainWindow._grow_window_for_panel(window)
+        window.resize.assert_called_once_with(1600, 900)
+
+    def test_a_window_already_wide_enough_is_left(self):
+        window = self._with_screen(
+            _make_mock_window(width=1500, panel_visible=True, no_panel_width=1100), 1600
+        )
+        MainWindow._grow_window_for_panel(window)
+        window.resize.assert_not_called()
+
+    def test_no_baseline_means_no_growth(self):
+        window = self._with_screen(
+            _make_mock_window(width=1234, panel_visible=True, no_panel_width=None), 1600
+        )
+        MainWindow._grow_window_for_panel(window)
+        window.resize.assert_not_called()
+
+    def test_tracking_keeps_the_baseline_through_a_capped_grow(self):
+        """The resize the grow asks for comes back as a resizeEvent.
+        Derived from a capped width it would leave the baseline short
+        of the width the window had before the panel opened."""
+        window = _make_mock_window(width=1600, panel_visible=True, no_panel_width=1280)
+        window._grow_target = 1600
+        window._grow_baseline = 1400
+        event = MagicMock()
+        event.size.return_value.width.return_value = 1600
+        MainWindow._track_no_panel_width(window, event)
+        assert window._no_panel_width == 1400
+        assert window._grow_target is None
+
+    def test_tracking_derives_from_other_resizes(self):
+        window = _make_mock_window(width=1500, panel_visible=True, no_panel_width=1100)
+        window._grow_target = None
+        event = MagicMock()
+        event.size.return_value.width.return_value = 1500
+        MainWindow._track_no_panel_width(window, event)
+        assert window._no_panel_width == 1180

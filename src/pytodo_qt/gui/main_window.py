@@ -854,6 +854,14 @@ class MainWindow(QMainWindow):
         # snapshot helper called before each show; cleared by
         # visibilityChanged(True) when the transition is complete.
         self._show_in_progress = False
+        # The width the show grows the window to, and the baseline to
+        # keep through it. Qt grows the window only to its new least
+        # width when the dock is shown, which squeezes the central views
+        # by most of the dock's width; the window is grown by the whole
+        # width instead, as far as the screen has room. The resize comes
+        # back as a resizeEvent, told apart from a user's by its width.
+        self._grow_target: int | None = None
+        self._grow_baseline: int | None = None
         # visibilityChanged covers every path that toggles the dock
         # — toolbar action, keyboard shortcut, the dock's own close-X
         # button, programmatic show() in _update_detail_panel.
@@ -1174,6 +1182,43 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(0, _do_resize)
 
+    def _schedule_grow_for_panel(self) -> None:
+        """Grow the window for the shown dock one event-loop tick later.
+
+        Qt's own growth to the new least width, and the dock's width,
+        are settled by then.
+        """
+        from PyQt6.QtCore import QTimer
+
+        QTimer.singleShot(0, self._grow_window_for_panel)
+
+    def _grow_window_for_panel(self) -> None:
+        """Grow the window by the dock's width, as far as the screen has room.
+
+        Qt grows the window only to its new least width when the dock
+        is shown: from the 1100 px default to 1234, with the dock at
+        320, so that the central views lose most of the dock's width
+        and the board scrolls sideways. The window is grown to the
+        width it had before the dock was shown plus the dock's width,
+        capped at the screen's available width, and left alone where
+        it is already that wide. Maximized and fullscreen windows stay
+        under the window manager's control.
+        """
+        baseline = self._no_panel_width
+        if baseline is None or self.isMaximized() or self.isFullScreen():
+            return
+        if not self._detail_panel.isVisible():
+            return
+        wanted = baseline + self._detail_panel.width()
+        screen = self.screen()
+        available = screen.availableGeometry().width() if screen is not None else wanted
+        target = min(wanted, available)
+        if target <= self.width():
+            return
+        self._grow_target = target
+        self._grow_baseline = baseline
+        self.resize(target, self.height())
+
     def resizeEvent(self, a0) -> None:  # noqa: N802
         """Forward to QMainWindow + update no-panel-width baseline."""
         super().resizeEvent(a0)
@@ -1213,6 +1258,14 @@ class MainWindow(QMainWindow):
             # Don't overwrite the snapshot taken before show() during
             # the auto-grow transition.
             return
+        grow_target = getattr(self, "_grow_target", None)
+        if isinstance(grow_target, int) and a0.size().width() == grow_target:
+            # The resize the grow asked for. Derived from a width the
+            # screen capped, the baseline would fall short of the width
+            # the window had before the dock was shown.
+            self._no_panel_width = self._grow_baseline
+            self._grow_target = None
+            return
         if self._detail_panel.isVisible():
             derived = a0.size().width() - self._detail_panel.width()
             if derived > 0:
@@ -1240,6 +1293,9 @@ class MainWindow(QMainWindow):
             # Show transition complete; allow resizeEvent to track
             # user-driven resizes from this point on.
             self._show_in_progress = False
+            is_max_or_full = self.isMaximized() or self.isFullScreen()
+            if not is_max_or_full and self._no_panel_width is not None:
+                self._schedule_grow_for_panel()
         else:
             is_max_or_full = self.isMaximized() or self.isFullScreen()
             if not is_max_or_full and self._no_panel_width is not None:
