@@ -11,15 +11,20 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { test } = require("node:test");
 
-const source = fs.readFileSync(
-  path.join(__dirname, "..", "..", "src", "pytodo_qt", "web", "static", "app.js"),
-  "utf8",
-);
+// Lines end in a line feed here whatever the checkout gave them: on
+// Windows git writes the file with a carriage return before each.
+const source = fs
+  .readFileSync(
+    path.join(__dirname, "..", "..", "src", "pytodo_qt", "web", "static", "app.js"),
+    "utf8",
+  )
+  .replace(/\r\n/g, "\n");
 
 function functionText(name) {
   const start = source.indexOf("  function " + name + "(");
   assert.notEqual(start, -1, name + " is in app.js");
   const end = source.indexOf("\n  }\n", start);
+  assert.notEqual(end, -1, "the end of " + name + " is found");
   return source.slice(start, end + 5);
 }
 
