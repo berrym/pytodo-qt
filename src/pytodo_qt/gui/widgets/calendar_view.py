@@ -134,6 +134,42 @@ def bar_state_label(state) -> str:
     return labels.get(state, _tr("BarStateLabels", "Unknown"))
 
 
+def zone_brush(palette: Any, late: bool) -> QBrush:
+    """The hatch of a completed bar's deviation zone, drawn over the bar's color.
+
+    The early zone and the late one differ in color and in the
+    direction of the hatch. The color is opaque: its contrast with the
+    bar's color is measured for the color as the palette gives it.
+    """
+    from ...core.calendar_layout import BarState
+
+    state = BarState.COMPLETED_LATE if late else BarState.COMPLETED_EARLY
+    pattern = Qt.BrushStyle.FDiagPattern if late else Qt.BrushStyle.BDiagPattern
+    return QBrush(QColor(palette[state].deviation), pattern)
+
+
+class _ZoneSwatch(QWidget):
+    """A legend swatch that shows a deviation zone as a bar shows it."""
+
+    def __init__(self, palette: Any, late: bool, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        from ...core.calendar_layout import BarState
+
+        state = BarState.COMPLETED_LATE if late else BarState.COMPLETED_EARLY
+        self._base = QColor(palette[state].base)
+        self._brush = zone_brush(palette, late)
+        self.setFixedSize(20, 16)
+
+    def paintEvent(self, a0: Any) -> None:
+        painter = QPainter(self)
+        body = self.rect().adjusted(0, 0, -1, -1)
+        painter.fillRect(body, self._base)
+        painter.fillRect(body, self._brush)
+        painter.setPen(QPen(self._base.darker(160), 1))
+        painter.drawRect(body)
+        painter.end()
+
+
 class _CellBarLayout:
     """Result of laying out the bars within a single hour cell.
 
@@ -3676,6 +3712,7 @@ class _WeekModel(QAbstractTableModel):
         """
         from ...core.calendar_layout import (
             WindowKind,
+            completion_day_beyond_window,
             compute_bar_segments,
             compute_bar_window,
         )
@@ -3683,12 +3720,17 @@ class _WeekModel(QAbstractTableModel):
         now = datetime.now()
         out: list = []
         for item in items:
+            window = compute_bar_window(item)
+            # A task finished on a later day than it was due is among
+            # that day's items for the bar it has in the hours there,
+            # and has no chip in this row.
+            if window is not None and completion_day_beyond_window(item, window) == cell_date:
+                continue
             # Fast path: no due_time and no time block → traditional
             # all-day. A block-only item has a window in the hour grid.
             if item.due_time is None and not getattr(item, "due_time_block", None):
                 out.append(item)
                 continue
-            window = compute_bar_window(item)
             if window is None:
                 # Shouldn't happen (items_by_date is keyed on due_date),
                 # but defensive.
@@ -3793,7 +3835,6 @@ class _WeekDelegate(QStyledItemDelegate):
         Skips all-day and marker segments — those belong in the All Day
         row, which is rendered separately.
         """
-        from ...core.calendar_layout import BarState
 
         cell_date = index.data(_WEEK_DATE_ROLE)
         hour = index.data(_WEEK_HOUR_ROLE)
@@ -3858,7 +3899,7 @@ class _WeekDelegate(QStyledItemDelegate):
         # that's a wide chip; for continuing slices that's a thin
         # ribbon on the left edge that doesn't crowd in-cell tasks.
         # ------------------------------------------------------------------
-        for item, window, seg, slot_left, slot_right_edge, _is_ribbon in all_slots:
+        for item, _window, seg, slot_left, slot_right_edge, _is_ribbon in all_slots:
             visible_start = max(seg.start_minute, cell_minute_start)
             visible_end = min(seg.end_minute, cell_minute_end)
             raw_top = rect.top() + int(
@@ -3953,18 +3994,18 @@ class _WeekDelegate(QStyledItemDelegate):
                         min(int(bot_y - top_y - 2), 14),
                     )
 
-            # Two-zone deviation overlay for completed bars
-            if seg.state in (BarState.COMPLETED_EARLY, BarState.COMPLETED_LATE):
+            # The deviation zone of a completed bar, inside the bar's
+            # border.
+            if seg.zone_start_minute is not None:
                 self._paint_deviation_overlay(
                     painter,
                     rect,
-                    item,
-                    window,
                     seg,
                     cell_minute_start,
                     cell_minute_end,
-                    slot_left,
-                    slot_right_edge - slot_left,
+                    bar_rect.adjusted(
+                        1, 0 if is_continuing_top else 1, -1, 0 if is_continuing_bot else -1
+                    ),
                     label_rect,
                 )
 
@@ -4026,19 +4067,18 @@ class _WeekDelegate(QStyledItemDelegate):
         self,
         painter: QPainter,
         rect: Any,
-        item: Any,
-        window: Any,
         seg: Any,
         cell_minute_start: int,
         cell_minute_end: int,
-        bar_left: int,
-        bar_width: int,
+        bar_rect: QRect,
         label_rect: QRect | None = None,
     ) -> None:
-        """Paint the deviation zone for a COMPLETED_EARLY or COMPLETED_LATE bar.
+        """Paint the part of a completed bar's deviation zone that lies in a cell.
 
-        Both rely on item.completed_at being set (the BarState classification
-        guarantees this for EARLY/LATE — UNKNOWN doesn't trigger this path).
+        The zone is the segment's own (`zone_start_minute` to
+        `zone_end_minute`): the layout decides where it is, and it is
+        within the segment, so within cells that are painted. It is
+        hatched over the bar's color, inside `bar_rect`.
 
         The zone is not painted behind the bar's label (`label_rect`,
         when this cell carries it): the label's color is chosen for
@@ -4046,30 +4086,12 @@ class _WeekDelegate(QStyledItemDelegate):
         """
         from ...core.calendar_layout import BarState
 
-        if item.completed_at is None:
-            return  # Defensive: should not happen given the state check
-
-        cell_minute_width = cell_minute_end - cell_minute_start
-        completed_dt = datetime.fromtimestamp(item.completed_at / 1000)
-
-        # Only paint deviation on the same calendar day as the cell, since
-        # we map datetime → minute-of-day for layout.
-        if completed_dt.date() != window.end.date():
-            # Cross-day deviation will be handled when the cell on
-            # completed_dt's day is painted via _maybe_marker_segment's
-            # completion-day path. Skip here to avoid double-painting.
+        if seg.zone_start_minute is None or seg.zone_end_minute is None:
             return
 
-        completed_minute = completed_dt.hour * 60 + completed_dt.minute
-        end_minute = window.end.hour * 60 + window.end.minute
-
-        if seg.state == BarState.COMPLETED_EARLY:
-            zone_start = max(completed_minute, cell_minute_start)
-            zone_end = min(end_minute, cell_minute_end)
-        else:  # COMPLETED_LATE
-            zone_start = max(end_minute, cell_minute_start)
-            zone_end = min(completed_minute, cell_minute_end)
-
+        cell_minute_width = cell_minute_end - cell_minute_start
+        zone_start = max(seg.zone_start_minute, cell_minute_start)
+        zone_end = min(seg.zone_end_minute, cell_minute_end)
         if zone_end <= zone_start:
             return
 
@@ -4079,33 +4101,34 @@ class _WeekDelegate(QStyledItemDelegate):
         zone_bot = rect.top() + int(
             (zone_end - cell_minute_start) / cell_minute_width * rect.height()
         )
-        if zone_bot <= zone_top:
+        zone_rect = QRect(bar_rect.left(), zone_top, bar_rect.width(), zone_bot - zone_top)
+        zone_rect = zone_rect.intersected(bar_rect)
+        if zone_rect.isEmpty():
             return
 
-        # Two-channel redundancy per WCAG 1.4.1: deviation zones are
-        # reinforced by BOTH a chroma bump (stronger alpha than the prior
-        # subtle tint) AND a diagonal-hatch texture. Hatching keeps the
-        # zone structurally distinct from the base fill even on bars too
-        # narrow for the color shift to read, and also serves users with
-        # color-vision deficiency who can't resolve the two greens.
-        deviation_color = QColor(self._bar_palette[seg.state].deviation)
-        if seg.state == BarState.COMPLETED_EARLY:
-            deviation_color.setAlpha(200)
-            pattern = Qt.BrushStyle.BDiagPattern
-        else:  # COMPLETED_LATE
-            deviation_color.setAlpha(220)
-            pattern = Qt.BrushStyle.FDiagPattern
-        brush = QBrush(deviation_color, pattern)
-        zone = QRegion(QRect(bar_left, zone_top, bar_width, zone_bot - zone_top))
+        # Two channels, per WCAG 1.4.1: the hatch's color, which has a
+        # contrast of 3:1 or more with the bar's in both themes, and
+        # its direction, which differs between the early zone and the
+        # late one for a reader who cannot tell the colors apart.
+        zone = QRegion(zone_rect)
         if label_rect is not None:
             # A band across the bar, a pixel taller than the label on
             # each side.
             zone = zone.subtracted(
-                QRegion(QRect(bar_left, label_rect.top() - 1, bar_width, label_rect.height() + 2))
+                QRegion(
+                    QRect(
+                        bar_rect.left(),
+                        label_rect.top() - 1,
+                        bar_rect.width(),
+                        label_rect.height() + 2,
+                    )
+                )
             )
         painter.save()
         painter.setClipRegion(zone, Qt.ClipOperation.IntersectClip)
-        painter.fillRect(bar_left, zone_top, bar_width, zone_bot - zone_top, brush)
+        painter.fillRect(
+            zone_rect, zone_brush(self._bar_palette, seg.state == BarState.COMPLETED_LATE)
+        )
         painter.restore()
 
     def _paint_now_line(
@@ -5042,12 +5065,8 @@ class _WeekTableView(QTableView):
             if not (slot_left <= click_x <= slot_right):
                 continue
             visible_start = max(seg.start_minute, cell_minute_start)
-            visible_end = min(seg.end_minute, cell_minute_end)
             seg_top_y = rect.top() + int(
                 (visible_start - cell_minute_start) / cell_minute_width * rect.height()
-            )
-            seg_bot_y = rect.top() + int(
-                (visible_end - cell_minute_start) / cell_minute_width * rect.height()
             )
 
             window = compute_bar_window(item)
@@ -5073,13 +5092,21 @@ class _WeekTableView(QTableView):
                     "slot_x_range": (slot_left, slot_right),
                 }
 
-            # Bottom edge — only when the segment's true end is in this
-            # cell. Draggable for EVENT, WORKBACK and
+            # Bottom edge — where the bar's planned span ends, which a
+            # bar that runs on to a late completion has above its own
+            # end. Draggable for EVENT, WORKBACK and
             # DEADLINE_FROM_CREATED. A BLOCK bar has no draggable edge:
             # its extent is the block's configured boundaries.
+            due_edge = seg.due_edge_minute
+            if due_edge is None:
+                continue
+            seg_bot_y = rect.top() + int(
+                (min(due_edge, cell_minute_end) - cell_minute_start)
+                / cell_minute_width
+                * rect.height()
+            )
             if (
-                not seg.clipped_bottom
-                and abs(click_y - seg_bot_y) <= self._EDGE_HIT_PIXELS
+                abs(click_y - seg_bot_y) <= self._EDGE_HIT_PIXELS
                 and window.kind != WindowKind.BLOCK
                 and window.kind != WindowKind.ALL_DAY
             ):
@@ -5966,39 +5993,17 @@ class _CalendarLegend(QWidget):
         )
         self._layout.addWidget(spacer)
 
-        # Deviation indicators — using the COMPLETED_EARLY and COMPLETED_LATE
-        # deviation colors to show the two-zone concept.
-        early_colors = palette[BarState.COMPLETED_EARLY]
-        early_swatch = QLabel()
-        early_swatch.setFixedSize(20, 16)
-        early_swatch_color = QColor(early_colors.deviation)
-        early_swatch_color.setAlpha(150)
-        early_swatch.setStyleSheet(
-            f"QLabel {{ background-color: rgba("
-            f"{early_swatch_color.red()},"
-            f"{early_swatch_color.green()},"
-            f"{early_swatch_color.blue()},"
-            f"{early_swatch_color.alpha()}); "
-            f"border: 1px solid {QColor(early_colors.deviation).darker(130).name()}; "
-            f"border-radius: 2px; }}"
-        )
-        self._layout.addWidget(early_swatch)
-        early_label = QLabel(self.tr("Early surplus"))
-        early_label.setStyleSheet(f"QLabel {{ color: palette(text); font-size: {font_px(10)}px; }}")
-        self._layout.addWidget(early_label)
-
-        late_colors = palette[BarState.COMPLETED_LATE]
-        late_swatch = QLabel()
-        late_swatch.setFixedSize(20, 16)
-        late_swatch.setStyleSheet(
-            f"QLabel {{ background-color: {late_colors.deviation}; "
-            f"border: 1px solid {QColor(late_colors.deviation).darker(130).name()}; "
-            f"border-radius: 2px; }}"
-        )
-        self._layout.addWidget(late_swatch)
-        late_label = QLabel(self.tr("Late overflow"))
-        late_label.setStyleSheet(f"QLabel {{ color: palette(text); font-size: {font_px(10)}px; }}")
-        self._layout.addWidget(late_label)
+        # The two deviation zones of a completed bar, as a bar shows
+        # them: its color with the zone's hatch over it.
+        for late, text in ((False, self.tr("Early surplus")), (True, self.tr("Late overflow"))):
+            zone_swatch = _ZoneSwatch(palette, late)
+            self._layout.addWidget(zone_swatch)
+            self._swatches.append(zone_swatch)
+            zone_label = QLabel(text)
+            zone_label.setStyleSheet(
+                f"QLabel {{ color: palette(text); font-size: {font_px(10)}px; }}"
+            )
+            self._layout.addWidget(zone_label)
 
         # Separator before the now-line indicator
         spacer2 = QLabel("  |  ")
@@ -7286,6 +7291,7 @@ class CalendarViewWidget(QWidget):
         # grid (the next day's cells only look up items keyed on that
         # day). Applies to both real items and projections.
         self._spill_cross_midnight(scheduled_with_projections)
+        self._spill_late_completions(scheduled_with_projections)
 
         sort_key = lambda i: (  # noqa: E731
             i.complete,
@@ -7412,6 +7418,31 @@ class CalendarViewWidget(QWidget):
                 ):
                     bucket.append(item)
                 day = day + timedelta(days=1)
+
+    def _spill_late_completions(self, scheduled: dict[date, list]) -> None:
+        """Add each task finished on a later day than it was due to that day.
+
+        Such a task has a bar on the day it was finished, from midnight
+        to the completion: all of it late overflow. The buckets hold a
+        task on the days of its window only, and the day it was finished
+        on is none of them, so the bar would be drawn nowhere. Mutates
+        the dict in place.
+        """
+        from ...core.calendar_layout import completion_day_beyond_window, compute_bar_window
+
+        # A projected occurrence of a recurring task shares its task's
+        # id and is never complete: every entry is looked at.
+        for item in [item for items in scheduled.values() for item in items]:
+            item_id = getattr(item, "id", None)
+            window = compute_bar_window(item)
+            if window is None:
+                continue
+            day = completion_day_beyond_window(item, window)
+            if day is None:
+                continue
+            bucket = scheduled.setdefault(day, [])
+            if not any(getattr(existing, "id", None) == item_id for existing in bucket):
+                bucket.append(item)
 
     def _project_recurrences_into(self, scheduled: dict[date, list]) -> None:
         """Project recurring tasks into future date buckets.

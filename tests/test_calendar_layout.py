@@ -1074,9 +1074,9 @@ class TestQ6LifecycleTableComplete:
 
 class TestBarSegmentDataclass:
     def test_named_tuple_field_count(self):
-        """Defensive: BarSegment has the expected 9 fields. Adding a field
+        """Defensive: BarSegment has the expected 11 fields. Adding a field
         without updating tests would be caught here."""
-        assert len(BarSegment._fields) == 9
+        assert len(BarSegment._fields) == 11
 
     def test_named_tuple_immutable(self):
         """NamedTuples are immutable — assigning a field raises."""

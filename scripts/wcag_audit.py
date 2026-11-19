@@ -268,11 +268,11 @@ def _bar_pairs() -> list[Pair]:
     the one `bar_palette.readable_text_on` chooses; the ratio is this
     script's own.
 
-    Completion-state deviation colors are paired sub-zones rendered
-    inside a high-contrast base bar (early surplus, late overflow);
-    their meaning is carried by the adjacent base, not by their
-    contrast against the canvas. They are flagged `essential=False`
-    so the audit surfaces them informatively without gating the run.
+    The deviation colors of the completed states (early surplus, late
+    overflow) are hatches drawn over the bar's own color, never on the
+    grid: a hatch is measured against that color, at 3:1. The hatch is
+    what tells a task finished late from one finished on time, so the
+    pair gates the run.
     """
     light_bg = LIGHT_COLORS["base"]
     dark_bg = DARK_COLORS["base"]
@@ -282,10 +282,10 @@ def _bar_pairs() -> list[Pair]:
         "bar-due-now": "#d97706",
         "bar-overdue-active": "#dc2626",
         "bar-completed-early-base": "#059669",
-        "bar-completed-early-deviation": "#a7f3d0",
+        "bar-completed-early-deviation": "#d1fae5",
         "bar-completed-ontime": "#059669",
         "bar-completed-late-base": "#059669",
-        "bar-completed-late-deviation": "#fca5a5",
+        "bar-completed-late-deviation": "#450a0a",
         "bar-completed-unknown": "#6b7280",
     }
     dark_bars = {
@@ -300,22 +300,26 @@ def _bar_pairs() -> list[Pair]:
         "bar-completed-late-deviation": "#7f1d1d",
         "bar-completed-unknown": "#9ca3af",
     }
-    deviation_keys = {"bar-completed-early-deviation", "bar-completed-late-deviation"}
+    hatch_bars = {
+        "bar-completed-early-deviation": "bar-completed-early-base",
+        "bar-completed-late-deviation": "bar-completed-late-base",
+    }
     out: list[Pair] = []
     for theme_name, bars, bg in (("light", light_bars, light_bg), ("dark", dark_bars, dark_bg)):
         for name, hex_val in bars.items():
-            essential = name not in deviation_keys
-            out.append(
-                Pair(
-                    f"{name} on base",
-                    theme_name,
-                    hex_val,
-                    bg,
-                    THRESHOLD_UI,
-                    "ui",
-                    essential=essential,
+            if name in hatch_bars:
+                out.append(
+                    Pair(
+                        f"{name} hatch on its bar",
+                        theme_name,
+                        hex_val,
+                        bars[hatch_bars[name]],
+                        THRESHOLD_UI,
+                        "ui",
+                    )
                 )
-            )
+                continue
+            out.append(Pair(f"{name} on base", theme_name, hex_val, bg, THRESHOLD_UI, "ui"))
         for state, colors in bar_palette.get_palette(theme_name).items():
             out.append(
                 Pair(

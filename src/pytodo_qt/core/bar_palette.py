@@ -56,10 +56,10 @@ class BarColors(NamedTuple):
 
     For non-completed states, `base` and `deviation` are the same.
     For completed-early, `base` is the completion color and `deviation`
-    is a slightly translucent variant for the unused planned span.
-    For completed-late, `base` is the completion color and `deviation`
-    is a contrasting late-overflow color (red-tinted, hatched in
-    practice).
+    the color of the hatch over the unused planned span. For
+    completed-late, `deviation` is the color of the hatch over the late
+    overflow. A hatch is drawn over `base`, opaque, and has a contrast
+    of 3:1 or more with it (WCAG SC 1.4.11).
     """
 
     base: str  # hex string e.g. "#10b981"
@@ -84,15 +84,14 @@ _LIGHT_PALETTE: dict[BarState, BarColors] = {
     BarState.DUE_NOW: BarColors(base="#d97706", deviation="#d97706"),
     # Active overdue: red, attention-demanding
     BarState.OVERDUE_ACTIVE: BarColors(base="#dc2626", deviation="#dc2626"),
-    # Completed early: green base + lighter green deviation for the
-    # unused planned span (early surplus zone)
-    BarState.COMPLETED_EARLY: BarColors(base="#059669", deviation="#a7f3d0"),
+    # Completed early: green base + a pale green hatch over the unused
+    # planned span (early surplus zone), 3.32:1 on the base
+    BarState.COMPLETED_EARLY: BarColors(base="#059669", deviation="#d1fae5"),
     # Completed on time: solid green, no deviation zone
     BarState.COMPLETED_ONTIME: BarColors(base="#059669", deviation="#059669"),
-    # Completed late: green base for the planned span + red-tinted
-    # deviation for the late overflow (renders with hatch in matplotlib,
-    # texture/gradient in the calendar delegate)
-    BarState.COMPLETED_LATE: BarColors(base="#059669", deviation="#fca5a5"),
+    # Completed late: green base + a dark red hatch over the late
+    # overflow, 4.28:1 on the base
+    BarState.COMPLETED_LATE: BarColors(base="#059669", deviation="#450a0a"),
     # Completed unknown: identical to on-time visually (we render the
     # full planned span as completed) but classified separately for
     # transparency in tooltips and analytics

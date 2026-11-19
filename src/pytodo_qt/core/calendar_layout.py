@@ -123,6 +123,13 @@ class BarSegment(NamedTuple):
     is True when the segment's true end is after the next midnight (the
     bar continues later). The delegate paints an edge marker on clipped
     sides per Q3.
+
+    `zone_start_minute` and `zone_end_minute` bound the deviation zone
+    of a completed bar on this day, and are None where there is none.
+    For a task finished early it is the stretch from the completion to
+    the planned end; for one finished late, the stretch from the planned
+    end to the completion, which the segment runs on to. The zone lies
+    within the segment, and whoever draws the bar draws it from these.
     """
 
     item_id: UUID
@@ -134,6 +141,25 @@ class BarSegment(NamedTuple):
     is_marker: bool
     marker_label: str | None
     is_all_day: bool
+    zone_start_minute: int | None = None
+    zone_end_minute: int | None = None
+
+    @property
+    def due_edge_minute(self) -> int | None:
+        """The minute of this day at which the bar's planned span ends.
+
+        None where the planned end is not on this day. A bar that runs
+        on past its planned end, to a late completion, has that end
+        where its zone begins and not at its own end.
+        """
+        if self.clipped_bottom:
+            return None
+        if self.state == BarState.COMPLETED_LATE and self.zone_start_minute is not None:
+            if self.zone_start_minute <= self.start_minute:
+                # All of the segment is past the planned end.
+                return None
+            return self.zone_start_minute
+        return self.end_minute
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +245,48 @@ the perception threshold, holds a one-line label, and lines up with
 the half-hour gridline so floored bars still feel grid-native rather
 than arbitrary.
 """
+
+
+# The least stretch of a late bar drawn as its late-overflow zone. A
+# task finished late and one finished on time have the same color; the
+# zone is what tells them apart, and a completion a minute late would
+# otherwise give a zone a pixel high.
+_LEAST_ZONE_MINUTES = 10
+
+
+def _late_zone(start_minute: int, planned_end: int, completed_minute: int) -> tuple[int, int]:
+    """The late-overflow zone of a bar finished late on its due day.
+
+    It runs from the planned end, as the bar is drawn, to the
+    completion, and is at least ``_LEAST_ZONE_MINUTES`` long. A bar that
+    ends too near midnight for that has its zone begin earlier instead,
+    not before the bar itself.
+    """
+    zone_end = min(1440, max(completed_minute, planned_end + _LEAST_ZONE_MINUTES))
+    zone_start = planned_end
+    if zone_end - zone_start < _LEAST_ZONE_MINUTES:
+        zone_start = max(start_minute, zone_end - _LEAST_ZONE_MINUTES)
+    return zone_start, zone_end
+
+
+def completion_day_beyond_window(item: TodoItem, window: BarWindow) -> date | None:
+    """The day a task finished late has its bar on, past its window's days.
+
+    A task finished on a later day than its planned end has a bar on
+    the day it was finished, from midnight to the completion. That day
+    is no day of its window, so a view that sorts tasks by the days of
+    their windows has to add it there. None for any other task.
+    """
+    if not item.complete or item.completed_at is None:
+        return None
+    completed_day = datetime.fromtimestamp(item.completed_at / 1000).date()
+    if window.kind == WindowKind.ALL_DAY:
+        last_day = window.origin.date()
+    else:
+        last_day = window.end.date()
+        if window.end.time() == time(0, 0, 0) and window.end > window.origin:
+            last_day = last_day - timedelta(days=1)
+    return completed_day if completed_day > last_day else None
 
 
 def _apply_min_height_floor(
@@ -650,11 +718,31 @@ def _hour_grid_segment(
     )
 
     as_of = _as_of_for_viewing_day(viewing_day, current_time)
+    completed_dt: datetime | None = None
     if item.complete and item.completed_at is not None:
         completed_dt = datetime.fromtimestamp(item.completed_at / 1000)
         if as_of > completed_dt:
             as_of = completed_dt
     state = compute_bar_state(item, window, as_of)
+
+    # The deviation zone of a completed bar, on this day.
+    zone_start: int | None = None
+    zone_end: int | None = None
+    if completed_dt is not None:
+        completed_minute = _minute_of_day(completed_dt, viewing_day)
+        if state == BarState.COMPLETED_EARLY:
+            # From the completion to the planned end: all of this day's
+            # slice when the task was finished before it, none of it
+            # when the task was finished after this day.
+            if max(start_minute, completed_minute) < end_minute:
+                zone_start, zone_end = max(start_minute, completed_minute), end_minute
+        elif state == BarState.COMPLETED_LATE and completed_dt.date() == viewing_day:
+            # Finished late on the day it was due: the bar runs on to
+            # the completion. Finished on a later day, the bar here
+            # stays its planned span, and the day of the completion has
+            # a bar of its own (_maybe_marker_segment).
+            zone_start, zone_end = _late_zone(start_minute, end_minute, completed_minute)
+            end_minute = zone_end
 
     return [
         BarSegment(
@@ -667,6 +755,8 @@ def _hour_grid_segment(
             is_marker=False,
             marker_label=None,
             is_all_day=False,
+            zone_start_minute=zone_start,
+            zone_end_minute=zone_end,
         )
     ]
 
@@ -732,10 +822,14 @@ def _maybe_marker_segment(
         # midnight (clipped_top because the bar's true origin is days
         # earlier) to completed_at, while the state is computed from the
         # ORIGINAL window so it correctly classifies as COMPLETED_LATE.
+        # All of it is past the planned end: the whole segment is its
+        # late-overflow zone. A completion soon after midnight still
+        # gets a bar of the least height.
         start_minute = _minute_of_day(window.origin, viewing_day)
-        end_minute = _minute_of_day(completed_dt, viewing_day)
-        if start_minute >= end_minute:
-            return []
+        end_minute = max(
+            _minute_of_day(completed_dt, viewing_day),
+            min(1440, start_minute + _MIN_VISIBLE_MINUTES),
+        )
         # State always uses the original window — the completed_at is
         # past window.end, which produces COMPLETED_LATE.
         state = compute_bar_state(item, window, completed_dt)
@@ -750,6 +844,8 @@ def _maybe_marker_segment(
                 is_marker=False,
                 marker_label=None,
                 is_all_day=False,
+                zone_start_minute=start_minute,
+                zone_end_minute=end_minute,
             )
         ]
 
