@@ -59,6 +59,12 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 
+# The one style of an explanatory note on a tab: upright, in the dialog's
+# own type size, in the muted text colour. The notes had three styles:
+# italic, upright, and upright in smaller type.
+_NOTE_STYLE = "color: palette(placeholder-text);"
+
+
 class _FullHeightScrollArea(QScrollArea):
     """A scroll area that asks for the full size of what it holds.
 
@@ -399,7 +405,7 @@ class SettingsDialog(QDialog):
             )
         )
         note.setWordWrap(True)
-        note.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
+        note.setStyleSheet(_NOTE_STYLE)
         layout.addWidget(note)
 
         layout.addStretch()
@@ -438,7 +444,7 @@ class SettingsDialog(QDialog):
             )
         )
         push_label.setWordWrap(True)
-        push_label.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
+        push_label.setStyleSheet(_NOTE_STYLE)
         auto_layout.addRow(push_label)
 
         self.auto_sync_delay_spin = QSpinBox()
@@ -454,7 +460,7 @@ class SettingsDialog(QDialog):
             )
         )
         interval_label.setWordWrap(True)
-        interval_label.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
+        interval_label.setStyleSheet(_NOTE_STYLE)
         auto_layout.addRow(interval_label)
 
         self.auto_sync_interval_spin = QSpinBox()
@@ -512,7 +518,7 @@ class SettingsDialog(QDialog):
         font_hint = QLabel(
             self.tr("Some surfaces (timer digits, table rows) refresh on next app restart.")
         )
-        font_hint.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
+        font_hint.setStyleSheet(_NOTE_STYLE)
         font_hint.setWordWrap(True)
         font_layout.addRow("", font_hint)
 
@@ -547,7 +553,7 @@ class SettingsDialog(QDialog):
 
         # Preview note
         note = QLabel(self.tr("Theme changes are applied immediately."))
-        note.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
+        note.setStyleSheet(_NOTE_STYLE)
         layout.addWidget(note)
 
         layout.addStretch()
@@ -717,7 +723,7 @@ class SettingsDialog(QDialog):
                 "Noon (11:30-12:30) and midnight (23:30-00:30) are fixed."
             )
         )
-        note.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
+        note.setStyleSheet(_NOTE_STYLE)
         layout.addWidget(note)
 
         layout.addStretch()
@@ -836,7 +842,7 @@ class SettingsDialog(QDialog):
             self.tr("Focus-session and milestone notifications are set on the Focus Timer tab.")
         )
         note.setWordWrap(True)
-        note.setStyleSheet("color: palette(placeholder-text);")
+        note.setStyleSheet(_NOTE_STYLE)
         layout.addWidget(note)
         layout.addStretch()
 
@@ -877,7 +883,7 @@ class SettingsDialog(QDialog):
     def _make_notification_hint(self) -> QLabel:
         hint = QLabel()
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: palette(placeholder-text); font-style: italic;")
+        hint.setStyleSheet(_NOTE_STYLE)
         return hint
 
     def _notification_time_format(self) -> str:
@@ -1058,7 +1064,7 @@ class SettingsDialog(QDialog):
         form.addRow(self.tr("Pairing PIN:"), self.web_pin_label)
 
         self.web_pin_hint = QLabel(self.tr("Enter this PIN on your phone to connect"))
-        self.web_pin_hint.setStyleSheet("font-size: 11px; color: palette(placeholder-text);")
+        self.web_pin_hint.setStyleSheet(_NOTE_STYLE)
         form.addRow("", self.web_pin_hint)
 
         # Device count indicator

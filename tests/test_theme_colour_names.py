@@ -104,7 +104,7 @@ class TestSourcesNameColoursTheThemeDecides:
     def test_the_roles_are_in_use(self):
         """The check above finds something to check."""
         text = "\n".join(text for _path, text in _sources())
-        assert text.count("palette(placeholder-text)") >= 40
+        assert text.count("palette(placeholder-text)") >= 30
         assert text.count("palette(highlighted-text)") >= 9
 
 

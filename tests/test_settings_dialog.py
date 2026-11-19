@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
+    QLabel,
     QLineEdit,
     QScrollArea,
     QSlider,
@@ -580,3 +581,47 @@ class TestNoTabSqueezesItsRows:
         after = page.sizeHint().height()
         if after > before:
             assert page.height() >= after
+
+
+class TestNotesHaveOneStyle:
+    """An explanatory note on a tab is upright, in the dialog's own type
+    size, in the muted text colour. There were three styles: seven notes
+    in italics, one upright, two upright in smaller type."""
+
+    NOTE = "color: palette(placeholder-text);"
+
+    @staticmethod
+    def _muted_labels(dialog):
+        return [
+            label
+            for label in dialog.findChildren(QLabel)
+            if "palette(placeholder-text)" in label.styleSheet()
+        ]
+
+    def test_the_notes_are_found_on_six_tabs(self, dialog):
+        pages = set()
+        for label in self._muted_labels(dialog):
+            for index in range(dialog.tabs.count()):
+                if dialog.tabs.widget(index).isAncestorOf(label):
+                    pages.add(dialog.tabs.tabText(index))
+        assert pages == {"Security", "Sync", "Appearance", "Time Blocks", "Notifications", "Web UI"}
+
+    def test_every_note_has_the_one_style(self, dialog):
+        notes = [label for label in self._muted_labels(dialog) if label is not dialog.web_pin_label]
+        assert len(notes) >= 10
+        for note in notes:
+            assert note.styleSheet() == self.NOTE, note.text()
+
+    def test_no_note_is_in_italics_or_in_smaller_type(self, dialog):
+        for note in self._muted_labels(dialog):
+            assert "italic" not in note.styleSheet(), note.text()
+            if note is not dialog.web_pin_label:
+                assert "font-size" not in note.styleSheet(), note.text()
+                assert note.font().pointSizeF() == dialog.font().pointSizeF(), note.text()
+
+    def test_a_note_can_be_read(self):
+        from pytodo_qt.core.bar_palette import contrast_ratio
+        from pytodo_qt.gui.styles.themes import DARK_COLORS, LIGHT_COLORS
+
+        for colors in (LIGHT_COLORS, DARK_COLORS):
+            assert contrast_ratio(colors["completed_text"], colors["window"]) >= 4.5
