@@ -42,7 +42,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.models import TodoItem, TodoList, format_duration
-from ..styles.themes import border_color
+from ..styles.themes import border_color, font_px
 from .advance_reminder import AdvanceReminderEditor
 
 _W = TypeVar("_W", bound=QWidget)
@@ -165,7 +165,7 @@ class TaskDetailPanel(QDockWidget):
         header = QLabel(title)
         header_font = QFont()
         header_font.setBold(True)
-        header_font.setPixelSize(11)
+        header_font.setPixelSize(font_px(11))
         header.setFont(header_font)
         header.setStyleSheet("color: palette(link); margin-bottom: 2px;")
         layout.addWidget(header)
@@ -208,7 +208,7 @@ class TaskDetailPanel(QDockWidget):
         self._parent_breadcrumb.setStyleSheet(
             "QPushButton { text-align: left; color: palette(link);"
             " background: transparent; border: none; padding: 0 0 4px 0;"
-            " font-size: 11px; }"
+            f" font-size: {font_px(11)}px; }}"
             "QPushButton:hover { text-decoration: underline; }"
         )
         self._parent_breadcrumb.clicked.connect(self._on_parent_breadcrumb_clicked)
@@ -507,7 +507,7 @@ class TaskDetailPanel(QDockWidget):
         header = QLabel(self.tr("Subtasks"))
         header_font = QFont()
         header_font.setBold(True)
-        header_font.setPixelSize(11)
+        header_font.setPixelSize(font_px(11))
         header.setFont(header_font)
         header.setStyleSheet("color: palette(link); margin-bottom: 2px;")
         layout.addWidget(header)
@@ -526,7 +526,7 @@ class TaskDetailPanel(QDockWidget):
 
         self._subtasks_empty_label = QLabel(self.tr("No subtasks. Click + Add Subtask to add one."))
         self._subtasks_empty_label.setStyleSheet(
-            "color: palette(placeholder-text); font-style: italic; font-size: 10px;"
+            f"color: palette(placeholder-text); font-style: italic; font-size: {font_px(10)}px;"
         )
         self._subtasks_empty_label.setWordWrap(True)
         self._subtasks_layout.addWidget(self._subtasks_empty_label)
@@ -935,10 +935,12 @@ class TaskDetailPanel(QDockWidget):
 
         mono_css = ", ".join(f'"{f}"' for f in MONO_FONT_FAMILIES)
         self._id_value.setText(str(item.id))
-        self._id_value.setStyleSheet(f"font-family: {mono_css}; font-size: 10px;")
+        self._id_value.setStyleSheet(f"font-family: {mono_css}; font-size: {font_px(10)}px;")
         if item.parent_id:
             self._parent_value.setText(str(item.parent_id))
-            self._parent_value.setStyleSheet(f"font-family: {mono_css}; font-size: 10px;")
+            self._parent_value.setStyleSheet(
+                f"font-family: {mono_css}; font-size: {font_px(10)}px;"
+            )
         else:
             self._parent_value.setText("\u2014")
             self._parent_value.setStyleSheet("")

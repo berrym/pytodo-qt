@@ -44,7 +44,7 @@ from ...core.models import (
     is_due_today,
     is_overdue,
 )
-from ..styles.themes import FINISHED_BORDER_PX, get_colors, make_font
+from ..styles.themes import FINISHED_BORDER_PX, font_px, get_colors, make_font
 from .time_combo import TimeComboBox
 
 if TYPE_CHECKING:
@@ -1223,7 +1223,7 @@ class TodoTableWidget(QTableWidget):
                 toggle_btn = ClickableLabel(toggle_char)
                 write(
                     toggle_btn,
-                    f"color: {colors['completed_text']}; font-size: 10px; padding: 0 2px;",
+                    f"color: {colors['completed_text']}; font-size: {font_px(10)}px; padding: 0 2px;",
                 )
                 toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
                 toggle_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -1269,7 +1269,7 @@ class TodoTableWidget(QTableWidget):
 
             # Ellipsis indicator for viewing full reminder text (shown only when truncated)
             ellipsis = ClickableLabel("…")
-            write(ellipsis, f"color: {colors['completed_text']}; font-size: 10px;")
+            write(ellipsis, f"color: {colors['completed_text']}; font-size: {font_px(10)}px;")
             ellipsis.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             ellipsis.setCursor(Qt.CursorShape.PointingHandCursor)
             ellipsis.clicked.connect(
@@ -1285,7 +1285,7 @@ class TodoTableWidget(QTableWidget):
 
                 time_text = PomodoroWidget.format_time_spent(item.time_spent)
                 time_label = QLabel(time_text)
-                write(time_label, f"color: {colors['completed_text']}; font-size: 10px;")
+                write(time_label, f"color: {colors['completed_text']}; font-size: {font_px(10)}px;")
                 time_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
                 reminder_layout.addWidget(time_label)
 
@@ -1314,7 +1314,7 @@ class TodoTableWidget(QTableWidget):
                 else:
                     pomo_text = str(item.pomodoro_count)
                 pomo_label = QLabel(pomo_text)
-                write(pomo_label, f"color: {colors['completed_text']}; font-size: 10px;")
+                write(pomo_label, f"color: {colors['completed_text']}; font-size: {font_px(10)}px;")
                 pomo_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
                 pomo_container.addWidget(pomo_label)
 
@@ -1335,7 +1335,10 @@ class TodoTableWidget(QTableWidget):
                     if completed == total
                     else colors["completed_text"]
                 )
-                write(badge_label, f"color: {badge_color}; font-size: 10px; font-weight: bold;")
+                write(
+                    badge_label,
+                    f"color: {badge_color}; font-size: {font_px(10)}px; font-weight: bold;",
+                )
                 badge_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
                 reminder_layout.addWidget(badge_label)
 
@@ -1345,7 +1348,7 @@ class TodoTableWidget(QTableWidget):
                 chip_style = (
                     f"background-color: {colors['highlight']}; "
                     f"color: {colors.get('highlight_text', '#ffffff')}; "
-                    "border-radius: 8px; padding: 1px 6px; font-size: 10px;"
+                    f"border-radius: 8px; padding: 1px 6px; font-size: {font_px(10)}px;"
                 )
                 for tag in item.tags[:_MAX_VISIBLE_TAGS]:
                     chip = QLabel(tag)
@@ -1359,7 +1362,7 @@ class TodoTableWidget(QTableWidget):
                     badge.setStyleSheet(
                         f"background-color: {colors['button']}; "
                         f"color: {colors['text']}; "
-                        "border-radius: 8px; padding: 1px 6px; font-size: 10px;"
+                        f"border-radius: 8px; padding: 1px 6px; font-size: {font_px(10)}px;"
                     )
                     badge.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
                     badge.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1536,7 +1539,7 @@ class TodoTableWidget(QTableWidget):
         chip_style = (
             f"background-color: {colors['highlight']}; "
             f"color: {colors.get('highlight_text', '#ffffff')}; "
-            "border-radius: 8px; padding: 2px 8px; font-size: 10px;"
+            f"border-radius: 8px; padding: 2px 8px; font-size: {font_px(10)}px;"
         )
 
         popup = QWidget(self, Qt.WindowType.Popup)
@@ -1551,7 +1554,7 @@ class TodoTableWidget(QTableWidget):
 
         edit_btn = QPushButton(self.tr("Edit..."))
         edit_btn.setFixedHeight(20)
-        edit_btn.setStyleSheet("font-size: 10px; padding: 1px 6px;")
+        edit_btn.setStyleSheet(f"font-size: {font_px(10)}px; padding: 1px 6px;")
         edit_btn.clicked.connect(lambda: self._on_popup_edit(popup, item_id))
         layout.addWidget(edit_btn)
 

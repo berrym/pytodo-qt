@@ -35,7 +35,7 @@ from ...core.nlp_parser import (
     advance_reminder_label,
     parse,
 )
-from ..styles.themes import get_colors
+from ..styles.themes import font_px, get_colors
 
 # ---------------------------------------------------------------------------
 # Entity colors — sourced from the canonical theme palette in
@@ -173,7 +173,7 @@ class EntityChip(QLabel):
                 f"color: {color}; "
                 f"border: 1px dashed rgba({r}, {g}, {b}, 128); "
                 "border-radius: 8px; padding: 1px 6px; "
-                "font-size: 11px; font-weight: bold; }"
+                f"font-size: {font_px(11)}px; font-weight: bold; }}"
             )
         else:
             self.setStyleSheet(
@@ -181,7 +181,7 @@ class EntityChip(QLabel):
                 f"color: {color}; "
                 f"border: 1px solid rgba({r}, {g}, {b}, 97); "
                 "border-radius: 8px; padding: 1px 6px; "
-                "font-size: 11px; font-weight: bold; }"
+                f"font-size: {font_px(11)}px; font-weight: bold; }}"
             )
 
     def mousePressEvent(self, ev: QMouseEvent | None) -> None:  # noqa: N802

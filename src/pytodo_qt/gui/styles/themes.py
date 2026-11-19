@@ -418,6 +418,26 @@ def get_colors() -> dict[str, str]:
     return LIGHT_COLORS
 
 
+# The least size of text, in the pixels a style sheet and
+# `QFont.setPixelSize` count in. macOS counts 72 of them to the inch, so
+# that a point is a pixel and the application's 10 pt type is 10 px high;
+# Linux and Windows count 96, and the same type is 13.3 px. A size of
+# 10 px is the application's own size on macOS and three quarters of it
+# elsewhere: 7.5 pt. The least size is 10 pt on macOS, which is what
+# Apple's guidelines give, and 9 pt, 12 px, elsewhere.
+MIN_FONT_PX = 10 if sys.platform == "darwin" else 12
+
+
+def font_px(size: int) -> int:
+    """A text size in pixels, never under the platform's least size.
+
+    Sizes above the least size are kept as they are, so the steps
+    between a caption, a label and a heading stay where the platform
+    has room for them.
+    """
+    return max(size, MIN_FONT_PX)
+
+
 def border_color() -> str:
     """The theme's border color, to be written into a style sheet.
 

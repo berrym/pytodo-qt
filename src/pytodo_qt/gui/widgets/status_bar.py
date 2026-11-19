@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QEvent, QRect, QRectF, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QFontDatabase, QPainter, QPen
+from PyQt6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics, QPainter, QPen
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.logger import Logger
-from ..styles.themes import get_colors
+from ..styles.themes import font_px, get_colors
 
 _POMODORO_EMOJI = {"work": "\U0001f345", "break": "\u2615", "pause": "\u23f8\ufe0f"}
 _STOPWATCH_EMOJI = {"running": "\u23f1\ufe0f", "paused": "\u23f8\ufe0f"}
@@ -31,6 +31,10 @@ if TYPE_CHECKING:
 
 
 logger = Logger(__name__)
+
+# From the edge of the daily goal ring to the count inside it: the
+# ring's stroke, its margin, and a little air.
+_RING_INSET = 6
 
 # A muted text: the palette's placeholder role, which the theme sets to
 # its muted text color and which follows a change of theme by itself.
@@ -61,7 +65,15 @@ class DailyGoalRingWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(22, 22)
+        # The count in the middle is written at the least text size, and
+        # the ring is as wide as two digits of it need: 22 px for the
+        # 7 pt the count had, which was under the least size everywhere.
+        self._count_font = QFont()
+        self._count_font.setPixelSize(font_px(9))
+        self._count_font.setBold(True)
+        two_digits = QFontMetrics(self._count_font).horizontalAdvance("00")
+        side = max(22, two_digits + 2 * _RING_INSET)
+        self.setFixedSize(side, side)
         self._completed = 0
         self._goal = 0
 
@@ -106,10 +118,7 @@ class DailyGoalRingWidget(QWidget):
             painter.drawArc(rect, 90 * 16, span)
 
         # Center text
-        font = QFont()
-        font.setPointSize(7)
-        font.setBold(True)
-        painter.setFont(font)
+        painter.setFont(self._count_font)
         text_color = (
             QColor("#43a047")
             if self._completed >= self._goal

@@ -37,7 +37,7 @@ from ...core.config import get_config
 from ...core.logger import Logger
 from ...core.models import TodoItem
 from ...core.nlp_parser import EntityKind, ParseResult, replace_or_append_category
-from ..styles.themes import border_color
+from ..styles.themes import border_color, font_px
 from ..widgets.advance_reminder import AdvanceReminderEditor
 from ..widgets.smart_input import SmartInputWidget
 from ..widgets.time_combo import TimeComboBox
@@ -886,7 +886,7 @@ class AddTodoDialog(QDialog):
         btn.setMenu(menu)
         btn.setStyleSheet(
             f"QToolButton {{ padding: 4px 10px; border: 1px solid {border_color()};"
-            " border-radius: 4px; background: palette(base); font-size: 11px; }"
+            f" border-radius: 4px; background: palette(base); font-size: {font_px(11)}px; }}"
             " QToolButton:hover { background: palette(button); }"
             " QToolButton::menu-indicator { image: none; width: 0; }"
         )

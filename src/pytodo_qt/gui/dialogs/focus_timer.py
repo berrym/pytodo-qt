@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..styles.themes import get_colors
+from ..styles.themes import font_px, get_colors
 
 _TOMATO_EMOJI = "\U0001f345"
 
@@ -240,7 +240,7 @@ class FocusTimerDialog(QDialog):
         # Stats summary row
         self._stats_label = QLabel()
         self._stats_label.setStyleSheet(
-            f"color: {_toggle_colors['completed_text']}; font-size: 11px;"
+            f"color: {_toggle_colors['completed_text']}; font-size: {font_px(11)}px;"
         )
         self._stats_label.setWordWrap(True)
         sessions_outer.addWidget(self._stats_label)
@@ -465,7 +465,7 @@ class FocusTimerDialog(QDialog):
         if len(sessions) > max_recent:
             more = QLabel(self.tr(f"... and {len(sessions) - max_recent} earlier"))
             more.setStyleSheet(
-                "color: palette(placeholder-text); font-size: 10px; font-style: italic;"
+                f"color: palette(placeholder-text); font-size: {font_px(10)}px; font-style: italic;"
             )
             self._recent_layout.insertWidget(0, more)
 
@@ -495,7 +495,7 @@ class FocusTimerDialog(QDialog):
 
         text = f"{item_name}: {_format_duration(duration)}{time_range}"
         label = QLabel(text)
-        label.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
+        label.setStyleSheet(f"color: palette(placeholder-text); font-size: {font_px(11)}px;")
         label.setFrameShape(QFrame.Shape.NoFrame)
         return label
 
@@ -566,7 +566,7 @@ class FocusTimerDialog(QDialog):
         if len(sessions) > max_recent:
             more = QLabel(self.tr(f"... and {len(sessions) - max_recent} earlier"))
             more.setStyleSheet(
-                "color: palette(placeholder-text); font-size: 10px; font-style: italic;"
+                f"color: palette(placeholder-text); font-size: {font_px(10)}px; font-style: italic;"
             )
             # Insert at top
             self._recent_layout.insertWidget(0, more)
@@ -601,7 +601,7 @@ class FocusTimerDialog(QDialog):
 
         text = self.tr(f"Session {index}: {m:02d}:{s:02d} {mark}{time_range}")
         label = QLabel(text)
-        label.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
+        label.setStyleSheet(f"color: palette(placeholder-text); font-size: {font_px(11)}px;")
 
         # Add separator line
         label.setFrameShape(QFrame.Shape.NoFrame)
@@ -725,7 +725,9 @@ class FocusTimerDialog(QDialog):
 
         if overflow:
             overflow_label = QLabel(f"+{pomodoro_count - max_icons}")
-            overflow_label.setStyleSheet("color: palette(placeholder-text); font-size: 11px;")
+            overflow_label.setStyleSheet(
+                f"color: palette(placeholder-text); font-size: {font_px(11)}px;"
+            )
             layout.insertWidget(layout.count() - 1, overflow_label)
 
         self._item_progress_container.show()

@@ -49,6 +49,7 @@ from ..styles.themes import (
     MONO_FONT_FAMILIES,
     apply_current_theme,
     apply_font_setting,
+    font_px,
     get_colors,
 )
 
@@ -1041,7 +1042,7 @@ class SettingsDialog(QDialog):
 
         # TLS is always on — no user toggle (security requirement)
         tls_label = QLabel(self.tr("\U0001f512 All connections are encrypted (TLS)"))
-        tls_label.setStyleSheet("color: palette(link); font-size: 11px;")
+        tls_label.setStyleSheet(f"color: palette(link); font-size: {font_px(11)}px;")
         form.addRow("", tls_label)
 
         # Pairing PIN display — 28 px font + 8 px padding needs an

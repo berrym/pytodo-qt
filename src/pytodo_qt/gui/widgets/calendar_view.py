@@ -31,6 +31,7 @@ from PyQt6.QtCore import (
     QPoint,
     QPointF,
     QRect,
+    QSize,
     Qt,
     QTimer,
     pyqtSignal,
@@ -66,7 +67,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.bar_palette import readable_text_on
-from ..styles.themes import border_color
+from ..styles.themes import border_color, font_px
 from ..styles.themes import get_colors as _theme_colors
 
 if TYPE_CHECKING:
@@ -384,7 +385,7 @@ def _compute_overflow_badge_rect(rect, overflow_count: int) -> QRect | None:
     if overflow_count <= 0:
         return None
     badge_font = QFont()
-    badge_font.setPixelSize(9)
+    badge_font.setPixelSize(font_px(9))
     badge_font.setBold(True)
     fm = QFontMetrics(badge_font)
     badge_text = f"+{overflow_count}"
@@ -605,7 +606,7 @@ class _CloseButton(QWidget):
 _ITEMS_ROLE = Qt.ItemDataRole.UserRole + 1
 _DATE_ROLE = Qt.ItemDataRole.UserRole + 2
 _DAY_HEADER_HEIGHT = 18
-_ITEM_FONT_SIZE = 10
+_ITEM_FONT_SIZE = font_px(10)
 
 
 def _calc_cell_layout(
@@ -791,7 +792,7 @@ class _CalendarDelegate(QStyledItemDelegate):
 
         # --- Day number ---
         day_font = QFont(painter.font())
-        day_font.setPixelSize(11)
+        day_font.setPixelSize(font_px(11))
         if cell_date == self._today:
             day_font.setBold(True)
         painter.setFont(day_font)
@@ -1812,7 +1813,7 @@ class _TimelineTasksWidget(QWidget):
                 f'<span style="color:{hex_c};">\u25a0</span> '
                 f'<span style="color:{text_color};">{name}</span>'
             )
-            lbl.setStyleSheet("font-size: 11px;")
+            lbl.setStyleSheet(f"font-size: {font_px(11)}px;")
             if legend_layout is not None:
                 legend_layout.addWidget(lbl)
             self._legend_labels.append(lbl)
@@ -2353,7 +2354,7 @@ class _TimelineDailyWidget(QWidget):
                 f'<span style="color:{hex_c};">\u25a0</span> '
                 f'<span style="color:{text_color};">{name}</span>'
             )
-            lbl.setStyleSheet("font-size: 11px;")
+            lbl.setStyleSheet(f"font-size: {font_px(11)}px;")
             if legend_layout is not None:
                 legend_layout.addWidget(lbl)
             self._legend_labels.append(lbl)
@@ -2738,7 +2739,7 @@ class _TimelineProductivityWidget(QWidget):
                 f'<span style="color:{hex_c};">\u25a0</span> '
                 f'<span style="color:{text_color};">{name}</span>'
             )
-            lbl.setStyleSheet("font-size: 11px;")
+            lbl.setStyleSheet(f"font-size: {font_px(11)}px;")
             if legend_layout is not None:
                 legend_layout.addWidget(lbl)
             self._legend_labels.append(lbl)
@@ -2746,7 +2747,7 @@ class _TimelineProductivityWidget(QWidget):
             f'<span style="color:{c.get("completed_text", "#8c8c8c")};">'
             f"{_tr('CalendarViewWidget', '% = sessions finished without interruption')}</span>"
         )
-        note.setStyleSheet("font-size: 10px;")
+        note.setStyleSheet(f"font-size: {font_px(10)}px;")
         if legend_layout is not None:
             legend_layout.addWidget(note)
         self._legend_labels.append(note)
@@ -3109,7 +3110,7 @@ class _TimelineAccuracyWidget(QWidget):
                 f'<span style="color:{hex_c};">\u25cf</span> '
                 f'<span style="color:{text_color};">{name}</span>'
             )
-            lbl.setStyleSheet("font-size: 11px;")
+            lbl.setStyleSheet(f"font-size: {font_px(11)}px;")
             if legend_layout is not None:
                 legend_layout.addWidget(lbl)
             self._legend_labels.append(lbl)
@@ -3177,7 +3178,7 @@ class _TimelineTimingWidget(QWidget):
         self._title_label.setToolTip(self.tr("Click ⓘ for the full explanation."))
         self._title_label.linkActivated.connect(lambda _href: self._show_explanation())
         self._note_label = QLabel("")
-        self._note_label.setStyleSheet("font-size: 11px; padding: 0px 10px 6px 10px;")
+        self._note_label.setStyleSheet(f"font-size: {font_px(11)}px; padding: 0px 10px 6px 10px;")
         self._note_label.setVisible(False)
 
         self._create_styles()
@@ -3314,7 +3315,7 @@ class _TimelineTimingWidget(QWidget):
 
         if timing.unknown_count > 0:
             self._note_label.setStyleSheet(
-                f"font-size: 11px; color: {self._col_muted.name()}; padding: 0px 10px 6px 10px;"
+                f"font-size: {font_px(11)}px; color: {self._col_muted.name()}; padding: 0px 10px 6px 10px;"
             )
             self._note_label.setText(
                 _tr(
@@ -3408,7 +3409,9 @@ class _TimelineCycleWidget(QWidget):
             self._tiles_layout.addWidget(tile_widget, 1)
 
         self._subtitle_label = QLabel("")
-        self._subtitle_label.setStyleSheet("font-size: 11px; padding: 0px 10px 10px 10px;")
+        self._subtitle_label.setStyleSheet(
+            f"font-size: {font_px(11)}px; padding: 0px 10px 10px 10px;"
+        )
         self._subtitle_label.setWordWrap(True)
 
         layout = QVBoxLayout(self)
@@ -3452,7 +3455,7 @@ class _TimelineCycleWidget(QWidget):
             value_label.setStyleSheet(f"font-size: 28px; font-weight: bold; color: {text_color};")
         for tag_label in (self._mean_label, self._median_label, self._p90_label):
             tag_label.setStyleSheet(
-                f"font-size: 11px; color: {muted_color}; text-transform: uppercase;"
+                f"font-size: {font_px(11)}px; color: {muted_color}; text-transform: uppercase;"
                 " letter-spacing: 1px;"
             )
         self._tiles_widget.setStyleSheet(
@@ -3460,7 +3463,7 @@ class _TimelineCycleWidget(QWidget):
             " border-radius: 6px; }"
         )
         self._subtitle_label.setStyleSheet(
-            f"font-size: 11px; color: {muted_color}; padding: 0px 10px 10px 10px;"
+            f"font-size: {font_px(11)}px; color: {muted_color}; padding: 0px 10px 10px 10px;"
         )
 
     def set_analytics(self, analytics) -> None:
@@ -3978,7 +3981,7 @@ class _WeekDelegate(QStyledItemDelegate):
             if label_rect is not None:
                 painter.save()
                 text_font = QFont(painter.font())
-                text_font.setPixelSize(10)
+                text_font.setPixelSize(font_px(10))
                 text_font.setBold(True)
                 painter.setFont(text_font)
                 fm = QFontMetrics(text_font)
@@ -4006,7 +4009,7 @@ class _WeekDelegate(QStyledItemDelegate):
         if badge_rect is not None:
             painter.save()
             badge_font = QFont(painter.font())
-            badge_font.setPixelSize(9)
+            badge_font.setPixelSize(font_px(9))
             badge_font.setBold(True)
             painter.setFont(badge_font)
             painter.setBrush(QColor(17, 24, 39, 220))  # near-black translucent
@@ -4288,7 +4291,7 @@ class _WeekDelegate(QStyledItemDelegate):
 
         # Draw task chips (All Day row only)
         item_font = QFont(painter.font())
-        item_font.setPixelSize(10)
+        item_font.setPixelSize(font_px(10))
         painter.setFont(item_font)
         fm = QFontMetrics(item_font)
 
@@ -4771,7 +4774,7 @@ class _WeekTableView(QTableView):
         )
         self._resize_snap_label.setStyleSheet(
             f"QLabel {{ background: {_overlay}; color: {readable_text_on(_overlay)}; "
-            "padding: 4px 8px; font-size: 11px; font-weight: bold; }"
+            f"padding: 4px 8px; font-size: {font_px(11)}px; font-weight: bold; }}"
         )
         self._resize_snap_label.hide()
 
@@ -4860,7 +4863,7 @@ class _WeekTableView(QTableView):
             return None
 
         font = QFont()
-        font.setPixelSize(10)
+        font.setPixelSize(font_px(10))
         fm = QFontMetrics(font)
         chip_height = fm.height() + 4
         overflow_height = fm.height() + 2
@@ -5612,7 +5615,7 @@ class _DayHeaders(QWidget):
             lbl = QLabel(name)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setStyleSheet(
-                "font-size: 11px; font-weight: bold; padding: 2px;"
+                f"font-size: {font_px(11)}px; font-weight: bold; padding: 2px;"
                 " color: palette(placeholder-text); border: none;"
             )
             lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -5631,6 +5634,40 @@ class _DraggableTaskButton(QPushButton):
         super().__init__(parent)
         self._item_id = item_id
         self._drag_start = None
+        # The button's text is in labels laid out inside it, and its
+        # height is theirs: see sizeHint(). A button's own height is
+        # fixed; this one's follows its width, as a title that wraps
+        # takes more lines in a narrower panel.
+        policy = self.sizePolicy()
+        policy.setVerticalPolicy(QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+
+    # A button asks for the height of its own text, which this one does
+    # not have: its text is in the labels of a layout inside it. With
+    # the button's own height the labels were squeezed under theirs, a
+    # title and a line of detail into the room of one line and a half.
+    def sizeHint(self) -> QSize:  # noqa: N802
+        hint = super().sizeHint()
+        layout = self.layout()
+        return hint if layout is None else hint.expandedTo(layout.totalSizeHint())
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        hint = super().minimumSizeHint()
+        layout = self.layout()
+        return hint if layout is None else hint.expandedTo(layout.totalMinimumSize())
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802
+        layout = self.layout()
+        return layout is not None and layout.hasHeightForWidth()
+
+    def heightForWidth(self, a0: int) -> int:  # noqa: N802
+        layout = self.layout()
+        if layout is None:
+            return super().heightForWidth(a0)
+        # A title that wraps takes a line more. The total takes in the
+        # room the button's style keeps free around the layout.
+        return max(layout.totalHeightForWidth(a0), layout.totalMinimumSize().height())
 
     def mousePressEvent(self, e) -> None:  # noqa: N802
         if e is not None and e.button() == Qt.MouseButton.LeftButton:
@@ -5700,7 +5737,9 @@ class _UnscheduledPanel(QFrame):
         layout.addWidget(header)
 
         self._count_label = QLabel(self.tr("0 tasks"))
-        self._count_label.setStyleSheet("font-size: 10px; color: palette(placeholder-text);")
+        self._count_label.setStyleSheet(
+            f"font-size: {font_px(10)}px; color: palette(placeholder-text);"
+        )
         layout.addWidget(self._count_label)
 
         self._scroll = QScrollArea()
@@ -5789,7 +5828,7 @@ class _UnscheduledPanel(QFrame):
             title.setWordWrap(True)
             title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             title.setStyleSheet(
-                f"font-size: 10px; {strike} color: {text_color}; border: none; background: none;"
+                f"font-size: {font_px(10)}px; {strike} color: {text_color}; border: none; background: none;"
             )
             row_layout.addWidget(title)
 
@@ -5821,7 +5860,7 @@ class _UnscheduledPanel(QFrame):
                 detail_lbl = QLabel(" \u2022 ".join(details))
                 detail_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
                 detail_lbl.setStyleSheet(
-                    f"font-size: 9px; color: {c['completed_text']}; border: none; background: none;"
+                    f"font-size: {font_px(9)}px; color: {c['completed_text']}; border: none; background: none;"
                 )
                 row_layout.addWidget(detail_lbl)
 
@@ -5894,7 +5933,9 @@ class _CalendarLegend(QWidget):
 
         # "Legend:" prefix
         prefix = QLabel(self.tr("Legend:"))
-        prefix.setStyleSheet("QLabel { color: palette(text); font-size: 11px; font-weight: bold; }")
+        prefix.setStyleSheet(
+            f"QLabel {{ color: palette(text); font-size: {font_px(11)}px; font-weight: bold; }}"
+        )
         self._layout.addWidget(prefix)
 
         # Swatches are sized for WCAG 1.4.11 legibility — the prior 14x12 was
@@ -5912,13 +5953,17 @@ class _CalendarLegend(QWidget):
             )
             self._layout.addWidget(swatch)
             text_label = QLabel(bar_state_label(state))
-            text_label.setStyleSheet("QLabel { color: palette(text); font-size: 11px; }")
+            text_label.setStyleSheet(
+                f"QLabel {{ color: palette(text); font-size: {font_px(11)}px; }}"
+            )
             self._layout.addWidget(text_label)
             self._swatches.append(swatch)
 
         # Spacer between lifecycle states and deviation markers
         spacer = QLabel("  |  ")
-        spacer.setStyleSheet("QLabel { color: palette(placeholder-text); font-size: 10px; }")
+        spacer.setStyleSheet(
+            f"QLabel {{ color: palette(placeholder-text); font-size: {font_px(10)}px; }}"
+        )
         self._layout.addWidget(spacer)
 
         # Deviation indicators — using the COMPLETED_EARLY and COMPLETED_LATE
@@ -5939,7 +5984,7 @@ class _CalendarLegend(QWidget):
         )
         self._layout.addWidget(early_swatch)
         early_label = QLabel(self.tr("Early surplus"))
-        early_label.setStyleSheet("QLabel { color: palette(text); font-size: 10px; }")
+        early_label.setStyleSheet(f"QLabel {{ color: palette(text); font-size: {font_px(10)}px; }}")
         self._layout.addWidget(early_label)
 
         late_colors = palette[BarState.COMPLETED_LATE]
@@ -5952,12 +5997,14 @@ class _CalendarLegend(QWidget):
         )
         self._layout.addWidget(late_swatch)
         late_label = QLabel(self.tr("Late overflow"))
-        late_label.setStyleSheet("QLabel { color: palette(text); font-size: 10px; }")
+        late_label.setStyleSheet(f"QLabel {{ color: palette(text); font-size: {font_px(10)}px; }}")
         self._layout.addWidget(late_label)
 
         # Separator before the now-line indicator
         spacer2 = QLabel("  |  ")
-        spacer2.setStyleSheet("QLabel { color: palette(placeholder-text); font-size: 10px; }")
+        spacer2.setStyleSheet(
+            f"QLabel {{ color: palette(placeholder-text); font-size: {font_px(10)}px; }}"
+        )
         self._layout.addWidget(spacer2)
 
         # Now-line indicator — a small horizontal red line swatch matching
@@ -5990,7 +6037,7 @@ class _CalendarLegend(QWidget):
         )
         self._layout.addWidget(now_swatch)
         now_label = QLabel(self.tr("Now"))
-        now_label.setStyleSheet("QLabel { color: palette(text); font-size: 10px; }")
+        now_label.setStyleSheet(f"QLabel {{ color: palette(text); font-size: {font_px(10)}px; }}")
         self._layout.addWidget(now_label)
         self._swatches.append(now_swatch)
 
@@ -6313,7 +6360,9 @@ class _AgendaRow(QFrame):
         time_label = QLabel(time_text)
         # Wide enough for the longest block name, "Early Afternoon".
         time_label.setFixedWidth(96)
-        self._text_labels.append((time_label, colors["text"], "font-size: 11px; border: none;"))
+        self._text_labels.append(
+            (time_label, colors["text"], f"font-size: {font_px(11)}px; border: none;")
+        )
         layout.addWidget(time_label)
 
         # Priority dot
@@ -6355,7 +6404,7 @@ class _AgendaRow(QFrame):
                 tags_text += f" +{len(item.tags) - 3}"
             tag_label = QLabel(tags_text)
             self._text_labels.append(
-                (tag_label, colors["entity_tag"], "font-size: 11px; border: none;")
+                (tag_label, colors["entity_tag"], f"font-size: {font_px(11)}px; border: none;")
             )
             layout.addWidget(tag_label)
 
@@ -6861,7 +6910,7 @@ class CalendarViewWidget(QWidget):
             btn.setCheckable(True)
             btn.setChecked(i == self._sub_view)
             btn.setStyleSheet(
-                "QPushButton { border: none; padding: 4px 12px; font-size: 11px;"
+                f"QPushButton {{ border: none; padding: 4px 12px; font-size: {font_px(11)}px;"
                 " border-radius: 3px; }"
                 " QPushButton:checked { background: palette(highlight);"
                 " color: palette(highlighted-text); font-weight: bold; }"
@@ -6894,7 +6943,7 @@ class CalendarViewWidget(QWidget):
         self._today_btn = QPushButton(self.tr("Today"))
         self._today_btn.setStyleSheet(
             f"QPushButton {{ border: 1px solid {border_color()}; border-radius: 3px;"
-            " padding: 3px 10px; font-size: 11px; }"
+            f" padding: 3px 10px; font-size: {font_px(11)}px; }}"
         )
         self._today_btn.clicked.connect(self._navigate_today)
         top_layout.addWidget(self._today_btn)
@@ -6938,7 +6987,7 @@ class CalendarViewWidget(QWidget):
             btn.setCheckable(True)
             btn.setChecked(i == self._tl_sub_view)
             btn.setStyleSheet(
-                "QPushButton { border: none; padding: 4px 10px; font-size: 10px;"
+                f"QPushButton {{ border: none; padding: 4px 10px; font-size: {font_px(10)}px;"
                 " border-radius: 3px; }"
                 " QPushButton:checked { background: palette(highlight);"
                 " color: palette(highlighted-text); font-weight: bold; }"
@@ -7858,7 +7907,9 @@ class CalendarViewWidget(QWidget):
         pop_layout.addLayout(header_row)
 
         count_lbl = QLabel(f"{len(items)} task{'s' if len(items) != 1 else ''}")
-        count_lbl.setStyleSheet(f"font-size: 10px; color: {c['completed_text']}; border: none;")
+        count_lbl.setStyleSheet(
+            f"font-size: {font_px(10)}px; color: {c['completed_text']}; border: none;"
+        )
         pop_layout.addWidget(count_lbl)
 
         # Scrollable task list
@@ -7943,7 +7994,7 @@ class CalendarViewWidget(QWidget):
                 detail_lbl.setWordWrap(True)
                 detail_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
                 detail_lbl.setStyleSheet(
-                    f"font-size: 10px; color: {c['completed_text']};"
+                    f"font-size: {font_px(10)}px; color: {c['completed_text']};"
                     f" border: none; background: none;"
                 )
                 row_layout.addWidget(detail_lbl)

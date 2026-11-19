@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ...core.bar_palette import readable_text_on
-from ..styles.themes import border_color, get_colors
+from ..styles.themes import border_color, font_px, get_colors
 
 if TYPE_CHECKING:
     from ...web.device_store import PairedDevice
@@ -154,7 +154,7 @@ def _step_row(number: int, title: str, description: str, widget: QWidget | None 
     if description:
         desc_lbl = QLabel(description)
         desc_lbl.setWordWrap(True)
-        desc_lbl.setStyleSheet("font-size: 11px; border: none; background: none;")
+        desc_lbl.setStyleSheet(f"font-size: {font_px(11)}px; border: none; background: none;")
         content.addWidget(desc_lbl)
     if widget is not None:
         content.addWidget(widget)
@@ -167,7 +167,7 @@ def _step_row(number: int, title: str, description: str, widget: QWidget | None 
 # fills it with the highlight color, and a text color the button gives
 # itself stays on top of that fill, blue on blue.
 _LINK_BUTTON_STYLE = (
-    "QPushButton { color: palette(link); font-size: 11px; background: transparent;"
+    f"QPushButton {{ color: palette(link); font-size: {font_px(11)}px; background: transparent;"
     " border: none; }"
     " QPushButton:hover { text-decoration: underline; }"
 )
@@ -181,7 +181,7 @@ def _security_badge(text: str, color: str) -> QLabel:
     lbl.setFixedHeight(22)
     lbl.setStyleSheet(
         f"background: {color}; color: {readable_text_on(color)};"
-        " font-size: 10px; font-weight: bold;"
+        f" font-size: {font_px(10)}px; font-weight: bold;"
         " border-radius: 11px; padding: 0 10px;"
     )
     return lbl
@@ -243,7 +243,7 @@ def _browser_warning_visual(ip: str) -> QFrame:
     ]
     for step in steps:
         step_lbl = QLabel(step)
-        step_lbl.setStyleSheet("font-size: 11px; border: none; background: none;")
+        step_lbl.setStyleSheet(f"font-size: {font_px(11)}px; border: none; background: none;")
         layout.addWidget(step_lbl)
 
     reassurance = QLabel(
@@ -256,7 +256,7 @@ def _browser_warning_visual(ip: str) -> QFrame:
     )
     reassurance.setWordWrap(True)
     reassurance.setStyleSheet(
-        "font-size: 10px; font-style: italic; border: none; background: none;"
+        f"font-size: {font_px(10)}px; font-style: italic; border: none; background: none;"
     )
     layout.addWidget(reassurance)
 
@@ -307,7 +307,7 @@ class _MethodCard(QFrame):
             ribbon = QLabel(self.tr("Recommended"))
             ribbon.setStyleSheet(
                 "background: palette(highlight); color: palette(highlighted-text);"
-                " font-size: 9px;"
+                f" font-size: {font_px(9)}px;"
                 " font-weight: bold; border-radius: 4px; padding: 2px 8px;"
             )
             ribbon.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -325,7 +325,7 @@ class _MethodCard(QFrame):
 
         sub_lbl = QLabel(subtitle)
         sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sub_lbl.setStyleSheet("font-size: 11px; border: none;")
+        sub_lbl.setStyleSheet(f"font-size: {font_px(11)}px; border: none;")
         layout.addWidget(sub_lbl)
 
         desc_lbl = QLabel(description)
@@ -405,21 +405,21 @@ class _DeviceRow(QFrame):
         detail_parts.append(self.tr(f"last seen {_time_ago(device.last_seen)}"))
         detail_lbl = QLabel(" \u2022 ".join(detail_parts))
         detail_lbl.setStyleSheet(
-            "font-size: 10px; color: palette(placeholder-text); border: none; background: none;"
+            f"font-size: {font_px(10)}px; color: palette(placeholder-text); border: none; background: none;"
         )
         info.addWidget(detail_lbl)
 
         if is_stale:
             stale_lbl = QLabel(self.tr("\u26a0 Needs certificate reinstall"))
             stale_lbl.setStyleSheet(
-                f"font-size: 10px; color: {get_colors()['due_today']}; font-weight: bold;"
+                f"font-size: {font_px(10)}px; color: {get_colors()['due_today']}; font-weight: bold;"
                 " border: none; background: none;"
             )
             info.addWidget(stale_lbl)
         elif not recently_seen:
             hint_lbl = QLabel(self.tr("May need to reconnect"))
             hint_lbl.setStyleSheet(
-                "font-size: 10px; color: palette(placeholder-text);"
+                f"font-size: {font_px(10)}px; color: palette(placeholder-text);"
                 " font-style: italic; border: none; background: none;"
             )
             info.addWidget(hint_lbl)
@@ -434,7 +434,7 @@ class _DeviceRow(QFrame):
             reconnect_btn = QPushButton(self.tr("Reconnect"))
             reconnect_btn.setFixedWidth(72)
             reconnect_btn.setStyleSheet(
-                "QPushButton { color: palette(link); font-size: 11px;"
+                f"QPushButton {{ color: palette(link); font-size: {font_px(11)}px;"
                 " border: 1px solid palette(highlight);"
                 " border-radius: 4px; padding: 4px 8px; background: none; }"
                 " QPushButton:hover { background: palette(highlight);"
@@ -448,7 +448,7 @@ class _DeviceRow(QFrame):
             rename_btn.setFixedWidth(72)
             rename_btn.setObjectName("rename_btn")
             rename_btn.setStyleSheet(
-                "QPushButton { color: palette(text); font-size: 11px;"
+                f"QPushButton {{ color: palette(text); font-size: {font_px(11)}px;"
                 f" border: 1px solid {border_color()};"
                 " border-radius: 4px; padding: 4px 8px; background: none; }"
                 " QPushButton:hover { background: palette(button);"
@@ -461,7 +461,7 @@ class _DeviceRow(QFrame):
         forget_btn.setFixedWidth(72)
         _danger = get_colors()["due_overdue"]
         forget_btn.setStyleSheet(
-            f"QPushButton {{ color: {_danger}; font-size: 11px; "
+            f"QPushButton {{ color: {_danger}; font-size: {font_px(11)}px; "
             f"border: 1px solid {_danger};"
             " border-radius: 4px; padding: 4px 8px; background: none; }"
             f" QPushButton:hover {{ background: {_danger};"
@@ -646,7 +646,7 @@ class MobileAccessWizard(QDialog):
         )
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("font-size: 11px; color: palette(placeholder-text);")
+        subtitle.setStyleSheet(f"font-size: {font_px(11)}px; color: palette(placeholder-text);")
         layout.addWidget(subtitle)
 
         mw = self._main_window
@@ -697,7 +697,7 @@ class MobileAccessWizard(QDialog):
             # A link, like the two above: no fill under the pointer, where
             # its red would stand on the highlight color.
             revoke_btn.setStyleSheet(
-                f"QPushButton {{ color: {get_colors()['due_overdue']}; font-size: 11px;"
+                f"QPushButton {{ color: {get_colors()['due_overdue']}; font-size: {font_px(11)}px;"
                 " padding: 4px; background: transparent; border: none; }"
                 " QPushButton:hover { text-decoration: underline; }"
             )
@@ -783,7 +783,7 @@ class MobileAccessWizard(QDialog):
         mw = self._main_window
         if mw:
             self._remember_check.setChecked(bool(mw._config.web.connect_method))
-        self._remember_check.setStyleSheet("font-size: 11px;")
+        self._remember_check.setStyleSheet(f"font-size: {font_px(11)}px;")
         remember_row = QHBoxLayout()
         remember_row.addStretch()
         remember_row.addWidget(self._remember_check)
@@ -821,13 +821,13 @@ class MobileAccessWizard(QDialog):
             url_lbl = QLabel(self._url)
             url_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             url_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            url_lbl.setStyleSheet("font-size: 11px; border: none; background: none;")
+            url_lbl.setStyleSheet(f"font-size: {font_px(11)}px; border: none; background: none;")
             qr_layout.addWidget(url_lbl)
 
             if self._url_ip and self._url_ip != self._url:
                 ip_toggle = QPushButton(self.tr("QR not working? Use IP address instead"))
                 ip_toggle.setStyleSheet(
-                    "font-size: 10px; color: palette(link); "
+                    f"font-size: {font_px(10)}px; color: palette(link); "
                     "border: none; background: none; text-decoration: underline;"
                 )
                 ip_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -914,7 +914,7 @@ class MobileAccessWizard(QDialog):
 
             tabs = QTabWidget()
             tabs.setStyleSheet(
-                "QTabWidget { border: none; background: none; } QTabBar { font-size: 11px; }"
+                f"QTabWidget {{ border: none; background: none; }} QTabBar {{ font-size: {font_px(11)}px; }}"
             )
 
             ios_widget = QWidget()
@@ -933,7 +933,7 @@ class MobileAccessWizard(QDialog):
             ):
                 lbl = QLabel(f"{i}. {text}")
                 lbl.setWordWrap(True)
-                lbl.setStyleSheet("font-size: 11px; padding: 4px 0;")
+                lbl.setStyleSheet(f"font-size: {font_px(11)}px; padding: 4px 0;")
                 ios_layout.addWidget(lbl)
             ios_layout.addStretch()
             tabs.addTab(ios_widget, self.tr("iOS / iPadOS"))
@@ -952,7 +952,7 @@ class MobileAccessWizard(QDialog):
             ):
                 lbl = QLabel(f"{i}. {text}")
                 lbl.setWordWrap(True)
-                lbl.setStyleSheet("font-size: 11px; padding: 4px 0;")
+                lbl.setStyleSheet(f"font-size: {font_px(11)}px; padding: 4px 0;")
                 android_layout.addWidget(lbl)
 
             android_caveat = QLabel(
@@ -962,7 +962,9 @@ class MobileAccessWizard(QDialog):
                 )
             )
             android_caveat.setWordWrap(True)
-            android_caveat.setStyleSheet("font-size: 10px; font-style: italic; padding: 4px 0;")
+            android_caveat.setStyleSheet(
+                f"font-size: {font_px(10)}px; font-style: italic; padding: 4px 0;"
+            )
             android_layout.addWidget(android_caveat)
             android_layout.addStretch()
             tabs.addTab(android_widget, self.tr("Android"))
@@ -1144,7 +1146,7 @@ class MobileAccessWizard(QDialog):
             url_lbl = QLabel(self._url)
             url_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             url_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            url_lbl.setStyleSheet("font-size: 11px;")
+            url_lbl.setStyleSheet(f"font-size: {font_px(11)}px;")
             layout.addWidget(url_lbl)
 
             # Show IP fallback if using .local
@@ -1152,7 +1154,9 @@ class MobileAccessWizard(QDialog):
                 fallback_lbl = QLabel(self.tr(f"IP address: {self._url_ip}"))
                 fallback_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 fallback_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-                fallback_lbl.setStyleSheet("font-size: 10px; color: palette(placeholder-text);")
+                fallback_lbl.setStyleSheet(
+                    f"font-size: {font_px(10)}px; color: palette(placeholder-text);"
+                )
                 layout.addWidget(fallback_lbl)
 
         layout.addStretch()
@@ -1166,7 +1170,7 @@ class MobileAccessWizard(QDialog):
         pin_layout.addWidget(_pin_widget(self._pairing_pin))
         pin_hint = QLabel(self.tr("PIN expires in 5 minutes \u2022 Auto-submits at 6 digits"))
         pin_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        pin_hint.setStyleSheet("font-size: 10px; border: none; background: none;")
+        pin_hint.setStyleSheet(f"font-size: {font_px(10)}px; border: none; background: none;")
         pin_layout.addWidget(pin_hint)
         return _step_row(
             step_number, self.tr("Enter this PIN on the login page"), "", pin_container
@@ -1180,7 +1184,7 @@ class MobileAccessWizard(QDialog):
                 "Android: Tap browser menu (\u22ee) \u2192 Install app"
             )
         )
-        install_info.setStyleSheet("font-size: 11px; border: none; background: none;")
+        install_info.setStyleSheet(f"font-size: {font_px(11)}px; border: none; background: none;")
         return _step_row(
             step_number,
             self.tr("Add to Home Screen (optional)"),

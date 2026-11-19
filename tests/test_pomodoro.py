@@ -2249,8 +2249,10 @@ class TestDailyGoalRingWidget:
 
         ring = DailyGoalRingWidget()
         qtbot.addWidget(ring)
-        assert ring.width() == 22
-        assert ring.height() == 22
+        # A square of 22 pixels or more: as wide as its count needs
+        # (tests/test_text_sizes.py has the measure).
+        assert ring.width() == ring.height()
+        assert ring.width() >= 22
 
     def test_hidden_when_no_goal(self, qtbot):
         from pytodo_qt.gui.widgets.status_bar import DailyGoalRingWidget

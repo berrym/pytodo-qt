@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
 
 from ...core.logger import Logger
 from ...core.models import TodoItem, TodoList
-from ..styles.themes import FINISHED_BORDER_PX, get_colors
+from ..styles.themes import FINISHED_BORDER_PX, font_px, get_colors
 
 
 class ClickableLabel(QLabel):
@@ -323,7 +323,7 @@ class KanbanCardWidget(QFrame):
                 f" {colors['highlight']}; border-radius: 3px;"
                 f" color: {colors['highlight_text']};"
                 f" background: {colors['highlight']};"
-                " font-size: 11px; font-weight: bold; text-align: center; }"
+                f" font-size: {font_px(11)}px; font-weight: bold; text-align: center; }}"
             )
             join_url = meeting.url
 
@@ -361,18 +361,22 @@ class KanbanCardWidget(QFrame):
                     due_color = colors["due_overdue"]
                     due_label.setStyleSheet(
                         _label_only(
-                            f"color: {due_color}; font-size: 11px; font-weight: bold; border: none;"
+                            f"color: {due_color}; font-size: {font_px(11)}px; font-weight: bold; border: none;"
                         )
                     )
                 elif item.due_date == date.today():
                     due_color = colors["due_today"]
                     due_label.setStyleSheet(
-                        _label_only(f"color: {due_color}; font-size: 11px; border: none;")
+                        _label_only(
+                            f"color: {due_color}; font-size: {font_px(11)}px; border: none;"
+                        )
                     )
                 else:
                     due_color = colors["due_soon"]
                     due_label.setStyleSheet(
-                        _label_only(f"color: {due_color}; font-size: 11px; border: none;")
+                        _label_only(
+                            f"color: {due_color}; font-size: {font_px(11)}px; border: none;"
+                        )
                     )
                 # Tooltip with full date/time details
                 tip_parts = [item.due_date.strftime("%A, %B %d, %Y")]
@@ -403,7 +407,7 @@ class KanbanCardWidget(QFrame):
                     )
                     missed_label.setStyleSheet(
                         _label_only(
-                            f"color: {colors['due_today']}; font-size: 10px;"
+                            f"color: {colors['due_today']}; font-size: {font_px(10)}px;"
                             " font-style: italic; border: none;"
                         )
                     )
@@ -414,14 +418,14 @@ class KanbanCardWidget(QFrame):
             if has_pomo:
                 pomo_label = QLabel(f"\U0001f345 {item.pomodoro_count}")
                 pomo_label.setStyleSheet(
-                    f"color: {colors['completed_text']}; font-size: 11px; border: none;"
+                    f"color: {colors['completed_text']}; font-size: {font_px(11)}px; border: none;"
                 )
                 row2.addWidget(pomo_label)
 
             if is_focus_item:
                 focus_label = QLabel("\u23f1 Focus")  # ⏱ Focus
                 focus_label.setStyleSheet(
-                    f"color: {colors['link']}; font-size: 11px; font-weight: bold; border: none;"
+                    f"color: {colors['link']}; font-size: {font_px(11)}px; font-weight: bold; border: none;"
                 )
                 row2.addWidget(focus_label)
 
@@ -432,7 +436,7 @@ class KanbanCardWidget(QFrame):
             evt_label = QLabel(f"\U0001f4c5 {item.event_date.strftime('%b %d')}")
             evt_label.setStyleSheet(
                 _label_only(
-                    f"color: {colors['link']}; font-size: 11px; font-style: italic; border: none;"
+                    f"color: {colors['link']}; font-size: {font_px(11)}px; font-style: italic; border: none;"
                 )
             )
             evt_label.setToolTip(
@@ -451,7 +455,7 @@ class KanbanCardWidget(QFrame):
                         f"background: {colors['alternate_base']}; "
                         f"color: {colors['completed_text']}; "
                         "border-radius: 4px; padding: 1px 4px; "
-                        "font-size: 10px; border: none;"
+                        f"font-size: {font_px(10)}px; border: none;"
                     )
                 )
                 badge.setToolTip(f"{cond.get('type', '')}: {cond.get('expression', '')}")
@@ -470,7 +474,7 @@ class KanbanCardWidget(QFrame):
                     f"background: {colors['alternate_base']}; "
                     f"color: {colors['text']}; "
                     "border-radius: 4px; padding: 1px 4px; "
-                    "font-size: 10px; border: none;"
+                    f"font-size: {font_px(10)}px; border: none;"
                 )
                 row3.addWidget(chip)
             if len(item.tags) > max_tags:
@@ -478,7 +482,7 @@ class KanbanCardWidget(QFrame):
                 overflow.setStyleSheet(
                     f"background-color: {colors['button']}; "
                     f"color: {colors['text']}; "
-                    "border-radius: 8px; padding: 1px 6px; font-size: 10px; border: none;"
+                    f"border-radius: 8px; padding: 1px 6px; font-size: {font_px(10)}px; border: none;"
                 )
                 overflow.setCursor(Qt.CursorShape.PointingHandCursor)
                 overflow.clicked.connect(lambda b=overflow: self._show_tag_popup(max_tags, b))
@@ -493,7 +497,7 @@ class KanbanCardWidget(QFrame):
             self._subtask_badge = QPushButton(self.tr(f"\u2630 {done}/{total} subtasks"))
             badge_color = colors["due_soon"] if done == total else colors["completed_text"]
             self._subtask_badge.setStyleSheet(
-                f"color: {badge_color}; font-size: 11px; "
+                f"color: {badge_color}; font-size: {font_px(11)}px; "
                 "border: none; text-align: left; padding: 2px 0px; "
                 "background: transparent;"
             )
@@ -533,7 +537,7 @@ class KanbanCardWidget(QFrame):
                 sub_row.addWidget(sub_cb)
                 sub_label = QLabel(subtask.reminder)
                 sub_label.setStyleSheet(
-                    f"color: {text_color}; font-size: 11px; border: none;"
+                    f"color: {text_color}; font-size: {font_px(11)}px; border: none;"
                     + (" text-decoration: line-through;" if subtask.complete else "")
                 )
                 sub_label.setWordWrap(True)
@@ -548,7 +552,7 @@ class KanbanCardWidget(QFrame):
         chip_style = (
             f"background-color: {colors['highlight']}; "
             f"color: {colors.get('highlight_text', '#ffffff')}; "
-            "border-radius: 8px; padding: 2px 8px; font-size: 10px;"
+            f"border-radius: 8px; padding: 2px 8px; font-size: {font_px(10)}px;"
         )
 
         popup = QWidget(self, Qt.WindowType.Popup)
@@ -563,7 +567,7 @@ class KanbanCardWidget(QFrame):
 
         edit_btn = QPushButton(self.tr("Edit..."))
         edit_btn.setFixedHeight(20)
-        edit_btn.setStyleSheet("font-size: 10px; padding: 1px 6px;")
+        edit_btn.setStyleSheet(f"font-size: {font_px(10)}px; padding: 1px 6px;")
         edit_btn.clicked.connect(lambda: self._on_popup_edit(popup))
         layout.addWidget(edit_btn)
 
