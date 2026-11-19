@@ -92,6 +92,17 @@ def _sort_fragment(item: TodoItem, dimension: str, reverse: bool) -> tuple:
     return ()
 
 
+def _label_only(properties: str) -> str:
+    """A style sheet for one label, and for nothing shown for it.
+
+    A sheet of bare properties applies to the widget and to everything
+    below it, and a tooltip counts as below the widget it is shown for:
+    it would take the label's colour and type size and lose its own
+    border. A label that has a tooltip is styled through this.
+    """
+    return f"QLabel {{ {properties} }}"
+
+
 def _is_overdue(due_date: date | None, due_time: time | None) -> bool:
     """Check if an item is overdue."""
     if due_date is None:
@@ -349,14 +360,20 @@ class KanbanCardWidget(QFrame):
                 if overdue:
                     due_color = colors["due_overdue"]
                     due_label.setStyleSheet(
-                        f"color: {due_color}; font-size: 11px; font-weight: bold; border: none;"
+                        _label_only(
+                            f"color: {due_color}; font-size: 11px; font-weight: bold; border: none;"
+                        )
                     )
                 elif item.due_date == date.today():
                     due_color = colors["due_today"]
-                    due_label.setStyleSheet(f"color: {due_color}; font-size: 11px; border: none;")
+                    due_label.setStyleSheet(
+                        _label_only(f"color: {due_color}; font-size: 11px; border: none;")
+                    )
                 else:
                     due_color = colors["due_soon"]
-                    due_label.setStyleSheet(f"color: {due_color}; font-size: 11px; border: none;")
+                    due_label.setStyleSheet(
+                        _label_only(f"color: {due_color}; font-size: 11px; border: none;")
+                    )
                 # Tooltip with full date/time details
                 tip_parts = [item.due_date.strftime("%A, %B %d, %Y")]
                 if item.due_time is not None:
@@ -373,7 +390,9 @@ class KanbanCardWidget(QFrame):
                 rec_label = QLabel("\u21bb")  # ↻
                 rec_label.setToolTip(_recurrence_tooltip(item))
                 rec_label.setStyleSheet(
-                    f"color: {colors['completed_text']}; font-size: 13px; border: none;"
+                    _label_only(
+                        f"color: {colors['completed_text']}; font-size: 13px; border: none;"
+                    )
                 )
                 row2.addWidget(rec_label)
 
@@ -383,8 +402,10 @@ class KanbanCardWidget(QFrame):
                         self.tr(f"{item.missed_recurrences} occurrence(s) auto-advanced")
                     )
                     missed_label.setStyleSheet(
-                        f"color: {colors['due_today']}; font-size: 10px;"
-                        " font-style: italic; border: none;"
+                        _label_only(
+                            f"color: {colors['due_today']}; font-size: 10px;"
+                            " font-style: italic; border: none;"
+                        )
                     )
                     row2.addWidget(missed_label)
 
@@ -411,7 +432,10 @@ class KanbanCardWidget(QFrame):
         if item.event_date is not None:
             evt_label = QLabel(f"\U0001f4c5 {item.event_date.strftime('%b %d')}")
             evt_label.setStyleSheet(
-                f"color: {colors['highlight']}; font-size: 11px; font-style: italic; border: none;"
+                _label_only(
+                    f"color: {colors['highlight']}; font-size: 11px;"
+                    " font-style: italic; border: none;"
+                )
             )
             evt_label.setToolTip(
                 self.tr("Event date: ") + item.event_date.strftime("%A, %B %d, %Y")
@@ -425,10 +449,12 @@ class KanbanCardWidget(QFrame):
             for cond in item.conditions[:3]:
                 badge = QLabel(cond.get("type", ""))
                 badge.setStyleSheet(
-                    f"background: {colors['alternate_base']}; "
-                    f"color: {colors['completed_text']}; "
-                    "border-radius: 4px; padding: 1px 4px; "
-                    "font-size: 10px; border: none;"
+                    _label_only(
+                        f"background: {colors['alternate_base']}; "
+                        f"color: {colors['completed_text']}; "
+                        "border-radius: 4px; padding: 1px 4px; "
+                        "font-size: 10px; border: none;"
+                    )
                 )
                 badge.setToolTip(f"{cond.get('type', '')}: {cond.get('expression', '')}")
                 cond_row.addWidget(badge)
@@ -692,14 +718,14 @@ class KanbanColumnWidget(QFrame):
         if is_first:
             inbox_icon = QLabel("\U0001f4e5")  # 📥
             inbox_icon.setToolTip(self.tr("Inbox column — new items land here"))
-            inbox_icon.setStyleSheet("border: none; font-size: 12px;")
+            inbox_icon.setStyleSheet(_label_only("border: none; font-size: 12px;"))
             header.addWidget(inbox_icon)
         elif is_last:
             check_icon = QLabel("\u2705")  # ✅
             check_icon.setToolTip(
                 self.tr("Completion column — items moved here are marked complete")
             )
-            check_icon.setStyleSheet("border: none; font-size: 12px;")
+            check_icon.setStyleSheet(_label_only("border: none; font-size: 12px;"))
             header.addWidget(check_icon)
         self._title_label = QLabel(column_name)
         self._title_label.setStyleSheet(
@@ -731,9 +757,19 @@ class KanbanColumnWidget(QFrame):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("border: none; background: transparent;")
+        # Named, and the rules given a selector: a sheet of bare
+        # properties applies to everything below the widget, and a
+        # tooltip counts as below the widget it is shown for. The bare
+        # `background: transparent` here gave every tooltip of a card a
+        # transparent background.
+        scroll.setObjectName("kanbanCardScroll")
+        scroll.setStyleSheet(
+            "#kanbanCardScroll { border: none; background: transparent; }"
+            " #kanbanCardScroll > QWidget { background: transparent; }"
+        )
         self._card_container = QWidget()
-        self._card_container.setStyleSheet("background: transparent;")
+        self._card_container.setObjectName("kanbanCardContainer")
+        self._card_container.setStyleSheet("#kanbanCardContainer { background: transparent; }")
         self._card_layout = QVBoxLayout(self._card_container)
         self._card_layout.setContentsMargins(4, 2, 4, 2)
         self._card_layout.setSpacing(6)
@@ -977,7 +1013,8 @@ class KanbanBoardWidget(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("border: none;")
+        scroll.setObjectName("kanbanBoardScroll")
+        scroll.setStyleSheet("#kanbanBoardScroll { border: none; }")
         self._scroll = scroll
 
         self._board_container = QWidget()
