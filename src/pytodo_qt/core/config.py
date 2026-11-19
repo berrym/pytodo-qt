@@ -12,7 +12,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import paths
+from . import interface_scale, paths
 from .logger import Logger
 from .private_files import ensure_private_dir
 
@@ -440,6 +440,9 @@ class AppearanceConfig:
     close_to_tray: bool = True
     start_minimized_to_tray: bool = False  # hide to tray on launch (or minimize if no tray)
     font: str = "system"  # "system", "bundled", or custom family name
+    # The size of the whole interface in percent; see interface_scale.py.
+    # Read when the application starts.
+    interface_scale: int = 100
 
 
 @dataclass
@@ -510,6 +513,7 @@ class AppConfig:
             f"start_minimized_to_tray = {str(self.appearance.start_minimized_to_tray).lower()}"
         )
         lines.append(f'font = "{self.appearance.font}"')
+        lines.append(f"interface_scale = {self.appearance.interface_scale}")
         lines.append("")
 
         # Time blocks section
@@ -622,6 +626,7 @@ class AppConfig:
                 close_to_tray=app.get("close_to_tray", True),
                 start_minimized_to_tray=app.get("start_minimized_to_tray", False),
                 font=app.get("font", "system"),
+                interface_scale=interface_scale.normalized(app.get("interface_scale", 100)),
             )
 
         if "pomodoro" in data:

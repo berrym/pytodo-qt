@@ -39,7 +39,7 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 from qasync import QEventLoop
 
-from .core import settings
+from .core import interface_scale, settings
 from .core.logger import Logger
 
 logger = Logger(__name__)
@@ -348,6 +348,13 @@ def main():
         help="UI theme",
     )
 
+    appearance_group.add_argument(
+        "--scale",
+        type=int,
+        choices=list(interface_scale.SCALES),
+        help="size of the whole interface in percent, for this start",
+    )
+
     # Web UI options
     web_group = arg_parser.add_argument_group("Web UI Options")
 
@@ -414,6 +421,8 @@ def main():
         config.discovery.enabled = args.discovery == "yes"
     if args.theme is not None:
         config.appearance.theme = args.theme
+    if args.scale is not None:
+        config.appearance.interface_scale = args.scale
     if args.web is not None:
         config.web.enabled = args.web == "yes"
     if args.web_port is not None:
@@ -421,6 +430,10 @@ def main():
 
     # Set macOS menu bar name before Qt reads bundle info
     _set_macos_app_name()
+
+    # The size of the interface is read by Qt when the application
+    # object is made, and not again.
+    interface_scale.apply(config.appearance.interface_scale, overridden=args.scale is not None)
 
     # Create Qt application
     app = QApplication(sys.argv)
@@ -487,6 +500,12 @@ def main():
 
     _window = MainWindow()
 
+    # Started again for a new interface size: the window comes back
+    # where it was, and shown, whatever the start-in-tray setting says.
+    _window_before = interface_scale.window_to_restore()
+    if _window_before is not None:
+        _window.restore_after_restart(_window_before)
+
     # Set up SIGUSR1 handler so a second instance can activate this one
     if sys.platform != "win32":
         _setup_activation_handler(_window)
@@ -495,6 +514,8 @@ def main():
     with loop:
         exit_code = loop.run_forever()
         _dispose_before_exit(app, _window)
+    # The event loop has ended and the instance lock is free.
+    interface_scale.relaunch()
     sys.exit(exit_code)
 
 

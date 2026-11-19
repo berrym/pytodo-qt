@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QEvent, QSize, Qt, QTime, pyqtSignal
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -30,6 +31,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ...core import interface_scale
 from ...core.config import (
     LEAD_MINUTES_RANGE,
     AppConfig,
@@ -130,6 +132,12 @@ class SettingsDialog(QDialog):
     # connects this to refresh theme-dependent chrome it owns (the system
     # tray icon, which the dialog has no handle on).
     theme_applied = pyqtSignal()
+
+    # Emitted at every save that leaves the stored interface size
+    # another than the one the run is drawn at, a size left for later
+    # included. Qt takes a size only when the application starts, so
+    # the main window starts the application again.
+    interface_scale_changed = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -555,6 +563,24 @@ class SettingsDialog(QDialog):
         font_layout.addRow("", font_hint)
 
         layout.addWidget(font_group)
+
+        # Interface size group
+        scale_group = QGroupBox(self.tr("Interface Size"))
+        scale_layout = QFormLayout(scale_group)
+
+        self.interface_scale_combo = QComboBox()
+        self.interface_scale_combo.setAccessibleName(self.tr("Interface size"))
+        for scale in interface_scale.SCALES:
+            self.interface_scale_combo.addItem(f"{scale}%", scale)
+        self.interface_scale_combo.currentIndexChanged.connect(self._update_interface_scale_note)
+        scale_layout.addRow(self.tr("Size:"), self.interface_scale_combo)
+
+        self.interface_scale_note = QLabel()
+        self.interface_scale_note.setStyleSheet(_NOTE_STYLE)
+        self.interface_scale_note.setWordWrap(True)
+        scale_layout.addRow("", self.interface_scale_note)
+
+        layout.addWidget(scale_group)
 
         # Time display group
         time_group = QGroupBox(self.tr("Time Display"))
@@ -1193,6 +1219,8 @@ class SettingsDialog(QDialog):
                 break
 
         # Font
+        self._show_interface_scale(config.appearance.interface_scale)
+
         font_setting = config.appearance.font
         self.font_combo.blockSignals(True)
         idx = self.font_combo.findData(font_setting)
@@ -1261,6 +1289,74 @@ class SettingsDialog(QDialog):
                 f"font-size: {font_px(12)}px; color: palette(placeholder-text); padding: 8px;"
             )
 
+    # ------------------------------------------------------------------
+    # Interface size
+    # ------------------------------------------------------------------
+
+    def _screen_room_at_full_size(self) -> tuple[float, float] | None:
+        """The room the screen has for a window, in pixels at 100%.
+
+        The screen reports its room in the pixels of the size this run
+        is drawn at; at 150% a screen of 1500 pixels reports 1000.
+        """
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return None
+        room = screen.availableGeometry()
+        factor = interface_scale.active_factor()
+        return room.width() * factor, room.height() * factor
+
+    def _least_window_size(self) -> tuple[int, int] | None:
+        """The least size of the main window, which has to fit the screen."""
+        window = self.parentWidget()
+        if window is None:
+            return None
+        least = window.minimumSizeHint().expandedTo(window.minimumSize())
+        return least.width(), least.height()
+
+    def _show_interface_scale(self, scale: int) -> None:
+        """Show the stored size, and mark the sizes the screen has no room for."""
+        room = self._screen_room_at_full_size()
+        least = self._least_window_size()
+        combo = self.interface_scale_combo
+        combo.blockSignals(True)
+        for index in range(combo.count()):
+            offered = combo.itemData(index)
+            text = f"{offered}%"
+            if (
+                room is not None
+                and least is not None
+                and not interface_scale.fits(offered, room, least)
+            ):
+                text = self.tr("{size}% (needs a larger screen)").format(size=offered)
+            combo.setItemText(index, text)
+        combo.setCurrentIndex(max(combo.findData(interface_scale.normalized(scale)), 0))
+        combo.blockSignals(False)
+        self._update_interface_scale_note()
+
+    def _update_interface_scale_note(self) -> None:
+        if interface_scale.source() == interface_scale.FROM_ENVIRONMENT:
+            self.interface_scale_note.setText(
+                self.tr(
+                    "The environment variable QT_SCALE_FACTOR is set and decides the size. "
+                    "This setting has no effect while it is."
+                )
+            )
+            return
+        now = round(interface_scale.active_factor() * 100)
+        chosen = self.interface_scale_combo.currentData()
+        if chosen == now:
+            text = self.tr("Text, spacing and controls are drawn at this size.")
+        elif chosen == self._config.appearance.interface_scale and interface_scale.overridden():
+            # The run was started with --scale in place of this stored
+            # size: accepting the dialog does not start it again.
+            text = self.tr("Applies the next time PyTodo-Qt starts. Now at {now}%.").format(now=now)
+        else:
+            text = self.tr("PyTodo-Qt starts again to apply this size. Now at {now}%.").format(
+                now=now
+            )
+        self.interface_scale_note.setText(text)
+
     def _save_settings(self) -> bool:
         """Save settings from UI to config."""
         config = self._config
@@ -1302,6 +1398,10 @@ class SettingsDialog(QDialog):
         new_theme = self.theme_combo.currentData()
         config.appearance.theme = new_theme
         config.appearance.time_format = self.time_format_combo.currentData()
+        old_scale = config.appearance.interface_scale
+        new_scale = self.interface_scale_combo.currentData()
+        config.appearance.interface_scale = new_scale
+
         old_font = config.appearance.font
         new_font = self.font_combo.currentData()
         config.appearance.font = new_font
@@ -1359,13 +1459,24 @@ class SettingsDialog(QDialog):
         # holdouts (todo_table rows, status-bar timer) refresh on next
         # restart, which is what the hint label in the Font group says.
         if old_font != new_font:
-            from PyQt6.QtWidgets import QApplication
-
             qapp = QApplication.instance()
             if isinstance(qapp, QApplication):
                 apply_font_setting(qapp, new_font)
 
         logger.log.info("Settings saved")
+
+        # Last, when everything is stored: the application may start
+        # again in answer to this. A size that was left for later is
+        # offered again; one that --scale stood in for is not, unless
+        # it was changed here.
+        if (
+            new_scale != round(interface_scale.active_factor() * 100)
+            and interface_scale.source() != interface_scale.FROM_ENVIRONMENT
+            and (new_scale != old_scale or not interface_scale.overridden())
+        ):
+            self.interface_scale_changed.emit(new_scale)
+        # The size chosen is the stored one now.
+        self._update_interface_scale_note()
         return True
 
     def _copy_fingerprint(self) -> None:

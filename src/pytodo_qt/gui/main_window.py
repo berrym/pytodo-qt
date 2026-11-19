@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from PyQt6.QtCore import QDate, Qt, QTimer, pyqtSlot
+from PyQt6.QtCore import QDate, QPoint, Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import (
     QAction,
     QActionGroup,
@@ -25,6 +25,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
 from PyQt6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QDialog,
     QHBoxLayout,
@@ -123,6 +124,9 @@ class MainWindow(QMainWindow):
         self._auto_syncing_devices: set[UUID] = set()
         self._unseen_changes: set[UUID] = set()  # Lists with unviewed sync changes
         self._force_quit = False
+        # Set when a new interface size was accepted in the settings
+        # dialog: the application starts again once the dialog is closed.
+        self._restart_pending = False
         self._event_loop = asyncio.get_event_loop()  # Store for thread-safe scheduling
 
         # Undo/redo
@@ -4699,7 +4703,15 @@ class MainWindow(QMainWindow):
         # Keep the tray icon in step with live theme preview, Apply, OK, and
         # cancel-revert while the modal dialog runs its own event loop.
         dialog.theme_applied.connect(self._update_tray_icon_for_theme)
-        if dialog.exec() == SettingsDialog.DialogCode.Accepted:
+        dialog.interface_scale_changed.connect(
+            lambda _scale: self._on_interface_scale_changed(dialog)
+        )
+        accepted = dialog.exec() == SettingsDialog.DialogCode.Accepted
+        if self._restart_pending:
+            # After the dialog's own event loop has ended.
+            QTimer.singleShot(0, self._restart_application)
+            return
+        if accepted:
             # Re-fetch config — reload() in SettingsDialog creates a new object
             self._config = get_config()
             # Keep the tray-menu toggle in step with the dialog's checkbox.
@@ -4724,6 +4736,98 @@ class MainWindow(QMainWindow):
             elif not self._config.web.enabled and self._web_server is not None:
                 self._stop_web_server()
             self._refresh_ui()
+
+    # ------------------------------------------------------------------
+    # Starting again at a new interface size
+    # ------------------------------------------------------------------
+
+    def _session_under_way(self) -> bool:
+        """Whether a focus timer or the stopwatch holds anything.
+
+        Neither is kept over a restart: a session at work, on a break
+        or paused would be lost.
+        """
+        from .widgets.pomodoro import TimerState
+        from .widgets.stopwatch import StopwatchState
+
+        return (
+            self._pomodoro.state is not TimerState.IDLE
+            or self._stopwatch.state is not StopwatchState.IDLE
+        )
+
+    def _on_interface_scale_changed(self, dialog: QDialog) -> None:
+        """A new interface size was saved: start again to draw at it.
+
+        Qt takes the size only when the application starts. With a
+        focus session or the stopwatch under way the restart is asked
+        about first; left for later, the size applies at the next start.
+        """
+        under_way = self._session_under_way()
+        logger.log.info(
+            "Interface size saved; a focus session or the stopwatch is %s",
+            "under way: asking before the restart" if under_way else "not under way: restarting",
+        )
+        if under_way:
+            box = QMessageBox(dialog)
+            box.setIcon(QMessageBox.Icon.Question)
+            box.setWindowTitle(self.tr("Interface Size"))
+            box.setText(self.tr("Start PyTodo-Qt again now to apply the new size?"))
+            box.setInformativeText(
+                self.tr(
+                    "A focus session or the stopwatch is running and would end. "
+                    "Later keeps it; the new size then applies the next time "
+                    "PyTodo-Qt starts."
+                )
+            )
+            restart = box.addButton(self.tr("Restart now"), QMessageBox.ButtonRole.AcceptRole)
+            later = box.addButton(self.tr("Later"), QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(later)
+            box.exec()
+            if box.clickedButton() is not restart:
+                logger.log.info("Restart for the interface size left for later")
+                return
+        self._restart_pending = True
+        dialog.accept()
+
+    def _restart_application(self) -> None:
+        """Quit in the ordinary way, to be started again once that is done."""
+        from ..core import interface_scale
+
+        self._restart_pending = False
+        place = self.normalGeometry() if self.isMaximized() else self.geometry()
+        interface_scale.request_restart(
+            interface_scale.encode_window(
+                place.x(), place.y(), place.width(), place.height(), self.isMaximized()
+            )
+        )
+        self._quit_application()
+
+    def restore_after_restart(self, window: tuple[int, int, int, int, bool]) -> None:
+        """Put the window where it was before the application started again.
+
+        The size is the one the window had on the screen, so at a larger
+        interface size it holds less; it is never less than the window's
+        least size, and it stays on the screen it is on. The window is
+        shown whatever the start-in-tray setting says: it was open.
+        """
+        x, y, width, height, maximized = window
+        least = self.minimumSizeHint().expandedTo(self.minimumSize())
+        width, height = max(width, least.width()), max(height, least.height())
+        screen = QApplication.screenAt(QPoint(x + width // 2, y + height // 2))
+        screen = screen or self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            room = screen.availableGeometry()
+            width, height = min(width, room.width()), min(height, room.height())
+            x = min(max(x, room.left()), room.right() - width + 1)
+            y = min(max(y, room.top()), room.bottom() - height + 1)
+        self.setGeometry(x, y, width, height)
+        logger.log.info("Window put back at %d,%d, %d x %d", x, y, width, height)
+        if maximized:
+            self.showMaximized()
+        else:
+            self.show()
+        self.raise_()
+        self.activateWindow()
 
     def _on_system_theme_changed(self) -> None:
         """Handle OS dark/light mode change while following the system theme."""

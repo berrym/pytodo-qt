@@ -257,6 +257,8 @@ Discovery Options:
 
 Appearance Options:
   -t, --theme {light,dark,system}
+  --scale {100,110,125,150,175,200}
+                           size of the whole interface in percent, for this start
 ```
 
 ## Configuration
@@ -293,6 +295,7 @@ auto_sync_interval = 0  # minutes between periodic full syncs (0 = disabled)
 
 [appearance]
 theme = "system"  # light, dark, system
+interface_scale = 100  # 100, 110, 125, 150, 175, 200; read at startup
 ```
 
 ## Synchronization
