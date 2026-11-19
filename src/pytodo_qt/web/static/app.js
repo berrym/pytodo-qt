@@ -3554,6 +3554,25 @@
     keepingPageScroll(renderCalendar);
   }
 
+  // Opens a day in the Day view, from a place in another view that
+  // stands for that day: the date is given as the server gives it,
+  // YYYY-MM-DD.
+  function _openCalendarDay(dayKey) {
+    var parts = dayKey.split("-");
+    calDate = new Date(
+      Number(parts[0]),
+      Number(parts[1]) - 1,
+      Number(parts[2]),
+    );
+    calSubView = "day";
+    localStorage.setItem(CAL_VIEW_KEY, calSubView);
+    calTabs.forEach(function (tab) {
+      tab.classList.toggle("active", tab.dataset.cal === calSubView);
+    });
+    calDateChosen = !calShowsToday();
+    renderCalendar();
+  }
+
   function _taskCount(count) {
     if (count === 0) return "no tasks";
     return count + (count === 1 ? " task" : " tasks");
@@ -4156,6 +4175,14 @@
     var pinnedH = _GRID_HEADER_HEIGHT + allDayRowH + markerRowH;
     var hoursH = 24 * _HOUR_ROW_HEIGHT;
 
+    // The Day has every bar in a lane of its own. Where the screen has
+    // not the width for them, the grid is wider than the screen and
+    // scrolls sideways. The Week keeps its width, and a day of it
+    // says how many bars it has no lane for.
+    if (days === 1) {
+      W = Math.max(W, _HOUR_LABEL_WIDTH + _widthForLanes(_mostLanes(data)));
+    }
+
     // A canvas has as many pixels as the screen gives its size, and is
     // painted in the page's own units. With one pixel to each unit, a
     // phone's screen, which has two or three, showed the text blurred.
@@ -4381,29 +4408,173 @@
       var dayData = data.days[d];
       var colX = _HOUR_LABEL_WIDTH + d * colWidth;
 
-      dayData.segments.forEach(function (seg) {
-        if (seg.is_marker || seg.is_all_day) return;
-        var item = data.items[seg.item_id];
-        if (!item) return;
+      var known = dayData.segments.filter(function (seg) {
+        return data.items[seg.item_id];
+      });
+      var placed = _placeDayBars(known, colX, colWidth);
 
-        var segTopY = (seg.start_minute / 60) * _HOUR_ROW_HEIGHT;
-        var segBottomY = (seg.end_minute / 60) * _HOUR_ROW_HEIGHT;
-        var segH = Math.max(segBottomY - segTopY, 3);
-        var segX = colX + 2;
-        var segW = colWidth - 4;
-
+      placed.bars.forEach(function (bar) {
+        var segTopY = (bar.seg.start_minute / 60) * _HOUR_ROW_HEIGHT;
+        var segBottomY = (bar.seg.end_minute / 60) * _HOUR_ROW_HEIGHT;
         _paintHourBar(
           ctx,
           canvas._hitRects,
-          item,
-          seg,
-          segX,
+          data.items[bar.seg.item_id],
+          bar.seg,
+          bar.x,
           segTopY,
-          segW,
-          segH,
+          bar.w,
+          Math.max(segBottomY - segTopY, 3),
+        );
+      });
+
+      placed.more.forEach(function (more) {
+        var moreTopY = (more.start_minute / 60) * _HOUR_ROW_HEIGHT;
+        var moreBottomY = (more.end_minute / 60) * _HOUR_ROW_HEIGHT;
+        _paintMoreBlock(
+          ctx,
+          canvas._hitRects,
+          dayData.date,
+          more,
+          moreTopY,
+          Math.max(moreBottomY - moreTopY, 3),
         );
       });
     }
+  }
+
+  // The narrowest a bar is drawn: the least size of something to be
+  // tapped (WCAG 2.5.8). The gap between two bars side by side, and
+  // the space kept clear at each edge of a day's column.
+  var _LANE_MIN_WIDTH = 24;
+  var _LANE_GAP = 2;
+  var _BAR_INSET = 2;
+
+  // How many bars fit side by side in a day's column of this width.
+  function _lanesThatFit(colWidth) {
+    var room = colWidth - 2 * _BAR_INSET;
+    return Math.max(
+      1,
+      Math.floor((room + _LANE_GAP) / (_LANE_MIN_WIDTH + _LANE_GAP)),
+    );
+  }
+
+  // The least width of a day's column that holds this many bars side
+  // by side.
+  function _widthForLanes(lanes) {
+    return 2 * _BAR_INSET + lanes * _LANE_MIN_WIDTH + (lanes - 1) * _LANE_GAP;
+  }
+
+  // The most bars any group of the days shown has side by side.
+  function _mostLanes(data) {
+    var most = 1;
+    data.days.forEach(function (day) {
+      day.segments.forEach(function (seg) {
+        if (seg.is_marker || seg.is_all_day) return;
+        if (seg.lanes > most) most = seg.lanes;
+      });
+    });
+    return most;
+  }
+
+  // Where the timed bars of one day go across its column. The server
+  // gives each bar a lane among the bars it shares hours with, and the
+  // number of lanes of that group: the bars of a group have equal
+  // widths and stand side by side, and a bar alone has the column to
+  // itself. Painted one over the other at the full width, as they
+  // were, only the last could be seen or opened.
+  //
+  // A group with more lanes than fit in the column keeps its first
+  // lanes; the bars of the rest share the last one. Where two or more
+  // of them share time, a block there says how many they are. One of
+  // them alone at its time is drawn as itself.
+  //
+  // Returns the bars, each with its segment, left edge and width, and
+  // the blocks, each with its minutes, the number of bars it stands
+  // for, its left edge and its width.
+  function _placeDayBars(segments, colX, colWidth) {
+    var fit = _lanesThatFit(colWidth);
+    var room = colWidth - 2 * _BAR_INSET;
+
+    function place(lane, lanes) {
+      var w = (room - (lanes - 1) * _LANE_GAP) / lanes;
+      return { x: colX + _BAR_INSET + lane * (w + _LANE_GAP), w: w };
+    }
+
+    var bars = [];
+    var crowded = [];
+    segments.forEach(function (seg) {
+      if (seg.is_marker || seg.is_all_day) return;
+      // A server that sends no lanes: every bar at the full width.
+      var laned = typeof seg.lane === "number" && seg.lanes > 0;
+      var lanes = laned ? seg.lanes : 1;
+      var lane = laned ? seg.lane : 0;
+      var at;
+      if (lanes <= fit) at = place(lane, lanes);
+      else if (lane < fit - 1) at = place(lane, fit);
+      else {
+        crowded.push(seg);
+        return;
+      }
+      bars.push({ seg: seg, x: at.x, w: at.w });
+    });
+
+    crowded.sort(function (a, b) {
+      return a.start_minute - b.start_minute || a.end_minute - b.end_minute;
+    });
+    var runs = [];
+    crowded.forEach(function (seg) {
+      var run = runs[runs.length - 1];
+      if (run && seg.start_minute < run.end_minute) {
+        run.end_minute = Math.max(run.end_minute, seg.end_minute);
+        run.segments.push(seg);
+      } else {
+        runs.push({
+          start_minute: seg.start_minute,
+          end_minute: seg.end_minute,
+          segments: [seg],
+        });
+      }
+    });
+
+    var last = place(fit - 1, fit);
+    var more = [];
+    runs.forEach(function (run) {
+      if (run.segments.length === 1) {
+        bars.push({ seg: run.segments[0], x: last.x, w: last.w });
+      } else {
+        more.push({
+          start_minute: run.start_minute,
+          end_minute: run.end_minute,
+          count: run.segments.length,
+          x: last.x,
+          w: last.w,
+        });
+      }
+    });
+    return { bars: bars, more: more };
+  }
+
+  // The block that stands for the bars of a day that have no lane of
+  // their own in the Week: how many they are, on the color of the
+  // page's lesser text. It opens the day, where a bar has the room.
+  function _paintMoreBlock(ctx, hitRects, dayKey, more, y, h) {
+    var fill = _themeColor("text-secondary", "#6c6c6c");
+    ctx.fillStyle = fill;
+    ctx.fillRect(more.x, y, more.w, h);
+    if (h >= 14) {
+      ctx.font = "11px sans-serif";
+      ctx.textAlign = "center";
+      _paintLabelOn(ctx, "+" + more.count, more.x + more.w / 2, y + 12, {
+        x: more.x,
+        y: y,
+        w: more.w,
+        h: h,
+        fill: fill,
+      });
+      ctx.textAlign = "start";
+    }
+    hitRects.push({ x: more.x, y: y, w: more.w, h: h, day: dayKey });
   }
 
   // A canvas used to read a color in one form, whatever form the
@@ -4486,10 +4657,14 @@
   // The height a bar keeps clear of the hatch for its label.
   var _BAR_LABEL_BAND = 16;
 
+  // The narrowest bar that has its reminder written on it: narrower,
+  // there is room for three or four letters, which name no task.
+  var _BAR_LABEL_MIN_WIDTH = 40;
+
   function _paintHourBar(ctx, hitRects, item, seg, x, y, w, h) {
     var base = _paletteColor(seg.state);
     var labelColor = _barTextColor(base);
-    var labeled = h >= 14;
+    var labeled = h >= 14 && w >= _BAR_LABEL_MIN_WIDTH;
 
     ctx.fillStyle = base;
     ctx.fillRect(x, y, w, h);
@@ -4606,7 +4781,8 @@
       for (var i = hits.length - 1; i >= 0; i--) {
         var r = hits[i];
         if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
-          location.hash = "#/item/" + r.item_id;
+          if (r.day) _openCalendarDay(r.day);
+          else location.hash = "#/item/" + r.item_id;
           return;
         }
       }

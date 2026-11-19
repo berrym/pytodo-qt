@@ -1254,6 +1254,78 @@ class TestCalendarSegments:
         assert (seg["zone_start_minute"], seg["zone_end_minute"]) == (15 * 60, 16 * 60 + 20)
 
     @pytest.mark.asyncio
+    async def test_bars_that_share_hours_carry_their_lanes(self):
+        """The page draws bars that share time side by side, in the
+        lanes the layout gives (#88): 09:00-10:00 and 09:30-11:00 are
+        lanes 0 and 1 of 2, and a bar at noon has the width to itself."""
+        from datetime import date as _date
+        from datetime import time as _time
+
+        from pytodo_qt.core.models import create_todo_item
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        made = {}
+        for text, start, end in (
+            ("Lane first", _time(9, 0), _time(10, 0)),
+            ("Lane second", _time(9, 30), _time(11, 0)),
+            ("Lane alone", _time(12, 0), _time(13, 0)),
+        ):
+            item = create_todo_item(text, due_date=_date(2030, 6, 15), due_time=start)
+            item.due_time_end = end
+            lst.add_item(item)
+            made[text] = str(item.id)
+        whole_day = create_todo_item("Lane without a time", due_date=_date(2030, 6, 15))
+        lst.add_item(whole_day)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/calendar/segments?start=2030-06-15&days=1")
+            data = await resp.json()
+        finally:
+            await client.close()
+        by_item = {s["item_id"]: s for s in data["days"][0]["segments"]}
+        assert (by_item[made["Lane first"]]["lane"], by_item[made["Lane first"]]["lanes"]) == (0, 2)
+        assert (by_item[made["Lane second"]]["lane"], by_item[made["Lane second"]]["lanes"]) == (
+            1,
+            2,
+        )
+        assert (by_item[made["Lane alone"]]["lane"], by_item[made["Lane alone"]]["lanes"]) == (0, 1)
+        # A chip of the rows above the hours has no lane.
+        chip = by_item[str(whole_day.id)]
+        assert chip["is_all_day"] is True
+        assert (chip["lane"], chip["lanes"]) == (None, None)
+
+    @pytest.mark.asyncio
+    async def test_lanes_are_of_one_day(self):
+        """Bars at the same hours of two days share no time."""
+        from datetime import date as _date
+        from datetime import time as _time
+
+        from pytodo_qt.core.models import create_todo_item
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        ids = []
+        for day in (15, 16):
+            item = create_todo_item(
+                f"Day {day}", due_date=_date(2030, 6, day), due_time=_time(9, 0)
+            )
+            item.due_time_end = _time(10, 0)
+            lst.add_item(item)
+            ids.append(str(item.id))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.get("/api/calendar/segments?start=2030-06-15&days=2")
+            data = await resp.json()
+        finally:
+            await client.close()
+        for day, item_id in zip(data["days"], ids, strict=True):
+            seg = next(s for s in day["segments"] if s["item_id"] == item_id)
+            assert (seg["lane"], seg["lanes"]) == (0, 1)
+
+    @pytest.mark.asyncio
     async def test_a_bar_without_a_zone_has_null_for_it(self):
         from datetime import date as _date
         from datetime import time as _time

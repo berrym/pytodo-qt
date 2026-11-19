@@ -109,20 +109,23 @@ const paint = new Function(
     "function _barTextColor(fill) { return '#ffffff'; }",
     "function _paintLabelOn(ctx, text, tx, ty, zone) { labels.push(zone); }",
     "var _BAR_LABEL_BAND = 16;",
+    "var _BAR_LABEL_MIN_WIDTH = 40;",
     functionText("_paintHatch"),
     functionText("_paintHourBar"),
     "_paintHourBar(ctx, hitRects, item, seg, x, y, w, h);",
   ].join("\n"),
 );
 
-// A bar as the page draws it: 60 units of height to the hour.
-function draw(seg) {
+// A bar as the page draws it: 60 units of height to the hour, and 80
+// wide unless a width is given.
+function draw(seg, width) {
   const ctx = recordingContext();
   const hits = [];
   const labels = [];
   const y = seg.start_minute;
   const h = seg.end_minute - seg.start_minute;
-  paint(ctx, hits, { reminder: "Task" }, seg, 100, y, 80, h, labels);
+  const w = width === undefined ? 80 : width;
+  paint(ctx, hits, { reminder: "Task" }, seg, 100, y, w, h, labels);
   return { ctx: ctx, hits: hits, labels: labels };
 }
 
@@ -266,4 +269,31 @@ test("a segment from a server that sends no zone is drawn as before", () => {
   const drawn = draw(seg);
   assert.equal(drawn.ctx.hatches.length, 0);
   assert.equal(drawn.ctx.fills[0].color, BASE);
+});
+
+test("a bar 40 wide has its reminder written on it", () => {
+  assert.equal(draw(segment({}), 40).labels.length, 1);
+});
+
+test("a narrower bar has no reminder on it", () => {
+  // One of several side by side (#88): there is room for three or
+  // four letters, which name no task.
+  assert.equal(draw(segment({}), 39).labels.length, 0);
+  assert.equal(draw(segment({}), 24).labels.length, 0);
+});
+
+test("a bar without a label is hatched from the top of its zone", () => {
+  // No strip is kept clear for text that is not written.
+  const drawn = draw(
+    segment({
+      start_minute: 0,
+      end_minute: 600,
+      state: "completed_late",
+      clipped_top: true,
+      zone_start_minute: 0,
+      zone_end_minute: 600,
+    }),
+    24,
+  );
+  assert.deepEqual(drawn.ctx.hatches[0].clip, { x: 100, y: 0, w: 24, h: 600 });
 });

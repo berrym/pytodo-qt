@@ -1853,10 +1853,18 @@ async def handle_calendar_segments(request: web.Request) -> web.Response:
                     metadata ready for Canvas 2D rendering, with the
                     minutes of a completed bar's deviation zone
                     (zone_start_minute/zone_end_minute, null without
-                    one).
+                    one). A bar with a time has its place among the
+                    bars it shares hours with: lane, counted from 0
+                    at the left, and lanes, the number its group is
+                    divided into (both null for a marker or an
+                    all-day chip).
     """
     from .. import core  # noqa: F401 — ensure core is importable
-    from ..core.calendar_layout import compute_bar_segments, compute_bar_window
+    from ..core.calendar_layout import (
+        assign_lanes,
+        compute_bar_segments,
+        compute_bar_window,
+    )
 
     database: Database | None = request.app.get(database_key)
     if database is None:
@@ -1932,8 +1940,16 @@ async def handle_calendar_segments(request: web.Request) -> web.Response:
                         "is_all_day": seg.is_all_day,
                         "zone_start_minute": seg.zone_start_minute,
                         "zone_end_minute": seg.zone_end_minute,
+                        "lane": None,
+                        "lanes": None,
                     }
                 )
+        # Bars with a time that share hours stand side by side.
+        timed = [s for s in day_segments if not s["is_marker"] and not s["is_all_day"]]
+        lanes = assign_lanes([(s["start_minute"], s["end_minute"]) for s in timed])
+        for timed_segment, (lane, lane_count) in zip(timed, lanes, strict=True):
+            timed_segment["lane"] = lane
+            timed_segment["lanes"] = lane_count
         days_out.append({"date": day.isoformat(), "segments": day_segments})
 
     return web.json_response(

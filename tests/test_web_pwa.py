@@ -1492,6 +1492,63 @@ class TestCalendarHourGrid:
         )
         assert result.returncode == 0, result.stdout + result.stderr
 
+    def test_bars_that_share_hours_stand_side_by_side(self):
+        """Where the bars of a day go across its column, and the block
+        for those a Week's column has no lane for:
+        tests/js/day_lanes.test.js, run under Node."""
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("Node.js is not installed")
+        result = subprocess.run(
+            [node, "--test", str(Path(__file__).parent / "js" / "day_lanes.test.js")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_the_hours_are_painted_from_the_lanes(self):
+        """Every bar of a day was painted at the column's full width,
+        one over the other (#88). The hours are painted from where
+        `_placeDayBars` puts each bar; the page works out no lane of
+        its own, it takes the server's."""
+        hours = "".join(self._function("_paintHoursZone").split())
+        assert "_placeDayBars(known,colX,colWidth)" in hours
+        assert "colWidth-4" not in hours
+        place = self._function("_placeDayBars")
+        assert "seg.lane" in place
+        assert "seg.lanes" in place
+
+    def test_the_day_is_as_wide_as_its_lanes_and_the_week_is_not(self):
+        """The Day gives every bar a lane and grows wider than the
+        screen for them; the Week keeps its width."""
+        paint = "".join(self._function("_paintPinnedAndHours").split())
+        assert (
+            "if(days===1){W=Math.max(W,_HOUR_LABEL_WIDTH+_widthForLanes(_mostLanes(data)));}"
+            in (paint)
+        )
+
+    def test_a_grid_wider_than_the_screen_moves_as_one(self):
+        """The hours are in a box of their own that scrolls up and
+        down. Left to the width of the frame, that box scrolled the
+        hours sideways by themselves, and the header above stood
+        still: it is as wide as the hours, and the frame moves both."""
+        css = (STATIC_DIR / "style.css").read_text()
+        rule = css.split(".cal-hour-grid-scroll {")[1].split("}")[0]
+        assert "min-width: max-content;" in rule
+        frame = css.split(".cal-hour-grid-wrap {")[1].split("}")[0]
+        assert "overflow-x: auto;" in frame
+
+    def test_a_tap_on_the_count_opens_the_day(self):
+        """The block that stands for bars without a lane has a day
+        where a bar has a task."""
+        click = "".join(self._function("_installHourGridClickHandler").split())
+        assert "if(r.day)_openCalendarDay(r.day);" in click
+        opened = self._function("_openCalendarDay")
+        assert 'calSubView = "day";' in opened
+        assert "localStorage.setItem(CAL_VIEW_KEY, calSubView);" in opened
+        assert "renderCalendar();" in opened
+
     def test_the_page_works_no_zone_out_for_itself(self):
         """The layout decides where a zone is. The page split an early
         bar's width by the share of its window that was used, whatever

@@ -1527,6 +1527,9 @@ body {
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+  /* As wide as the hours it holds: a grid wider than the screen is
+     moved sideways by the frame around it, its header with it. */
+  min-width: max-content;
 }
 .cal-hour-grid-hours {
   display: block;

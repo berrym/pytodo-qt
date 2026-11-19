@@ -57,6 +57,14 @@ def _relative_luminance(rgb: tuple[int, int, int]) -> float:
     return 0.2126 * _channel_lum(r) + 0.7152 * _channel_lum(g) + 0.0722 * _channel_lum(b)
 
 
+def _blend(over_hex: str, under_hex: str, alpha: float) -> str:
+    """The color seen where `over_hex` at `alpha` lies on `under_hex`."""
+    over, under = _hex_to_rgb(over_hex), _hex_to_rgb(under_hex)
+    return "#" + "".join(
+        f"{round(o * alpha + u * (1 - alpha)):02x}" for o, u in zip(over, under, strict=True)
+    )
+
+
 def contrast_ratio(fg_hex: str, bg_hex: str) -> float:
     """WCAG 2.1 contrast ratio for two solid hex colors."""
     l1 = _relative_luminance(_hex_to_rgb(fg_hex))
@@ -419,8 +427,48 @@ def _web_fill_pairs() -> list[Pair]:
             "bar-completed-unknown": "#9ca3af",
         },
     }
+    # The block in a day of the Week that stands for the bars the
+    # column has no lane for: a count on a fill of --text-secondary,
+    # on the card or on today's column (--accent-subtle, the accent at
+    # 8% over the card).
+    more_blocks = {
+        "light": {"fill": "#6c6c6c", "card": "#ffffff", "accent": "#1976d2"},
+        "dark": {"fill": "#9e9e9e", "card": "#1e1e1e", "accent": "#64b5f6"},
+    }
     out: list[Pair] = []
     for theme in ("light", "dark"):
+        block = more_blocks[theme]
+        today = _blend(block["accent"], block["card"], 0.08)
+        out.append(
+            Pair(
+                "web count on the block of bars without a lane",
+                theme,
+                readable_text_on(block["fill"]),
+                block["fill"],
+                THRESHOLD_TEXT,
+                "text",
+            )
+        )
+        out.append(
+            Pair(
+                "web block of bars without a lane on bg-card",
+                theme,
+                block["fill"],
+                block["card"],
+                THRESHOLD_UI,
+                "ui",
+            )
+        )
+        out.append(
+            Pair(
+                "web block of bars without a lane on today's column",
+                theme,
+                block["fill"],
+                today,
+                THRESHOLD_UI,
+                "ui",
+            )
+        )
         for name, fill in fills[theme].items():
             out.append(
                 Pair(

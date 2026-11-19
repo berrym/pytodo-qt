@@ -21,10 +21,14 @@ Key functions:
     compute_bar_state(item, window, as_of)             — Q5 lifecycle state
     compute_bar_segments(item, window, viewing_day,    — Q3 clipping +
                          current_time)                   Q6 marker mode
+    assign_lanes(spans)                                — side-by-side lanes
+                                                         for bars of one day
+                                                         that share time
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, NamedTuple
@@ -880,3 +884,67 @@ def _make_marker(
         marker_label=label,
         is_all_day=True,  # Markers live in the All Day row
     )
+
+
+# ---------------------------------------------------------------------------
+# Lanes for bars of one day that share time
+# ---------------------------------------------------------------------------
+
+
+def assign_lanes(spans: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Place the timed bars of one day side by side where they share time.
+
+    `spans` holds the (start_minute, end_minute) of each bar, as its
+    segment for the day gives them. The answer has, for each span in
+    the order given, `(lane, lanes)`: the bar's lane, counted from 0 at
+    the left, and the number of lanes its group is divided into.
+
+    A group is a run of bars joined by shared time, directly or through
+    other bars: 09:00-10:00 and 09:30-11:00 are a group, and a bar at
+    10:30-11:30 joins it through the second. A bar that ends at the
+    minute another begins shares no time with it.
+
+    Every bar of a group has the same share of the width, `1 / lanes`,
+    and keeps its lane for its whole length, so its width does not
+    change part of the way down. A bar that shares time with no other
+    is alone in its group: `(0, 1)`, the full width.
+
+    Within a group the bar that begins first is furthest left; of bars
+    that begin together, the longer; of bars with the same times, the
+    one given first. Each bar takes the leftmost lane that is free when
+    it begins, so the group has as many lanes as the most bars it has
+    at one minute.
+    """
+    order = sorted(range(len(spans)), key=lambda i: (spans[i][0], -spans[i][1], i))
+    placed: list[tuple[int, int]] = [(0, 1)] * len(spans)
+
+    group: list[int] = []
+    lane_of: dict[int, int] = {}
+    lane_ends: list[int] = []
+    group_end = 0
+
+    def close_group() -> None:
+        for index in group:
+            placed[index] = (lane_of[index], len(lane_ends))
+
+    for index in order:
+        start, end = spans[index]
+        # A span with no length still takes the minute it is at.
+        end = max(end, start + 1)
+        if group and start >= group_end:
+            close_group()
+            group, lane_ends, group_end = [], [], 0
+        # The leftmost lane whose bar has ended, or a new one.
+        lane = next(
+            (n for n, lane_end in enumerate(lane_ends) if lane_end <= start),
+            len(lane_ends),
+        )
+        if lane == len(lane_ends):
+            lane_ends.append(end)
+        else:
+            lane_ends[lane] = end
+        lane_of[index] = lane
+        group.append(index)
+        group_end = max(group_end, end)
+    close_group()
+    return placed
