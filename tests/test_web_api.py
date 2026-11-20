@@ -13,10 +13,12 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date, timedelta
 from uuid import UUID
 
 import pytest
+from aiohttp import WSCloseCode, WSMsgType
 from aiohttp.test_utils import TestClient, TestServer
 
 from pytodo_qt.core.config import AppConfig, ConfigManager, WebConfig
@@ -25,7 +27,7 @@ from pytodo_qt.core.models import (
     create_todo_item,
     create_todo_list,
 )
-from pytodo_qt.web.api import database_key
+from pytodo_qt.web.api import database_key, ws_clients_key
 from pytodo_qt.web.server import WebServer
 
 # ===========================================================================
@@ -5313,6 +5315,110 @@ class TestDeviceRevocation:
             assert resp.status == 401
         finally:
             await client.close()
+
+    @pytest.mark.asyncio
+    async def test_removed_device_has_its_websocket_closed(self):
+        """A page open on a removed device learns of it at once (#74)."""
+        ws, token = _make_authed_client()
+        other = ws.validate_pin(ws.pairing_pin, user_agent="Device2/1.0")
+        assert other is not None
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
+            kept = await client.ws_connect(f"/ws?token={token}")
+            removed = await client.ws_connect(f"/ws?token={other.token}")
+            assert (await kept.receive_json())["event"] == "hello"
+            assert (await removed.receive_json())["event"] == "hello"
+
+            assert ws.remove_device(other.id) is True
+            # Told of no change from here on, though the closing takes a moment.
+            await asyncio.sleep(0)
+            assert len(ws.app[ws_clients_key]) == 1
+
+            closed = await removed.receive(timeout=5)
+            assert closed.type == WSMsgType.CLOSE
+            assert closed.data == WSCloseCode.POLICY_VIOLATION
+            # The other device's WebSocket stays, and is still told of changes.
+            await kept.send_str("ping")
+            assert (await kept.receive_json(timeout=5))["event"] == "pong"
+            assert len(ws.app[ws_clients_key]) == 1
+            # What the page then asks is refused.
+            resp = await client.get(
+                "/api/status", headers={"Authorization": f"Bearer {other.token}"}
+            )
+            assert resp.status == 401
+            await kept.close()
+            await removed.close()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_removing_a_device_at_the_endpoint_closes_its_websocket(self):
+        ws, token = _make_authed_client()
+        other = ws.validate_pin(ws.pairing_pin, user_agent="Device2/1.0")
+        assert other is not None
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
+            removed = await client.ws_connect(f"/ws?token={other.token}")
+            assert (await removed.receive_json())["event"] == "hello"
+            resp = await client.delete(
+                f"/api/devices/{other.id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert resp.status == 200
+            closed = await removed.receive(timeout=5)
+            assert closed.type == WSMsgType.CLOSE
+            await removed.close()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_revoking_all_devices_closes_every_websocket(self):
+        ws, token = _make_authed_client()
+        other = ws.validate_pin(ws.pairing_pin, user_agent="Device2/1.0")
+        assert other is not None
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
+            first = await client.ws_connect(f"/ws?token={token}")
+            second = await client.ws_connect(f"/ws?token={other.token}")
+            assert (await first.receive_json())["event"] == "hello"
+            assert (await second.receive_json())["event"] == "hello"
+
+            assert ws.revoke_all_devices() == 2
+
+            for conn in (first, second):
+                closed = await conn.receive(timeout=5)
+                assert closed.type == WSMsgType.CLOSE
+                await conn.close()
+            assert len(ws.app[ws_clients_key]) == 0
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_removing_a_device_that_is_not_there_closes_nothing(self):
+        ws, token = _make_authed_client()
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
+            kept = await client.ws_connect(f"/ws?token={token}")
+            assert (await kept.receive_json())["event"] == "hello"
+            assert ws.remove_device("no-such-device") is False
+            await kept.send_str("ping")
+            assert (await kept.receive_json(timeout=5))["event"] == "pong"
+            await kept.close()
+        finally:
+            await client.close()
+
+    def test_removing_a_device_without_a_running_loop_does_not_fail(self):
+        """The desktop removes a device from Qt code; a test, with no loop at all."""
+        ws, _token = _make_authed_client()
+        # A WebSocket's place in the set, with no loop to close it on.
+        ws.app[ws_clients_key].add(object())
+        device = ws.get_paired_devices()[0]
+        assert ws.remove_device(device.id) is True
+        assert ws.revoke_all_devices() == 0
 
     @pytest.mark.asyncio
     async def test_device_list_endpoint(self):

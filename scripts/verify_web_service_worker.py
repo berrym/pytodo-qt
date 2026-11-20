@@ -30,6 +30,11 @@ A stopped server refuses a connection at once. A server that falls
 silent keeps its connections and answers nothing, as a computer put to
 sleep does, or one whose network has dropped: a request to it waits
 instead of failing. Step 5 is that case.
+
+Steps 6 and 7 are for a device that is paired and then removed. Up to
+there the server asks for no PIN; for these two it does, with a list of
+paired devices of its own in a temporary directory. The application's
+list of paired devices is not read and not changed.
 """
 
 from __future__ import annotations
@@ -51,6 +56,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from verify_web_advance_reminder import application_certificate  # noqa: E402
 
+from pytodo_qt.core.config import ConfigManager, WebConfig  # noqa: E402
 from pytodo_qt.core.models import Database, create_todo_item, create_todo_list  # noqa: E402
 from pytodo_qt.web import server as web_server  # noqa: E402
 from pytodo_qt.web.server import WebServer, static_asset_version  # noqa: E402
@@ -189,6 +195,42 @@ STEP_ANSWERS = """\
   The server answers again.
   - Within 10 seconds the notice goes and the dot is green.
 
+  Press Enter to go on."""
+
+STEP_PAIRED = """\
+Step 6: the device is paired. The server now asks every device for a
+PIN, as the application does. The PIN is printed below; a new one is
+printed when it has been used, and after five minutes.
+
+  1. Look at the page, still open.
+     - Within 10 seconds a screen that asks for a PIN takes its place.
+  2. Type the PIN.
+     - The page shows the three tasks again.
+
+  Press Enter when the three tasks are showing."""
+
+STEP_REMOVED = """\
+Step 7: the device is removed. Keep the page open and in view.
+
+  Press Enter here. The device is then removed at the server, as
+  Forget in the application's Mobile Access window does.
+  - Within a few seconds the PIN screen comes up by itself. Do not
+    type a PIN."""
+
+STEP_NOTHING_KEPT = """\
+  The device is removed.
+
+  Press Enter once the PIN screen is showing. The server is then
+  stopped."""
+
+STEP_NOTHING_SHOWN = """\
+  The server is stopped.
+
+  Close the page (or the browser tab) and open the same address again.
+  - The page opens with the notice "Can't reach the server." and shows
+    no task: what the device had stored of the server's tasks went
+    when the device was removed.
+
   Press Enter to stop."""
 
 
@@ -233,8 +275,16 @@ def describe(db: Database) -> list[str]:
     ]
 
 
-async def start(db: Database, port: int) -> web.AppRunner:
-    app = WebServer(database=db).create_app()
+async def start(
+    db: Database, port: int, pairing: Path | None = None
+) -> tuple[web.AppRunner, WebServer]:
+    """Start the server. With a directory for its paired devices, it asks for a PIN."""
+    if pairing is None:
+        server = WebServer(database=db)
+    else:
+        manager = ConfigManager(config_dir=pairing, data_dir=pairing)
+        server = WebServer(database=db, config=WebConfig(enabled=True), config_manager=manager)
+    app = server.create_app()
     app.middlewares.append(print_page_files)
     app.router.add_get("/check/worker", worker_report)
     # No access log, so the steps stay readable; a short shutdown, so an
@@ -243,7 +293,7 @@ async def start(db: Database, port: int) -> web.AppRunner:
     await runner.setup()
     context, _ = application_certificate()
     await web.TCPSite(runner, "0.0.0.0", port, ssl_context=context).start()
-    return runner
+    return runner, server
 
 
 async def enter(text: str) -> None:
@@ -268,13 +318,25 @@ async def watch(db: Database) -> None:
         await asyncio.sleep(0.5)
 
 
-async def serve(port: int, static_dir: Path) -> None:
+async def watch_pin(server: WebServer) -> None:
+    """Print the PIN a device is paired with, whenever it changes."""
+    last = ""
+    while True:
+        current = server.pairing_pin
+        if current != last:
+            print(f"  PIN: {current}", flush=True)
+            last = current
+        await asyncio.sleep(0.5)
+
+
+async def serve(port: int, static_dir: Path, pairing_dir: Path) -> None:
     db = build_database()
     original_css = (static_dir / "style.css").read_text(encoding="utf-8")
     _, hosts = application_certificate()
 
-    runner = await start(db, port)
+    runner, _ = await start(db, port)
     watcher = asyncio.create_task(watch(db))
+    pin_watcher: asyncio.Task[None] | None = None
     try:
         print("\nOn a phone or tablet on the same network, either of:")
         for name in hosts:
@@ -287,7 +349,7 @@ async def serve(port: int, static_dir: Path) -> None:
         await enter(STEP_2)
 
         label(static_dir, original_css, "UPDATED", "#2e7d32")
-        runner = await start(db, port)
+        runner, _ = await start(db, port)
         await enter(STEP_3)
 
         await enter(STEP_4)
@@ -299,8 +361,22 @@ async def serve(port: int, static_dir: Path) -> None:
         # connection is closed and no WebSocket is answered until Enter.
         sys.stdin.readline()
         await enter(STEP_ANSWERS)
+
+        await runner.cleanup()
+        runner, server = await start(db, port, pairing_dir)
+        pin_watcher = asyncio.create_task(watch_pin(server))
+        await enter(STEP_PAIRED)
+
+        await enter(STEP_REMOVED)
+        for device in server.get_paired_devices():
+            server.remove_device(device.id)
+        await enter(STEP_NOTHING_KEPT)
+        await runner.cleanup()
+        await enter(STEP_NOTHING_SHOWN)
     finally:
         watcher.cancel()
+        if pin_watcher is not None:
+            pin_watcher.cancel()
         await runner.cleanup()
 
 
@@ -315,8 +391,10 @@ def main() -> None:
         with (static_dir / "app.js").open("a", encoding="utf-8") as script:
             script.write(REPORT_JS)
         web_server._STATIC_DIR = static_dir
+        pairing_dir = Path(temporary) / "pairing"
+        pairing_dir.mkdir()
         with contextlib.suppress(KeyboardInterrupt):
-            asyncio.run(serve(args.port, static_dir))
+            asyncio.run(serve(args.port, static_dir, pairing_dir))
     print("\nStopped.")
 
 

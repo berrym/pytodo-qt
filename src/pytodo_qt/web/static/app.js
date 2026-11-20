@@ -367,9 +367,7 @@
     var sentAs = opts.headers.Authorization;
     var resp = await serverFetch(API + path, opts, deadline);
     if (resp.status === 401 && storedTimeOf(resp) === null) {
-      // Not for a request sent before the device was paired again: the
-      // token it was refused for is not the one held now.
-      if (authHeaders().Authorization === sentAs) showLoginScreen();
+      tokenRefused(sentAs);
       var err401 = new Error("Authentication required");
       err401.status = 401;
       err401.body = {};
@@ -396,6 +394,109 @@
       throw e;
     }
     return { data: data, savedAt: storedTimeOf(resp) };
+  }
+
+  // ====================================================================
+  // A token the server refuses
+  // ====================================================================
+
+  // The server itself refuses the token a request carried (sentAs, the
+  // Authorization header; undefined for a request that carried none):
+  // the device was removed at the desktop, or was never paired. The
+  // token is forgotten, what the device has stored of the server's data
+  // goes with it, and the PIN screen comes up.
+  //
+  // Not for a request sent before the device was paired again: the
+  // token it was refused for is not the one held now.
+  function tokenRefused(sentAs) {
+    if (authHeaders().Authorization !== sentAs) return;
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    forgetStoredData();
+    showLoginScreen();
+  }
+
+  // The service worker's store of the server's answers (sw.js).
+  var DATA_CACHE = "pytodo-data";
+  // How long the service worker has to say that it has forgotten its
+  // stored answers, in milliseconds. One of an earlier version of the
+  // page does not answer at all.
+  var WORKER_FORGETS_WITHIN = 2000;
+
+  // The forgetting under way, or the last one. A sign-in waits for it,
+  // so that what the page reads afterward is not deleted with the rest.
+  var forgetting = Promise.resolve();
+
+  // Empties what the device holds of the server's data: the tasks on
+  // screen, the service worker's stored answers and the copy in
+  // IndexedDB. The changes not yet sent are kept, and so is what the
+  // person has chosen on this device: the theme, the view.
+  function forgetStoredData() {
+    clearShownData();
+    forgetting = forgetting
+      .then(function () {
+        return Promise.all([
+          workerForgets(),
+          deleteDataCache(),
+          clearStoredLists(),
+        ]);
+      })
+      .catch(function () {
+        /* a store that cannot be reached holds nothing to show either */
+      });
+    return forgetting;
+  }
+
+  // Has the service worker delete its stored answers, and store none
+  // that is on its way: an answer asked for while the token was still
+  // good would otherwise be stored after the rest has gone. Resolves
+  // when the worker says it is done; without a worker, or with one that
+  // does not say, deleteDataCache has deleted them all the same.
+  function workerForgets() {
+    var worker = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (!worker || typeof MessageChannel === "undefined") {
+      return Promise.resolve();
+    }
+    return new Promise(function (resolve) {
+      var channel = new MessageChannel();
+      var timer = null;
+      function done() {
+        clearTimeout(timer);
+        channel.port1.onmessage = null;
+        channel.port1.close();
+        resolve();
+      }
+      timer = setTimeout(done, WORKER_FORGETS_WITHIN);
+      channel.port1.onmessage = done;
+      try {
+        worker.postMessage({ type: "forget-data" }, [channel.port2]);
+      } catch (e) {
+        done();
+      }
+    });
+  }
+
+  function deleteDataCache() {
+    if (typeof caches === "undefined") return Promise.resolve();
+    return caches.delete(DATA_CACHE).catch(function () {});
+  }
+
+  // What the page shows and holds of the server's data. The page is as
+  // one that has started with nothing stored; the next read fills it.
+  function clearShownData() {
+    serverItems = [];
+    cachedItems = [];
+    serverBoardData = null;
+    cachedBoardData = null;
+    cachedLists = [];
+    dataSavedAt = null;
+    listIsServers = false;
+    lastItemsFingerprint = "";
+    lastListsFingerprint = "";
+    lastBoardFingerprint = "";
+    if (itemsContainer) itemsContainer.innerHTML = "";
+    if (boardContainer) boardContainer.innerHTML = "";
+    if (calContainer) calContainer.innerHTML = "";
+    if (listPickerName) listPickerName.textContent = "Loading...";
   }
 
   // ====================================================================
@@ -483,6 +584,12 @@
       );
       if (resp.ok) {
         var data = await resp.json();
+        // Another token than the one held: what the device has stored
+        // was read with that one, or with one the server has refused.
+        // Every PIN gives a new token, so this is every sign-in; the
+        // stores are as a rule empty by now (tokenRefused).
+        if (data.token !== getAuthToken()) forgetStoredData();
+        await forgetting;
         setAuthToken(data.token);
         hideLoginScreen();
         init();
@@ -656,6 +763,97 @@
         resolve(null);
       }
     });
+  }
+
+  // Empties the copy kept here. Resolves when that is done, or cannot
+  // be done.
+  async function clearStoredLists() {
+    var db = await openIDB();
+    if (!db) return;
+    await new Promise(function (resolve) {
+      try {
+        var tx = db.transaction(["lists", "listItems"], "readwrite");
+        tx.objectStore("lists").clear();
+        tx.objectStore("listItems").clear();
+        tx.oncomplete = resolve;
+        tx.onerror = resolve;
+        tx.onabort = resolve;
+      } catch (e) {
+        resolve();
+      }
+    });
+  }
+
+  // ====================================================================
+  // Stored data the server no longer renews
+  // ====================================================================
+
+  // How long a stored answer, or a list's saved tasks, is kept without
+  // being renewed by the server, in milliseconds: 14 days. Each read
+  // the server answers renews what is stored for it, so what is older
+  // is for something the page no longer reads: a list that was
+  // deleted, a week of the calendar looked at once.
+  var KEPT_FOR = 1209600000;
+  // The least time between two sweeps, in milliseconds: a day.
+  var SWEEP_EVERY = 86400000;
+  var SWEPT_AT_KEY = "pytodo_swept_at";
+
+  // Whether the tasks of the current list were last read from the
+  // server itself.
+  var listIsServers = false;
+
+  // Deletes what the server has not renewed for KEPT_FOR, at most once
+  // in SWEEP_EVERY. Called when the server itself has just answered
+  // with the lists and with the current list, where there is one: what
+  // the page shows has then been renewed, and a device that cannot
+  // reach the server keeps all it has, however old. lists is the
+  // server's answer.
+  function sweepStoredData(lists) {
+    var now = Date.now();
+    var sweptAt = parseInt(localStorage.getItem(SWEPT_AT_KEY) || "", 10) || 0;
+    // A time that is yet to come is no time of a sweep: the device's
+    // clock was set back.
+    if (sweptAt <= now && now - sweptAt < SWEEP_EVERY) return;
+    localStorage.setItem(SWEPT_AT_KEY, String(now));
+    var before = now - KEPT_FOR;
+    var worker = navigator.serviceWorker && navigator.serviceWorker.controller;
+    if (worker) {
+      try {
+        worker.postMessage({ type: "sweep-data", before: before });
+      } catch (e) {
+        /* the next sweep asks again */
+      }
+    }
+    sweepStoredLists(before, lists);
+  }
+
+  // Whether a list's saved tasks are kept at a sweep: the server still
+  // has the list (listIds, a map of ids), and the tasks were saved at
+  // or after the time given. Tasks saved before times were kept have
+  // not been renewed since, and go.
+  function listRecordIsKept(record, before, listIds) {
+    return Boolean(listIds[record.listId]) && record.savedAt >= before;
+  }
+
+  async function sweepStoredLists(before, lists) {
+    var db = await openIDB();
+    if (!db) return;
+    var listIds = {};
+    lists.forEach(function (lst) {
+      listIds[lst.id] = true;
+    });
+    try {
+      var tx = db.transaction("listItems", "readwrite");
+      var walk = tx.objectStore("listItems").openCursor();
+      walk.onsuccess = function () {
+        var cursor = walk.result;
+        if (!cursor) return;
+        if (!listRecordIsKept(cursor.value, before, listIds)) cursor.delete();
+        cursor.continue();
+      };
+    } catch (e) {
+      /* best-effort */
+    }
   }
 
   // ====================================================================
@@ -7477,9 +7675,19 @@
 
   async function refreshLists() {
     try {
-      var data = await api("/lists");
-      renderLists(data.lists);
-      cacheListsData(data.lists);
+      var answer = await apiAnswer("/lists");
+      // The server refused the device while this was on its way: what
+      // came back is not shown behind the PIN screen, and not saved
+      // after the stores were emptied for the refusal.
+      if (pinScreenUp) return;
+      var lists = answer.data.lists;
+      renderLists(lists);
+      cacheListsData(lists);
+      // The server's own lists, and its own tasks under them, or no
+      // list to have tasks: what is stored and still read is renewed.
+      if (answer.savedAt === null && (!currentListId || listIsServers)) {
+        sweepStoredData(lists);
+      }
     } catch (e) {
       console.error("Failed to load lists:", e);
       // Fall back to IndexedDB cache
@@ -7499,8 +7707,12 @@
     }
     try {
       var answer = await apiAnswer("/lists/" + currentListId);
+      // The server refused the device while this was on its way (see
+      // refreshLists).
+      if (pinScreenUp) return;
       var data = answer.data;
       var fromServer = answer.savedAt === null;
+      listIsServers = fromServer;
       serverItems = data.items || [];
       serverBoardData = {
         board_columns: data.board_columns || [],
@@ -7521,6 +7733,7 @@
       else readListAgainSoon();
     } catch (e) {
       console.error("Failed to load list:", e);
+      listIsServers = false;
       // Fall back to IndexedDB cache
       var record = await getCachedListRecord(currentListId);
       serverItems = (record && record.items) || [];
@@ -8091,10 +8304,9 @@
       return;
     }
     if (resp.status === 401 && storedTimeOf(resp) === null) {
-      // A token the server refuses is forgotten; the device is paired
-      // again.
-      if (token) localStorage.removeItem(AUTH_TOKEN_KEY);
-      showLoginScreen();
+      // A token the server refuses is forgotten, with what the device
+      // has stored; the device is paired again.
+      tokenRefused(token ? "Bearer " + token : undefined);
       return;
     }
     // The server's answer, a stored one, or the answer the service

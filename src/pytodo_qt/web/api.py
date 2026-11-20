@@ -7,13 +7,15 @@ a UI refresh is scheduled via QTimer.singleShot(0, ...).
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import re
 import time as _time
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from aiohttp import web
+from aiohttp import WSCloseCode, web
 
 from ..core import settings
 from ..core.calendar_layout import compute_bar_state, compute_bar_window
@@ -41,6 +43,8 @@ config_manager_key: web.AppKey[ConfigManager] = web.AppKey("config_manager")
 ws_clients_key: web.AppKey[set[web.WebSocketResponse]] = web.AppKey("ws_clients")
 web_server_key: web.AppKey[Any] = web.AppKey("web_server")
 device_store_key: web.AppKey[Any] = web.AppKey("device_store")
+# Where a WebSocket keeps the id of the paired device that opened it.
+WS_DEVICE_ID = "device_id"
 main_window_key: web.AppKey[Any] = web.AppKey("main_window")
 analytics_key: web.AppKey[Any] = web.AppKey("analytics")
 
@@ -1983,6 +1987,9 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
     from .server import static_asset_version
 
     ws = web.WebSocketResponse(heartbeat=30.0)
+    device = request.get("authenticated_device")
+    if device is not None:
+        ws[WS_DEVICE_ID] = device.id
     await ws.prepare(request)
     await ws.send_json({"event": "hello", "page_version": static_asset_version()})
 
@@ -2146,6 +2153,26 @@ async def handle_ca_cert_download(request: web.Request) -> web.Response:
             "Content-Disposition": 'attachment; filename="PyTodo-Qt-CA.pem"',
         },
     )
+
+
+async def close_device_sockets(clients: set[web.WebSocketResponse], device_id: str | None) -> None:
+    """Close the WebSockets of a device that was removed; of every device for None.
+
+    A page open on the device asks the server again when its WebSocket
+    closes, is refused, and empties what it has stored. Left open, the
+    WebSocket would go on being told of every change, and the page would
+    show its tasks until it next read something.
+    """
+    removed = [ws for ws in clients if device_id is None or ws.get(WS_DEVICE_ID) == device_id]
+    for ws in removed:
+        clients.discard(ws)
+
+    async def close(ws: web.WebSocketResponse) -> None:
+        with contextlib.suppress(Exception):
+            await ws.close(code=WSCloseCode.POLICY_VIOLATION, message=b"Device removed")
+
+    # Together: a device that does not answer the close takes its time.
+    await asyncio.gather(*(close(ws) for ws in removed))
 
 
 async def _broadcast_refresh(clients: set[web.WebSocketResponse]) -> None:

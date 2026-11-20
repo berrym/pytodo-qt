@@ -6,6 +6,7 @@ so it can safely read the in-memory Database without locking.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import ssl
@@ -197,6 +198,7 @@ class WebServer:
         self._pairing_pin_expiry: float = 0
         self._pin_attempts: dict[str, tuple[int, float]] = {}  # ip → (count, lockout_until)
         self._device_store: WebDeviceStore | None = None
+        self._closing_sockets: set[asyncio.Task[None]] = set()
 
     def generate_pin(self) -> str:
         """Generate a new 6-digit pairing PIN, valid for 5 minutes."""
@@ -308,15 +310,39 @@ class WebServer:
         count = 0
         if self._device_store:
             count = self._device_store.remove_all_devices()
+            self._close_device_sockets(None)
         self.generate_pin()
         logger.log.info("All device tokens revoked — %d devices removed", count)
         return count
 
     def remove_device(self, device_id: str) -> bool:
         """Remove a single paired device. Returns True if found and removed."""
-        if self._device_store:
-            return self._device_store.remove_device(device_id)
+        if self._device_store and self._device_store.remove_device(device_id):
+            self._close_device_sockets(device_id)
+            return True
         return False
+
+    def _close_device_sockets(self, device_id: str | None) -> None:
+        """Close the WebSockets of a removed device; of every device for None.
+
+        Safe to call from sync Qt code: the closing is scheduled on the
+        running event loop. Without one there is no WebSocket to close.
+        """
+        if not self._app:
+            return
+        from .api import close_device_sockets, ws_clients_key
+
+        clients = self._app.get(ws_clients_key)
+        if not clients:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        closing = loop.create_task(close_device_sockets(clients, device_id))
+        # The loop keeps no reference of its own to a task.
+        self._closing_sockets.add(closing)
+        closing.add_done_callback(self._closing_sockets.discard)
 
     def rename_device(self, device_id: str, new_name: str) -> bool:
         """Rename a paired device. Returns True if the device was updated.

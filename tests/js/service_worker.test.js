@@ -63,10 +63,13 @@ function worker(serverAnswers) {
     await settle();
   }
   const stores = {};
-  const broken = { open: false, match: false };
+  const broken = { open: false, match: false, delete: false };
   const caches = {
     async open(name) {
       if (broken.open) throw new Error("the store cannot be opened");
+      // A store that is deleted goes on taking what is put into it
+      // through a handle opened before, as the browser's does; nothing
+      // reaches it by its name any more.
       const entries = (stores[name] = stores[name] || new Map());
       return {
         async match(request) {
@@ -77,7 +80,19 @@ function worker(serverAnswers) {
         async put(request, response) {
           entries.set(request.url, response);
         },
+        async keys() {
+          return Array.from(entries.keys()).map((url) => new Request(url));
+        },
+        async delete(request) {
+          return entries.delete(request.url);
+        },
       };
+    },
+    async delete(name) {
+      if (broken.delete) throw new Error("the store cannot be deleted");
+      const had = name in stores;
+      delete stores[name];
+      return had;
     },
   };
   const listeners = {};
@@ -138,6 +153,27 @@ function worker(serverAnswers) {
     clock: clock,
     advance: advance,
     broken: broken,
+    // The addresses an answer is stored for, in a store of the name.
+    storedFor(name) {
+      return Array.from((stores[name] || new Map()).keys())
+        .map((url) => url.slice(ORIGIN.length))
+        .sort();
+    },
+    // What the page tells the worker, with a port for its reply. Gives
+    // the replies once the worker has done with the message.
+    async told(data) {
+      const waits = [];
+      const replies = [];
+      listeners.message({
+        data: data,
+        ports: [{ postMessage: (reply) => replies.push(reply) }],
+        waitUntil(promise) {
+          waits.push(promise);
+        },
+      });
+      await Promise.all(waits);
+      return replies;
+    },
     // Puts another network in the place of the one the worker was made with.
     serve(other) {
       server = other;
@@ -758,4 +794,159 @@ test("the address a device comes back by is left to the network", () => {
   sw.listeners.fetch(made);
   assert.equal(made.answer, null);
   assert.deepEqual(sw.fetched, []);
+});
+
+// --- The device is removed, or paired again ---
+
+test("told to forget, the worker deletes its stored answers and says when it has", async () => {
+  const sw = worker(() => json({ lists: ["Home"] }));
+  await sw.read("/api/lists");
+  await sw.read("/api/status");
+  assert.deepEqual(sw.storedFor("pytodo-data"), ["/api/lists", "/api/status"]);
+
+  const replies = await sw.told({ type: "forget-data" });
+  assert.deepEqual(replies, [{ type: "data-forgotten" }]);
+  assert.deepEqual(sw.storedFor("pytodo-data"), []);
+
+  // Without the server there is nothing to give.
+  sw.serve(down);
+  const answer = await sw.read("/api/lists");
+  assert.equal(answer.status, 503);
+  assert.equal(answer.headers.get(sw.SOURCE_HEADER), "none");
+});
+
+test("the page's own files are not forgotten with the answers", async () => {
+  const sw = worker(() => json({}));
+  const files = await sw.caches.open("pytodo-static-__ASSET_VERSION__");
+  await files.put(new Request(ORIGIN + "/static/app.js"), json({}));
+  await sw.read("/api/lists");
+  await sw.told({ type: "forget-data" });
+  assert.deepEqual(sw.storedFor("pytodo-static-__ASSET_VERSION__"), [
+    "/static/app.js",
+  ]);
+});
+
+test("an answer on its way when the worker is told to forget is not stored", async () => {
+  // Asked for while the token was good; the device was removed at the
+  // server before the answer came.
+  const server = slowServer();
+  const sw = worker(server);
+  const read = sw.begin("/api/lists");
+  await sw.advance(0);
+  await sw.told({ type: "forget-data" });
+  server.answers({ lists: ["Home"] });
+  await sw.advance(0);
+  await read.event.settled();
+  // The page has its answer all the same.
+  assert.deepEqual(await read.outcome.json(), { lists: ["Home"] });
+  assert.deepEqual(sw.storedFor("pytodo-data"), []);
+});
+
+test("an answer asked for after the forgetting is stored as before", async () => {
+  const sw = worker(() => json({ lists: ["Home"] }));
+  await sw.read("/api/lists");
+  await sw.told({ type: "forget-data" });
+  await sw.read("/api/lists");
+  assert.deepEqual(sw.storedFor("pytodo-data"), ["/api/lists"]);
+  sw.serve(down);
+  const answer = await sw.read("/api/lists");
+  assert.equal(answer.headers.get(sw.SOURCE_HEADER), "store");
+});
+
+test("a store that cannot be deleted: the worker still says it is done, and stores nothing on its way", async () => {
+  const server = slowServer();
+  const sw = worker(server);
+  const read = sw.begin("/api/lists");
+  await sw.advance(0);
+  sw.broken.delete = true;
+  const replies = await sw.told({ type: "forget-data" });
+  assert.deepEqual(replies, [{ type: "data-forgotten" }]);
+  server.answers({ lists: ["Home"] });
+  await sw.advance(0);
+  await read.event.settled();
+  assert.deepEqual(sw.storedFor("pytodo-data"), []);
+});
+
+test("a message of no known kind does nothing", async () => {
+  const sw = worker(() => json({ n: 1 }));
+  await sw.read("/api/status");
+  assert.deepEqual(await sw.told({ type: "something-else" }), []);
+  assert.deepEqual(await sw.told(undefined), []);
+  assert.deepEqual(sw.storedFor("pytodo-data"), ["/api/status"]);
+});
+
+// --- Answers the server no longer renews ---
+
+const DAY = 24 * 60 * 60 * 1000;
+
+test("a sweep deletes the answers stored before the time given, and no others", async () => {
+  const sw = worker(() => json({ n: 1 }));
+  await sw.read("/api/lists/old");
+  await sw.advance(DAY);
+  await sw.read("/api/lists/at-the-time");
+  await sw.advance(1);
+  await sw.read("/api/lists/new");
+
+  assert.deepEqual(
+    await sw.told({ type: "sweep-data", before: sw.clock.now - 1 }),
+    [],
+  );
+  assert.deepEqual(sw.storedFor("pytodo-data"), [
+    "/api/lists/at-the-time",
+    "/api/lists/new",
+  ]);
+});
+
+test("an answer the server has renewed is kept, however long ago it was first stored", async () => {
+  const sw = worker(() => json({ n: 1 }));
+  await sw.read("/api/lists");
+  await sw.advance(30 * DAY);
+  await sw.read("/api/lists");
+  await sw.told({ type: "sweep-data", before: sw.clock.now - 14 * DAY });
+  assert.deepEqual(sw.storedFor("pytodo-data"), ["/api/lists"]);
+});
+
+test("an answer stored before times were kept is as old as the server's date on it", async () => {
+  const sw = worker(down);
+  const cache = await sw.caches.open("pytodo-data");
+  await cache.put(
+    new Request(ORIGIN + "/api/lists/1"),
+    json({}, { headers: { Date: "Wed, 18 Nov 2026 21:34:00 GMT" } }),
+  );
+  await cache.put(
+    new Request(ORIGIN + "/api/lists/2"),
+    json({}, { headers: { Date: "Wed, 18 Nov 2026 21:36:00 GMT" } }),
+  );
+  await sw.told({
+    type: "sweep-data",
+    before: Date.UTC(2026, 10, 18, 21, 35, 0),
+  });
+  assert.deepEqual(sw.storedFor("pytodo-data"), ["/api/lists/2"]);
+});
+
+test("an answer with neither a time nor a date goes at a sweep", async () => {
+  const sw = worker(down);
+  const cache = await sw.caches.open("pytodo-data");
+  await cache.put(new Request(ORIGIN + "/api/lists"), json({}));
+  await sw.told({ type: "sweep-data", before: 1 });
+  assert.deepEqual(sw.storedFor("pytodo-data"), []);
+});
+
+test("a sweep that names no time deletes nothing", async () => {
+  const sw = worker(() => json({ n: 1 }));
+  await sw.read("/api/lists");
+  // A time is a number: text that reads as a later time is none.
+  const later = String(sw.clock.now + 1);
+  for (const before of [undefined, 0, -1, "tomorrow", later, NaN]) {
+    await sw.told({ type: "sweep-data", before: before });
+  }
+  assert.deepEqual(sw.storedFor("pytodo-data"), ["/api/lists"]);
+});
+
+test("a store that cannot be read stops a sweep without an error", async () => {
+  const sw = worker(() => json({ n: 1 }));
+  await sw.read("/api/lists");
+  sw.broken.match = true;
+  await sw.told({ type: "sweep-data", before: sw.clock.now + 1 });
+  assert.deepEqual(sw.storedFor("pytodo-data"), ["/api/lists"]);
 });

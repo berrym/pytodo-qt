@@ -39,6 +39,10 @@ var slowUntil = 0;
 // STORED_AFTER, so that a server that is only slow still has its
 // answer stored; no longer than the page's deadline for a read.
 var GIVEN_UP_AFTER = 8000;
+// How often the page has had the stored answers forgotten (onMessage).
+// An answer asked for before that is not stored after it: the device
+// was removed at the server while the request was on its way.
+var forgotten = 0;
 var STATIC_ASSETS = [
   "/",
   "/static/style.css",
@@ -62,6 +66,7 @@ if (self.location.protocol === "http:") {
   self.addEventListener("install", onInstall);
   self.addEventListener("activate", onActivate);
   self.addEventListener("fetch", onFetch);
+  self.addEventListener("message", onMessage);
 }
 
 function removeSelf() {
@@ -171,6 +176,7 @@ async function networkFirst(event) {
     gaveUp.abort();
   }, GIVEN_UP_AFTER);
   var asked = fetch(request, { signal: gaveUp.signal });
+  var askedAfter = forgotten;
   // Whatever is given to the page, the server's answer is stored when
   // it comes within GIVEN_UP_AFTER, and the worker is kept alive until
   // then: a stored answer given in its place is then the newer one
@@ -180,7 +186,7 @@ async function networkFirst(event) {
       .then(function (response) {
         // The server answers: it is not slow, or no longer.
         slowUntil = 0;
-        if (response.ok) return store(request, response.clone());
+        if (response.ok) return store(request, response.clone(), askedAfter);
       })
       .catch(function () {
         /* no answer, or a full store: the page has been answered */
@@ -234,12 +240,15 @@ async function networkFirst(event) {
   return fromStore(stored);
 }
 
-// Stores an answer with the time it was stored.
-async function store(request, response) {
+// Stores an answer with the time it was stored. Not one asked for
+// before the stored answers were last forgotten (askedAfter is the
+// value of forgotten when it was asked for).
+async function store(request, response, askedAfter) {
   var body = await response.blob();
   var headers = new Headers(response.headers);
   headers.set(STORED_AT_HEADER, String(Date.now()));
   var cache = await caches.open(DATA_CACHE);
+  if (askedAfter !== undefined && askedAfter !== forgotten) return;
   await cache.put(
     request,
     new Response(body, {
@@ -250,15 +259,21 @@ async function store(request, response) {
   );
 }
 
-// A stored answer as the page receives it. One stored before times
-// were kept has the server's own date, where that can be read.
+// When a stored answer was stored, in milliseconds. One stored before
+// times were kept has the server's own date, where that can be read;
+// 0 where nothing tells.
+function storedAt(stored) {
+  var at = parseInt(stored.headers.get(STORED_AT_HEADER) || "", 10);
+  if (at > 0) return at;
+  var sent = Date.parse(stored.headers.get("Date") || "");
+  return isNaN(sent) ? 0 : sent;
+}
+
+// A stored answer as the page receives it.
 function fromStore(stored) {
   var headers = new Headers(stored.headers);
   headers.set(SOURCE_HEADER, "store");
-  if (!headers.has(STORED_AT_HEADER)) {
-    var sent = Date.parse(headers.get("Date") || "");
-    headers.set(STORED_AT_HEADER, String(isNaN(sent) ? 0 : sent));
-  }
+  headers.set(STORED_AT_HEADER, String(storedAt(stored)));
   return new Response(stored.body, {
     status: stored.status,
     statusText: stored.statusText,
@@ -273,4 +288,56 @@ function nothingStored() {
     status: 503,
     headers: headers,
   });
+}
+
+// --- What the page asks of the store ---
+//
+// "forget-data": the server refuses the device's token, or the device
+// holds another one. The stored answers are deleted, none that is on
+// its way is stored afterward, and the page is told on the port it
+// sent when that is done.
+// "sweep-data": the stored answers the server has not renewed since
+// the time given (before, in milliseconds) are deleted. The page asks
+// when the server has just answered what it shows, so that a device
+// away from the server keeps what it has, however old.
+function onMessage(event) {
+  var asked = event.data || {};
+  if (asked.type === "forget-data") {
+    var port = event.ports && event.ports[0];
+    event.waitUntil(
+      forgetData().then(function () {
+        if (port) port.postMessage({ type: "data-forgotten" });
+      }),
+    );
+  } else if (asked.type === "sweep-data") {
+    event.waitUntil(sweepData(asked.before));
+  }
+}
+
+async function forgetData() {
+  forgotten++;
+  try {
+    await caches.delete(DATA_CACHE);
+  } catch (_) {
+    /* a store that cannot be reached; the page deletes it as well */
+  }
+}
+
+// Deletes the answers stored before a time. One whose time nothing
+// tells (storedAt) goes with them: it has not been renewed since times
+// were kept.
+async function sweepData(before) {
+  if (typeof before !== "number" || !(before > 0)) return;
+  try {
+    var cache = await caches.open(DATA_CACHE);
+    var requests = await cache.keys();
+    for (var i = 0; i < requests.length; i++) {
+      var stored = await cache.match(requests[i]);
+      if (stored && storedAt(stored) < before) {
+        await cache.delete(requests[i]);
+      }
+    }
+  } catch (_) {
+    /* what could not be deleted is tried at the next sweep */
+  }
 }

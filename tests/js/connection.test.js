@@ -114,6 +114,15 @@ function element() {
 //   ownSockets   true to run the page's own connectWebSocket,
 //                scheduleReconnect and probeServer against WebSockets
 //                of the test's making, listed in env.sockets
+//   ownLists     true to run the page's own refreshLists; the lists it
+//                draws are listed in env.drawnLists
+//   noWorker     true for a page no service worker controls
+//   workerSilent true for a service worker that does not say when it
+//                has forgotten its stored answers
+//   sweptAt      the time of the last sweep of the stores, as stored
+//   currentList  the id of the list shown (null for none)
+//   clock        the time the page reads, in milliseconds, where a
+//                test needs it to stand still
 // Time stands still until env.advance(milliseconds) moves it.
 function page(options) {
   const env = Object.assign(
@@ -164,6 +173,7 @@ function page(options) {
   const kept = {
     pytodo_auth_token: env.token === undefined ? "token" : env.token,
   };
+  if (env.sweptAt !== undefined) kept.pytodo_swept_at = String(env.sweptAt);
   env.pinInput = { value: env.pin || "", focus() {} };
   env.pinError = { textContent: "" };
   env.pinButton = { disabled: false, textContent: "Connect" };
@@ -184,10 +194,45 @@ function page(options) {
       env.stores = env.stores.filter((store) => store !== name);
     },
   };
+  // What the service worker is told, and the lists whose saved tasks
+  // are swept: [before, ids of the server's lists].
+  env.told = [];
+  env.sweptLists = [];
+  env.drawnLists = [];
+  // A channel as far as the page uses one: what is posted at one end
+  // arrives at the other at once.
+  env.MessageChannel = function () {
+    const channel = {
+      port1: { onmessage: null, closed: false },
+      port2: {
+        postMessage(reply) {
+          if (channel.port1.onmessage) channel.port1.onmessage({ data: reply });
+        },
+      },
+    };
+    channel.port1.close = () => {
+      channel.port1.closed = true;
+    };
+    env.channels.push(channel);
+    return channel;
+  };
+  env.channels = [];
   env.navigator = {
     onLine: env.deviceOnline,
     serviceWorker: {
-      controller: {},
+      controller: env.noWorker
+        ? null
+        : {
+            postMessage(message, ports) {
+              env.told.push(message);
+              if (message.type !== "forget-data") return;
+              // The worker deletes its stored answers, and says so.
+              env.stores = env.stores.filter((name) => name !== "pytodo-data");
+              if (!env.workerSilent) {
+                ports[0].postMessage({ type: "data-forgotten" });
+              }
+            },
+          },
       getRegistrations: async () =>
         env.workers.map(() => ({
           unregister: async () => {
@@ -245,6 +290,8 @@ function page(options) {
       "var AUTH_TOKEN_KEY = 'pytodo_auth_token';",
       "var localStorage = env.localStorage;",
       "var caches = env.caches;",
+      "var MessageChannel = env.MessageChannel;",
+      "var Date = env.clock === undefined ? globalThis.Date : { now: function () { return env.clock; } };",
       "function getAuthToken() { return env.localStorage.getItem('pytodo_auth_token') || ''; }",
       "function init() { env.calls.push('init'); }",
       functionText("authHeaders"),
@@ -253,6 +300,22 @@ function page(options) {
         ? functionText("showLoginScreen")
         : "function showLoginScreen() { env.calls.push('showLoginScreen'); pinScreenUp = true; }",
       functionText("startPage"),
+      functionText("tokenRefused"),
+      constantText("DATA_CACHE"),
+      constantText("WORKER_FORGETS_WITHIN"),
+      "var forgetting = Promise.resolve();",
+      functionText("forgetStoredData"),
+      functionText("workerForgets"),
+      functionText("deleteDataCache"),
+      called("clearShownData"),
+      "async function clearStoredLists() { env.calls.push('clearStoredLists'); }",
+      constantText("KEPT_FOR"),
+      constantText("SWEEP_EVERY"),
+      constantText("SWEPT_AT_KEY"),
+      "var listIsServers = Boolean(env.listIsServers);",
+      functionText("sweepStoredData"),
+      functionText("listRecordIsKept"),
+      "function sweepStoredLists(before, lists) { env.sweptLists.push([before, lists.map(function (l) { return l.id; })]); }",
       "function onServerPageVersion(version) { env.calls.push('version ' + version); }",
       constantText("WS_MAX_DELAY"),
       constantText("WS_MAX_DELAY_IN_VIEW"),
@@ -293,7 +356,7 @@ function page(options) {
       env.ownRefresh
         ? functionText("refreshCurrentList")
         : called("refreshCurrentList"),
-      "var currentListId = 'list-1';",
+      "var currentListId = env.currentList === undefined ? 'list-1' : env.currentList;",
       "var serverItems = [];",
       "var cachedItems = [];",
       "var serverBoardData = null;",
@@ -310,7 +373,12 @@ function page(options) {
       "function cacheListItems(id, items) { env.calls.push('cacheListItems'); }",
       "function showQueuedChanges() { env.drawn.push(serverItems.map(function (i) { return i.id; }).join(',')); }",
       "function refreshBoard() {}",
-      "function refreshLists() {}",
+      env.ownLists
+        ? functionText("refreshLists")
+        : "function refreshLists() {}",
+      "function renderLists(lists) { env.drawnLists.push(lists.map(function (l) { return l.id; })); }",
+      "function cacheListsData(lists) { env.calls.push('cacheListsData'); }",
+      "async function getCachedLists() { return null; }",
       "function markSynced() { env.calls.push('markSynced'); }",
       "async function getCachedListRecord() { return env.stored; }",
       constantText("LIST_READ_AGAIN_AFTER"),
@@ -359,6 +427,13 @@ function page(options) {
       "  showLoginScreen: showLoginScreen,",
       "  startPage: startPage,",
       "  signIn: signIn,",
+      "  tokenRefused: tokenRefused,",
+      "  forgetStoredData: forgetStoredData,",
+      "  forgetting: function () { return forgetting; },",
+      "  refreshLists: refreshLists,",
+      "  sweepStoredData: sweepStoredData,",
+      "  listRecordIsKept: listRecordIsKept,",
+      "  listIsServers: function () { return listIsServers; },",
       "  replayOfflineQueue: replayOfflineQueue,",
       "  sendOrQueue: sendOrQueue,",
       "  serverDoubted: serverDoubted,",
@@ -1008,9 +1083,11 @@ test("a start the server refuses asks for the PIN and forgets the token", async 
   assert.ok(made.env.calls.includes("showLoginScreen"));
   assert.equal(made.env.calls.includes("init"), false);
   assert.equal(made.env.localStorage.getItem("pytodo_auth_token"), null);
-  // What is stored is not touched here.
+  // The server's data goes with the token; the page's own files and
+  // the worker stay, so that the PIN screen opens without the server.
+  await made.forgetting();
   assert.deepEqual(made.env.workers, ["worker"]);
-  assert.deepEqual(made.env.stores, ["pytodo-static-1", "pytodo-data"]);
+  assert.deepEqual(made.env.stores, ["pytodo-static-1"]);
 });
 
 test("a start without a token asks for the PIN when the server wants one", async () => {
@@ -1027,7 +1104,12 @@ test("a start without a token asks for the PIN when the server wants one", async
   assert.equal(made.env.calls.includes("init"), false);
   // No token is sent where there is none.
   assert.deepEqual(sent, [undefined]);
-  nothingLost(made, "");
+  // What an earlier pairing left on the device goes: the server has
+  // said that this device is not paired.
+  await made.forgetting();
+  assert.deepEqual(made.env.workers, ["worker"]);
+  assert.deepEqual(made.env.stores, ["pytodo-static-1"]);
+  assert.equal(made.env.localStorage.getItem("pytodo_auth_token"), null);
 });
 
 test("a start without a token goes on to the page where the server wants none", async () => {
@@ -2487,4 +2569,470 @@ test("a change that is sent starts no try", async () => {
   made.env.advance(300000);
   await settled();
   assert.equal(made.env.calls.includes("sendQueuedChanges"), false);
+});
+
+// --- A token the server refuses: what the device has stored ---
+//
+// The server's data is given up with the token: the tasks on screen,
+// the service worker's stored answers and the copy in IndexedDB. The
+// changes not yet sent are the person's own, and are kept.
+
+// What a forgetting did, in order, without the notice and the dot.
+function forgotten(made) {
+  return made.env.calls.filter((name) =>
+    ["clearShownData", "clearStoredLists", "showLoginScreen"].includes(name),
+  );
+}
+
+test("a read the server refuses forgets the token and empties the stores", async () => {
+  const queue = [{ path: "/items/1", opts: { method: "PUT" } }];
+  const made = page({ queue: queue, fetch: async () => answer({}, 401) });
+  await assert.rejects(made.apiAnswer("/lists"), { status: 401 });
+  // The tasks are off the screen before the PIN screen is up.
+  assert.deepEqual(forgotten(made).slice(0, 2), [
+    "clearShownData",
+    "showLoginScreen",
+  ]);
+  assert.equal(made.env.localStorage.getItem("pytodo_auth_token"), null);
+  await made.forgetting();
+  assert.deepEqual(made.env.told, [{ type: "forget-data" }]);
+  assert.deepEqual(made.env.stores, ["pytodo-static-1"]);
+  assert.ok(made.env.calls.includes("clearStoredLists"));
+  // The worker stays, and the changes not yet sent.
+  assert.deepEqual(made.env.workers, ["worker"]);
+  assert.deepEqual(made.env.queue, queue);
+});
+
+test("a change the server refuses for the token does the same", async () => {
+  const made = page({ fetch: async () => answer({}, 401) });
+  await assert.rejects(made.apiAnswer("/items/1", { method: "PUT" }), {
+    status: 401,
+  });
+  await made.forgetting();
+  assert.equal(made.env.localStorage.getItem("pytodo_auth_token"), null);
+  assert.deepEqual(made.env.stores, ["pytodo-static-1"]);
+});
+
+test("a refusal for a token the device no longer holds forgets nothing", async () => {
+  // Sent before the device was paired again, answered after.
+  let refuse;
+  const made = page({
+    token: "old-token",
+    fetch: () =>
+      new Promise((resolve) => {
+        refuse = () => resolve(answer({}, 401));
+      }),
+  });
+  const read = made.apiAnswer("/lists");
+  made.env.localStorage.setItem("pytodo_auth_token", "new-token");
+  refuse();
+  await assert.rejects(read, { status: 401 });
+  await made.forgetting();
+  assert.deepEqual(forgotten(made), []);
+  assert.deepEqual(made.env.told, []);
+  nothingLost(made, "new-token");
+});
+
+test("a refusal that is not the server's own forgets nothing", async () => {
+  const marked = { "X-Pytodo-Source": "store", "X-Pytodo-Stored-At": "0" };
+  const made = page({ fetch: async () => answer(marked, 401) });
+  await made.startPage();
+  await assert.rejects(made.apiAnswer("/lists"));
+  await made.forgetting();
+  assert.deepEqual(forgotten(made), []);
+  nothingLost(made);
+});
+
+test("a fault of the server's own, and a list it does not have, forget nothing", async () => {
+  for (const status of [403, 404, 409, 429, 500, 503]) {
+    const made = page({ fetch: async () => answer({}, status) });
+    await assert.rejects(made.apiAnswer("/lists"), { status: status });
+    await made.forgetting();
+    assert.deepEqual(forgotten(made), [], "after a " + status);
+    nothingLost(made);
+  }
+});
+
+test("a PIN the server refuses forgets nothing more", async () => {
+  // The server answers a wrong PIN with a 401 as well. That is no
+  // refusal of a token: nothing is asked of the stores for it.
+  const made = page({
+    token: "",
+    pin: "123456",
+    fetch: async (url) =>
+      url === "/api/status"
+        ? answer()
+        : new Response(JSON.stringify({ error: "Invalid or expired PIN" }), {
+            status: 401,
+          }),
+  });
+  await made.signIn();
+  await made.forgetting();
+  assert.equal(made.env.pinError.textContent, "Invalid or expired PIN");
+  assert.deepEqual(forgotten(made), []);
+  assert.deepEqual(made.env.told, []);
+  nothingLost(made, "");
+});
+
+test("without a service worker the page deletes the stored answers itself", async () => {
+  // A page loaded past its worker, as a forced reload does.
+  const made = page({ noWorker: true, fetch: async () => answer({}, 401) });
+  await assert.rejects(made.apiAnswer("/lists"), { status: 401 });
+  await made.forgetting();
+  assert.deepEqual(made.env.told, []);
+  assert.deepEqual(made.env.stores, ["pytodo-static-1"]);
+  assert.ok(made.env.calls.includes("clearStoredLists"));
+});
+
+test("a worker that does not say it has forgotten is waited for 2 s, no longer", async () => {
+  // One of an earlier version of the page.
+  const made = page({ workerSilent: true });
+  let done = false;
+  made.forgetStoredData().then(() => {
+    done = true;
+  });
+  await settled();
+  assert.equal(done, false);
+  made.env.advance(1999);
+  await settled();
+  assert.equal(done, false);
+  made.env.advance(1);
+  await settled();
+  assert.equal(done, true);
+  assert.deepEqual(made.env.stores, ["pytodo-static-1"]);
+  assert.equal(made.env.channels[0].port1.closed, true);
+});
+
+test("a worker that says it has forgotten leaves no timer and no open port", async () => {
+  const made = page();
+  await made.forgetStoredData();
+  assert.deepEqual(made.env.timers, []);
+  assert.equal(made.env.channels[0].port1.closed, true);
+});
+
+test("a store that cannot be deleted does not keep the PIN screen from working", async () => {
+  const made = page({ fetch: async () => answer({}, 401) });
+  made.env.caches.delete = async () => {
+    throw new Error("the store cannot be deleted");
+  };
+  await assert.rejects(made.apiAnswer("/lists"), { status: 401 });
+  await made.forgetting();
+  assert.ok(made.env.calls.includes("showLoginScreen"));
+});
+
+// --- Another token ---
+
+test("a sign-in empties the stores before the new token is held", async () => {
+  // What the device has stored was read with another token.
+  const order = [];
+  const made = page({
+    token: "old-token",
+    pin: "123456",
+    fetch: async (url) =>
+      url === "/api/status"
+        ? answer()
+        : new Response(JSON.stringify({ token: "new-token" }), { status: 200 }),
+  });
+  const setItem = made.env.localStorage.setItem;
+  made.env.localStorage.setItem = (key, value) => {
+    order.push("token " + value + " with " + made.env.stores.join("+"));
+    setItem(key, value);
+  };
+  await made.signIn();
+  assert.deepEqual(order, ["token new-token with pytodo-static-1"]);
+  assert.deepEqual(made.env.told, [{ type: "forget-data" }]);
+  assert.ok(made.env.calls.includes("clearStoredLists"));
+  // The page starts after that, so that what it reads is kept.
+  const calls = made.env.calls;
+  assert.ok(calls.indexOf("clearStoredLists") < calls.indexOf("init"));
+});
+
+test("a sign-in waits for a forgetting that is under way", async () => {
+  // The token was refused a moment ago, and the worker is slow to say
+  // that it has forgotten.
+  const made = page({
+    workerSilent: true,
+    pin: "123456",
+    fetch: async (url) =>
+      url === "/api/lists"
+        ? answer({}, 401)
+        : url === "/api/status"
+          ? answer()
+          : new Response(JSON.stringify({ token: "new-token" }), {
+              status: 200,
+            }),
+  });
+  await assert.rejects(made.apiAnswer("/lists"), { status: 401 });
+  const signedIn = made.signIn();
+  await settled();
+  assert.equal(made.env.calls.includes("init"), false);
+  assert.equal(made.env.localStorage.getItem("pytodo_auth_token"), null);
+  // The worker is waited for at the refusal, and again at the sign-in.
+  made.env.advance(2000);
+  await settled();
+  made.env.advance(2000);
+  await signedIn;
+  assert.equal(made.env.localStorage.getItem("pytodo_auth_token"), "new-token");
+  assert.ok(made.env.calls.includes("init"));
+});
+
+test("a sign-in that gives the token already held forgets nothing", async () => {
+  // No server does so today; the rule is the page's all the same.
+  const made = page({
+    token: "same-token",
+    pin: "123456",
+    fetch: async (url) =>
+      url === "/api/status"
+        ? answer()
+        : new Response(JSON.stringify({ token: "same-token" }), {
+            status: 200,
+          }),
+  });
+  await made.signIn();
+  assert.deepEqual(made.env.told, []);
+  assert.ok(made.env.calls.includes("init"));
+  nothingLost(made, "same-token");
+});
+
+// --- Behind the PIN screen: answers that were on their way ---
+
+test("a list that comes back behind the PIN screen is not shown", async () => {
+  let answerNow;
+  const made = page({
+    ownRefresh: true,
+    fetch: () =>
+      new Promise((resolve) => {
+        answerNow = () => resolve(list(["left-over"]));
+      }),
+  });
+  const read = made.refreshCurrentList();
+  made.showLoginScreen();
+  answerNow();
+  await read;
+  assert.deepEqual(made.env.drawn, []);
+  assert.equal(made.env.calls.includes("cacheListItems"), false);
+  assert.equal(made.env.calls.includes("markSynced"), false);
+});
+
+test("lists that come back behind the PIN screen are not shown", async () => {
+  let answerNow;
+  const made = page({
+    ownRefresh: true,
+    ownLists: true,
+    fetch: () =>
+      new Promise((resolve) => {
+        answerNow = () => resolve(lists(["list-1"]));
+      }),
+  });
+  const read = made.refreshLists();
+  made.showLoginScreen();
+  answerNow();
+  await read;
+  assert.deepEqual(made.env.drawnLists, []);
+  assert.equal(made.env.calls.includes("cacheListsData"), false);
+});
+
+// --- Stored data the server no longer renews ---
+//
+// Swept when the server itself has just answered with the lists and
+// with the current list, at most once a day. A device that cannot
+// reach the server keeps what it has, however old.
+
+const KEPT_FOR = numberOf("KEPT_FOR");
+const SWEEP_EVERY = numberOf("SWEEP_EVERY");
+
+function lists(ids, headers) {
+  return new Response(
+    JSON.stringify({ lists: ids.map((id) => ({ id: id })) }),
+    { status: 200, headers: headers || {} },
+  );
+}
+
+// A server with these lists, and tasks in each.
+function listServer(ids, headers) {
+  return async (url) =>
+    url === "/api/lists" ? lists(ids, headers) : list(["task"], headers);
+}
+
+test("the times are 14 days and one day", () => {
+  assert.equal(KEPT_FOR, 14 * 24 * 60 * 60 * 1000);
+  assert.equal(SWEEP_EVERY, 24 * 60 * 60 * 1000);
+});
+
+test("after the server's own tasks and lists the stores are swept", async () => {
+  const made = page({
+    ownRefresh: true,
+    ownLists: true,
+    fetch: listServer(["list-1", "list-2"]),
+  });
+  const began = Date.now();
+  await made.refreshCurrentList();
+  const ended = Date.now();
+  assert.equal(made.env.told.length, 1);
+  const told = made.env.told[0];
+  assert.equal(told.type, "sweep-data");
+  assert.ok(told.before >= began - KEPT_FOR && told.before <= ended - KEPT_FOR);
+  // The saved tasks of lists the server no longer has go as well.
+  assert.deepEqual(made.env.sweptLists, [[told.before, ["list-1", "list-2"]]]);
+  const sweptAt = Number(made.env.localStorage.getItem("pytodo_swept_at"));
+  assert.ok(sweptAt >= began && sweptAt <= ended);
+});
+
+test("lists read before the current list's tasks do not sweep", async () => {
+  // As at the start of the page: the tasks shown are not yet renewed.
+  const made = page({ ownLists: true, fetch: listServer(["list-1"]) });
+  await made.refreshLists();
+  assert.deepEqual(made.env.told, []);
+  assert.deepEqual(made.env.sweptLists, []);
+});
+
+test("with no list to show, the server's own lists are enough", async () => {
+  // The last list was deleted elsewhere: its saved tasks have to go.
+  const made = page({
+    ownLists: true,
+    currentList: null,
+    fetch: listServer([]),
+  });
+  await made.refreshLists();
+  assert.equal(made.env.told.length, 1);
+  assert.deepEqual(
+    made.env.sweptLists.map((swept) => swept[1]),
+    [[]],
+  );
+});
+
+test("stored answers sweep nothing", async () => {
+  // Without the server nothing is renewed: all of it would go.
+  const made = page({
+    ownRefresh: true,
+    ownLists: true,
+    fetch: listServer(["list-1"], FROM_STORE),
+  });
+  await made.refreshCurrentList();
+  assert.deepEqual(made.env.told, []);
+  assert.deepEqual(made.env.sweptLists, []);
+  assert.equal(made.env.localStorage.getItem("pytodo_swept_at"), null);
+});
+
+test("stored lists under the server's own tasks sweep nothing", async () => {
+  const made = page({
+    ownLists: true,
+    listIsServers: true,
+    fetch: listServer(["list-1"], FROM_STORE),
+  });
+  await made.refreshLists();
+  assert.deepEqual(made.env.told, []);
+  assert.deepEqual(made.env.sweptLists, []);
+});
+
+test("the tasks shown are the server's only after its own answer", async () => {
+  let headers = {};
+  const made = page({
+    ownRefresh: true,
+    connected: false,
+    fetch: async () => list(["task"], headers),
+  });
+  await made.refreshCurrentList();
+  assert.equal(made.listIsServers(), true);
+  headers = FROM_STORE;
+  await made.refreshCurrentList();
+  assert.equal(made.listIsServers(), false);
+});
+
+test("reads that fail sweep nothing", async () => {
+  const made = page({
+    ownRefresh: true,
+    ownLists: true,
+    listIsServers: true,
+    fetch: async () => {
+      throw new TypeError("Failed to fetch");
+    },
+  });
+  await made.refreshCurrentList();
+  await made.refreshLists();
+  assert.deepEqual(made.env.told, []);
+  // The tasks shown are no longer the server's.
+  assert.equal(made.listIsServers(), false);
+});
+
+test("the stores are swept once a day, not at every read", async () => {
+  const made = page({
+    ownRefresh: true,
+    ownLists: true,
+    fetch: listServer(["list-1"]),
+  });
+  await made.refreshCurrentList();
+  await made.refreshCurrentList();
+  await made.refreshCurrentList();
+  assert.equal(made.env.told.length, 1);
+});
+
+test("a sweep less than a day ago is not repeated, one a day ago is", async () => {
+  const now = 1795200000000;
+  const recent = page({
+    ownRefresh: true,
+    ownLists: true,
+    clock: now,
+    sweptAt: now - SWEEP_EVERY + 1,
+    fetch: listServer(["list-1"]),
+  });
+  await recent.refreshCurrentList();
+  assert.deepEqual(recent.env.told, []);
+  assert.equal(
+    recent.env.localStorage.getItem("pytodo_swept_at"),
+    String(now - SWEEP_EVERY + 1),
+  );
+
+  const due = page({
+    ownRefresh: true,
+    ownLists: true,
+    clock: now,
+    sweptAt: now - SWEEP_EVERY,
+    fetch: listServer(["list-1"]),
+  });
+  await due.refreshCurrentList();
+  assert.deepEqual(due.env.told, [
+    { type: "sweep-data", before: now - KEPT_FOR },
+  ]);
+  assert.equal(due.env.localStorage.getItem("pytodo_swept_at"), String(now));
+});
+
+test("a time of the last sweep that cannot be so does not put the sweep off", async () => {
+  // A clock set back, or a value that is no time.
+  for (const sweptAt of [Date.now() + 5 * SWEEP_EVERY, "never", ""]) {
+    const made = page({
+      ownRefresh: true,
+      ownLists: true,
+      sweptAt: sweptAt,
+      fetch: listServer(["list-1"]),
+    });
+    await made.refreshCurrentList();
+    assert.equal(made.env.told.length, 1, "after " + sweptAt);
+  }
+});
+
+test("without a service worker the saved tasks are swept all the same", async () => {
+  const made = page({
+    ownRefresh: true,
+    ownLists: true,
+    noWorker: true,
+    fetch: listServer(["list-1"]),
+  });
+  await made.refreshCurrentList();
+  assert.deepEqual(made.env.told, []);
+  assert.equal(made.env.sweptLists.length, 1);
+});
+
+test("a list's saved tasks are kept while the server has the list and they are not 14 days old", () => {
+  const made = page();
+  const before = 1795000000000;
+  const has = { "list-1": true };
+  const kept = (record) => made.listRecordIsKept(record, before, has);
+  assert.equal(kept({ listId: "list-1", savedAt: before }), true);
+  assert.equal(kept({ listId: "list-1", savedAt: before + 1 }), true);
+  assert.equal(kept({ listId: "list-1", savedAt: before - 1 }), false);
+  // Saved before times were kept.
+  assert.equal(kept({ listId: "list-1" }), false);
+  // A list the server no longer has, however lately saved.
+  assert.equal(kept({ listId: "list-2", savedAt: before + 1 }), false);
 });
