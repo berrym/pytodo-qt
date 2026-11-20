@@ -2591,12 +2591,10 @@ class MainWindow(QMainWindow):
         from .commands import AddItemCommand
 
         list_id = self._database.active_list.id
-        cmd = AddItemCommand(self, list_id, item)
-        self._undo_stack.push(cmd)
-
-        # Create child items from inline subtask syntax ("task: a, b, c")
-        for sub_text in dialog.get_subtask_reminders():
-            child = TodoItem(
+        # Child items from inline subtask syntax ("task: a, b, c"), added
+        # with the item in one step.
+        children = [
+            TodoItem(
                 reminder=sub_text,
                 priority=item.priority,
                 due_date=item.due_date,
@@ -2604,8 +2602,9 @@ class MainWindow(QMainWindow):
                 parent_id=item.id,
                 board_column=item.board_column,
             )
-            sub_cmd = AddItemCommand(self, list_id, child)
-            self._undo_stack.push(sub_cmd)
+            for sub_text in dialog.get_subtask_reminders()
+        ]
+        self._undo_stack.push(AddItemCommand(self, list_id, item, children))
 
     def _on_add_todo_at_cell(self, cell_date, hour: int) -> None:
         """Open AddTodoDialog with the calendar cell's date + hour pre-filled.
@@ -2645,10 +2644,8 @@ class MainWindow(QMainWindow):
         from .commands import AddItemCommand
 
         list_id = self._database.active_list.id
-        cmd = AddItemCommand(self, list_id, item)
-        self._undo_stack.push(cmd)
-        for sub_text in dialog.get_subtask_reminders():
-            child = TodoItem(
+        children = [
+            TodoItem(
                 reminder=sub_text,
                 priority=item.priority,
                 due_date=item.due_date,
@@ -2656,8 +2653,9 @@ class MainWindow(QMainWindow):
                 parent_id=item.id,
                 board_column=item.board_column,
             )
-            sub_cmd = AddItemCommand(self, list_id, child)
-            self._undo_stack.push(sub_cmd)
+            for sub_text in dialog.get_subtask_reminders()
+        ]
+        self._undo_stack.push(AddItemCommand(self, list_id, item, children))
 
     def _on_add_subtask(self, parent_id: UUID | None = None) -> None:
         """Handle add subtask action."""

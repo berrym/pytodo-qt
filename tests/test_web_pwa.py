@@ -400,7 +400,8 @@ class TestOfflineQueueRules:
         """Every change that can be queued goes through sendOrQueue, so
         that a failed request and an offline device are handled alike."""
         js = (STATIC_DIR / "app.js").read_text()
-        assert js.count("await sendOrQueue(") == 6
+        # Seven since "Add subtask" in the task sheet is queued too (#117).
+        assert js.count("await sendOrQueue(") == 7
         # enqueueOfflineEdit: its definition and its one caller.
         assert js.count("enqueueOfflineEdit(") == 2
 
@@ -2001,6 +2002,18 @@ class TestServerNotReached:
     def test_one_copy_of_the_page_sends_the_queue_at_a_time(self):
         """tests/js/queue_send.test.js, run under Node (#78)."""
         self._node("queue_send.test.js")
+
+    def test_every_task_the_page_adds_has_an_id_of_its_making(self):
+        """The add sheet and "Add subtask": the server creates a task of
+        an id once, however often its add is delivered (#117)."""
+        js = self._app()
+        adds = re.findall(r'"/lists/" \+ \w+ \+ "/items"', js)
+        assert len(adds) == 2
+        assert js.count("id: newItemId(),") == 2
+        sheet = js.split("// Sent or queued as any added task is, with an id of its own.")[1]
+        sheet = sheet.split("addSubInput.addEventListener")[0]
+        assert "await sendOrQueue(" in sheet
+        assert "parent_id: itemId," in sheet
 
     def test_the_queue_is_stored_twice(self):
         """tests/js/queue_copies.test.js, run under Node (#77)."""

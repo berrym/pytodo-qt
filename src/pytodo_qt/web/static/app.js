@@ -1052,6 +1052,22 @@
   // script.
   var QueueRules = window.PytodoOfflineQueue;
 
+  // An id for a task the page adds, a random UUID as the server's own
+  // are. The page gives the id and sends it with the add, so that the
+  // server can tell a second delivery of the same add from another
+  // task with the same text, and creates the task once.
+  function newItemId() {
+    var bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    var hex = "";
+    for (var i = 0; i < 16; i++) {
+      hex += (bytes[i] + 0x100).toString(16).slice(1);
+      if (i === 3 || i === 5 || i === 7 || i === 9) hex += "-";
+    }
+    return hex;
+  }
+
   function enqueueOfflineEdit(path, opts) {
     var queue = getOfflineQueue();
     var change = {
@@ -1323,6 +1339,17 @@
       var entry = QueueRules.nextToSend(getOfflineQueue(), tried, heldItems);
       if (!entry) break;
       tried[entry.timestamp] = true;
+      // An add queued by an earlier version of the page has no id. It
+      // is given one, and stored with it, before it is sent: sent again
+      // after that, by this copy of the page or another, it carries the
+      // same id, and is the same task to the server.
+      if (
+        QueueRules.kindOf(entry) === "add" &&
+        QueueRules.addIdOf(entry) === null
+      ) {
+        entry = giveQueuedAddAnId(entry.timestamp);
+        if (!entry) continue;
+      }
       var itemId = QueueRules.itemIdOf(entry.path);
       var opts = entry.opts || {};
       if (itemId && latest[itemId] !== undefined) {
@@ -1330,19 +1357,14 @@
       }
       opts = Object.assign({}, opts, { headers: authHeaders(opts.headers) });
       // A change that is given up may have reached the server, and is
-      // sent again later. For a tick, an edit, a move or a delete that
-      // does no harm: the server refuses the second as out of date, or
-      // as gone. A task added a second time is a second task, so an
-      // add is not given up, and waits for as long as the browser lets
-      // it (#117).
-      var givenUp = null;
-      if (QueueRules.kindOf(entry) !== "add") {
-        givenUp = new AbortController();
-        opts.signal = givenUp.signal;
-      }
+      // sent again later. That does no harm: the server refuses a
+      // second tick, edit, move or delete as out of date, or as gone,
+      // and creates the task of an add once, by its id.
+      var givenUp = new AbortController();
+      opts.signal = givenUp.signal;
       var resp;
       queuedSend = givenUp;
-      if (givenUp) watchQueuedSend(QUEUED_SEND_ASKED_AFTER);
+      watchQueuedSend(QUEUED_SEND_ASKED_AFTER);
       try {
         resp = await serverFetch(API + entry.path, opts);
       } catch (e) {
@@ -1373,6 +1395,20 @@
       }
     }
     return { conflicts: conflicts, refused: refused };
+  }
+
+  // Gives the add that was queued at that time an id, in the stored
+  // queue, and returns the add as it is stored now; null where it is no
+  // longer queued.
+  function giveQueuedAddAnId(timestamp) {
+    saveOfflineQueue(
+      QueueRules.withAddId(getOfflineQueue(), timestamp, newItemId()),
+      true,
+    );
+    var stored = getOfflineQueue().filter(function (queued) {
+      return queued.timestamp === timestamp;
+    });
+    return stored.length > 0 ? stored[0] : null;
   }
 
   // Says what became of a run that sent the queue, and reads the list.
@@ -3342,15 +3378,10 @@
     }
     if (emptyMsg) emptyMsg.classList.add("hidden");
 
-    waiting.forEach(function (queued) {
-      place(createQueuedAddRow(queued), queued);
-    });
-    if (!items) return;
-
     // Separate top-level and subtasks
     var topLevel = [];
     var childMap = {};
-    items.forEach(function (item) {
+    (items || []).forEach(function (item) {
       if (item.parent_id) {
         if (!childMap[item.parent_id]) childMap[item.parent_id] = [];
         childMap[item.parent_id].push(item);
@@ -3358,6 +3389,19 @@
         topLevel.push(item);
       }
     });
+
+    // A subtask waiting to be added is drawn under its task, where
+    // that is shown; any other waiting task at the top.
+    var placed = QueueRules.placedAdds(
+      waiting,
+      topLevel.map(function (item) {
+        return item.id;
+      }),
+    );
+    placed.atTop.forEach(function (queued) {
+      place(createQueuedAddRow(queued), queued);
+    });
+    if (!items) return;
 
     topLevel = sortItems(topLevel);
 
@@ -3372,10 +3416,48 @@
           place(el, child);
         });
       }
+      // Also under a task whose subtasks are folded away: these are
+      // not among them yet, and "Not sent" has to be seen.
+      placed.under[item.id].forEach(function (queued) {
+        var el = createQueuedAddRow(queued);
+        el.classList.add("subtask");
+        place(el, queued);
+      });
     });
   }
 
   // Marks a task whose change is waiting to be sent to the server.
+  // A subtask that is waiting to be added, as a row of its task's list
+  // of subtasks in the task sheet or on a board card: it cannot be
+  // ticked or opened yet, and can be taken back.
+  function createQueuedSubtaskRow(queued, className) {
+    var row = document.createElement("div");
+    row.className = className + " queued-add";
+    var cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.disabled = true;
+    cb.setAttribute("aria-label", queued.reminder + ", not sent yet");
+    row.appendChild(cb);
+    var text = document.createElement("span");
+    text.textContent = queued.reminder;
+    row.appendChild(text);
+    row.appendChild(createUnsentLabel());
+    var removeButton = createQueuedAddRemoveButton(
+      queued,
+      "queued-subtask-remove",
+    );
+    // The list and the board are drawn again when the queue changes;
+    // the task sheet is not, so the row goes here.
+    removeButton.addEventListener("click", function () {
+      row.remove();
+    });
+    row.appendChild(removeButton);
+    row.addEventListener("click", function (e) {
+      e.stopPropagation();
+    });
+    return row;
+  }
+
   function createUnsentLabel() {
     var label = document.createElement("span");
     label.className = "item-unsent";
@@ -3837,6 +3919,12 @@
       var stContainer = document.createElement("div");
       stContainer.className = "board-card-subtasks hidden";
       subtasks.forEach(function (sub) {
+        if (sub.provisional) {
+          stContainer.appendChild(
+            createQueuedSubtaskRow(sub, "board-card-subtask-row"),
+          );
+          return;
+        }
         var row = document.createElement("div");
         row.className =
           "board-card-subtask-row" + (sub.complete ? " completed" : "");
@@ -6294,7 +6382,7 @@
       if (!text || !targetList) return;
 
       var path = "/lists/" + targetList + "/items";
-      var body = { reminder: text, parse_nlp: true };
+      var body = { id: newItemId(), reminder: text, parse_nlp: true };
       var opts = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -6714,7 +6802,13 @@
     var children = cachedItems.filter(function (i) {
       return i.parent_id === itemId;
     });
-    if (children.length > 0) {
+    var waitingSubtasks = QueueRules.queuedAdds(
+      getOfflineQueue(),
+      currentListId,
+    ).filter(function (queued) {
+      return queued.parent_id === itemId;
+    });
+    if (children.length > 0 || waitingSubtasks.length > 0) {
       var subtaskList = document.createElement("div");
       subtaskList.className = "detail-subtask-list";
       children.forEach(function (child) {
@@ -6736,6 +6830,11 @@
         row.appendChild(text);
         subtaskList.appendChild(row);
       });
+      waitingSubtasks.forEach(function (queued) {
+        subtaskList.appendChild(
+          createQueuedSubtaskRow(queued, "detail-subtask-row"),
+        );
+      });
       subtaskDiv.appendChild(subtaskList);
     }
 
@@ -6749,21 +6848,30 @@
     addSubBtn.type = "button";
     addSubBtn.textContent = "+";
     addSubBtn.className = "btn-small";
+    // Sent or queued as any added task is, with an id of its own.
     addSubBtn.addEventListener("click", async function () {
       var text = addSubInput.value.trim();
-      if (!text || !currentListId) return;
-      try {
-        await api("/lists/" + currentListId + "/items", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reminder: text, parent_id: itemId }),
-        });
-        addSubInput.value = "";
+      if (!text || !currentListId || addSubBtn.disabled) return;
+      addSubBtn.disabled = true;
+      var outcome = await sendOrQueue("/lists/" + currentListId + "/items", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: newItemId(),
+          reminder: text,
+          parent_id: itemId,
+        }),
+      });
+      addSubBtn.disabled = false;
+      if (outcome === "sent") {
         await refreshCurrentList();
         openDetailSheet(itemId);
-      } catch (e) {
-        showToast("Failed to add subtask");
+      } else if (outcome === "queued") {
+        // Drawn again with the subtask in its list, marked "Not sent".
+        openDetailSheet(itemId);
+        showToast("Added (offline)");
       }
+      // Refused: sendOrQueue has said why, and the text stays.
     });
     addSubInput.addEventListener("keydown", function (e) {
       if (e.key === "Enter") {

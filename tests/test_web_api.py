@@ -1920,9 +1920,9 @@ class TestCreateItemExtended:
         assert len(lst.items) == before + 1
 
     @pytest.mark.asyncio
-    async def test_with_the_desktop_running_each_item_is_an_undo_step(self):
-        """With a main window, items go through its undo stack: the
-        parent first, then each subtask."""
+    async def test_with_the_desktop_running_the_item_and_its_subtasks_are_one_undo_step(self):
+        """With a main window, the item goes through its undo stack with
+        its subtasks, in one step: they are saved together."""
         from pytodo_qt.web.api import main_window_key
 
         db = _make_db_with_data()
@@ -1955,8 +1955,10 @@ class TestCreateItemExtended:
             data = await resp.json()
         finally:
             await client.close()
-        assert [command._item.reminder for command in pushed] == ["Pack", "socks", "charger"]
-        assert [command._item.parent_id for command in pushed[1:]] == [UUID(data["id"])] * 2
+        assert [command._item.reminder for command in pushed] == ["Pack"]
+        children = pushed[0]._children
+        assert [child.reminder for child in children] == ["socks", "charger"]
+        assert [child.parent_id for child in children] == [UUID(data["id"])] * 2
         assert len([item for item in lst.items.values() if item.parent_id]) == 2
 
     @pytest.mark.asyncio
@@ -2003,6 +2005,315 @@ class TestCreateItemExtended:
 # ===========================================================================
 # Phase 1: Update item extended fields
 # ===========================================================================
+
+
+class TestAddWithAnIdOfThePages:
+    """The page gives an item its id, and may deliver the same add more
+    than once: its answer was lost, or the request was given up while
+    the server was silent. An id is created once (#117)."""
+
+    ID = "7b0d6f0e-6c1b-4a54-9f0f-2f9b1c5a8d11"
+
+    async def _post(self, client, lst, body):
+        resp = await client.post(f"/api/lists/{lst.id}/items", json=body)
+        return resp.status, await resp.json()
+
+    @pytest.mark.asyncio
+    async def test_the_item_is_created_under_the_id_given(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            status, data = await self._post(
+                client, lst, {"reminder": "Feed the cat", "id": self.ID}
+            )
+        finally:
+            await client.close()
+        assert status == 201
+        assert data["id"] == self.ID
+        assert lst.items[UUID(self.ID)].reminder == "Feed the cat"
+        assert UUID(self.ID) in db.web_added_ids
+
+    @pytest.mark.asyncio
+    async def test_a_second_delivery_creates_nothing(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        before = len(lst.items)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            body = {"reminder": "Feed the cat", "id": self.ID}
+            first = await self._post(client, lst, body)
+            second = await self._post(client, lst, body)
+            third = await self._post(client, lst, body)
+        finally:
+            await client.close()
+        assert first[0] == 201
+        assert second == (200, {"id": self.ID, "already_added": True})
+        assert third == second
+        assert len(lst.items) == before + 1
+
+    @pytest.mark.asyncio
+    async def test_two_deliveries_at_once_create_one_item(self):
+        import asyncio
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        before = len(lst.items)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            body = {"reminder": "Feed the cat", "id": self.ID}
+            both = await asyncio.gather(
+                self._post(client, lst, body), self._post(client, lst, body)
+            )
+        finally:
+            await client.close()
+        assert sorted(status for status, _ in both) == [200, 201]
+        assert len(lst.items) == before + 1
+
+    @pytest.mark.asyncio
+    async def test_the_subtasks_in_the_text_are_created_with_the_first_delivery_only(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        before = len(lst.items)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            body = {"reminder": "Pack: socks, charger", "parse_nlp": True, "id": self.ID}
+            await self._post(client, lst, body)
+            status, data = await self._post(client, lst, body)
+        finally:
+            await client.close()
+        assert (status, data) == (200, {"id": self.ID, "already_added": True})
+        assert len(lst.items) == before + 3
+        children = [item for item in lst.items.values() if item.parent_id == UUID(self.ID)]
+        assert sorted(child.reminder for child in children) == ["charger", "socks"]
+
+    @pytest.mark.asyncio
+    async def test_the_answer_is_the_same_whatever_became_of_the_item(self):
+        """Deleted, gone for good, or in a list the page may not see: the
+        answer has the id and nothing else of the item."""
+        db = _make_db_with_data()
+        lst, other = list(db.lists.values())[:2]
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            body = {"reminder": "Feed the cat", "id": self.ID}
+            await self._post(client, lst, body)
+            item = lst.items[UUID(self.ID)]
+            expected = (200, {"id": self.ID, "already_added": True})
+
+            item.mark_deleted()
+            assert await self._post(client, lst, body) == expected
+            assert item.deleted is True
+
+            # Collected after its time as a deleted record.
+            del lst.items[item.id]
+            assert await self._post(client, lst, body) == expected
+            assert UUID(self.ID) not in lst.items
+
+            # Moved to a private list.
+            item.deleted = False
+            other.private = True
+            other.items[item.id] = item
+            assert await self._post(client, lst, body) == expected
+            # And asked for at that list: it is not served at all.
+            resp = await client.post(f"/api/lists/{other.id}/items", json=body)
+            assert resp.status == 404
+        finally:
+            await client.close()
+        assert UUID(self.ID) not in lst.items
+
+    @pytest.mark.asyncio
+    async def test_an_id_that_an_item_made_elsewhere_has_is_not_given_to_another(self):
+        db = _make_db_with_data()
+        lst, other = list(db.lists.values())[:2]
+        taken = next(iter(other.items.values()))
+        before = len(lst.items)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            status, data = await self._post(
+                client, lst, {"reminder": "Feed the cat", "id": str(taken.id)}
+            )
+            # The same where that item is in a list the page may not see.
+            other.private = True
+            hidden = await self._post(
+                client, lst, {"reminder": "Feed the cat", "id": str(taken.id)}
+            )
+        finally:
+            await client.close()
+        assert (status, data) == (200, {"id": str(taken.id), "already_added": True})
+        assert hidden == (status, data)
+        assert len(lst.items) == before
+        assert taken.reminder == "Write report"
+
+    @pytest.mark.asyncio
+    async def test_an_id_that_is_no_uuid_is_refused(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        before = len(lst.items)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            for bad in ("not-an-id", "", 17, ["x"]):
+                status, data = await self._post(
+                    client, lst, {"reminder": "Feed the cat", "id": bad}
+                )
+                assert status == 400, bad
+                assert data["error"] == "Invalid item ID"
+        finally:
+            await client.close()
+        assert len(lst.items) == before
+        assert db.web_added_ids == {}
+
+    @pytest.mark.asyncio
+    async def test_without_an_id_the_server_makes_one_as_before(self):
+        """A page of an earlier version, still open in a tab."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        before = len(lst.items)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            first = await self._post(client, lst, {"reminder": "Feed the cat"})
+            second = await self._post(client, lst, {"reminder": "Feed the cat", "id": None})
+        finally:
+            await client.close()
+        assert first[0] == second[0] == 201
+        assert first[1]["id"] != second[1]["id"]
+        assert len(lst.items) == before + 2
+        assert db.web_added_ids == {}
+
+    @pytest.mark.asyncio
+    async def test_the_id_is_not_taken_for_a_field_of_the_item(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            status, data = await self._post(
+                client, lst, {"reminder": "Feed the cat", "id": self.ID, "priority": 1}
+            )
+        finally:
+            await client.close()
+        assert status == 201
+        assert data["priority"] == 1
+        assert data["reminder"] == "Feed the cat"
+
+    @pytest.mark.asyncio
+    async def test_a_subtask_is_added_under_an_item_that_is_there(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        parent = next(iter(lst.items.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            status, data = await self._post(
+                client, lst, {"reminder": "Oat", "id": self.ID, "parent_id": str(parent.id)}
+            )
+        finally:
+            await client.close()
+        assert status == 201
+        assert data["parent_id"] == str(parent.id)
+
+    @pytest.mark.asyncio
+    async def test_a_subtask_of_an_item_that_is_gone_is_added_at_the_top_level(self):
+        """As the subtasks of a deleted item go to the top level: nothing
+        the person typed is lost, and nothing is refused."""
+        db = _make_db_with_data()
+        lst, other = list(db.lists.values())[:2]
+        deleted = next(iter(lst.items.values()))
+        deleted.mark_deleted()
+        elsewhere = next(iter(other.items.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            cases = {
+                "deleted": str(deleted.id),
+                "unknown": "0d5c2f3a-1a2b-4c3d-8e9f-001122334455",
+                "of another list": str(elsewhere.id),
+            }
+            for number, (what, parent_id) in enumerate(cases.items()):
+                status, data = await self._post(
+                    client,
+                    lst,
+                    {
+                        "reminder": "Oat " + what,
+                        "id": self.ID[:-1] + str(number),
+                        "parent_id": parent_id,
+                    },
+                )
+                assert status == 201, what
+                assert data["parent_id"] is None, what
+        finally:
+            await client.close()
+        assert deleted.deleted is True
+
+    @pytest.mark.asyncio
+    async def test_without_the_desktop_a_deleted_items_subtasks_go_to_the_top_level(self):
+        """As the desktop's own delete does it: they are not left under
+        an item that is gone, where the page would draw them nowhere."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        lst.board_columns = ["To Do", "Done"]
+        parent, child, other = list(lst.items.values())[:3]
+        child.parent_id = parent.id
+        child.board_column = ""
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.delete(f"/api/items/{parent.id}", json={})
+            assert resp.status == 200
+        finally:
+            await client.close()
+        assert parent.deleted is True
+        assert child.parent_id is None
+        assert child.deleted is False
+        assert child.board_column == "To Do"
+        assert other.parent_id is None
+
+    @pytest.mark.asyncio
+    async def test_with_the_desktop_running_a_second_delivery_is_no_undo_step(self):
+        from pytodo_qt.web.api import main_window_key
+
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        pushed = []
+        saves = []
+
+        class Stack:
+            def push(self, command) -> None:
+                pushed.append(command)
+                command.redo()
+
+        class Window:
+            _database = db
+            _undo_stack = Stack()
+
+            def _save_database(self) -> None:
+                # What a save stores: the id is on record by now.
+                saves.append(UUID(TestAddWithAnIdOfThePages.ID) in db.web_added_ids)
+
+            def _refresh_ui(self) -> None:
+                pass
+
+        client = await _make_client(db)
+        client.server.app[main_window_key] = Window()
+        await client.start_server()
+        try:
+            body = {"reminder": "Pack: socks, charger", "parse_nlp": True, "id": self.ID}
+            first = await self._post(client, lst, body)
+            second = await self._post(client, lst, body)
+        finally:
+            await client.close()
+        assert first[0] == 201
+        assert second == (200, {"id": self.ID, "already_added": True})
+        assert len(pushed) == 1
+        # One save for the item, its two subtasks and the record of its id.
+        assert saves == [True]
 
 
 class TestUpdateItemExtended:

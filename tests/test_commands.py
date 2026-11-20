@@ -83,6 +83,56 @@ def make_populated_db() -> tuple[Database, TodoList, TodoItem, TodoItem]:
 # AddItemCommand
 # ---------------------------------------------------------------------------
 class TestAddItemCommand:
+    def _with_subtasks(self):
+        db, lst, _, _ = make_populated_db()
+        window = make_window(db)
+        parent = create_todo_item("Pack")
+        children = [create_todo_item("socks"), create_todo_item("charger")]
+        for child in children:
+            child.parent_id = parent.id
+        return window, lst, parent, children
+
+    def test_an_item_and_its_subtasks_are_added_in_one_step(self):
+        """Saved together, so that the item is never stored without them."""
+        window, lst, parent, children = self._with_subtasks()
+        cmd = AddItemCommand(window, lst.id, parent, children)
+
+        cmd.redo()
+
+        for added in (parent, *children):
+            assert lst.items[added.id] is added
+            assert added.deleted is False
+        window._save_database.assert_called_once()
+        window._refresh_ui.assert_called_once()
+
+    def test_each_of_them_is_marked_as_updated_for_the_sync(self):
+        window, lst, parent, children = self._with_subtasks()
+        for added in (parent, *children):
+            added.updated_at = 1
+        list_updated = lst.updated_at
+        time.sleep(0.002)
+
+        AddItemCommand(window, lst.id, parent, children).redo()
+
+        for added in (parent, *children):
+            assert added.updated_at > 1
+        assert lst.updated_at > list_updated
+
+    def test_one_undo_takes_the_item_and_its_subtasks_back(self):
+        window, lst, parent, children = self._with_subtasks()
+        stack = QUndoStack()
+        stack.push(AddItemCommand(window, lst.id, parent, children))
+        assert stack.count() == 1
+
+        stack.undo()
+
+        for added in (parent, *children):
+            assert lst.items[added.id].deleted is True
+        stack.redo()
+        for added in (parent, *children):
+            assert lst.items[added.id].deleted is False
+            assert lst.items[added.id].parent_id == added.parent_id
+
     def test_redo_adds_item(self):
         db, lst, _, _ = make_populated_db()
         window = make_window(db)

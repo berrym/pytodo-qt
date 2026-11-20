@@ -236,6 +236,11 @@ def _web_pairs() -> list[Pair]:
             ("danger on surface", c["danger"], c["surface"]),
             ("success on bg", c["success"], c["bg"]),
             ("warning on bg", c["warning"], c["bg"]),
+            # The "Not sent" label and the button that takes a waiting
+            # subtask back, in a board card's list of subtasks; in the
+            # task sheet they are on bg.
+            ("warning on bg-card", c["warning"], c["bg-card"]),
+            ("text-secondary on bg-card", c["text-secondary"], c["bg-card"]),
             # The "Not sent" label on a task row; a ticked task that is
             # waiting to be sent is drawn on the completed background.
             ("warning on completed-bg", c["warning"], c["completed-bg"]),

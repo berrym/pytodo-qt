@@ -21,6 +21,7 @@ const rules = require(
 
 const ITEM_A = "11111111-1111-1111-1111-111111111111";
 const ITEM_B = "22222222-2222-2222-2222-222222222222";
+const ITEM_C = "44444444-4444-4444-4444-444444444444";
 const LIST = "33333333-3333-3333-3333-333333333333";
 
 function change(timestamp, itemPath, method, body) {
@@ -718,6 +719,7 @@ test("queuedAdds: a row for each task waiting to be added to the list, in order"
       id: "unsent-1",
       queued_at: 1,
       reminder: "Milk tomorrow !high",
+      parent_id: null,
       provisional: true,
       unsent: true,
     },
@@ -725,6 +727,7 @@ test("queuedAdds: a row for each task waiting to be added to the list, in order"
       id: "unsent-3",
       queued_at: 3,
       reminder: "Bread",
+      parent_id: null,
       provisional: true,
       unsent: true,
     },
@@ -809,4 +812,244 @@ test("savedIsNewer: no copy, or one that cannot be made out, is not", () => {
   assert.equal(rules.savedIsNewer(0, { n: "3", queue: [] }), false);
   assert.equal(rules.savedIsNewer(0, { n: 3, queue: "[]" }), false);
   assert.equal(rules.savedIsNewer(0, { queue: [] }), false);
+});
+
+// --- A task added with an id of the page's (#117) ---
+
+const subtask = (ts, text, parent, id) =>
+  change(ts, "/lists/" + LIST + "/items", "POST", {
+    id: id || "id-" + ts,
+    reminder: text,
+    parent_id: parent,
+  });
+
+test("addIdOf: the id an add carries, and none for an add of an earlier version", () => {
+  assert.equal(rules.addIdOf(subtask(1, "Oat", ITEM_A, "abc")), "abc");
+  assert.equal(rules.addIdOf(add(1, "Milk")), null);
+  assert.equal(
+    rules.addIdOf(
+      change(1, "/lists/" + LIST + "/items", "POST", { id: "", reminder: "x" }),
+    ),
+    null,
+  );
+  assert.equal(
+    rules.addIdOf(
+      change(1, "/lists/" + LIST + "/items", "POST", { id: 7, reminder: "x" }),
+    ),
+    null,
+  );
+});
+
+test("withAddId gives the add queued at that time an id, and no other change", () => {
+  const queue = [add(1, "Milk"), tick(2, ITEM_A, 100), add(3, "Bread")];
+  const given = rules.withAddId(queue, 3, "new-id");
+  assert.deepEqual(stamps(given), [1, 2, 3]);
+  assert.deepEqual(JSON.parse(given[2].opts.body), {
+    reminder: "Bread",
+    parse_nlp: true,
+    id: "new-id",
+  });
+  assert.equal(given[0], queue[0]);
+  assert.equal(given[1], queue[1]);
+  // The queue given is left as it was.
+  assert.equal(rules.addIdOf(queue[2]), null);
+});
+
+test("withAddId leaves an add that has an id, and a change that is no add", () => {
+  const queue = [subtask(1, "Oat", ITEM_A, "kept"), tick(2, ITEM_A, 100)];
+  assert.deepEqual(rules.withAddId(queue, 1, "other"), queue);
+  assert.deepEqual(rules.withAddId(queue, 2, "other"), queue);
+  assert.deepEqual(rules.withAddId(queue, 9, "other"), queue);
+});
+
+test("queuedAdds: a subtask waiting to be added names the task it was added to", () => {
+  const rows = rules.queuedAdds([subtask(1, "Oat", ITEM_A)], LIST);
+  assert.deepEqual(rows, [
+    {
+      id: "unsent-1",
+      queued_at: 1,
+      reminder: "Oat",
+      parent_id: ITEM_A,
+      provisional: true,
+      unsent: true,
+    },
+  ]);
+});
+
+// --- The subtasks of a task that is deleted ---
+
+test("withQueuedChanges: the subtasks of a deleted task go to the top level", () => {
+  // As the server puts them there when it deletes the task.
+  const items = [
+    task(ITEM_A),
+    task(ITEM_B, { parent_id: ITEM_A }),
+    task(ITEM_C, { parent_id: ITEM_A }),
+  ];
+  const shown = rules.withQueuedChanges(items, [remove(1, ITEM_A)], COLUMNS);
+  assert.deepEqual(
+    shown.map((item) => [item.id, item.parent_id]),
+    [
+      [ITEM_B, null],
+      [ITEM_C, null],
+    ],
+  );
+  // The tasks given are left as they were.
+  assert.equal(items[1].parent_id, ITEM_A);
+});
+
+test("withQueuedChanges: the subtasks of another task stay where they are", () => {
+  const items = [
+    task(ITEM_A),
+    task(ITEM_B),
+    task(ITEM_C, { parent_id: ITEM_B }),
+  ];
+  const shown = rules.withQueuedChanges(items, [remove(1, ITEM_A)], COLUMNS);
+  assert.deepEqual(
+    shown.map((item) => [item.id, item.parent_id || null]),
+    [
+      [ITEM_B, null],
+      [ITEM_C, ITEM_B],
+    ],
+  );
+});
+
+test("boardWithQueuedChanges: the subtasks of a deleted card become cards of their own", () => {
+  const parent = task(ITEM_A, {
+    subtasks: [
+      task(ITEM_B, { parent_id: ITEM_A, board_column: "In Progress" }),
+      task(ITEM_C, { parent_id: ITEM_A, board_column: "" }),
+    ],
+  });
+  const sent = board({ "To Do": [parent], "In Progress": [], Done: [] });
+  const shown = rules.boardWithQueuedChanges(sent, [remove(1, ITEM_A)]);
+  // Each in its column; in the first where it has none.
+  assert.deepEqual(
+    shown.columns["To Do"].map((card) => [card.id, card.parent_id]),
+    [[ITEM_C, null]],
+  );
+  assert.deepEqual(
+    shown.columns["In Progress"].map((card) => [card.id, card.parent_id]),
+    [[ITEM_B, null]],
+  );
+  // The board given is left as it was.
+  assert.equal(sent.columns["To Do"][0].subtasks[0].parent_id, ITEM_A);
+});
+
+test("boardWithQueuedChanges: a subtask deleted with its task is no card", () => {
+  const parent = task(ITEM_A, {
+    subtasks: [task(ITEM_B, { parent_id: ITEM_A })],
+  });
+  const sent = board({ "To Do": [parent], "In Progress": [], Done: [] });
+  const shown = rules.boardWithQueuedChanges(sent, [
+    remove(1, ITEM_B),
+    remove(2, ITEM_A),
+  ]);
+  assert.deepEqual(shown.columns["To Do"], []);
+});
+
+// --- A subtask waiting to be added, on the board ---
+
+test("boardWithQueuedChanges: a waiting subtask is listed in its task's card, not as a card", () => {
+  const parent = task(ITEM_A, {
+    subtasks: [task(ITEM_B, { parent_id: ITEM_A })],
+  });
+  const sent = board({
+    "To Do": [task(ITEM_C)],
+    "In Progress": [parent],
+    Done: [],
+  });
+  const shown = rules.boardWithQueuedChanges(sent, [subtask(5, "Oat", ITEM_A)]);
+  assert.deepEqual(
+    shown.columns["To Do"].map((card) => card.id),
+    [ITEM_C],
+  );
+  const subtasks = shown.columns["In Progress"][0].subtasks;
+  assert.deepEqual(
+    subtasks.map((sub) => [sub.id, Boolean(sub.provisional)]),
+    [
+      [ITEM_B, false],
+      ["unsent-5", true],
+    ],
+  );
+  // The board given is left as it was.
+  assert.equal(sent.columns["In Progress"][0].subtasks.length, 1);
+});
+
+test("boardWithQueuedChanges: a waiting subtask of a card with no subtasks yet", () => {
+  const sent = board({ "To Do": [task(ITEM_A)], "In Progress": [], Done: [] });
+  const shown = rules.boardWithQueuedChanges(sent, [subtask(5, "Oat", ITEM_A)]);
+  assert.deepEqual(
+    shown.columns["To Do"][0].subtasks.map((sub) => sub.id),
+    ["unsent-5"],
+  );
+});
+
+test("boardWithQueuedChanges: a waiting subtask whose task is not shown is a card at the top", () => {
+  // The task was deleted in the page after the subtask was added, or
+  // is no card of the board.
+  const sent = board({
+    "To Do": [task(ITEM_A), task(ITEM_C)],
+    "In Progress": [],
+    Done: [],
+  });
+  const shown = rules.boardWithQueuedChanges(sent, [
+    subtask(5, "Oat", ITEM_A),
+    remove(6, ITEM_A),
+  ]);
+  assert.deepEqual(
+    shown.columns["To Do"].map((card) => card.id),
+    ["unsent-5", ITEM_C],
+  );
+  // Taken back, the delete leaves the subtask in its task's card again.
+  const back = rules.boardWithQueuedChanges(sent, [subtask(5, "Oat", ITEM_A)]);
+  assert.deepEqual(
+    back.columns["To Do"].map((card) => card.id),
+    [ITEM_A, ITEM_C],
+  );
+  assert.equal(back.columns["To Do"][0].subtasks[0].id, "unsent-5");
+});
+
+test("a delete of a task leaves a subtask waiting to be added to it in the queue", () => {
+  // The subtask is sent with the rest: the server adds it at the top
+  // level where its task is gone by then.
+  const queue = rules.withChange(
+    [subtask(5, "Oat", ITEM_A)],
+    remove(6, ITEM_A),
+  );
+  assert.deepEqual(stamps(queue), [5, 6]);
+  assert.equal(JSON.parse(queue[0].opts.body).parent_id, ITEM_A);
+});
+
+// --- Where a waiting task is drawn in the list ---
+
+test("placedAdds: a waiting subtask goes under its task, any other waiting task to the top", () => {
+  const waiting = rules.queuedAdds(
+    [add(1, "Milk"), subtask(2, "Oat", ITEM_A), subtask(3, "Rye", ITEM_A)],
+    LIST,
+  );
+  const placed = rules.placedAdds(waiting, [ITEM_A, ITEM_B]);
+  assert.deepEqual(
+    placed.atTop.map((row) => row.id),
+    ["unsent-1"],
+  );
+  assert.deepEqual(
+    placed.under[ITEM_A].map((row) => row.id),
+    ["unsent-2", "unsent-3"],
+  );
+  assert.deepEqual(placed.under[ITEM_B], []);
+});
+
+test("placedAdds: a subtask whose task is not among the top-level tasks shown is at the top", () => {
+  // Its task was deleted in the page meanwhile, or is itself a subtask.
+  const waiting = rules.queuedAdds([subtask(2, "Oat", ITEM_C)], LIST);
+  const placed = rules.placedAdds(waiting, [ITEM_A]);
+  assert.deepEqual(
+    placed.atTop.map((row) => row.id),
+    ["unsent-2"],
+  );
+  assert.deepEqual(placed.under, { [ITEM_A]: [] });
+});
+
+test("placedAdds: nothing waiting, and no task shown", () => {
+  assert.deepEqual(rules.placedAdds([], []), { atTop: [], under: {} });
 });

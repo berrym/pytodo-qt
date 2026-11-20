@@ -324,6 +324,12 @@ class Database:
     focus_sessions: list[FocusSession] = field(default_factory=list)
     active_list_id: UUID | None = None
     schema_version: int = 2
+    # The id of every item the web page has added, with the time, in
+    # milliseconds. The page gives an item its id and may deliver the
+    # same add twice; an id that is here is not created again, though
+    # the item has since been deleted and its record collected. Kept on
+    # this device only: it is no part of what is synced or exported.
+    web_added_ids: dict[UUID, int] = field(default_factory=dict)
 
     @property
     def active_list(self) -> TodoList | None:

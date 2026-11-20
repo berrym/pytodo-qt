@@ -303,6 +303,11 @@
       if (!kind || at === -1) continue;
       var item = shown[at];
       if (kind === "delete") {
+        // The subtasks of a deleted task go to the top level, as the
+        // server puts them there when it deletes the task.
+        for (var c = 0; c < shown.length; c++) {
+          if (shown[c].parent_id === item.id) shown[c].parent_id = null;
+        }
         shown.splice(at, 1);
         continue;
       }
@@ -352,10 +357,13 @@
       var change = queue[i];
       if (kindOf(change) !== "add") continue;
       if (change.path !== "/lists/" + listId + "/items") continue;
+      var body = bodyOf(change);
       rows.push({
         id: "unsent-" + change.timestamp,
         queued_at: change.timestamp,
-        reminder: String(bodyOf(change).reminder || ""),
+        reminder: String(body.reminder || ""),
+        // The task a subtask was added to; null for a task of its own.
+        parent_id: body.parent_id || null,
         provisional: true,
         unsent: true,
       });
@@ -382,18 +390,94 @@
     names.forEach(function (name) {
       columns[name] = [];
     });
-    withQueuedChanges(cards, queue, names).forEach(function (card) {
+    var shownCards = withQueuedChanges(cards, queue, names);
+    var byId = {};
+    shownCards.forEach(function (card) {
+      byId[card.id] = card;
       if (card.subtasks && card.subtasks.length > 0) {
         card.subtasks = withQueuedChanges(card.subtasks, queue, []);
       }
+    });
+    // The subtasks of a card that a queued delete takes away become
+    // cards of their own, as the server makes them tasks of their own:
+    // each in its column, or in the first where it has none.
+    cards.forEach(function (card) {
+      if (byId[card.id] || !card.subtasks || names.length === 0) return;
+      withQueuedChanges(card.subtasks, queue, names).forEach(function (sub) {
+        sub.parent_id = null;
+        if (names.indexOf(sub.board_column) === -1) sub.board_column = names[0];
+        shownCards.push(sub);
+      });
+    });
+    shownCards.forEach(function (card) {
       columns[card.board_column].push(card);
     });
     if (names.length > 0 && board.id) {
-      columns[names[0]] = queuedAdds(queue, board.id).concat(columns[names[0]]);
+      // A subtask waiting to be added is listed in its task's card; a
+      // task of its own, or a subtask whose task is not shown, is a
+      // card at the top of the first column.
+      var ownCards = [];
+      queuedAdds(queue, board.id).forEach(function (waiting) {
+        var parent = waiting.parent_id ? byId[waiting.parent_id] : null;
+        if (parent) parent.subtasks = (parent.subtasks || []).concat([waiting]);
+        else ownCards.push(waiting);
+      });
+      columns[names[0]] = ownCards.concat(columns[names[0]]);
     }
     var shown = copyOf(board);
     shown.columns = columns;
     return shown;
+  }
+
+  // Where the tasks waiting to be added (queuedAdds) are drawn in the
+  // list: a subtask under its task, where that task is one of the
+  // top-level tasks shown (topLevelIds, a list of ids); any other
+  // waiting task at the top. A subtask whose task has been deleted in
+  // the page meanwhile is at the top with the rest: that is where the
+  // server will put it.
+  function placedAdds(waiting, topLevelIds) {
+    var placed = { atTop: [], under: {} };
+    for (var n = 0; n < topLevelIds.length; n++) {
+      placed.under[topLevelIds[n]] = [];
+    }
+    for (var i = 0; i < waiting.length; i++) {
+      var row = waiting[i];
+      if (row.parent_id && placed.under[row.parent_id]) {
+        placed.under[row.parent_id].push(row);
+      } else {
+        placed.atTop.push(row);
+      }
+    }
+    return placed;
+  }
+
+  // The id the page gave the task that an add creates; null for an add
+  // that has none, as one queued by an earlier version of the page.
+  function addIdOf(change) {
+    var id = bodyOf(change).id;
+    return typeof id === "string" && id ? id : null;
+  }
+
+  // The queue with an id given to the add that was queued at the time
+  // given, where it has none. The server creates a task of an id once,
+  // however often its add is delivered: an add with no id would be a
+  // second task the second time.
+  function withAddId(queue, timestamp, id) {
+    return queue.map(function (queued) {
+      if (
+        queued.timestamp !== timestamp ||
+        kindOf(queued) !== "add" ||
+        addIdOf(queued)
+      ) {
+        return queued;
+      }
+      var body = bodyOf(queued);
+      body.id = id;
+      var given = copyOf(queued);
+      given.opts = copyOf(given.opts);
+      given.opts.body = JSON.stringify(body);
+      return given;
+    });
   }
 
   // Whether the copy of the queue kept in IndexedDB is the one to go
@@ -431,6 +515,9 @@
     nextToSend: nextToSend,
     withUpdatedAt: withUpdatedAt,
     savedIsNewer: savedIsNewer,
+    placedAdds: placedAdds,
+    addIdOf: addIdOf,
+    withAddId: withAddId,
   };
 
   if (typeof module !== "undefined" && module.exports) {

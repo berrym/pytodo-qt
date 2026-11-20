@@ -9,7 +9,13 @@ from uuid import uuid4
 import pytest
 
 from pytodo_qt.core.database import SCHEMA_VERSION, DatabaseStorage
-from pytodo_qt.core.models import Database, TodoItem, TodoList
+from pytodo_qt.core.models import (
+    Database,
+    TodoItem,
+    TodoList,
+    create_todo_item,
+    create_todo_list,
+)
 
 
 class TestDatabaseStorageBasics:
@@ -201,6 +207,190 @@ class TestSchemaMigrationV18ToV19:
             storage2.close()
 
 
+class TestWebAddedIds:
+    """v25 keeps the id of every item the web page has added (#117)."""
+
+    def _storage(self, tmpdir: str) -> DatabaseStorage:
+        storage = DatabaseStorage(Path(tmpdir) / "test.db")
+        storage.open()
+        return storage
+
+    def _db_with_an_item(self) -> tuple[Database, TodoItem]:
+        db = Database()
+        lst = create_todo_list("Home")
+        item = create_todo_item("Buy milk")
+        lst.add_item(item)
+        db.add_list(lst)
+        return db, item
+
+    def test_ids_are_saved_and_loaded_with_the_database(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = self._storage(tmpdir)
+            try:
+                db, item = self._db_with_an_item()
+                gone = uuid4()
+                db.web_added_ids = {item.id: 1795000000000, gone: 1794000000000}
+                storage.save_database(db)
+            finally:
+                storage.close()
+            storage = self._storage(tmpdir)
+            try:
+                loaded = storage.load_database()
+            finally:
+                storage.close()
+            # An id stays on record without its item.
+            assert loaded.web_added_ids == {item.id: 1795000000000, gone: 1794000000000}
+
+    def test_saving_again_keeps_the_time_an_id_was_first_recorded(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = self._storage(tmpdir)
+            try:
+                db, item = self._db_with_an_item()
+                db.web_added_ids = {item.id: 1}
+                storage.save_database(db)
+                db.web_added_ids[item.id] = 2
+                storage.save_database(db)
+                assert storage.get_web_added_ids() == {item.id: 1}
+            finally:
+                storage.close()
+
+    def test_an_item_and_its_id_are_saved_together_or_not_at_all(self):
+        """One transaction: a save that fails at the ids leaves no item
+        behind, so no id is ever missing for a stored item."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = self._storage(tmpdir)
+            try:
+                db, item = self._db_with_an_item()
+                db.web_added_ids = {item.id: object()}  # type: ignore[dict-item]
+                with pytest.raises(sqlite3.Error):
+                    storage.save_database(db)
+                assert storage.load_database().lists == {}
+                assert storage.get_web_added_ids() == {}
+            finally:
+                storage.close()
+
+    def test_a_database_of_the_version_before_gains_the_table(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            storage.close()
+            raw = sqlite3.connect(db_path)
+            raw.execute("DROP TABLE web_added_items")
+            raw.execute("UPDATE metadata SET value = '24' WHERE key = 'schema_version'")
+            raw.commit()
+            raw.close()
+
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            try:
+                assert storage.get_schema_version() == 25
+                assert storage.get_web_added_ids() == {}
+            finally:
+                storage.close()
+
+    def _rewind_to_24(self, db_path: Path) -> None:
+        """A current database, put back into the shape of version 24."""
+        raw = sqlite3.connect(db_path)
+        raw.execute("DROP TABLE web_added_items")
+        raw.execute("UPDATE metadata SET value = '24' WHERE key = 'schema_version'")
+        raw.commit()
+        raw.close()
+
+    def test_the_migration_keeps_what_the_database_holds(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            db, item = self._db_with_an_item()
+            item.set_complete(True)
+            storage.save_database(db)
+            storage.record_notifications([(str(item.id), "due", "")], fired_at=1794000000000)
+            storage.close()
+            self._rewind_to_24(db_path)
+
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            try:
+                assert storage.get_schema_version() == 25
+                loaded = storage.load_database()
+                (lst,) = loaded.lists.values()
+                assert lst.name == "Home"
+                assert lst.items[item.id].reminder == "Buy milk"
+                assert lst.items[item.id].complete is True
+                assert storage.get_fired_notifications() == {(str(item.id), "due", "")}
+                assert loaded.web_added_ids == {}
+                # And an id is kept from here on.
+                loaded.web_added_ids[item.id] = 1795000000000
+                storage.save_database(loaded)
+                assert storage.get_web_added_ids() == {item.id: 1795000000000}
+            finally:
+                storage.close()
+
+    def test_running_the_migration_again_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = self._storage(tmpdir)
+            try:
+                db, item = self._db_with_an_item()
+                db.web_added_ids = {item.id: 1795000000000}
+                storage.save_database(db)
+                storage.set_schema_version(24)
+                storage._migrate_schema_to_25()
+                storage._migrate_schema_to_25()
+                assert storage.get_schema_version() == 25
+                assert storage.get_web_added_ids() == {item.id: 1795000000000}
+                assert len(storage.load_database().lists) == 1
+            finally:
+                storage.close()
+
+    def test_a_database_of_a_later_version_is_opened_as_it_is(self):
+        """What an earlier build does with this version's database, shown
+        here for a version this build does not know: the version is not
+        put back, a table it does not know is left alone, and the lists
+        are read and saved as ever. A build of schema 24 therefore opens
+        a database of schema 25 and leaves the ids on record."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            db, item = self._db_with_an_item()
+            db.web_added_ids = {item.id: 1795000000000}
+            storage.save_database(db)
+            storage.close()
+            raw = sqlite3.connect(db_path)
+            raw.execute("CREATE TABLE of_a_later_version (id TEXT PRIMARY KEY)")
+            raw.execute("INSERT INTO of_a_later_version VALUES ('kept')")
+            raw.execute(
+                "UPDATE metadata SET value = ? WHERE key = 'schema_version'",
+                (str(SCHEMA_VERSION + 1),),
+            )
+            raw.commit()
+            raw.close()
+
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            try:
+                assert storage.get_schema_version() == SCHEMA_VERSION + 1
+                loaded = storage.load_database()
+                next(iter(loaded.lists.values())).add_item(create_todo_item("Buy bread"))
+                storage.save_database(loaded)
+                assert storage.get_schema_version() == SCHEMA_VERSION + 1
+                rows = storage.connection.execute("SELECT id FROM of_a_later_version").fetchall()
+                assert [row["id"] for row in rows] == ["kept"]
+                assert storage.get_web_added_ids() == {item.id: 1795000000000}
+                assert storage.load_database().total_items() == 2
+            finally:
+                storage.close()
+
+    def test_the_ids_are_no_part_of_what_is_synced_or_exported(self):
+        db, item = self._db_with_an_item()
+        db.web_added_ids = {item.id: 1795000000000}
+        allowed = set(db.lists)
+        for shared in (db.to_dict(), db.to_dict_for_sync(), db.to_dict_for_device(allowed)):
+            assert "web_added_ids" not in shared
+            assert str(1795000000000) not in str(shared)
+
+
 class TestSchemaMigrationToV24:
     """v24 records which items have been notified, apart from the log."""
 
@@ -278,7 +468,7 @@ class TestSchemaMigrationToV24:
                 storage.set_schema_version(23)
                 storage._migrate_schema_to_24()
                 assert self._notified(storage) == before
-                assert storage.get_schema_version() == SCHEMA_VERSION
+                assert storage.get_schema_version() == 24
             finally:
                 storage.close()
 

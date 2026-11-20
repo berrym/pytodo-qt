@@ -2274,6 +2274,27 @@ body {
   flex: 1;
 }
 
+.detail-subtask-row.queued-add span,
+.board-card-subtask-row.queued-add span {
+  cursor: default;
+}
+
+.detail-subtask-row .item-unsent,
+.board-card-subtask-row .item-unsent {
+  flex: none;
+}
+
+.queued-subtask-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 16px;
+  min-width: 24px;
+  min-height: 24px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
 .detail-subtask-row input[type="checkbox"] {
   width: 18px;
   height: 18px;

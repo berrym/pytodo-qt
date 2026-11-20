@@ -3,8 +3,8 @@ the server cannot be reached.
 
 Serves the real web page from a throwaway in-memory database, stops the
 server, and walks through the changes the page keeps for sending later:
-a tick, a second tick on the same task, a priority, a delete, and a task
-added. Each is shown in the page at once and after the page is opened
+a tick, a second tick on the same task, a priority, a delete, a task
+added, and a subtask added in a task's sheet. Each is shown in the page at once and after the page is opened
 again, marked "Not sent", and is sent when the server is started again.
 One change is made just before the browser itself is closed: a browser
 that is ended writes what a page has stored to disk some time after the
@@ -369,13 +369,25 @@ Step 3: other changes. The server is still stopped.
        opened.
   4. Add another task, "7 Remove me". Remove it with the x on its row.
      - The row goes.
-  5. Close the page and open it again.
-     - Everything is as it was left: 1 ticked, 3 high, 4 gone, and the
-       dashed "6 Added offline tomorrow" at the top. The count is 4.
-  6. Open the board.
+  5. Tap the name of "5 Leave me alone". In the sheet that opens, type
+         9 Subtask of 5
+     into "Add subtask..." and tap the + beside it.
+     - The sheet lists "9 Subtask of 5" with the label. Its box cannot
+       be ticked.
+     Close the sheet.
+     - In the list "9 Subtask of 5" is under "5 Leave me alone", set
+       in, dashed, with the label.
+  6. Close the page and open it again.
+     - Everything is as it was left: 1 ticked, 3 high, 4 gone, the
+       dashed "6 Added offline tomorrow" at the top, and the dashed
+       "9 Subtask of 5" under 5. The count is 5.
+  7. Open the board.
      - "6 Added offline tomorrow" is at the top of the first column,
        dashed, with the label. "3 Change my priority" below it has the
        label. "4 Delete me" is not there.
+     - The card "5 Leave me alone" reads "0/1 subtasks". Tap that:
+       "9 Subtask of 5" is listed in the card, with the label. It is
+       not a card of its own.
      - Swipe to the last column: "1 Tick me" is in it, with the label.
      Go back to the list.
 
@@ -394,7 +406,7 @@ one go.
   2. Open the browser and the same address again.
      - A dashed row "8 Added before closing" is near the top of the
        list, with the label, below "6 Added offline tomorrow". The
-       count on "More" is 5.
+       count on "More" is 6.
 
   Leave the page open and press Enter. The server then starts again."""
 
@@ -415,7 +427,10 @@ Step 5: the changes are sent. The server is running again.
       5 Leave me alone       not done
       6 Added offline        not done, due tomorrow
       8 Added before closing not done
+      9 Subtask of 5         not done
     with no "4 Delete me" and no "7 Remove me".
+  - "9 Subtask of 5" is under "5 Leave me alone" in the list, as an
+    ordinary subtask.
 
   Press Enter to stop."""
 

@@ -3114,3 +3114,32 @@ test("a list's saved tasks are kept while the server has the list and they are n
   // A list the server no longer has, however lately saved.
   assert.equal(kept({ listId: "list-2", savedAt: before + 1 }), false);
 });
+
+// --- The id the page gives a task it adds (#117) ---
+
+const UUID_V4 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+function idMaker(crypto) {
+  return new Function(
+    "crypto",
+    functionText("newItemId") + "\nreturn newItemId;",
+  )(crypto);
+}
+
+test("the id of an added task is a random UUID, another each time", () => {
+  // Made from random bytes, which every browser the page runs in has.
+  const newItemId = idMaker({
+    getRandomValues: (bytes) => globalThis.crypto.getRandomValues(bytes),
+  });
+  const ids = new Set();
+  for (let n = 0; n < 50; n++) {
+    const id = newItemId();
+    assert.match(id, UUID_V4);
+    ids.add(id);
+  }
+  assert.equal(ids.size, 50);
+  // Every byte is written in two digits.
+  const zeros = idMaker({ getRandomValues: (bytes) => bytes.fill(0) });
+  assert.equal(zeros(), "00000000-0000-4000-8000-000000000000");
+});

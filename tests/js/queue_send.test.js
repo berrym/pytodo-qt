@@ -98,14 +98,21 @@ function lockManager() {
 
 // What the copies of the page on one device share.
 function device(queue) {
-  return { queue: queue.slice(), locks: lockManager() };
+  return { queue: queue.slice(), locks: lockManager(), ids: 0 };
 }
 
 // A server that takes changes. While slow is true a change waits until
 // the test answers it (answer) or the connection is lost (lose); one
 // that the page gives up is marked.
 function server() {
-  const model = { received: [], reads: 0, waiting: [], slow: false, up: true };
+  const model = {
+    received: [],
+    bodies: [],
+    reads: 0,
+    waiting: [],
+    slow: false,
+    up: true,
+  };
   model.fetch = (url, opts) => {
     const method = opts.method || "GET";
     if (!model.up) return Promise.reject(new TypeError("Failed to fetch"));
@@ -115,6 +122,7 @@ function server() {
     }
     const change = method + " " + url.replace("/api", "");
     model.received.push(change);
+    model.bodies.push(opts.body);
     const reply = () =>
       new Response(JSON.stringify({ updated_at: "after " + change }), {
         status: model.status || 200,
@@ -190,6 +198,9 @@ function page(disk, network, options) {
       functionText("watchQueuedSend"),
       "function getOfflineQueue() { return env.disk.queue.slice(); }",
       "function saveOfflineQueue(queue) { env.disk.queue = queue.slice(); }",
+      // Ids in the order they are made, by any copy on the device.
+      "function newItemId() { env.disk.ids += 1; return 'made-' + env.disk.ids; }",
+      functionText("giveQueuedAddAnId"),
       "function authHeaders(extra) { return Object.assign({}, extra || {}); }",
       "async function serverFetch(url, opts) { return env.fetch(url, opts || {}); }",
       "function showToast(text) { env.toasts.push(text); }",
@@ -240,9 +251,18 @@ const remove = (timestamp, item) => ({
   opts: { method: "DELETE" },
   timestamp: timestamp,
 });
-const add = (timestamp, text) => ({
+// A task waiting to be added, with the id the page gave it; null for
+// one queued by an earlier version of the page, which gave none.
+const add = (timestamp, text, id) => ({
   path: "/lists/" + LIST + "/items",
-  opts: { method: "POST", body: JSON.stringify({ reminder: text }) },
+  opts: {
+    method: "POST",
+    body: JSON.stringify(
+      id === null
+        ? { reminder: text }
+        : { id: id || "given-" + timestamp, reminder: text },
+    ),
+  },
   timestamp: timestamp,
 });
 
@@ -584,24 +604,105 @@ test("a delete, an edit and a move on their way are given up in the same way", a
   }
 });
 
-test("an added task on its way is not given up", async () => {
-  // Sent a second time it would be a second task (#117): it waits for
-  // its answer, and its run with it.
+test("an added task on its way is given up like any other change", async () => {
+  // It carries its id: sent again, it is the same task to the server.
   const disk = device([add(1, "Buy milk")]);
   const network = server();
   network.slow = true;
   const made = page(disk, network);
   const run = made.send();
   await settled();
+  const onItsWay = network.waiting[0];
   made.silent();
-  await settled();
-  assert.equal(network.waiting[0].givenUp, false);
-  assert.equal(made.running(), true);
-  assert.equal(disk.locks.held["pytodo-queue-send"], true);
-  network.answer();
   await run;
-  assert.deepEqual(network.received, [ADD]);
+  assert.equal(onItsWay.givenUp, true);
+  assert.equal(disk.locks.held["pytodo-queue-send"], false);
+  assert.equal(disk.queue.length, 1);
+  // The next run sends the same id.
+  network.slow = false;
+  made.found();
+  await made.send();
+  assert.deepEqual(network.received, [ADD, ADD]);
+  assert.deepEqual(
+    network.bodies.map((body) => JSON.parse(body).id),
+    ["given-1", "given-1"],
+  );
   assert.deepEqual(disk.queue, []);
+});
+
+// --- An add queued by an earlier version of the page ---
+//
+// It has no id. Sent as it is, a second delivery would be a second
+// task: it is given an id, and stored with it, before it is sent.
+
+test("an add without an id is given one, and stored with it, before it is sent", async () => {
+  const disk = device([add(1, "Buy milk", null)]);
+  const network = server();
+  let storedWhenSent = null;
+  const send = network.fetch;
+  network.fetch = (url, opts) => {
+    if (opts.method === "POST") {
+      storedWhenSent = JSON.parse(disk.queue[0].opts.body).id;
+    }
+    return send(url, opts);
+  };
+  const made = page(disk, network);
+  await made.send();
+  assert.equal(storedWhenSent, "made-1");
+  assert.deepEqual(JSON.parse(network.bodies[0]), {
+    reminder: "Buy milk",
+    id: "made-1",
+  });
+  assert.deepEqual(disk.queue, []);
+});
+
+test("given up and sent again, it carries the id it was given the first time", async () => {
+  const disk = device([add(1, "Buy milk", null)]);
+  const network = server();
+  network.slow = true;
+  const made = page(disk, network);
+  const run = made.send();
+  await settled();
+  made.silent();
+  await run;
+  assert.equal(JSON.parse(disk.queue[0].opts.body).id, "made-1");
+  network.slow = false;
+  made.found();
+  await made.send();
+  assert.deepEqual(
+    network.bodies.map((body) => JSON.parse(body).id),
+    ["made-1", "made-1"],
+  );
+  assert.equal(disk.ids, 1);
+});
+
+test("another copy of the page sends the id the first one stored", async () => {
+  const disk = device([add(1, "Buy milk", null)]);
+  const network = server();
+  network.slow = true;
+  const first = page(disk, network);
+  const second = page(disk, network);
+  const run = first.send();
+  await settled();
+  first.silent();
+  await run;
+  network.slow = false;
+  await second.send();
+  assert.deepEqual(
+    network.bodies.map((body) => JSON.parse(body).id),
+    ["made-1", "made-1"],
+  );
+});
+
+test("an add that has its id keeps it, and other changes are given none", async () => {
+  const disk = device([add(1, "Buy milk"), tick(2, ITEM_A)]);
+  const network = server();
+  await page(disk, network).send();
+  assert.deepEqual(
+    network.bodies.map((body) => JSON.parse(body)),
+    [{ id: "given-1", reminder: "Buy milk" }, {}],
+  );
+  assert.equal(disk.ids, 0);
 });
 
 test("nothing is given up when nothing is on its way", async () => {
@@ -704,15 +805,15 @@ test("a change that is given up, or lost, ends the asking", async () => {
   }
 });
 
-test("an added task on its way is not asked about: it is not given up either", async () => {
+test("an added task on its way is asked about as any other change is", async () => {
   const disk = device([add(1, "Buy milk")]);
   const network = server();
   network.slow = true;
   const made = page(disk, network);
   const run = made.send();
   await settled();
-  made.env.advance(60000);
-  assert.deepEqual(asked(made), []);
+  made.env.advance(3000);
+  assert.deepEqual(asked(made), ["probeServer at 3000"]);
   network.answer();
   await run;
 });

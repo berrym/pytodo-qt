@@ -785,6 +785,17 @@ async def handle_create_item(request: web.Request) -> web.Response:
     parser reads is kept, as when the same text is typed into the desktop's
     Add Todo: subtasks written inline ("pack: socks, charger") are created
     as child items. The response is the parent item.
+
+    The page gives the item its id (``id``, a UUID) and may deliver the
+    same add more than once: its answer was lost, or it gave the request
+    up while the server was silent. An id is created once. A later
+    delivery creates nothing and is answered 200 with the id and
+    ``already_added``, whatever has become of the item since: the answer
+    says nothing of an item the page may no longer see. Without an id
+    the server makes one, as for a page of an earlier version.
+
+    The item and its inline subtasks are added in one step and saved
+    together, with the record of the id.
     """
     db: Database = request.app[database_key]
     try:
@@ -804,6 +815,15 @@ async def handle_create_item(request: web.Request) -> web.Response:
     reminder = body.get("reminder", "").strip()
     if not reminder:
         return _error(400, "Item reminder text is required")
+
+    given_id: UUID | None = None
+    if body.get("id") is not None:
+        try:
+            given_id = UUID(str(body["id"]))
+        except ValueError:
+            return _error(400, "Invalid item ID")
+        if _item_was_added(db, given_id):
+            return web.json_response({"id": str(given_id), "already_added": True})
 
     # NLP parsing: extract fields from natural language, then let explicit
     # body fields override.
@@ -855,8 +875,20 @@ async def handle_create_item(request: web.Request) -> web.Response:
     else:
         item = create_todo_item(reminder)
 
+    if given_id is not None:
+        item.id = given_id
+
     # Explicit body fields override NLP results
     _apply_item_fields(item, {k: v for k, v in body.items() if k != "reminder"}, lst)
+
+    # A subtask belongs to an item of this list that is still there. Where
+    # the item it was added to has been deleted meanwhile, or is not
+    # known, it is added at the top level: that is where the subtasks of
+    # a deleted item go (DeleteItemsCommand).
+    if item.parent_id is not None:
+        parent = lst.items.get(item.parent_id)
+        if parent is None or parent.deleted:
+            item.parent_id = None
 
     # An advance reminder counts back from the due date, so one taken
     # from the text is dropped when the item ends up without a date.
@@ -886,17 +918,33 @@ async def handle_create_item(request: web.Request) -> web.Response:
             child.board_column = item.board_column
             children.append(child)
 
+    # On record before the save, which stores it with the items.
+    if given_id is not None:
+        db.web_added_ids[given_id] = int(_time.time() * 1000)
+
     window = request.app.get(main_window_key)
     if window:
         from ..gui.commands import AddItemCommand
 
-        for added in (item, *children):
-            window._undo_stack.push(AddItemCommand(window, list_id, added))
+        window._undo_stack.push(AddItemCommand(window, list_id, item, children))
     else:
         for added in (item, *children):
             lst.add_item(added)
         _schedule_save_and_refresh(request)
     return web.json_response(_item_to_json(item), status=201)
+
+
+def _item_was_added(db: Database, item_id: UUID) -> bool:
+    """Whether an item of this id has been added, whatever became of it.
+
+    The record of the ids the page gave is asked first, since it holds
+    an id after its item is gone; then the items themselves, deleted
+    ones and those of private and deleted lists included, so that no id
+    is ever given to two items.
+    """
+    if item_id in db.web_added_ids:
+        return True
+    return any(item_id in lst.items for lst in db.lists.values())
 
 
 async def handle_update_item(request: web.Request) -> web.Response:
@@ -969,6 +1017,16 @@ async def handle_delete_item(request: web.Request) -> web.Response:
         cmd = DeleteItemsCommand(window, lst.id, [item_id])
         window._undo_stack.push(cmd)
     else:
+        # As DeleteItemsCommand does: the subtasks of a deleted item go
+        # to the top level, and are not left under an item that is gone.
+        if lst:
+            first_column = lst.board_columns[0] if lst.board_columns else ""
+            for child in lst.items.values():
+                if child.parent_id == item_id and not child.deleted:
+                    child.parent_id = None
+                    if not child.board_column and first_column:
+                        child.board_column = first_column
+                    child.mark_updated()
         item.mark_deleted()
         _schedule_save_and_refresh(request)
     return web.json_response({"ok": True})

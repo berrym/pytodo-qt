@@ -52,21 +52,36 @@ def _best_incomplete_column(item: TodoItem, todo_list: TodoList) -> str:
 
 
 class AddItemCommand(QUndoCommand):
-    """Add a todo item to a list."""
+    """Add a todo item to a list, with the subtasks it is created with.
 
-    def __init__(self, window: MainWindow, list_id: UUID, item: TodoItem) -> None:
+    An item whose text names its subtasks ("pack: socks, charger") is
+    added with them in one step: they are saved together, so that the
+    item is never stored without them, and one Undo takes all of them
+    back. Each is marked as updated, as an item added by itself is,
+    which is what the sync goes by.
+    """
+
+    def __init__(
+        self,
+        window: MainWindow,
+        list_id: UUID,
+        item: TodoItem,
+        children: list[TodoItem] | None = None,
+    ) -> None:
         super().__init__("Add item")
         self._window = window
         self._list_id = list_id
         self._item = item
+        self._children = list(children or [])
 
     def redo(self) -> None:
         todo_list = self._window._database.lists.get(self._list_id)
         if not todo_list:
             return
-        self._item.deleted = False
-        self._item.mark_updated()
-        todo_list.items[self._item.id] = self._item
+        for added in (self._item, *self._children):
+            added.deleted = False
+            added.mark_updated()
+            todo_list.items[added.id] = added
         todo_list.mark_updated()
         self._window._save_database()
         self._window._refresh_ui()
@@ -75,7 +90,8 @@ class AddItemCommand(QUndoCommand):
         todo_list = self._window._database.lists.get(self._list_id)
         if not todo_list:
             return
-        todo_list.remove_item(self._item.id)
+        for added in (*self._children, self._item):
+            todo_list.remove_item(added.id)
         self._window._save_database()
         self._window._refresh_ui()
 

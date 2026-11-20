@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -189,6 +189,16 @@ CREATE TABLE IF NOT EXISTS notified_items (
 )
 """
 
+# The id of every item the web page has added (Database.web_added_ids).
+# No row is ever removed: an id is created once, however late a second
+# delivery of its add arrives.
+_CREATE_WEB_ADDED_ITEMS_TABLE = """
+CREATE TABLE IF NOT EXISTS web_added_items (
+    item_id TEXT PRIMARY KEY,
+    added_at INTEGER NOT NULL
+)
+"""
+
 _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_lists_deleted ON lists(deleted)",
     "CREATE INDEX IF NOT EXISTS idx_lists_name ON lists(name)",
@@ -307,6 +317,7 @@ class DatabaseStorage:
         conn.execute(_CREATE_FOCUS_SESSIONS_TABLE)
         conn.execute(_CREATE_NOTIFICATION_LOG_TABLE)
         conn.execute(_CREATE_NOTIFIED_ITEMS_TABLE)
+        conn.execute(_CREATE_WEB_ADDED_ITEMS_TABLE)
 
         for index_sql in _CREATE_INDEXES:
             conn.execute(index_sql)
@@ -340,6 +351,7 @@ class DatabaseStorage:
         self._migrate_schema_to_22()
         self._migrate_schema_to_23()
         self._migrate_schema_to_24()
+        self._migrate_schema_to_25()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -774,6 +786,18 @@ class DatabaseStorage:
 
         self.set_schema_version(24)
         logger.log.info("Migrated schema -> 24: recorded %d items as notified", seeded)
+
+    def _migrate_schema_to_25(self) -> None:
+        """Migrate schema to version 25 (ids of the items the web page added).
+
+        The web_added_items table is created with the rest of the schema
+        and starts empty: no item added before this version carries an id
+        of the page's making.
+        """
+        if self.get_schema_version() >= 25:
+            return
+        self.set_schema_version(25)
+        logger.log.info("Migrated schema -> 25: web_added_items")
 
     def get_schema_version(self) -> int:
         """Get current schema version."""
@@ -1229,6 +1253,8 @@ class DatabaseStorage:
         except Exception:
             db.focus_sessions = []
 
+        db.web_added_ids = self.get_web_added_ids()
+
         logger.log.info(
             "Loaded database: %d lists, %d total items, %d focus sessions",
             len(db.lists),
@@ -1257,12 +1283,24 @@ class DatabaseStorage:
             for session in db.focus_sessions:
                 self.save_focus_session(session)
 
+            # In the transaction that saves the items themselves: an id
+            # is on record exactly when its item has been saved.
+            self.connection.executemany(
+                "INSERT OR IGNORE INTO web_added_items (item_id, added_at) VALUES (?, ?)",
+                [(str(item_id), added_at) for item_id, added_at in db.web_added_ids.items()],
+            )
+
         logger.log.info(
             "Saved database: %d lists, %d total items, %d focus sessions",
             len(db.lists),
             sum(len(lst.items) for lst in db.lists.values()),
             len(db.focus_sessions),
         )
+
+    def get_web_added_ids(self) -> dict[UUID, int]:
+        """The id of every item the web page has added, with the time it was added."""
+        cursor = self.connection.execute("SELECT item_id, added_at FROM web_added_items")
+        return {UUID(row["item_id"]): row["added_at"] for row in cursor}
 
     # Device operations
 
