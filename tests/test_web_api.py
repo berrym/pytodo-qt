@@ -5855,6 +5855,248 @@ class TestSecurityHeaders:
 
 
 # ===========================================================================
+# Request bodies (#118)
+# ===========================================================================
+
+
+class TestRequestBodies:
+    """A change carries the time of the item as its sender last saw it,
+    and is refused where the item has changed since. A body that was
+    sent and cannot be read was taken for an empty one by four handlers,
+    which then applied the change with no time to compare. Every handler
+    now reads its body in one of two ways, and a body that cannot be
+    read, or is no JSON object, is answered 400 with nothing applied."""
+
+    # The sixteen routes that read a body: method, path, and whether a
+    # request without a body is served.
+    def _routes(self, lst, item, deleted, device_id) -> list[tuple[str, str, bool]]:
+        return [
+            ("POST", "/api/lists", False),
+            ("PUT", f"/api/lists/{lst.id}", False),
+            ("DELETE", f"/api/lists/{lst.id}", True),
+            ("PATCH", f"/api/lists/{lst.id}/columns", False),
+            ("POST", f"/api/lists/{lst.id}/items", False),
+            ("PUT", f"/api/items/{item.id}", False),
+            ("DELETE", f"/api/items/{item.id}", True),
+            ("PATCH", f"/api/items/{item.id}/toggle", True),
+            ("PATCH", f"/api/items/{item.id}/move", False),
+            ("PATCH", f"/api/items/{item.id}/parent", False),
+            ("PATCH", f"/api/items/{deleted.id}/restore", True),
+            ("POST", "/api/parse", False),
+            ("PUT", "/api/sort", False),
+            ("POST", f"/api/lists/{lst.id}/apply-preset", False),
+            ("POST", "/api/auth", False),
+            ("PATCH", f"/api/devices/{device_id}", False),
+        ]
+
+    def _setup(self):
+        db = _make_db_with_data()
+        ws, token = _make_authed_client(db)
+        lst = next(iter(db.lists.values()))
+        item, deleted = list(lst.items.values())[:2]
+        deleted.mark_deleted()
+        device_id = ws.get_paired_devices()[0].id
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        return db, ws, lst, item, deleted, device_id, headers
+
+    def _state(self, db, lst, item, deleted):
+        """What the four handlers that take a request without a body change."""
+        return (
+            lst.deleted,
+            item.deleted,
+            item.complete,
+            deleted.deleted,
+            len(db.lists),
+            sum(len(one.items) for one in db.lists.values()),
+        )
+
+    def test_the_sixteen_are_every_handler_that_reads_a_body(self):
+        """A handler that reads a body by itself would be outside the rule."""
+        import inspect
+
+        from pytodo_qt.web import api
+
+        source = inspect.getsource(api)
+        assert source.count("await request.json()") == 1
+        # Twelve handlers, and _optional_body itself.
+        assert source.count("await _required_body(request)") == 13
+        assert source.count("await _optional_body(request)") == 4
+        db, _ws, lst, item, deleted, device_id, _headers = self._setup()
+        assert len(self._routes(lst, item, deleted, device_id)) == 16
+
+    @pytest.mark.asyncio
+    async def test_a_body_that_is_no_json_is_refused_everywhere(self):
+        db, ws, lst, item, deleted, device_id, headers = self._setup()
+        before = self._state(db, lst, item, deleted)
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
+            for method, path, _ in self._routes(lst, item, deleted, device_id):
+                for body in ("{not json", '{"updated_at": 5', "\x00\x01"):
+                    resp = await client.request(method, path, data=body, headers=headers)
+                    assert resp.status == 400, (method, path, body)
+                    assert (await resp.json())["error"] == "Invalid JSON body"
+        finally:
+            await client.close()
+        assert self._state(db, lst, item, deleted) == before
+
+    @pytest.mark.asyncio
+    async def test_a_body_that_is_no_json_object_is_refused_everywhere(self):
+        """A list or a text was read as the body and failed later, as a
+        fault of the server's own."""
+        db, ws, lst, item, deleted, device_id, headers = self._setup()
+        before = self._state(db, lst, item, deleted)
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
+            for method, path, _ in self._routes(lst, item, deleted, device_id):
+                for body in ("[1]", '"text"', "7", "null", "true"):
+                    resp = await client.request(method, path, data=body, headers=headers)
+                    assert resp.status == 400, (method, path, body)
+                    assert (await resp.json())["error"] == "Invalid JSON body"
+        finally:
+            await client.close()
+        assert self._state(db, lst, item, deleted) == before
+
+    @pytest.mark.asyncio
+    async def test_a_request_without_a_body_is_refused_where_one_is_needed(self):
+        db, ws, lst, item, deleted, device_id, headers = self._setup()
+        before = self._state(db, lst, item, deleted)
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
+            for method, path, served in self._routes(lst, item, deleted, device_id):
+                if served:
+                    continue
+                resp = await client.request(method, path, headers=headers)
+                assert resp.status == 400, (method, path)
+                assert (await resp.json())["error"] == "Invalid JSON body"
+        finally:
+            await client.close()
+        assert self._state(db, lst, item, deleted) == before
+
+    @pytest.mark.asyncio
+    async def test_a_request_without_a_body_is_served_where_none_is_needed(self):
+        """A tick, a delete and a restore sent with no body ask for no
+        check, as before."""
+        db, ws, lst, item, deleted, device_id, headers = self._setup()
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
+            auth = {"Authorization": headers["Authorization"]}
+            resp = await client.patch(f"/api/items/{item.id}/toggle", headers=auth)
+            assert resp.status == 200
+            assert item.complete is True
+            resp = await client.patch(f"/api/items/{deleted.id}/restore", headers=auth)
+            assert resp.status == 200
+            assert deleted.deleted is False
+            resp = await client.delete(f"/api/items/{item.id}", headers=auth)
+            assert resp.status == 200
+            assert item.deleted is True
+            resp = await client.delete(f"/api/lists/{lst.id}", headers=auth)
+            assert resp.status == 200
+            assert lst.deleted is True
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_an_empty_object_is_a_body_like_any_other(self):
+        db, ws, lst, item, deleted, device_id, headers = self._setup()
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
+            resp = await client.patch(f"/api/items/{item.id}/toggle", data="{}", headers=headers)
+            assert resp.status == 200
+            assert item.complete is True
+        finally:
+            await client.close()
+
+    async def _serve_slowly(self, app, wait: float):
+        """The application's own server, as the desktop starts it, with
+        every change held back before it is handled; and what each
+        change was answered."""
+        from aiohttp import web
+
+        answered: list[tuple[str, int]] = []
+        held = {"for": wait}
+
+        @web.middleware
+        async def hold_back(request, handler):
+            if request.method != "GET":
+                await asyncio.sleep(held["for"])
+                response = await handler(request)
+                answered.append((request.path, response.status))
+                return response
+            return await handler(request)
+
+        app.middlewares.append(hold_back)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = runner.addresses[0][1]
+        return runner, f"http://127.0.0.1:{port}", answered, held
+
+    @pytest.mark.asyncio
+    async def test_a_change_whose_sender_has_gone_before_its_body_is_read_applies_nothing(self):
+        import aiohttp
+
+        for number in range(4):
+            db, ws, lst, item, deleted, device_id, headers = self._setup()
+            method, path, _ = [
+                route for route in self._routes(lst, item, deleted, device_id) if route[2]
+            ][number]
+            before = self._state(db, lst, item, deleted)
+            runner, base, answered, _held = await self._serve_slowly(ws.app, 0.3)
+            try:
+                async with aiohttp.ClientSession() as session:
+                    with pytest.raises(asyncio.TimeoutError):
+                        await session.request(
+                            method,
+                            base + path,
+                            json={"updated_at": 1},
+                            headers={"Authorization": headers["Authorization"]},
+                            timeout=aiohttp.ClientTimeout(total=0.1),
+                        )
+                    await asyncio.sleep(0.5)
+            finally:
+                await runner.cleanup()
+            # The handler ran, after its sender had gone, and refused.
+            assert answered == [(path, 400)], (method, path)
+            assert self._state(db, lst, item, deleted) == before, (method, path)
+
+    @pytest.mark.asyncio
+    async def test_a_tick_given_up_and_sent_again_is_applied_once(self):
+        """The case of the issue: the first delivery is handled after the
+        second. It was applied a second time, with no time to compare."""
+        import aiohttp
+
+        db, ws, lst, item, deleted, device_id, headers = self._setup()
+        runner, base, answered, held = await self._serve_slowly(ws.app, 0.4)
+        url = f"{base}/api/items/{item.id}/toggle"
+        auth = {"Authorization": headers["Authorization"]}
+        seen = item.updated_at
+        await asyncio.sleep(0.01)
+        try:
+            async with aiohttp.ClientSession() as session:
+                with pytest.raises(asyncio.TimeoutError):
+                    await session.patch(
+                        url,
+                        json={"updated_at": seen},
+                        headers=auth,
+                        timeout=aiohttp.ClientTimeout(total=0.1),
+                    )
+                held["for"] = 0
+                second = await session.patch(url, json={"updated_at": seen}, headers=auth)
+                assert second.status == 200
+                await asyncio.sleep(0.6)
+        finally:
+            await runner.cleanup()
+        assert [status for _, status in answered] == [200, 400]
+        assert item.complete is True
+
+
+# ===========================================================================
 # Analytics endpoint tests
 # ===========================================================================
 

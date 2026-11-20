@@ -253,6 +253,36 @@ def _error(status: int, message: str) -> web.Response:
     return web.json_response({"error": message, "status": status}, status=status)
 
 
+async def _required_body(request: web.Request) -> dict[str, Any] | None:
+    """The JSON object a request has to carry; None where it carries none.
+
+    None for a request without a body, and for a body that cannot be
+    read, is no JSON, or is JSON of another kind than an object. The
+    handler answers 400 and applies nothing.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return None
+    return body if isinstance(body, dict) else None
+
+
+async def _optional_body(request: web.Request) -> dict[str, Any] | None:
+    """The JSON object a request may carry: empty where it sent no body.
+
+    A change carries the time of the item as its sender last saw it, and
+    is refused where the item has changed since. A request that sent no
+    body asks for no such check, and has an empty one. A body that was
+    sent and cannot be read is another matter: the sender has gone
+    before it was read, or it is cut off or malformed. Taken for empty,
+    the change would be applied without the check its sender asked for;
+    it is None here, and the handler answers 400 and applies nothing.
+    """
+    if not request.body_exists:
+        return {}
+    return await _required_body(request)
+
+
 def _conflict_response(current_data: dict[str, Any]) -> web.Response:
     """Return a 409 Conflict response with the entity's current state."""
     return web.json_response(
@@ -384,9 +414,8 @@ async def handle_get_list(request: web.Request) -> web.Response:
 async def handle_create_list(request: web.Request) -> web.Response:
     """POST /api/lists — Create a new list."""
     db: Database = request.app[database_key]
-    try:
-        body = await request.json()
-    except Exception:
+    body = await _required_body(request)
+    if body is None:
         return _error(400, "Invalid JSON body")
 
     name = body.get("name", "").strip()
@@ -418,9 +447,8 @@ async def handle_rename_list(request: web.Request) -> web.Response:
     if lst is None or lst.deleted or lst.private:
         return _error(404, "List not found")
 
-    try:
-        body = await request.json()
-    except Exception:
+    body = await _required_body(request)
+    if body is None:
         return _error(400, "Invalid JSON body")
 
     name = body.get("name", "").strip()
@@ -461,10 +489,9 @@ async def handle_delete_list(request: web.Request) -> web.Response:
     if lst is None or lst.deleted or lst.private:
         return _error(404, "List not found")
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await _optional_body(request)
+    if body is None:
+        return _error(400, "Invalid JSON body")
     client_updated_at = body.get("updated_at")
     if (
         client_updated_at is not None
@@ -559,9 +586,8 @@ async def handle_update_columns(request: web.Request) -> web.Response:
     if lst is None or lst.deleted or lst.private:
         return _error(404, "List not found")
 
-    try:
-        body = await request.json()
-    except Exception:
+    body = await _required_body(request)
+    if body is None:
         return _error(400, "Invalid JSON body")
 
     client_updated_at = body.get("updated_at")
@@ -807,9 +833,8 @@ async def handle_create_item(request: web.Request) -> web.Response:
     if lst is None or lst.deleted or lst.private:
         return _error(404, "List not found")
 
-    try:
-        body = await request.json()
-    except Exception:
+    body = await _required_body(request)
+    if body is None:
         return _error(400, "Invalid JSON body")
 
     reminder = body.get("reminder", "").strip()
@@ -959,9 +984,8 @@ async def handle_update_item(request: web.Request) -> web.Response:
     if item is None:
         return _error(404, "Item not found")
 
-    try:
-        body = await request.json()
-    except Exception:
+    body = await _required_body(request)
+    if body is None:
         return _error(400, "Invalid JSON body")
 
     client_updated_at = body.get("updated_at")
@@ -998,10 +1022,9 @@ async def handle_delete_item(request: web.Request) -> web.Response:
     if item is None:
         return _error(404, "Item not found")
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await _optional_body(request)
+    if body is None:
+        return _error(400, "Invalid JSON body")
     client_updated_at = body.get("updated_at")
     if (
         client_updated_at is not None
@@ -1044,10 +1067,9 @@ async def handle_toggle_item(request: web.Request) -> web.Response:
     if item is None:
         return _error(404, "Item not found")
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await _optional_body(request)
+    if body is None:
+        return _error(400, "Invalid JSON body")
     client_updated_at = body.get("updated_at")
     if (
         client_updated_at is not None
@@ -1115,9 +1137,8 @@ async def handle_move_item(request: web.Request) -> web.Response:
     if item is None:
         return _error(404, "Item not found")
 
-    try:
-        body = await request.json()
-    except Exception:
+    body = await _required_body(request)
+    if body is None:
         return _error(400, "Invalid JSON body")
 
     client_updated_at = body.get("updated_at")
@@ -1163,9 +1184,8 @@ async def handle_set_parent(request: web.Request) -> web.Response:
     if item is None:
         return _error(404, "Item not found")
 
-    try:
-        body = await request.json()
-    except Exception:
+    body = await _required_body(request)
+    if body is None:
         return _error(400, "Invalid JSON body")
 
     client_updated_at = body.get("updated_at")
@@ -1226,10 +1246,9 @@ async def handle_restore_item(request: web.Request) -> web.Response:
     except ValueError:
         return _error(400, "Invalid item ID")
 
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+    body = await _optional_body(request)
+    if body is None:
+        return _error(400, "Invalid JSON body")
 
     # Search across all lists for the deleted item
     for lst in db.lists.values():
@@ -1324,9 +1343,8 @@ async def handle_get_trash(request: web.Request) -> web.Response:
 
 async def handle_parse(request: web.Request) -> web.Response:
     """POST /api/parse — Parse natural language text into structured fields."""
-    try:
-        body = await request.json()
-    except Exception:
+    body = await _required_body(request)
+    if body is None:
         return _error(400, "Invalid JSON body")
 
     text = body.get("text", "").strip()
@@ -1441,9 +1459,8 @@ async def handle_update_sort(request: web.Request) -> web.Response:
     if cm is None:
         return _error(503, "Sort configuration not available")
 
-    try:
-        body = await request.json()
-    except Exception:
+    body = await _required_body(request)
+    if body is None:
         return _error(400, "Invalid JSON body")
 
     tiers = body.get("tiers")
@@ -1543,9 +1560,8 @@ async def handle_apply_preset(request: web.Request) -> web.Response:
     if lst is None or lst.deleted or lst.private:
         return _error(404, "List not found")
 
-    try:
-        body = await request.json()
-    except Exception:
+    body = await _required_body(request)
+    if body is None:
         return _error(400, "Invalid JSON body")
 
     client_updated_at = body.get("updated_at")
@@ -2104,9 +2120,8 @@ async def handle_reconnect(request: web.Request) -> web.Response:
 
 async def handle_pair(request: web.Request) -> web.Response:
     """POST /api/auth — Validate a 6-digit pairing PIN and return a per-device token."""
-    try:
-        body = await request.json()
-    except Exception:
+    body = await _required_body(request)
+    if body is None:
         return _error(400, "Invalid JSON body")
 
     pin = str(body.get("pin", "")).strip()
@@ -2172,9 +2187,8 @@ async def handle_rename_device(request: web.Request) -> web.Response:
     store = request.app.get(device_store_key)
     if store is None:
         return _error(503, "Not available")
-    try:
-        body = await request.json()
-    except Exception:
+    body = await _required_body(request)
+    if body is None:
         return _error(400, "Invalid JSON body")
     name = body.get("device_name", "").strip()
     if not name:
