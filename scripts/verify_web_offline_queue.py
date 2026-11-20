@@ -330,6 +330,10 @@ Step 1: the page is stored. The server is running.
 STEP_2 = """\
 Step 2: ticks. The server is stopped.
 
+  Within a few seconds a notice appears at the top of the page:
+      Can't reach the server. Showing data saved at <the time>.
+  and the dot by the title is red.
+
   1. Tick "1 Tick me".
      - It is shown ticked and struck through, with an orange "Not sent"
        label under its name. With the list sorted by completion, as it
@@ -379,6 +383,7 @@ Step 4: the changes are sent. The server is running again.
 
   Leave the page open. Within about half a minute, without anything
   being touched:
+  - The notice at the top goes, and the dot is green.
   - A notice reads "All changes synced".
   - Every label is gone, and the count on "More" is gone.
   - "6 Added offline" is an ordinary task, due tomorrow: the server read

@@ -21,7 +21,18 @@
   var cachedBoardData = null;
   var allTags = [];
   var pollTimer = null;
-  var isOnline = navigator.onLine;
+  // Whether the server answers: true after an answer of its own or an
+  // open WebSocket, false after a request that failed or was answered
+  // from the service worker's store. The browser's "online" says only
+  // that the device has a network.
+  var serverConnected = navigator.onLine;
+  // How many times the server has been heard from. A request compares
+  // the count at its start with the count at its end (serverFetch).
+  var serverAnswers = 0;
+  // When the tasks on screen were saved, in milliseconds, where they are
+  // not the server's own answer: 0 when that is not known. null for the
+  // server's own.
+  var dataSavedAt = null;
   var parseDebounceTimer = null;
   var saveDebounceTimer = null;
   var viewMode = localStorage.getItem(VIEW_MODE_KEY) || "list";
@@ -119,6 +130,7 @@
   // ====================================================================
 
   var offlineBanner = document.getElementById("offline-banner");
+  var offlineBannerText = document.getElementById("offline-banner-text");
   var connectionDot = document.getElementById("connection-dot");
   var lastSyncedEl = document.getElementById("last-synced");
   var headerTitle = document.getElementById("header-title");
@@ -285,10 +297,74 @@
     return h;
   }
 
-  async function api(path, opts) {
+  // The headers the service worker puts on an answer that is not the
+  // server's (sw.js).
+  var SOURCE_HEADER = "X-Pytodo-Source";
+  var STORED_AT_HEADER = "X-Pytodo-Stored-At";
+
+  // When the service worker stored an answer, in milliseconds: 0 when it
+  // does not say, or made the answer up for want of a stored one. null
+  // for the server's own answer.
+  function storedTimeOf(resp) {
+    if (!resp.headers.get(SOURCE_HEADER)) return null;
+    var at = parseInt(resp.headers.get(STORED_AT_HEADER) || "", 10);
+    return at > 0 ? at : 0;
+  }
+
+  // How long a read may go without an answer, and the request that
+  // asks whether the server is there, in milliseconds. A server that
+  // went away without closing its connections, a computer put to sleep
+  // for one, leaves a request waiting for as long as the browser lets
+  // it: a minute and more.
+  var READ_DEADLINE = 10000;
+  var PROBE_DEADLINE = 5000;
+
+  // fetch, with what its outcome says of the server noted: an answer of
+  // the server's own, or none (the request failed, had no answer by its
+  // deadline, or the service worker answered it from its store).
+  //
+  // A read is given up at its deadline, READ_DEADLINE unless another is
+  // passed; the deadline is for the whole answer, its body included. A
+  // change has none: giving one up says nothing of whether the server
+  // has made it.
+  async function serverFetch(url, opts, deadline) {
+    var method = ((opts && opts.method) || "GET").toUpperCase();
+    var timer = null;
+    if (method === "GET" && !(opts && opts.signal)) {
+      var gaveUp = new AbortController();
+      opts = Object.assign({}, opts, { signal: gaveUp.signal });
+      timer = setTimeout(function () {
+        gaveUp.abort();
+      }, deadline || READ_DEADLINE);
+    }
+    // What the server has said by now. A request that ends without its
+    // answer after the server has said something more says nothing of
+    // the server as it is: a read sent down a connection that had died
+    // is given up long after a later one was answered.
+    var heard = serverAnswers;
+    var resp;
+    try {
+      resp = await fetch(url, opts);
+    } catch (e) {
+      if (timer !== null) clearTimeout(timer);
+      if (heard === serverAnswers) serverSilent();
+      throw e;
+    }
+    if (storedTimeOf(resp) === null) serverAnswered();
+    else if (heard === serverAnswers) serverSilent();
+    return resp;
+  }
+
+  async function api(path, opts, deadline) {
+    return (await apiAnswer(path, opts, deadline)).data;
+  }
+
+  // The answer to a request, with the time it was saved where it is not
+  // the server's own (see storedTimeOf).
+  async function apiAnswer(path, opts, deadline) {
     if (!opts) opts = {};
     opts.headers = authHeaders(opts.headers);
-    var resp = await fetch(API + path, opts);
+    var resp = await serverFetch(API + path, opts, deadline);
     if (resp.status === 401) {
       showLoginScreen();
       var err401 = new Error("Authentication required");
@@ -305,7 +381,15 @@
       err.body = body;
       throw err;
     }
-    return resp.json();
+    var data;
+    try {
+      data = await resp.json();
+    } catch (e) {
+      // The answer began and did not end by the deadline.
+      if (e && e.name === "AbortError") serverSilent();
+      throw e;
+    }
+    return { data: data, savedAt: storedTimeOf(resp) };
   }
 
   // ====================================================================
@@ -343,7 +427,7 @@
       loginBtn.disabled = true;
       loginBtn.textContent = "Connecting...";
       try {
-        var resp = await fetch(API + "/auth", {
+        var resp = await serverFetch(API + "/auth", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ pin: pin }),
@@ -506,13 +590,19 @@
     if (!db) return;
     try {
       var tx = db.transaction("listItems", "readwrite");
-      tx.objectStore("listItems").put({ listId: listId, items: items });
+      tx.objectStore("listItems").put({
+        listId: listId,
+        items: items,
+        savedAt: Date.now(),
+      });
     } catch (e) {
       /* best-effort */
     }
   }
 
-  async function getCachedListItems(listId) {
+  // A list's items as last saved here, with the time (savedAt; absent
+  // on one saved before times were kept). null when none is saved.
+  async function getCachedListRecord(listId) {
     var db = await openIDB();
     if (!db) return null;
     return new Promise(function (resolve) {
@@ -520,7 +610,7 @@
         var tx = db.transaction("listItems", "readonly");
         var req = tx.objectStore("listItems").get(listId);
         req.onsuccess = function () {
-          resolve(req.result ? req.result.items : null);
+          resolve(req.result || null);
         };
         req.onerror = function () {
           resolve(null);
@@ -640,7 +730,7 @@
   // step, when given, receives the queue before and after a change that
   // is queued: what the Undo of a notice about that change takes back.
   async function sendOrQueue(path, opts, step) {
-    if (isOnline) {
+    if (serverConnected) {
       try {
         await api(path, opts);
         return "sent";
@@ -707,7 +797,7 @@
       opts = Object.assign({}, opts, { headers: authHeaders(opts.headers) });
       var resp;
       try {
-        resp = await fetch(API + entry.path, opts);
+        resp = await serverFetch(API + entry.path, opts);
       } catch (e) {
         // No answer: the rest would fail in the same way.
         break;
@@ -768,18 +858,110 @@
     }
   }
 
-  function updateOnlineStatus(online) {
-    isOnline = online;
+  // The server gave an answer of its own, the WebSocket opened, or
+  // something arrived on it.
+  function serverAnswered() {
+    serverAnswers += 1;
+    if (serverConnected) return;
+    serverConnected = true;
+    // Undo at the server takes over once the queue has been sent.
+    clearOfflineUndo();
+    showConnection();
+    if (appReady) resumeWithServer();
+  }
+
+  // A request failed, or was answered from the service worker's store.
+  function serverSilent() {
+    if (!serverConnected) return;
+    serverConnected = false;
+    showConnection();
+    if (appReady) waitForServer();
+  }
+
+  // While the server answers the page listens on the WebSocket, asks at
+  // intervals until that is open, and sends what was queued.
+  function resumeWithServer() {
+    // A try that was waiting its turn is dropped: left in place it
+    // would hold the next one back by its whole wait.
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+    wsReconnectDelay = 1000;
+    connectWebSocket();
+    if (!webSocketOpen()) startPolling();
+    replayOfflineQueue();
+    refreshCurrentList();
+    fetchUndoState();
+  }
+
+  // While it does not, nothing is asked at intervals: the WebSocket is
+  // tried again after a growing wait, and the server asked with it.
+  function waitForServer() {
+    stopPolling();
+    scheduleReconnect();
+  }
+
+  // Asks the server whether it is there. What follows from the answer,
+  // or from none, is serverFetch's.
+  function probeServer() {
+    api("/status", null, PROBE_DEADLINE).catch(function () {});
+  }
+
+  // The notice, the dot and the count of unsent changes follow the
+  // state.
+  function showConnection() {
     if (offlineBanner) {
-      offlineBanner.classList.toggle("hidden", online);
-    }
-    if (online) {
-      // Transitioning to online — clear offline undo stacks
-      // (server-side undo takes over after queue replay)
-      clearOfflineUndo();
+      offlineBanner.classList.toggle("hidden", serverConnected);
+      if (!serverConnected) {
+        // Tasks the server gave are as old as its last answer.
+        var savedAt = dataSavedAt === null ? lastSyncTime : dataSavedAt;
+        if (offlineBannerText) {
+          offlineBannerText.textContent = connectionNotice(
+            navigator.onLine,
+            savedAt,
+            new Date(),
+          );
+        }
+      }
     }
     updateConnectionIndicator();
     updatePendingBadge();
+  }
+
+  // What the notice says while the server does not answer. savedAt is
+  // the time the tasks on screen were saved, in milliseconds; 0 when it
+  // is not known.
+  function connectionNotice(deviceOnline, savedAt, now) {
+    var text = deviceOnline ? "Can't reach the server." : "Offline.";
+    if (savedAt) {
+      text += " Showing data saved " + savedWhen(new Date(savedAt), now) + ".";
+    }
+    return text;
+  }
+
+  // "at 16:34" for a time today, "at 16:34 yesterday", and "on Nov 17
+  // at 16:34" for an earlier day, with the year when it is another.
+  function savedWhen(saved, now) {
+    var time =
+      "at " +
+      String(saved.getHours()).padStart(2, "0") +
+      ":" +
+      String(saved.getMinutes()).padStart(2, "0");
+    var savedDay = new Date(saved);
+    savedDay.setHours(0, 0, 0, 0);
+    var today = new Date(now);
+    today.setHours(0, 0, 0, 0);
+    var days = Math.round((today - savedDay) / 86400000);
+    if (days === 0) return time;
+    if (days === 1) return time + " yesterday";
+    var format = { month: "short", day: "numeric" };
+    if (saved.getFullYear() !== now.getFullYear()) format.year = "numeric";
+    return "on " + saved.toLocaleDateString(undefined, format) + " " + time;
+  }
+
+  // The tasks on screen are from this time (see dataSavedAt).
+  function setDataSavedAt(savedAt) {
+    dataSavedAt = savedAt;
+    if (!serverConnected) showConnection();
   }
 
   function updateConnectionIndicator() {
@@ -787,9 +969,11 @@
     var queue = getOfflineQueue();
     var hasPending = queue.length > 0;
     connectionDot.classList.remove("online", "pending", "offline");
-    if (!isOnline) {
+    if (!serverConnected) {
       connectionDot.classList.add("offline");
-      connectionDot.title = "Offline";
+      connectionDot.title = navigator.onLine
+        ? "Can't reach the server"
+        : "Offline";
     } else if (hasPending) {
       connectionDot.classList.add("pending");
       connectionDot.title =
@@ -808,7 +992,7 @@
 
   function updateLastSyncedText() {
     if (!lastSyncedEl) return;
-    if (!isOnline) {
+    if (!serverConnected) {
       lastSyncedEl.textContent = "Offline";
       return;
     }
@@ -827,16 +1011,20 @@
     }
   }
 
+  // The device has a network again: the server is tried now, without
+  // the wait that had built up. What follows is the answer's.
   window.addEventListener("online", function () {
-    updateOnlineStatus(true);
+    showConnection();
+    wsReconnectDelay = 1000;
     connectWebSocket();
-    replayOfflineQueue();
-    refreshCurrentList();
-    startPolling();
+    probeServer();
   });
 
+  // Without a network the server cannot answer, and it is not tried
+  // again until there is one.
   window.addEventListener("offline", function () {
-    updateOnlineStatus(false);
+    serverSilent();
+    showConnection();
     stopPolling();
     disconnectWebSocket();
   });
@@ -970,7 +1158,7 @@
 
   // Fetch sort tiers from API (non-blocking, falls back to defaults)
   function fetchSortTiers() {
-    fetch(API + "/sort", { headers: authHeaders() })
+    serverFetch(API + "/sort", { headers: authHeaders() })
       .then(function (r) {
         return r.ok ? r.json() : null;
       })
@@ -1084,7 +1272,7 @@
 
   function saveSortTiers() {
     var payload = { tiers: currentSortTiers, updated_at: sortUpdatedAt };
-    fetch(API + "/sort", {
+    serverFetch(API + "/sort", {
       method: "PUT",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
@@ -6483,12 +6671,14 @@
     var connStatus = document.getElementById("settings-conn-status");
     if (connStatus) {
       var wsConnected = ws && ws.readyState === WebSocket.OPEN;
-      var statusText = !isOnline
-        ? "Offline"
+      var statusText = !serverConnected
+        ? navigator.onLine
+          ? "Can't reach the server"
+          : "Offline"
         : wsConnected
           ? "Connected (live)"
           : "Connected (polling)";
-      var statusClass = isOnline
+      var statusClass = serverConnected
         ? "settings-conn-online"
         : "settings-conn-offline";
       connStatus.textContent = statusText;
@@ -6800,7 +6990,9 @@
   // on those, whether or not the browser reports the device offline.
   function undoIsOffline() {
     return (
-      !isOnline || offlineUndoStack.length > 0 || offlineRedoStack.length > 0
+      !serverConnected ||
+      offlineUndoStack.length > 0 ||
+      offlineRedoStack.length > 0
     );
   }
 
@@ -7205,7 +7397,9 @@
       return;
     }
     try {
-      var data = await api("/lists/" + currentListId);
+      var answer = await apiAnswer("/lists/" + currentListId);
+      var data = answer.data;
+      var fromServer = answer.savedAt === null;
       serverItems = data.items || [];
       serverBoardData = {
         board_columns: data.board_columns || [],
@@ -7213,19 +7407,22 @@
         columns: null,
       };
 
-      // Cache for offline use
-      cacheListItems(currentListId, serverItems);
+      // Kept for use without the server, with the time of this answer.
+      if (fromServer) cacheListItems(currentListId, serverItems);
+      setDataSavedAt(answer.savedAt);
 
       showQueuedChanges();
       if (viewMode === "board") await refreshBoard();
 
       // Refresh list selector counts
       await refreshLists();
-      markSynced();
+      if (fromServer) markSynced();
     } catch (e) {
       console.error("Failed to load list:", e);
       // Fall back to IndexedDB cache
-      serverItems = (await getCachedListItems(currentListId)) || [];
+      var record = await getCachedListRecord(currentListId);
+      serverItems = (record && record.items) || [];
+      setDataSavedAt((record && record.savedAt) || 0);
       showQueuedChanges();
     }
   }
@@ -7256,6 +7453,18 @@
   var wsReconnectTimer = null;
   var wsReconnectDelay = 1000;
   var WS_MAX_DELAY = 30000;
+  // How long a WebSocket may take to open, in milliseconds.
+  var WS_CONNECT_DEADLINE = 10000;
+  // An open WebSocket says nothing of a server that went away without
+  // closing it: a computer put to sleep, a network that dropped. While
+  // the page is in view the server is asked over the WebSocket every
+  // WS_PING_INTERVAL milliseconds, and has WS_PONG_DEADLINE to say
+  // anything at all.
+  var WS_PING_INTERVAL = 15000;
+  var WS_PONG_DEADLINE = 5000;
+  var wsConnectTimer = null;
+  var wsPingTimer = null;
+  var wsPongTimer = null;
 
   function connectWebSocket() {
     if (
@@ -7272,19 +7481,32 @@
       location.host +
       "/ws" +
       (wsToken ? "?token=" + encodeURIComponent(wsToken) : "");
+    var socket;
     try {
-      ws = new WebSocket(url);
+      socket = new WebSocket(url);
     } catch (e) {
-      startPolling();
+      if (serverConnected) startPolling();
+      else scheduleReconnect();
       return;
     }
-    ws.onopen = function () {
+    ws = socket;
+    clearTimeout(wsConnectTimer);
+    wsConnectTimer = setTimeout(function () {
+      // Closing it here ends in onclose, as a refusal does.
+      if (socket.readyState === WebSocket.CONNECTING) socket.close();
+    }, WS_CONNECT_DEADLINE);
+    socket.onopen = function () {
+      clearTimeout(wsConnectTimer);
       wsReconnectDelay = 1000;
-      updateOnlineStatus(true);
       stopPolling();
+      serverAnswered();
       replayOfflineQueue();
+      waitToPing();
     };
-    ws.onmessage = function (e) {
+    socket.onmessage = function (e) {
+      // Anything the server says shows that it is there.
+      serverAnswered();
+      if (ws === socket) waitToPing();
       try {
         var msg = JSON.parse(e.data);
         if (msg.event === "refresh") {
@@ -7297,25 +7519,99 @@
         /* ignore malformed messages */
       }
     };
-    ws.onclose = function () {
-      ws = null;
-      if (navigator.onLine) {
-        startPolling();
-        scheduleReconnect();
-      } else {
-        updateOnlineStatus(false);
+    socket.onclose = function () {
+      if (ws === socket) {
+        ws = null;
+        stopPinging();
+        clearTimeout(wsConnectTimer);
       }
+      // Whether the server still answers is asked now, and shows after
+      // that in what is asked of it at intervals.
+      if (serverConnected) {
+        startPolling();
+        probeServer();
+      }
+      scheduleReconnect();
     };
-    ws.onerror = function () {
+    socket.onerror = function () {
       /* onclose fires after onerror */
     };
   }
 
+  function webSocketOpen() {
+    return Boolean(ws) && ws.readyState === WebSocket.OPEN;
+  }
+
+  function stopPinging() {
+    clearTimeout(wsPingTimer);
+    clearTimeout(wsPongTimer);
+    wsPingTimer = null;
+    wsPongTimer = null;
+  }
+
+  // The server has just said something, or the WebSocket has opened:
+  // it is asked again after WS_PING_INTERVAL. Not while the page is out
+  // of view, where the browser holds timers back and a late one would
+  // pass for a server that does not answer.
+  function waitToPing() {
+    stopPinging();
+    if (document.hidden) return;
+    wsPingTimer = setTimeout(pingServer, WS_PING_INTERVAL);
+  }
+
+  // Asks the server over the WebSocket whether it is there. Its answer,
+  // like anything else it sends, arrives in onmessage.
+  function pingServer() {
+    stopPinging();
+    if (!webSocketOpen()) return;
+    var socket = ws;
+    try {
+      socket.send("ping");
+    } catch (e) {
+      dropWebSocket(socket);
+      return;
+    }
+    wsPongTimer = setTimeout(function () {
+      dropWebSocket(socket);
+    }, WS_PONG_DEADLINE);
+  }
+
+  // The server did not answer over this WebSocket. It is given up
+  // without waiting for it to close, which a connection to nothing
+  // takes minutes to do, and the server is tried again.
+  function dropWebSocket(socket) {
+    if (ws !== socket) return;
+    stopPinging();
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onclose = null;
+    socket.onerror = null;
+    try {
+      socket.close();
+    } catch (e) {
+      /* it is given up either way */
+    }
+    ws = null;
+    serverSilent();
+    scheduleReconnect();
+  }
+
+  // Tries the WebSocket again after the current wait, which doubles up
+  // to WS_MAX_DELAY. Not without a network: the "online" event starts
+  // it again.
   function scheduleReconnect() {
-    if (wsReconnectTimer) return;
+    if (wsReconnectTimer || !navigator.onLine) return;
     wsReconnectTimer = setTimeout(function () {
       wsReconnectTimer = null;
       connectWebSocket();
+      // Where a WebSocket is not let through, an answer over HTTP
+      // shows that the server is back. The server is tried again after
+      // this for as long as it does not answer, whatever becomes of
+      // the WebSocket.
+      if (!serverConnected) {
+        probeServer();
+        scheduleReconnect();
+      }
     }, wsReconnectDelay);
     wsReconnectDelay = Math.min(wsReconnectDelay * 2, WS_MAX_DELAY);
   }
@@ -7325,25 +7621,35 @@
       clearTimeout(wsReconnectTimer);
       wsReconnectTimer = null;
     }
+    stopPinging();
+    clearTimeout(wsConnectTimer);
     if (ws) {
+      // Closed on purpose: nothing is to follow from it.
+      ws.onclose = null;
       ws.close();
       ws = null;
     }
   }
 
-  document.addEventListener("visibilitychange", function () {
+  // The page went out of view, or came back into it.
+  function pageViewChanged() {
     if (document.hidden) {
       stopPolling();
+      stopPinging();
     } else {
       refreshCurrentList();
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
+      if (webSocketOpen()) {
+        // The server may have gone while the page was out of view.
+        pingServer();
+      } else {
         connectWebSocket();
-        startPolling();
+        if (serverConnected) startPolling();
       }
       // A calendar left on screen overnight moves to the new day.
       if (viewMode === "calendar" && calDateIsStale()) renderCalendar();
     }
-  });
+  }
+  document.addEventListener("visibilitychange", pageViewChanged);
 
   // ====================================================================
   // Bottom navigation
@@ -7404,7 +7710,7 @@
   // ====================================================================
 
   async function init() {
-    updateOnlineStatus(navigator.onLine);
+    showConnection();
     await openIDB();
     updatePendingBadge();
     hideLoginScreen();
@@ -7415,12 +7721,18 @@
     // moment as the first: its rows are still new to the person.
     drawnRows = { list: null, rows: {} };
     setViewMode(viewMode);
-    connectWebSocket();
-    startPolling(); // Fallback until WS connects
-    fetchUndoState();
     // Keep "last synced" text fresh
     setInterval(updateLastSyncedText, 15000);
     appReady = true;
+    // The reads above have shown whether the server answers.
+    if (serverConnected) {
+      connectWebSocket();
+      startPolling(); // Fallback until WS connects
+      replayOfflineQueue();
+      fetchUndoState();
+    } else {
+      waitForServer();
+    }
     storeDataForOffline();
   }
 
@@ -7503,7 +7815,9 @@
     if (!navigator.serviceWorker || !navigator.serviceWorker.controller) {
       return;
     }
-    fetch(API + "/status", { headers: authHeaders() }).catch(function () {});
+    serverFetch(API + "/status", { headers: authHeaders() }).catch(
+      function () {},
+    );
     refreshLists()
       .then(refreshCurrentList)
       .catch(function () {});
@@ -7598,12 +7912,12 @@
   }
 
   // Check for existing token — if none, show login; if valid, init app
-  (async function () {
+  async function startPage() {
     var token = getAuthToken();
     if (!token) {
       // Try without token (server might have auth disabled)
       try {
-        var resp = await fetch(API + "/status");
+        var resp = await serverFetch(API + "/status");
         if (resp.ok) {
           init();
           return;
@@ -7616,7 +7930,7 @@
     }
     // Validate stored token
     try {
-      var resp2 = await fetch(API + "/status", {
+      var resp2 = await serverFetch(API + "/status", {
         headers: { Authorization: "Bearer " + token },
       });
       if (resp2.ok) {
@@ -7628,6 +7942,13 @@
         localStorage.removeItem(AUTH_TOKEN_KEY);
       }
     } catch (e) {
+      // The read was given up at its deadline: the server keeps the
+      // request waiting, as a computer put to sleep does. The page
+      // starts with what it has stored and goes on trying the server.
+      if (e && e.name === "AbortError") {
+        init();
+        return;
+      }
       // Network error — could be cert issue with active service worker.
       // Unregister SW so the browser handles TLS directly (allows user
       // to accept self-signed cert warnings in Quick Connect mode).
@@ -7648,5 +7969,6 @@
       }
     }
     showLoginScreen();
-  })();
+  }
+  startPage();
 })();

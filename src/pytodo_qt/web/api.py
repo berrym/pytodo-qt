@@ -1970,6 +1970,12 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
     been restarted, which is when that version may have changed; a page
     left open would otherwise go on running the version it was loaded
     with, against a server that has moved on.
+
+    A page sends "ping" to ask whether the server is there and is sent
+    a "pong" event. The heartbeat below is of no use to it for that: a
+    browser answers those pings itself and tells the page nothing, so a
+    page whose server went away without closing the connection, a
+    computer put to sleep for one, would go on taking it for open.
     """
     # The server module imports this one.
     from .server import static_asset_version
@@ -1986,6 +1992,12 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
         async for msg in ws:
             if msg.type == web.WSMsgType.ERROR:
                 break
+            if msg.type == web.WSMsgType.TEXT and msg.data == "ping":
+                try:
+                    await ws.send_json({"event": "pong"})
+                except ConnectionError:
+                    # The page went away between its ping and this.
+                    break
     finally:
         if clients is not None:
             clients.discard(ws)

@@ -4508,6 +4508,43 @@ class TestWebSocket:
             await client.close()
 
     @pytest.mark.asyncio
+    async def test_ws_answers_a_ping(self):
+        """A page asks over the WebSocket whether the server is there."""
+        client = await _make_client(_make_db_with_data())
+        await client.start_server()
+        try:
+            async with client.ws_connect("/ws") as ws_conn:
+                await ws_conn.send_str("ping")
+                assert await _receive_event(ws_conn) == {"event": "pong"}
+                # And again: each ping has its answer.
+                await ws_conn.send_str("ping")
+                assert await _receive_event(ws_conn) == {"event": "pong"}
+                await ws_conn.close()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_ws_answers_nothing_else(self):
+        """Other text from a page is read and left unanswered."""
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            async with client.ws_connect("/ws") as ws_conn:
+                await ws_conn.send_str("hello")
+                await ws_conn.send_str("PING")
+                await ws_conn.send_str("ping")
+                assert await _receive_event(ws_conn) == {"event": "pong"}
+                # One answer, for the one ping: what comes next is the
+                # news of a change, not an answer to the other two.
+                await client.post(f"/api/lists/{lst.id}/items", json={"reminder": "New task"})
+                assert (await _receive_event(ws_conn))["event"] == "refresh"
+                await ws_conn.close()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
     async def test_ws_broadcast_on_item_create(self):
         """Creating an item broadcasts a refresh event to WS clients."""
         db = _make_db_with_data()

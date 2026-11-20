@@ -171,10 +171,11 @@ class TestAppJsOfflineQueue:
         assert "offlineBanner" in js
         assert "offline-banner" in js
 
-    def test_toggle_queues_when_offline(self):
+    def test_a_change_is_queued_when_the_server_does_not_answer(self):
         js = self._read_app()
-        # onToggle should check isOnline
-        assert "isOnline" in js
+        send = js.split("async function sendOrQueue(")[1].split("\n  }\n")[0]
+        assert "if (serverConnected) {" in send
+        assert "enqueueOfflineEdit(path, opts);" in send
 
     def test_add_queues_when_offline(self):
         js = self._read_app()
@@ -1957,6 +1958,162 @@ class TestIndexRoute:
             resp = await client.get("/")
             text = await resp.text()
             assert "offline-banner" in text
+
+
+class TestServerNotReached:
+    """The page took the browser's word for whether it was connected: a
+    device with a network was "online", although the server did not
+    answer and the page showed what the service worker had stored
+    (#72). It now goes by the server's own answers, and says when it
+    has none."""
+
+    def _app(self) -> str:
+        return (STATIC_DIR / "app.js").read_text()
+
+    def _node(self, name: str) -> None:
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("Node.js is not installed")
+        result = subprocess.run(
+            [node, "--test", str(Path(__file__).parent / "js" / name)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_the_worker_marks_what_it_takes_from_its_store(self):
+        """tests/js/service_worker.test.js, run under Node."""
+        self._node("service_worker.test.js")
+
+    def test_the_page_goes_by_the_servers_answers(self):
+        """tests/js/connection.test.js, run under Node."""
+        self._node("connection.test.js")
+
+    def test_every_request_of_the_page_is_noted(self):
+        """One place calls the browser's fetch: serverFetch, which notes
+        what the outcome says of the server."""
+        js = self._app()
+        calls = re.findall(r"(?<![A-Za-z.])fetch\(", js)
+        assert len(calls) == 1
+        noted = js.split("async function serverFetch(")[1].split("\n  }\n")[0]
+        assert "await fetch(url, opts)" in noted
+
+    def test_the_worker_and_the_page_agree_on_the_mark(self):
+        js = self._app()
+        sw = (STATIC_DIR / "sw.js").read_text()
+        for name in ("SOURCE_HEADER", "STORED_AT_HEADER"):
+            in_page = re.search(rf'var {name} = "([^"]+)";', js)
+            in_worker = re.search(rf'var {name} = "([^"]+)";', sw)
+            assert in_page and in_worker
+            assert in_page.group(1) == in_worker.group(1)
+
+    def test_a_network_is_not_taken_for_the_server(self):
+        """The browser's "online" event starts another try; it does not
+        set the state."""
+        js = self._app()
+        assert "updateOnlineStatus" not in js
+        handler = js.split('window.addEventListener("online", function () {')[1].split("\n  });\n")[
+            0
+        ]
+        assert "serverConnected" not in handler
+        assert "serverAnswered" not in handler
+        assert "probeServer();" in handler
+
+    def test_the_start_goes_on_from_the_state_it_finds(self):
+        js = self._app()
+        start = js.split("async function init() {")[1].split("\n  }\n")[0]
+        assert "navigator.onLine" not in start
+        assert "if (serverConnected) {" in start
+        assert "waitForServer();" in start
+
+    def test_tasks_from_the_store_are_not_counted_as_synced(self):
+        js = self._app()
+        refresh = js.split("async function refreshCurrentList() {")[1].split("\n  }\n")[0]
+        assert "if (fromServer) markSynced();" in refresh
+        assert "if (fromServer) cacheListItems(currentListId, serverItems);" in refresh
+        assert "setDataSavedAt(answer.savedAt);" in refresh
+
+    def test_a_socket_closed_on_purpose_is_not_tried_again(self):
+        js = self._app()
+        close = js.split("function disconnectWebSocket() {")[1].split("\n  }\n")[0]
+        assert close.index("ws.onclose = null;") < close.index("ws.close();")
+
+    def test_the_notice_is_text_alone(self):
+        """Nothing in it to press: the page cannot mend what keeps it
+        from the server, and tries the server again by itself."""
+        html = (STATIC_DIR / "index.html").read_text()
+        notice = html.split('<div id="offline-banner"')[1].split("</div>")[0]
+        assert 'role="status"' in notice
+        assert 'id="offline-banner-text"' in notice
+        assert "<a" not in notice
+        assert "<button" not in notice
+
+    def test_a_read_has_a_deadline_and_a_change_has_none(self):
+        """A server that went away without closing its connections
+        leaves a request waiting for a minute and more. Giving up a
+        change says nothing of whether the server made it."""
+        js = self._app()
+        assert "var READ_DEADLINE = 10000;" in js
+        assert "var PROBE_DEADLINE = 5000;" in js
+        noted = js.split("async function serverFetch(")[1].split("\n  }\n")[0]
+        assert 'if (method === "GET" && !(opts && opts.signal)) {' in noted
+        probe = js.split("function probeServer() {")[1].split("\n  }\n")[0]
+        assert "PROBE_DEADLINE" in probe
+
+    def test_an_open_socket_is_asked_whether_the_server_is_there(self):
+        """An open WebSocket is not taken for a server that answers."""
+        js = self._app()
+        assert "var WS_PING_INTERVAL = 15000;" in js
+        assert "var WS_PONG_DEADLINE = 5000;" in js
+        assert "var WS_CONNECT_DEADLINE = 10000;" in js
+        connect = js.split("function connectWebSocket() {")[1].split("\n  function ")[0]
+        opened = connect.split("socket.onopen = function () {")[1].split("};")[0]
+        assert "waitToPing();" in opened
+        heard = connect.split("socket.onmessage = function (e) {")[1].split("try {")[0]
+        # Anything the server says is an answer.
+        assert "serverAnswered();" in heard
+        assert "waitToPing();" in heard
+        # A socket that does not open in time is closed, and tried again.
+        assert "WebSocket.CONNECTING) socket.close();" in connect
+
+    def test_the_server_is_not_asked_while_the_page_is_out_of_view(self):
+        """The browser holds a hidden page's timers back; a late one
+        would pass for a server that does not answer. It is asked at
+        once when the page comes back into view."""
+        js = self._app()
+        seen = js.split("function pageViewChanged() {")[1].split("\n  }\n")[0]
+        hidden, shown = seen.split("} else {", 1)
+        assert "stopPinging();" in hidden
+        assert "pingServer();" in shown
+
+    def test_the_view_handler_is_the_one_the_browser_calls(self):
+        js = self._app()
+        assert 'document.addEventListener("visibilitychange", pageViewChanged);' in js
+
+    def test_the_start_is_run(self):
+        """tests/js/connection.test.js runs startPage by name."""
+        js = self._app()
+        assert js.rstrip().endswith("  startPage();\n})();")
+
+    def test_the_server_is_tried_again_for_as_long_as_it_is_silent(self):
+        """Whatever becomes of the WebSocket: one that hangs while it
+        connects starts no further try by itself."""
+        js = self._app()
+        again = js.split("function scheduleReconnect() {")[1].split("\n  }\n")[0]
+        silent = again.split("if (!serverConnected) {")[1].split("}")[0]
+        assert "probeServer();" in silent
+        assert "scheduleReconnect();" in silent
+
+    def test_the_server_answers_no_address_for_checking(self):
+        """The link that opened the server in another tab is gone, and
+        the address it opened with it."""
+        from pytodo_qt.web import api
+
+        assert "check-connection" not in (STATIC_DIR / "index.html").read_text()
+        assert "check-connection" not in (STATIC_DIR / "style.css").read_text()
+        assert "check-connection" not in self._app()
+        assert "check-connection" not in Path(api.__file__).read_text()
 
 
 # ===========================================================================

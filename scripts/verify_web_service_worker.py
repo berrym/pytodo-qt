@@ -24,11 +24,12 @@ Run from the repo root:
 
 and follow the steps it prints. Each step ends by pressing Enter in the
 terminal, which changes what the server does: it stops, comes back with
-a changed page, and changes the page once more.
+a changed page, changes the page once more, and falls silent.
 
-A stopped server refuses a connection at once. Away from the network
-the server is on, a request waits before it fails; that case is not
-covered here.
+A stopped server refuses a connection at once. A server that falls
+silent keeps its connections and answers nothing, as a computer put to
+sleep does, or one whose network has dropped: a request to it waits
+instead of failing. Step 5 is that case.
 """
 
 from __future__ import annotations
@@ -120,16 +121,21 @@ Step 1: the page is stored.
   Press Enter when "installed and active" has appeared."""
 
 STEP_2 = """\
-Step 2: the page opens without the server. The server is now stopped.
+Step 2: the page says so without the server, and opens without it. The
+server is now stopped.
 
-  Close the page (or the browser tab) and open the same address again.
-  - The page appears, with the three tasks.
+  1. Look at the page, still open.
+     - Within a few seconds a notice appears at the top:
+         Can't reach the server. Showing data saved at <the time>.
+       The dot by the title is red.
+  2. Close the page (or the browser tab) and open the same address
+     again.
+     - The page appears, with the three tasks and the same notice.
   Optional: tick a task. A red count appears on "More": the change is
   kept on the device, and is sent in step 3.
 
-  The page shows no offline notice here, because the device itself is
-  still online. In airplane mode the page opens in the same way and
-  shows the notice.
+  In airplane mode the page opens in the same way; the notice then
+  begins "Offline."
 
   Press Enter to start the server again."""
 
@@ -159,6 +165,24 @@ Step 4: a new version waits for an open task. Do this in order.
 
 STEP_5 = """\
   The page has changed on the server. Continue with 3 and 4 above.
+
+  Press Enter when the orange label is showing."""
+
+STEP_SILENT = """\
+Step 5: the server falls silent. It keeps its connections and answers
+nothing, as a computer put to sleep does.
+
+  Keep the page open and in view, and press Enter here.
+  - Within 20 seconds the notice appears at the top:
+      Can't reach the server. Showing data saved at <the time>.
+    The dot by the title is red.
+  - This terminal prints nothing while the server is silent.
+
+  Press Enter now, and once more when the notice has appeared."""
+
+STEP_ANSWERS = """\
+  The server answers again.
+  - Within half a minute the notice goes and the dot is green.
 
   Press Enter to stop."""
 
@@ -264,6 +288,12 @@ async def serve(port: int, static_dir: Path) -> None:
         await enter(STEP_4)
         label(static_dir, original_css, "UPDATED AGAIN", "#e65100")
         await enter(STEP_5)
+
+        await enter(STEP_SILENT)
+        # Read on the event loop's own thread: nothing is served, no
+        # connection is closed and no WebSocket is answered until Enter.
+        sys.stdin.readline()
+        await enter(STEP_ANSWERS)
     finally:
         watcher.cancel()
         await runner.cleanup()

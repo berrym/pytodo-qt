@@ -8,6 +8,13 @@ var STATIC_CACHE = "pytodo-static-" + CACHE_VERSION;
 // API responses, kept across versions so that an update of the page
 // does not discard what can be shown offline.
 var DATA_CACHE = "pytodo-data";
+// What the page reads on an answer to tell that the server did not give
+// it: SOURCE_HEADER is "store" on an answer taken from the store here,
+// and "none" on the answer made up when nothing is stored.
+// STORED_AT_HEADER is the time a stored answer was stored, in
+// milliseconds; "0" when it is not known. The server sends neither.
+var SOURCE_HEADER = "X-Pytodo-Source";
+var STORED_AT_HEADER = "X-Pytodo-Stored-At";
 var STATIC_ASSETS = [
   "/",
   "/static/style.css",
@@ -107,7 +114,7 @@ function onFetch(event) {
 
   // API reads: network-first, fall back to the last response stored.
   if (url.pathname.startsWith("/api/")) {
-    event.respondWith(networkFirst(request));
+    event.respondWith(networkFirst(event));
     return;
   }
 
@@ -124,23 +131,69 @@ async function cacheFirst(request) {
   return cached || fetch(request);
 }
 
-async function networkFirst(request) {
+// The server's answer, stored on its way to the page; or, when the
+// server gives none, the answer last stored, marked as such. The page
+// takes an unmarked answer for the server's, and tells the person when
+// it has none.
+async function networkFirst(event) {
+  var request = event.request;
+  var response;
   try {
-    var response = await fetch(request);
-    if (response.ok) {
-      var cache = await caches.open(DATA_CACHE);
-      cache.put(request, response.clone());
-    }
-    return response;
+    response = await fetch(request);
   } catch (_) {
-    var stored = await caches.open(DATA_CACHE);
-    var cached = await stored.match(request);
-    return (
-      cached ||
-      new Response(JSON.stringify({ error: "Offline", status: 503 }), {
-        status: 503,
-        headers: { "Content-Type": "application/json" },
-      })
+    var cache = await caches.open(DATA_CACHE);
+    var stored = await cache.match(request);
+    return stored ? fromStore(stored) : nothingStored();
+  }
+  if (response.ok) {
+    // Kept alive until the answer is stored: the page has its copy
+    // before that.
+    event.waitUntil(
+      store(request, response.clone()).catch(function () {
+        /* a full store: the answer still reaches the page */
+      }),
     );
   }
+  return response;
+}
+
+// Stores an answer with the time it was stored.
+async function store(request, response) {
+  var body = await response.blob();
+  var headers = new Headers(response.headers);
+  headers.set(STORED_AT_HEADER, String(Date.now()));
+  var cache = await caches.open(DATA_CACHE);
+  await cache.put(
+    request,
+    new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: headers,
+    }),
+  );
+}
+
+// A stored answer as the page receives it. One stored before times
+// were kept has the server's own date, where that can be read.
+function fromStore(stored) {
+  var headers = new Headers(stored.headers);
+  headers.set(SOURCE_HEADER, "store");
+  if (!headers.has(STORED_AT_HEADER)) {
+    var sent = Date.parse(headers.get("Date") || "");
+    headers.set(STORED_AT_HEADER, String(isNaN(sent) ? 0 : sent));
+  }
+  return new Response(stored.body, {
+    status: stored.status,
+    statusText: stored.statusText,
+    headers: headers,
+  });
+}
+
+function nothingStored() {
+  var headers = { "Content-Type": "application/json" };
+  headers[SOURCE_HEADER] = "none";
+  return new Response(JSON.stringify({ error: "Offline", status: 503 }), {
+    status: 503,
+    headers: headers,
+  });
 }
