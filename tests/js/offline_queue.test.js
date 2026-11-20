@@ -785,3 +785,28 @@ test("boardWithQueuedChanges: tasks waiting for another list are not on this boa
     1,
   );
 });
+
+// --- The queue is stored twice (#77) ---
+
+test("savedIsNewer: the copy in IndexedDB with the higher counter is the later save", () => {
+  assert.equal(rules.savedIsNewer(4, { n: 5, queue: [] }), true);
+  assert.equal(
+    rules.savedIsNewer(0, { n: 1, queue: [change(1, "/x", "POST")] }),
+    true,
+  );
+});
+
+test("savedIsNewer: an equal or lower counter is not", () => {
+  assert.equal(rules.savedIsNewer(5, { n: 5, queue: [] }), false);
+  assert.equal(rules.savedIsNewer(6, { n: 5, queue: [] }), false);
+  assert.equal(rules.savedIsNewer(0, { n: 0, queue: [] }), false);
+});
+
+test("savedIsNewer: no copy, or one that cannot be made out, is not", () => {
+  assert.equal(rules.savedIsNewer(0, null), false);
+  assert.equal(rules.savedIsNewer(0, undefined), false);
+  assert.equal(rules.savedIsNewer(0, { n: 3 }), false);
+  assert.equal(rules.savedIsNewer(0, { n: "3", queue: [] }), false);
+  assert.equal(rules.savedIsNewer(0, { n: 3, queue: "[]" }), false);
+  assert.equal(rules.savedIsNewer(0, { queue: [] }), false);
+});

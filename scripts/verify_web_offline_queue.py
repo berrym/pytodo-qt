@@ -6,6 +6,9 @@ server, and walks through the changes the page keeps for sending later:
 a tick, a second tick on the same task, a priority, a delete, and a task
 added. Each is shown in the page at once and after the page is opened
 again, marked "Not sent", and is sent when the server is started again.
+One change is made just before the browser itself is closed: a browser
+that is ended writes what a page has stored to disk some time after the
+page stored it, and the change has to be there all the same.
 Nothing is saved, and the application's own files are not changed.
 
 The page opens without the server only where a service worker is in
@@ -23,7 +26,7 @@ Run from the repo root:
 
 and follow the steps it prints. Each step ends by pressing Enter in the
 terminal: the server stops after the first, and starts again after the
-third.
+fourth.
 
 With --trace the page also records what it does: each time it stores its
 queue of changes and which of its functions did so, each request it
@@ -376,10 +379,27 @@ Step 3: other changes. The server is still stopped.
      - Swipe to the last column: "1 Tick me" is in it, with the label.
      Go back to the list.
 
+  Press Enter to go on. The server stays stopped."""
+
+STEP_CLOSED = """\
+Step 4: the browser is closed right after a change. The server is still
+stopped. Read the three lines of 1 before doing them: they are done in
+one go.
+
+  1. Add a task: tap +, type
+         8 Added before closing
+     and tap Add. Within two seconds, close the browser itself, not
+     only the page: on a phone, open the list of recent apps and swipe
+     the browser away; on a computer, quit the browser.
+  2. Open the browser and the same address again.
+     - A dashed row "8 Added before closing" is near the top of the
+       list, with the label, below "6 Added offline tomorrow". The
+       count on "More" is 5.
+
   Leave the page open and press Enter. The server then starts again."""
 
 STEP_4 = """\
-Step 4: the changes are sent. The server is running again.
+Step 5: the changes are sent. The server is running again.
 
   Leave the page open. Within about 10 seconds, without anything
   being touched:
@@ -394,6 +414,7 @@ Step 4: the changes are sent. The server is running again.
       3 Change my priority   not done, high
       5 Leave me alone       not done
       6 Added offline        not done, due tomorrow
+      8 Added before closing not done
     with no "4 Delete me" and no "7 Remove me".
 
   Press Enter to stop."""
@@ -537,6 +558,7 @@ async def serve(port: int, trace: Trace | None) -> None:
             trace.add(time.time(), "server", "stopped")
         await enter(STEP_2)
         await enter(STEP_3)
+        await enter(STEP_CLOSED)
 
         runner = await start(db, port, trace)
         await enter(STEP_4)

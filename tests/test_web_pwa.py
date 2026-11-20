@@ -426,18 +426,20 @@ class TestQueuedChangesShown:
         its undo steps, which hold the queue as it was before."""
         js = self._app()
         start = js.index('window.addEventListener("storage"')
-        listener = js[start : js.index("\n  });", start)]
-        assert "event.key !== OFFLINE_QUEUE_KEY" in listener
+        listener = "".join(js[start : js.index("\n  });", start)].split())
+        assert "event.key!==OFFLINE_QUEUE_KEY" in listener
+        assert "followStoredQueue(" in listener
+        assert "storedQueueLength(event.newValue)<storedQueueLength(event.oldValue)" in listener
+        follows = js.split("function followStoredQueue(shorter) {")[1].split("\n  }\n")[0]
         for call in (
             "clearOfflineUndo();",
             "updatePendingBadge();",
             "updateConnectionIndicator();",
             "if (replayRunning) return;",
-            "storedQueueLength(event.newValue) < storedQueueLength(event.oldValue)",
-            "refreshCurrentList();",
-            "showQueuedChanges();",
+            "if (shorter) refreshCurrentList();",
+            "else showQueuedChanges();",
         ):
-            assert call in listener
+            assert call in follows
 
     def test_every_change_to_the_queue_redraws(self):
         js = self._app()
@@ -1989,6 +1991,26 @@ class TestServerNotReached:
     def test_the_page_goes_by_the_servers_answers(self):
         """tests/js/connection.test.js, run under Node."""
         self._node("connection.test.js")
+
+    def test_the_queue_is_stored_twice(self):
+        """tests/js/queue_copies.test.js, run under Node (#77)."""
+        self._node("queue_copies.test.js")
+
+    def test_one_place_reads_the_queue_and_one_writes_it(self):
+        """The copy in IndexedDB follows every write of the queue only
+        because every write goes through storeQueue."""
+        js = self._app()
+        assert js.count("localStorage.setItem(OFFLINE_QUEUE_KEY") == 2
+        for name in ("storeQueue", "settleQueueCopies"):
+            body = js.split("function " + name + "(")[1].split("\n  }\n")[0]
+            assert "localStorage.setItem(OFFLINE_QUEUE_KEY" in body
+            assert "localStorage.setItem(QUEUE_COUNTER_KEY" in body
+        assert js.count("localStorage.getItem(OFFLINE_QUEUE_KEY") == 1
+
+    def test_the_queue_is_settled_before_the_page_starts(self):
+        js = self._app()
+        start = js.split("async function startPage() {")[1].split("\n  }\n")[0]
+        assert start.lstrip().startswith("await restoreQueue();")
 
     def test_every_request_of_the_page_is_noted(self):
         """One place calls the browser's fetch: serverFetch, which notes

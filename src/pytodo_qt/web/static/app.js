@@ -872,10 +872,165 @@
   // follows from it. While the queue is being sent the list is left as
   // it is (quiet): it is reloaded when the run ends.
   function saveOfflineQueue(queue, quiet) {
-    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+    storeQueue(queueCounter() + 1, queue);
     updatePendingBadge();
     updateConnectionIndicator();
     if (!quiet) showQueuedChanges();
+  }
+
+  // --- The queue is stored twice ---
+  //
+  // localStorage is the copy the page works from: it is read and
+  // written at once, and every open copy of the page sees it. But a
+  // browser writes it to disk some time after the page's write, 20 s
+  // and more in Chrome, and one that is killed in that time (swiped
+  // away on a phone, or ended by the system) starts again with the
+  // queue as it was before: changes shown as not sent are gone, and
+  // changes that had been sent are in the queue again. IndexedDB is on
+  // disk when it says so. Each save therefore goes to both, with a
+  // counter that rises by one, and the page starts from the copy with
+  // the higher counter (QueueRules.savedIsNewer).
+  var QUEUE_COUNTER_KEY = "pytodo_offline_queue_n";
+  // A database of its own: the one for lists and tasks is emptied when
+  // the server refuses the device, and the queue is kept then.
+  var QUEUE_DB_NAME = "pytodo_queue";
+  var QUEUE_STORE = "copy";
+  var QUEUE_RECORD = "queue";
+  // How long the start of the page waits for the copy in IndexedDB,
+  // in milliseconds. A database that does not answer must not keep the
+  // page from starting.
+  var QUEUE_COPY_WITHIN = 2000;
+
+  // The counter of the queue in localStorage; 0 for a queue stored
+  // before there was one.
+  function queueCounter() {
+    return parseInt(localStorage.getItem(QUEUE_COUNTER_KEY) || "", 10) || 0;
+  }
+
+  // Both writes to localStorage are made in one go, so that the browser
+  // puts them on disk together.
+  function storeQueue(n, queue) {
+    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+    localStorage.setItem(QUEUE_COUNTER_KEY, String(n));
+    keepQueueCopy(n, queue);
+  }
+
+  var queueDb = null;
+
+  function openQueueDb() {
+    return new Promise(function (resolve) {
+      if (queueDb) {
+        resolve(queueDb);
+        return;
+      }
+      var req;
+      try {
+        req = indexedDB.open(QUEUE_DB_NAME, 1);
+      } catch (e) {
+        resolve(null);
+        return;
+      }
+      req.onupgradeneeded = function () {
+        req.result.createObjectStore(QUEUE_STORE);
+      };
+      req.onsuccess = function () {
+        queueDb = req.result;
+        resolve(queueDb);
+      };
+      req.onerror = function () {
+        resolve(null);
+      };
+    });
+  }
+
+  // Writes the queue to IndexedDB, unless a later save is there
+  // already: two open copies of the page write in the order of their
+  // saves, but their writes need not arrive in it. The browser is
+  // asked to have the write on disk before it reports it done.
+  async function keepQueueCopy(n, queue) {
+    var db = await openQueueDb();
+    if (!db) return;
+    try {
+      var tx;
+      try {
+        tx = db.transaction(QUEUE_STORE, "readwrite", { durability: "strict" });
+      } catch (e) {
+        tx = db.transaction(QUEUE_STORE, "readwrite");
+      }
+      var store = tx.objectStore(QUEUE_STORE);
+      var read = store.get(QUEUE_RECORD);
+      read.onsuccess = function () {
+        var saved = read.result;
+        if (saved && typeof saved.n === "number" && saved.n >= n) return;
+        store.put({ n: n, queue: queue, savedAt: Date.now() }, QUEUE_RECORD);
+      };
+    } catch (e) {
+      /* the copy in localStorage stands alone, as it did before */
+    }
+  }
+
+  // The copy in IndexedDB: {n, queue}, or null where there is none or
+  // it cannot be read.
+  async function readQueueCopy() {
+    var db = await openQueueDb();
+    if (!db) return null;
+    return new Promise(function (resolve) {
+      try {
+        var read = db
+          .transaction(QUEUE_STORE, "readonly")
+          .objectStore(QUEUE_STORE)
+          .get(QUEUE_RECORD);
+        read.onsuccess = function () {
+          resolve(read.result || null);
+        };
+        read.onerror = function () {
+          resolve(null);
+        };
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  }
+
+  // At the start of the page, before anything is drawn from the queue
+  // or sent from it: the later of the two copies is the queue.
+  // Resolves when that is settled, or after QUEUE_COPY_WITHIN; the
+  // copy in IndexedDB is still taken up when it comes after that.
+  function restoreQueue() {
+    var before = queueCounter();
+    var late = false;
+    var settled = readQueueCopy().then(function (saved) {
+      settleQueueCopies(saved, before, late);
+    });
+    var waited = new Promise(function (resolve) {
+      setTimeout(function () {
+        late = true;
+        resolve();
+      }, QUEUE_COPY_WITHIN);
+    });
+    return Promise.race([settled, waited]).catch(function () {});
+  }
+
+  // saved is the copy in IndexedDB; before is the counter in
+  // localStorage when it was asked for.
+  function settleQueueCopies(saved, before, late) {
+    var n = queueCounter();
+    if (!QueueRules.savedIsNewer(n, saved)) {
+      // IndexedDB has no copy, or an earlier one: it is given this one.
+      keepQueueCopy(n, getOfflineQueue());
+      return;
+    }
+    if (n !== before) {
+      // The queue was stored here while IndexedDB was being read: that
+      // is the latest there is, and it goes above the copy read.
+      storeQueue(saved.n + 1, getOfflineQueue());
+      return;
+    }
+    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(saved.queue));
+    localStorage.setItem(QUEUE_COUNTER_KEY, String(saved.n));
+    // The page has started meanwhile, with the earlier queue: it
+    // follows the stored one, as it follows another copy's write.
+    if (late) followStoredQueue(true);
   }
 
   // Draws the current list from what the server last sent and the
@@ -932,6 +1087,14 @@
   window.addEventListener("storage", function (event) {
     // A cleared storage has no key.
     if (event.key !== null && event.key !== OFFLINE_QUEUE_KEY) return;
+    followStoredQueue(
+      storedQueueLength(event.newValue) < storedQueueLength(event.oldValue),
+    );
+  });
+
+  // The stored queue is another than the one this copy of the page
+  // drew: shorter is whether it may hold fewer changes than before.
+  function followStoredQueue(shorter) {
     clearOfflineUndo();
     updatePendingBadge();
     updateConnectionIndicator();
@@ -941,12 +1104,9 @@
     // has newer data than this copy: the list is read again, and drawn
     // from the answer or, without the server, from the stored one.
     // Otherwise what the server last sent stands, and is drawn now.
-    if (storedQueueLength(event.newValue) < storedQueueLength(event.oldValue)) {
-      refreshCurrentList();
-    } else {
-      showQueuedChanges();
-    }
-  });
+    if (shorter) refreshCurrentList();
+    else showQueuedChanges();
+  }
 
   function storedQueueLength(text) {
     try {
@@ -8290,6 +8450,7 @@
   // and goes on trying it. Should the server then refuse the token, the
   // PIN screen comes up at that moment (apiAnswer).
   async function startPage() {
+    await restoreQueue();
     var token = getAuthToken();
     var resp;
     try {

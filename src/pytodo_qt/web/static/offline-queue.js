@@ -396,6 +396,28 @@
     return shown;
   }
 
+  // Whether the copy of the queue kept in IndexedDB is the one to go
+  // on from, and not the one in localStorage whose counter is localN.
+  //
+  // The queue is stored twice, with a counter that rises at every
+  // save. A browser writes localStorage to disk some time after the
+  // page's write: one that is killed in between starts again with an
+  // earlier queue and an earlier counter, while IndexedDB has the
+  // last. The higher counter is the later save, whatever its queue
+  // holds: an empty one, saved when the last change had been sent,
+  // keeps an earlier queue from being sent a second time.
+  //
+  // saved is the record read from IndexedDB, {n, queue}; anything
+  // else (none kept, or one that cannot be made out) is not newer.
+  function savedIsNewer(localN, saved) {
+    return (
+      Boolean(saved) &&
+      typeof saved.n === "number" &&
+      Array.isArray(saved.queue) &&
+      saved.n > localN
+    );
+  }
+
   var rules = {
     itemIdOf: itemIdOf,
     kindOf: kindOf,
@@ -408,6 +430,7 @@
     replyOutcome: replyOutcome,
     nextToSend: nextToSend,
     withUpdatedAt: withUpdatedAt,
+    savedIsNewer: savedIsNewer,
   };
 
   if (typeof module !== "undefined" && module.exports) {

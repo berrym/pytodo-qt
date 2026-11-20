@@ -299,6 +299,7 @@ function page(options) {
       env.ownRefresh
         ? functionText("showLoginScreen")
         : "function showLoginScreen() { env.calls.push('showLoginScreen'); pinScreenUp = true; }",
+      "async function restoreQueue() { env.calls.push('restoreQueue'); }",
       functionText("startPage"),
       functionText("tokenRefused"),
       constantText("DATA_CACHE"),
@@ -1042,6 +1043,8 @@ test("a start whose first read is given up keeps what the device has stored", as
   for (const token of ["token", ""]) {
     const made = page({ token: token, fetch: noAnswer([]) });
     const start = made.startPage();
+    // The queue is settled first; then the server is asked.
+    await settled();
     made.env.advance(10000);
     await start;
     assert.ok(made.env.calls.includes("init"));
@@ -1064,6 +1067,23 @@ test("a start the server answers goes on to the page", async () => {
   assert.ok(made.env.calls.includes("init"));
   assert.equal(made.env.calls.includes("showLoginScreen"), false);
   assert.equal(made.connected(), true);
+});
+
+test("the queue of unsent changes is settled before the server is asked, and before the page starts", async () => {
+  // The later of its two stored copies is the queue: nothing is drawn
+  // from it or sent from it before that.
+  let made = null;
+  made = page({
+    fetch: async () => {
+      made.env.calls.push("fetch");
+      return answer();
+    },
+  });
+  await made.startPage();
+  const order = made.env.calls.filter((name) =>
+    ["restoreQueue", "fetch", "init"].includes(name),
+  );
+  assert.deepEqual(order, ["restoreQueue", "fetch", "init"]);
 });
 
 test("a start the server answers with a fault of its own goes on to the page", async () => {
