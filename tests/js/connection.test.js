@@ -12,6 +12,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { test } = require("node:test");
+const QueueRules = require("../../src/pytodo_qt/web/static/offline-queue.js");
 
 // Lines end in a line feed here whatever the checkout gave them.
 const source = fs
@@ -77,6 +78,9 @@ function numberOf(name) {
 // how long the server has to say anything.
 const PING = numberOf("WS_PING_INTERVAL");
 const PONG = numberOf("WS_PONG_DEADLINE");
+// How long stored tasks stand under a connected page before the list
+// is read again.
+const AGAIN = numberOf("LIST_READ_AGAIN_AFTER");
 
 // An element of the page, as far as the notice uses one.
 function element() {
@@ -103,6 +107,8 @@ function element() {
 //   hidden       whether the page is out of view
 //   token        the token the device holds ("" for none)
 //   pin          what is typed into the PIN screen
+//   ownQueue     true to run the page's own replayOfflineQueue
+//   queue        the changes not yet sent
 //   ownRefresh   true to run the page's own refreshCurrentList and
 //                showLoginScreen; what is drawn is listed in env.drawn
 //   ownSockets   true to run the page's own connectWebSocket,
@@ -124,6 +130,7 @@ function page(options) {
     options,
   );
   env.calls = [];
+  env.QueueRules = QueueRules;
   env.drawn = [];
   env.stored = { items: [{ id: "kept" }], savedAt: 1795124040000 };
   env.sockets = [];
@@ -267,7 +274,22 @@ function page(options) {
       called("updatePendingBadge"),
       called("startPolling"),
       called("stopPolling"),
-      called("replayOfflineQueue"),
+      env.ownQueue
+        ? functionText("replayOfflineQueue")
+        : called("replayOfflineQueue"),
+      "var replayRunning = false;",
+      "var QueueRules = env.QueueRules;",
+      "function getOfflineQueue() { return env.queue || []; }",
+      "function enqueueOfflineEdit(path, opts) { env.queue.push({ path: path, opts: opts }); }",
+      "function pushOfflineUndo() {}",
+      "function showToast() {}",
+      "async function sendQueuedChanges() { env.calls.push('sendQueuedChanges'); if (env.sends) env.sends(); }",
+      constantText("QUEUE_AGAIN_AFTER"),
+      constantText("QUEUE_AGAIN_AT_MOST"),
+      "var queueAgainTimer = null;",
+      "var queueAgainWait = QUEUE_AGAIN_AFTER;",
+      functionText("sendQueueAgainSoon"),
+      functionText("sendOrQueue"),
       env.ownRefresh
         ? functionText("refreshCurrentList")
         : called("refreshCurrentList"),
@@ -314,6 +336,7 @@ function page(options) {
       functionText("storedTimeOf"),
       functionText("serverFetch"),
       functionText("serverAnswered"),
+      functionText("serverDoubted"),
       functionText("serverSilent"),
       functionText("resumeWithServer"),
       functionText("waitForServer"),
@@ -336,6 +359,9 @@ function page(options) {
       "  showLoginScreen: showLoginScreen,",
       "  startPage: startPage,",
       "  signIn: signIn,",
+      "  replayOfflineQueue: replayOfflineQueue,",
+      "  sendOrQueue: sendOrQueue,",
+      "  serverDoubted: serverDoubted,",
       "  hideLoginScreen: hideLoginScreen,",
       "  pinScreenUp: function () { return pinScreenUp; },",
       "  connectWebSocket: connectWebSocket,",
@@ -1697,7 +1723,7 @@ test("stored tasks that leave the server silent are not read again here", async 
   assert.equal(made.env.calls.includes("cacheListItems"), false);
   // Nothing is set to read it again.
   assert.equal(
-    made.env.timers.some((timer) => timer.at === 1000),
+    made.env.timers.some((timer) => timer.at === AGAIN),
     false,
   );
   made.env.advance(60000);
@@ -1726,7 +1752,7 @@ test("stored tasks under a page still counted as connected are read again", asyn
   assert.equal(made.connected(), true);
   assert.deepEqual(made.env.drawn, ["old"]);
 
-  made.env.advance(999);
+  made.env.advance(AGAIN - 1);
   await settled();
   assert.equal(reads, 1);
   made.env.advance(1);
@@ -1754,7 +1780,7 @@ test("they are read again for as long as stored ones come back", async () => {
   heard = () => made.serverAnswered();
   await made.refreshCurrentList();
   for (let i = 0; i < 5; i++) {
-    made.env.advance(1000);
+    made.env.advance(AGAIN);
     await settled();
   }
   assert.equal(reads, 4);
@@ -1777,7 +1803,7 @@ test("a read given up under a page still counted as connected is made again", as
   assert.equal(made.connected(), true);
   // What the device kept is shown meanwhile.
   assert.deepEqual(made.env.drawn, ["kept"]);
-  made.env.advance(1000);
+  made.env.advance(AGAIN);
   await settled();
   assert.deepEqual(made.env.drawn, ["kept", "new"]);
 });
@@ -1813,7 +1839,7 @@ test("the PIN screen is not brought up again by a read that was waiting", async 
   heard = () => made.serverAnswered();
   await made.refreshCurrentList();
   // The list is due to be read again in a second.
-  assert.ok(made.env.timers.some((timer) => timer.at === 1000));
+  assert.ok(made.env.timers.some((timer) => timer.at === AGAIN));
   made.showLoginScreen();
   made.env.advance(60000);
   await settled();
@@ -1846,7 +1872,7 @@ test("a WebSocket that opens while the list comes from the store ends with the s
   await settled();
   assert.equal(made.connected(), true);
   assert.deepEqual(made.env.drawn, ["old"]);
-  made.env.advance(1000);
+  made.env.advance(AGAIN);
   await settled();
   assert.equal(made.connected(), true);
   assert.equal(made.env.drawn[made.env.drawn.length - 1], "new");
@@ -1858,6 +1884,26 @@ test("a server that falls silent is noticed within 8 seconds, one that is back w
   assert.equal(PING, 5000);
   assert.equal(PONG, 3000);
   assert.equal(numberOf("WS_MAX_DELAY_IN_VIEW"), 5000);
+  // Stored tasks under a connected page are read again after 3 s: not
+  // sooner than the service worker gives a stored answer for a read the
+  // server keeps waiting, so that such reads do not add up.
+  assert.equal(AGAIN, 3000);
+  const worker = fs
+    .readFileSync(
+      path.join(
+        __dirname,
+        "..",
+        "..",
+        "src",
+        "pytodo_qt",
+        "web",
+        "static",
+        "sw.js",
+      ),
+      "utf8",
+    )
+    .replace(/\r\n/g, "\n");
+  assert.ok(AGAIN >= Number(/var STORED_AFTER = (\d+);/.exec(worker)[1]));
   assert.equal(numberOf("WS_MAX_DELAY"), 30000);
 });
 
@@ -2088,4 +2134,357 @@ test("a token refused in mid-use closes the WebSocket and stops asking over it",
   await settled();
   assert.deepEqual(open.sent, []);
   assert.equal(made.env.sockets.length, 1);
+});
+
+// --- A WebSocket that answers, and a read that came to nothing ---
+//
+// The two say opposite things of the same server. The WebSocket is
+// asked, and its silence decides.
+
+test("a stored answer under an open WebSocket puts the question to it, and no more", async () => {
+  const open = socket();
+  const made = page({ socket: open, fetch: async () => answer(FROM_STORE) });
+  await made.serverFetch("/api/lists/1", {});
+  assert.equal(made.connected(), true);
+  assert.deepEqual(open.sent, ["ping"]);
+  // The page's onmessage takes the answer: the server is there.
+  made.waitToPing();
+  made.env.advance(PONG);
+  assert.equal(open.closed, false);
+  assert.equal(made.connected(), true);
+});
+
+test("no answer over the WebSocket to that question: the server is silent", async () => {
+  const open = socket();
+  const made = page({ socket: open, fetch: async () => answer(FROM_STORE) });
+  await made.serverFetch("/api/lists/1", {});
+  made.env.advance(PONG - 1);
+  assert.equal(made.connected(), true);
+  made.env.advance(1);
+  assert.equal(open.closed, true);
+  assert.equal(made.connected(), false);
+  assert.equal(made.env.banner.hidden, false);
+});
+
+test("the question is put once, however many reads come to nothing", async () => {
+  // Put again, it would move its own deadline, and a dead WebSocket
+  // would never be found out.
+  const open = socket();
+  const made = page({ socket: open, fetch: async () => answer(FROM_STORE) });
+  await made.serverFetch("/api/lists/1", {});
+  made.env.advance(PONG - 500);
+  await made.serverFetch("/api/lists/1", {});
+  await made.serverFetch("/api/status", {});
+  assert.deepEqual(open.sent, ["ping"]);
+  made.env.advance(500);
+  assert.equal(made.connected(), false);
+});
+
+test("a request that fails under an open WebSocket puts the question too", async () => {
+  const open = socket();
+  const made = page({
+    socket: open,
+    fetch: async () => {
+      throw new TypeError("Failed to fetch");
+    },
+  });
+  await assert.rejects(made.serverFetch("/api/lists/1", {}));
+  assert.equal(made.connected(), true);
+  assert.deepEqual(open.sent, ["ping"]);
+});
+
+test("a read given up under an open WebSocket puts the question too", async () => {
+  const open = socket();
+  const made = page({ socket: open, fetch: noAnswer([]) });
+  const read = made.serverFetch("/api/lists/1", {});
+  made.env.advance(10000);
+  await assert.rejects(read, { name: "AbortError" });
+  assert.equal(made.connected(), true);
+  assert.deepEqual(open.sent, ["ping"]);
+});
+
+test("without a WebSocket a read that came to nothing makes the server silent", async () => {
+  const made = page({ fetch: async () => answer(FROM_STORE) });
+  await made.serverFetch("/api/lists/1", {});
+  assert.equal(made.connected(), false);
+});
+
+test("a WebSocket that is still connecting is no witness", async () => {
+  const connecting = socket();
+  connecting.readyState = 0;
+  const made = page({
+    socket: connecting,
+    fetch: async () => answer(FROM_STORE),
+  });
+  await made.serverFetch("/api/lists/1", {});
+  assert.equal(made.connected(), false);
+  assert.deepEqual(connecting.sent, []);
+});
+
+// --- The changes not yet sent ---
+
+test("the queue is sent after a read has reached the server, not before", async () => {
+  // A browser that found the server gone fails a change at once, until
+  // a read has reached the server again.
+  const seen = [];
+  const made = page({
+    ownQueue: true,
+    queue: [{ path: "/items/1/toggle" }],
+    fetch: async (url, opts) => {
+      seen.push(url + " " + opts.cache + " " + opts.headers.Authorization);
+      return answer();
+    },
+  });
+  await made.replayOfflineQueue();
+  assert.deepEqual(seen, ["/api/status no-store Bearer token"]);
+  assert.ok(made.env.calls.includes("sendQueuedChanges"));
+});
+
+test("with no answer to that read the queue stays, and can be sent later", async () => {
+  let up = false;
+  const made = page({
+    ownQueue: true,
+    queue: [{ path: "/items/1/toggle" }],
+    fetch: async () => {
+      if (!up) throw new TypeError("Failed to fetch");
+      return answer();
+    },
+  });
+  await made.replayOfflineQueue();
+  assert.equal(made.env.calls.includes("sendQueuedChanges"), false);
+  up = true;
+  await made.replayOfflineQueue();
+  assert.ok(made.env.calls.includes("sendQueuedChanges"));
+});
+
+test("a refusal of the token is an answer: the sending goes on to keep the changes", async () => {
+  const made = page({
+    ownQueue: true,
+    queue: [{ path: "/items/1/toggle" }],
+    fetch: async () => answer({}, 401),
+  });
+  await made.replayOfflineQueue();
+  assert.ok(made.env.calls.includes("sendQueuedChanges"));
+});
+
+test("an empty queue asks nothing", async () => {
+  let asked = 0;
+  const made = page({
+    ownQueue: true,
+    queue: [],
+    fetch: async () => {
+      asked += 1;
+      return answer();
+    },
+  });
+  await made.replayOfflineQueue();
+  assert.equal(asked, 0);
+});
+
+test("the question is put at once, between two of the regular ones", async () => {
+  // In a page in view the next regular question is always waiting.
+  const open = socket();
+  const made = page({ socket: open, fetch: async () => answer(FROM_STORE) });
+  made.waitToPing();
+  made.env.advance(1000);
+  await made.serverFetch("/api/lists/1", {});
+  assert.deepEqual(open.sent, ["ping"]);
+  made.env.advance(PONG - 1);
+  assert.equal(made.connected(), true);
+  made.env.advance(1);
+  assert.equal(open.closed, true);
+  assert.equal(made.connected(), false);
+  // The regular question was replaced, not left to be put as well.
+  assert.deepEqual(open.sent, ["ping"]);
+});
+
+test("an answer whose body is cut off under an open WebSocket puts the question", async () => {
+  const open = socket();
+  const made = page({
+    socket: open,
+    fetch: (url, opts) =>
+      Promise.resolve({
+        status: 200,
+        ok: true,
+        headers: new Headers(),
+        json: () =>
+          new Promise((resolve, reject) => {
+            opts.signal.addEventListener("abort", () =>
+              reject(
+                new DOMException("The operation was aborted.", "AbortError"),
+              ),
+            );
+          }),
+      }),
+  });
+  const read = made.apiAnswer("/lists/1");
+  await settled();
+  made.env.advance(10000);
+  await assert.rejects(read, { name: "AbortError" });
+  assert.equal(made.connected(), true);
+  assert.deepEqual(open.sent, ["ping"]);
+});
+
+test("a list the service worker has nothing stored for is read again", async () => {
+  // Its made-up answer is not the server's refusal: under a WebSocket
+  // that answers, nothing else would read the list again.
+  let reads = 0;
+  let heard = () => {};
+  const made = page({
+    ownRefresh: true,
+    fetch: async () => {
+      reads += 1;
+      heard();
+      return reads === 1
+        ? answer({ "X-Pytodo-Source": "none" }, 503)
+        : list(["new"]);
+    },
+  });
+  heard = () => made.serverAnswered();
+  await made.refreshCurrentList();
+  assert.equal(made.connected(), true);
+  assert.deepEqual(made.env.drawn, ["kept"]);
+  made.env.advance(AGAIN);
+  await settled();
+  assert.equal(reads, 2);
+  assert.deepEqual(made.env.drawn, ["kept", "new"]);
+});
+
+// --- The queue's own tries ---
+//
+// The queue is sent when the server is found again and when a WebSocket
+// opens. Under a WebSocket that goes on answering neither happens.
+
+// A connected page with an open WebSocket and changes not yet sent.
+// reads lists the times, in seconds, of the reads that go before a
+// sending.
+function withQueue(options) {
+  const reads = [];
+  const state = { up: true };
+  const made = page(
+    Object.assign(
+      {
+        ownQueue: true,
+        socket: socket(),
+        queue: [{ path: "/items/1/toggle" }],
+        fetch: async (url) => {
+          if (url === "/api/status") reads.push(made.env.now / 1000);
+          if (!state.up) throw new TypeError("Failed to fetch");
+          return answer();
+        },
+      },
+      options,
+    ),
+  );
+  return { made: made, reads: reads, server: state };
+}
+
+async function pass(made, milliseconds) {
+  // The WebSocket goes on answering meanwhile.
+  for (let passed = 0; passed < milliseconds; passed += 500) {
+    made.env.advance(500);
+    made.waitToPing();
+    await settled();
+  }
+}
+
+test("a sending whose read got no answer is tried again after 3 s", async () => {
+  const { made, reads, server } = withQueue();
+  server.up = false;
+  await made.replayOfflineQueue();
+  assert.equal(made.env.calls.includes("sendQueuedChanges"), false);
+  assert.equal(made.connected(), true);
+  server.up = true;
+  await pass(made, 2500);
+  assert.deepEqual(reads, [0]);
+  await pass(made, 500);
+  assert.deepEqual(reads, [0, 3]);
+  assert.ok(made.env.calls.includes("sendQueuedChanges"));
+});
+
+test("changes the server keeps refusing for now are tried at growing waits", async () => {
+  // The sending leaves them in the queue.
+  const { made, reads } = withQueue();
+  await made.replayOfflineQueue();
+  await pass(made, 300000);
+  assert.deepEqual(reads.slice(0, 8), [0, 3, 9, 21, 45, 93, 153, 213]);
+});
+
+test("a queue that has been sent is left alone, and the waits start short again", async () => {
+  const { made, reads } = withQueue();
+  let sendings = 0;
+  made.env.sends = () => {
+    sendings += 1;
+    if (sendings === 3) made.env.queue.length = 0;
+  };
+  await made.replayOfflineQueue();
+  await pass(made, 120000);
+  assert.deepEqual(reads, [0, 3, 9]);
+  // A change queued later is tried after 3 s, not after the long wait.
+  made.env.sends = null;
+  made.env.queue.push({ path: "/items/2/toggle" });
+  await made.replayOfflineQueue();
+  const again = reads.length;
+  await pass(made, 3000);
+  assert.equal(reads.length, again + 1);
+});
+
+test("while the server is silent the queue waits for it to be found again", async () => {
+  const { made, reads, server } = withQueue({ socket: null });
+  server.up = false;
+  await made.replayOfflineQueue();
+  assert.equal(made.connected(), false);
+  made.env.advance(300000);
+  await settled();
+  assert.deepEqual(reads, [0]);
+});
+
+test("behind the PIN screen the queue is not tried", async () => {
+  const { made, reads } = withQueue({ ownRefresh: true });
+  await made.replayOfflineQueue();
+  made.showLoginScreen();
+  made.env.advance(300000);
+  await settled();
+  assert.deepEqual(reads, [0]);
+});
+
+test("a change that fails under a connected page is queued, and sent again after 3 s", async () => {
+  // Firefox fails a change at once after the server is back, until a
+  // read has reached it; a connection reset does the same.
+  const sent = [];
+  const made = page({
+    ownQueue: true,
+    socket: socket(),
+    queue: [],
+    fetch: async (url, opts) => {
+      sent.push((opts.method || "GET") + " " + url);
+      if (opts.method === "PATCH") throw new TypeError("Failed to fetch");
+      return answer();
+    },
+  });
+  const outcome = await made.sendOrQueue("/items/1/toggle", {
+    method: "PATCH",
+  });
+  assert.equal(outcome, "queued");
+  assert.equal(made.env.queue.length, 1);
+  assert.equal(made.connected(), true);
+  await pass(made, 3000);
+  assert.ok(made.env.calls.includes("sendQueuedChanges"));
+  assert.deepEqual(sent, ["PATCH /api/items/1/toggle", "GET /api/status"]);
+});
+
+test("a change that is sent starts no try", async () => {
+  const made = page({
+    ownQueue: true,
+    socket: socket(),
+    queue: [],
+    fetch: async () => answer(),
+  });
+  assert.equal(
+    await made.sendOrQueue("/items/1/toggle", { method: "PATCH" }),
+    "sent",
+  );
+  made.env.advance(300000);
+  await settled();
+  assert.equal(made.env.calls.includes("sendQueuedChanges"), false);
 });

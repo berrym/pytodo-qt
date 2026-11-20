@@ -30,6 +30,15 @@ var STORED_AFTER = 3000;
 var STORED_SOON_AFTER = 300;
 var SLOW_FOR = 10000;
 var slowUntil = 0;
+// How long the worker's own request to the server may go on, whatever
+// has been given to the page meanwhile. A request that waits holds one
+// of the few connections a browser makes to one server (six in
+// Firefox), for a minute and more where the server's address does not
+// answer; those of a page that keeps trying add up, and after the
+// server is back its answers wait behind them. Longer than
+// STORED_AFTER, so that a server that is only slow still has its
+// answer stored; no longer than the page's deadline for a read.
+var GIVEN_UP_AFTER = 8000;
 var STATIC_ASSETS = [
   "/",
   "/static/style.css",
@@ -157,10 +166,15 @@ async function cacheFirst(request) {
 // tells the person when it has none.
 async function networkFirst(event) {
   var request = event.request;
-  var asked = fetch(request);
+  var gaveUp = new AbortController();
+  var limit = setTimeout(function () {
+    gaveUp.abort();
+  }, GIVEN_UP_AFTER);
+  var asked = fetch(request, { signal: gaveUp.signal });
   // Whatever is given to the page, the server's answer is stored when
-  // it comes, and the worker is kept alive until then: a stored answer
-  // given in its place is then the newer one next time.
+  // it comes within GIVEN_UP_AFTER, and the worker is kept alive until
+  // then: a stored answer given in its place is then the newer one
+  // next time.
   event.waitUntil(
     asked
       .then(function (response) {
@@ -170,6 +184,9 @@ async function networkFirst(event) {
       })
       .catch(function () {
         /* no answer, or a full store: the page has been answered */
+      })
+      .then(function () {
+        clearTimeout(limit);
       }),
   );
 

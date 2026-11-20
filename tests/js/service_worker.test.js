@@ -88,9 +88,10 @@ function worker(serverAnswers) {
     },
   };
   const fetched = [];
-  async function fetch(request) {
+  let server = serverAnswers;
+  async function fetch(request, init) {
     fetched.push(request.url);
-    return serverAnswers(request);
+    return server(request, init);
   }
   const names = new Function(
     "self",
@@ -103,7 +104,7 @@ function worker(serverAnswers) {
       "\nreturn { networkFirst: networkFirst, store: store," +
       " SOURCE_HEADER: SOURCE_HEADER, STORED_AT_HEADER: STORED_AT_HEADER," +
       " STORED_AFTER: STORED_AFTER, STORED_SOON_AFTER: STORED_SOON_AFTER," +
-      " SLOW_FOR: SLOW_FOR };",
+      " SLOW_FOR: SLOW_FOR, GIVEN_UP_AFTER: GIVEN_UP_AFTER };",
   )(self, caches, fetch, setTimeout, clearTimeout, FakeDate);
 
   // An event as the browser gives the worker, with what the worker did
@@ -137,6 +138,10 @@ function worker(serverAnswers) {
     clock: clock,
     advance: advance,
     broken: broken,
+    // Puts another network in the place of the one the worker was made with.
+    serve(other) {
+      server = other;
+    },
     // Starts a read and says what has become of it so far: "waiting",
     // or the answer.
     begin(url) {
@@ -279,10 +284,20 @@ test("a change is left to the network", () => {
 // the next waiting read the server's answer, fails() ends it without.
 function slowServer() {
   const waiting = [];
-  const serverAnswers = () =>
+  const serverAnswers = (request, init) =>
     new Promise((resolve, reject) => {
-      waiting.push({ resolve: resolve, reject: reject });
+      const read = { resolve: resolve, reject: reject, givenUp: false };
+      waiting.push(read);
+      serverAnswers.made.push(read);
+      if (init && init.signal) {
+        init.signal.addEventListener("abort", () => {
+          read.givenUp = true;
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        });
+      }
     });
+  // Every read made, whatever became of it.
+  serverAnswers.made = [];
   serverAnswers.answers = (body) => waiting.shift().resolve(json(body));
   serverAnswers.fails = () =>
     waiting.shift().reject(new TypeError("Failed to fetch"));
@@ -431,22 +446,36 @@ test("a server that is back answers within the short wait, and is heard", async 
   assert.equal(next.outcome, "waiting");
 });
 
-test("with nothing stored a read waits for the server, however long", async () => {
+test("with nothing stored a read waits for the server until the worker gives it up", async () => {
   const server = slowServer();
   const sw = worker(server);
   const read = sw.begin("/api/lists/7");
-  await sw.advance(120000);
+  await sw.advance(7999);
   assert.equal(read.outcome, "waiting");
+  await sw.advance(1);
+  assert.equal(read.outcome.status, 503);
+  assert.equal(read.outcome.headers.get(sw.SOURCE_HEADER), "none");
+  assert.equal(server.made[0].givenUp, true);
+  await read.event.settled();
+  assert.deepEqual(sw.clock.timers, []);
+});
+
+test("with nothing stored a slow server is still heard within that time", async () => {
+  const server = slowServer();
+  const sw = worker(server);
+  const read = sw.begin("/api/lists/7");
+  await sw.advance(7000);
   server.answers({ items: [] });
   await sw.advance(0);
   assert.equal(read.outcome.headers.get(sw.SOURCE_HEADER), null);
+  assert.deepEqual(await read.outcome.json(), { items: [] });
 });
 
 test("with nothing stored a read that fails late gets the answer made up", async () => {
   const server = slowServer();
   const sw = worker(server);
   const read = sw.begin("/api/lists/7");
-  await sw.advance(75000);
+  await sw.advance(5000);
   server.fails();
   await sw.advance(0);
   assert.equal(read.outcome.status, 503);
@@ -570,7 +599,7 @@ test("a store that cannot be read, and no server: the answer made up", async () 
 test("what is stored for one address is not given for another", async () => {
   const { sw } = await withStored("/api/lists", { lists: ["Home"] });
   const other = sw.begin("/api/lists/7");
-  await sw.advance(60000);
+  await sw.advance(7999);
   assert.equal(other.outcome, "waiting");
 });
 
@@ -586,4 +615,137 @@ test("a read that asks for no stored answer is left to the network", async () =>
   // And the same read without that is answered from the store.
   const stored = await sw.read("/api/status");
   assert.equal(stored.headers.get(sw.SOURCE_HEADER), "store");
+});
+
+// --- The worker's own request ---
+//
+// A request that waits holds one of the few connections a browser makes
+// to one server. The worker gives its own up, whatever it has given
+// the page meanwhile.
+
+test("the waits are in order: stored answer, the worker's request, the page's read", () => {
+  const sw = worker(down);
+  const page = fs
+    .readFileSync(
+      path.join(
+        __dirname,
+        "..",
+        "..",
+        "src",
+        "pytodo_qt",
+        "web",
+        "static",
+        "app.js",
+      ),
+      "utf8",
+    )
+    .replace(/\r\n/g, "\n");
+  const read = Number(/var READ_DEADLINE = (\d+);/.exec(page)[1]);
+  assert.ok(sw.STORED_AFTER < sw.GIVEN_UP_AFTER);
+  assert.ok(sw.GIVEN_UP_AFTER <= read);
+});
+
+test("a request kept waiting is given up after 8 s, though the page was answered at 3", async () => {
+  const { sw, server } = await withStored("/api/lists", { lists: ["Home"] });
+  const read = sw.begin("/api/lists");
+  await sw.advance(3000);
+  assert.equal(read.outcome.headers.get(sw.SOURCE_HEADER), "store");
+  const request = server.made[server.made.length - 1];
+  await sw.advance(4999);
+  assert.equal(request.givenUp, false);
+  await sw.advance(1);
+  assert.equal(request.givenUp, true);
+  // The worker is no longer kept alive for it, and nothing is left to fire.
+  await read.event.settled();
+  assert.deepEqual(sw.clock.timers, []);
+});
+
+test("an answer that comes before the request is given up is stored", async () => {
+  const { sw, server } = await withStored("/api/lists", { lists: ["Home"] });
+  sw.begin("/api/lists");
+  await sw.advance(7900);
+  server.answers({ lists: ["Home", "Work"] });
+  await sw.advance(200);
+  const request = server.made[server.made.length - 1];
+  assert.equal(request.givenUp, false);
+  assert.deepEqual(sw.clock.timers, []);
+
+  await sw.advance(60000);
+  const next = sw.begin("/api/lists");
+  await sw.advance(3000);
+  assert.deepEqual(await next.outcome.json(), { lists: ["Home", "Work"] });
+});
+
+test("a server that answers at once leaves nothing to be given up", async () => {
+  const sw = worker(() => json({ n: 1 }));
+  await sw.read("/api/status");
+  await sw.advance(0);
+  assert.deepEqual(sw.clock.timers, []);
+});
+
+test("requests that wait do not add up: each is given up in its turn", async () => {
+  // A page that keeps reading, every 3 s for a minute, without the server.
+  const { sw, server } = await withStored("/api/lists", { lists: ["Home"] });
+  for (let n = 0; n < 20; n++) {
+    sw.begin("/api/lists");
+    await sw.advance(3000);
+    const waiting = server.made.filter((read) => !read.givenUp).length - 1;
+    assert.ok(waiting <= 3, waiting + " requests waiting at once");
+  }
+});
+
+test("the worker's request is the page's own, with what it carries", async () => {
+  // The token, for one: without it every read would be refused.
+  const seen = [];
+  const sw = worker((request) => {
+    seen.push(request);
+    return json({ n: 1 });
+  });
+  const made = sw.event("/api/lists");
+  made.request = new Request(ORIGIN + "/api/lists", {
+    headers: { Authorization: "Bearer abc" },
+  });
+  sw.listeners.fetch(made);
+  await made.answer;
+  await made.settled();
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0], made.request);
+  assert.equal(seen[0].headers.get("Authorization"), "Bearer abc");
+});
+
+test("an answer whose body is still arriving when the request is given up is not stored", async () => {
+  const { sw } = await withStored("/api/lists", { lists: ["Home"] });
+  // The next answer begins and does not end.
+  let cut = false;
+  const stalled = (request, init) =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"lists":["Ho'));
+            init.signal.addEventListener("abort", () => {
+              cut = true;
+              controller.error(
+                new DOMException("The operation was aborted.", "AbortError"),
+              );
+            });
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+  sw.serve(stalled);
+  const read = sw.begin("/api/lists");
+  await sw.advance(7999);
+  assert.equal(cut, false);
+  await sw.advance(1);
+  assert.equal(cut, true);
+  await read.event.settled();
+  assert.deepEqual(sw.clock.timers, []);
+
+  // What was stored before is still what is given without the server.
+  sw.serve(down);
+  const next = await sw.read("/api/lists");
+  assert.equal(next.headers.get(sw.SOURCE_HEADER), "store");
+  assert.deepEqual(await next.json(), { lists: ["Home"] });
 });

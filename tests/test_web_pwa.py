@@ -2106,6 +2106,20 @@ class TestServerNotReached:
         assert "if (lastSyncedTimer === null) {" in start
         assert start.count("setInterval(") == 1
 
+    def test_no_request_is_left_to_the_browser_while_the_server_is_silent(self):
+        """A request the page cannot give up waits a minute and more by
+        a name whose address does not answer, and holds one of the few
+        connections the browser makes to the server (#116)."""
+        js = self._app()
+        seen = js.split('.register("/sw.js")')[1].split(".catch(function (err)")[0]
+        assert 'document.visibilityState === "visible" && serverConnected' in seen
+        # The browser asks for /favicon.ico where the page names no icon;
+        # the one named is among the files the service worker has stored.
+        html = (STATIC_DIR / "index.html").read_text()
+        assert '<link rel="icon" href="/static/icon-192.png" />' in html
+        sw = (STATIC_DIR / "sw.js").read_text()
+        assert '"/static/icon-192.png",' in sw.split("var STATIC_ASSETS = [")[1].split("];")[0]
+
     def test_the_view_handler_is_the_one_the_browser_calls(self):
         js = self._app()
         assert 'document.addEventListener("visibilitychange", pageViewChanged);' in js

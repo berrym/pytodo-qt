@@ -347,11 +347,11 @@
       resp = await fetch(url, opts);
     } catch (e) {
       if (timer !== null) clearTimeout(timer);
-      if (heard === serverAnswers) serverSilent();
+      if (heard === serverAnswers) serverDoubted();
       throw e;
     }
     if (storedTimeOf(resp) === null) serverAnswered();
-    else if (heard === serverAnswers) serverSilent();
+    else if (heard === serverAnswers) serverDoubted();
     return resp;
   }
 
@@ -382,6 +382,9 @@
       var err = new Error(body.error || resp.statusText);
       err.status = resp.status;
       err.body = body;
+      // The answer the service worker makes up where it has nothing
+      // stored is not the server's refusal.
+      err.notTheServers = storedTimeOf(resp) !== null;
       throw err;
     }
     var data;
@@ -389,7 +392,7 @@
       data = await resp.json();
     } catch (e) {
       // The answer began and did not end by the deadline.
-      if (e && e.name === "AbortError") serverSilent();
+      if (e && e.name === "AbortError") serverDoubted();
       throw e;
     }
     return { data: data, savedAt: storedTimeOf(resp) };
@@ -790,7 +793,33 @@
       step.before = before;
       step.after = after;
     }
+    // Queued under a page that counts the server as there: nothing else
+    // would send it.
+    sendQueueAgainSoon();
     return "queued";
+  }
+
+  // The queue is sent when the server is found again (resumeWithServer)
+  // and when a WebSocket opens. A change can be left in it while
+  // neither happens: one that failed under a WebSocket that goes on
+  // answering, or a sending cut short. It is therefore sent again
+  // after a wait, which doubles while changes stay, for as long as the
+  // page counts the server as there.
+  var QUEUE_AGAIN_AFTER = 3000;
+  var QUEUE_AGAIN_AT_MOST = 60000;
+  var queueAgainTimer = null;
+  var queueAgainWait = QUEUE_AGAIN_AFTER;
+  function sendQueueAgainSoon() {
+    if (getOfflineQueue().length === 0) {
+      queueAgainWait = QUEUE_AGAIN_AFTER;
+      return;
+    }
+    if (queueAgainTimer !== null || !serverConnected || pinScreenUp) return;
+    queueAgainTimer = setTimeout(function () {
+      queueAgainTimer = null;
+      if (serverConnected && !pinScreenUp) replayOfflineQueue();
+    }, queueAgainWait);
+    queueAgainWait = Math.min(queueAgainWait * 2, QUEUE_AGAIN_AT_MOST);
   }
 
   var replayRunning = false;
@@ -801,9 +830,23 @@
     if (replayRunning || getOfflineQueue().length === 0) return;
     replayRunning = true;
     try {
+      // The server is asked first, with a read. A browser that found
+      // the server gone remembers it: Firefox then fails a change at
+      // once, without trying the server, until a read has reached it
+      // again. A WebSocket that opens is no such read.
+      await serverFetch(
+        API + "/status",
+        { cache: "no-store", headers: authHeaders() },
+        PROBE_DEADLINE,
+      );
       await sendQueuedChanges();
+    } catch (e) {
+      /* no answer to the read: the changes stay queued */
     } finally {
       replayRunning = false;
+      // What is left is tried again; an empty queue starts the waits
+      // short the next time.
+      sendQueueAgainSoon();
     }
   }
 
@@ -904,7 +947,23 @@
     if (appReady && !pinScreenUp) resumeWithServer();
   }
 
-  // A request failed, or was answered from the service worker's store.
+  // A request failed, got no answer by its deadline, or was answered
+  // from the service worker's store. Where a WebSocket is open the
+  // server is asked over it, and only its silence there counts: an
+  // answer over the WebSocket and a read that came to nothing say
+  // opposite things of the same server, and the page went back and
+  // forth between them for as long as reads waited in the browser
+  // behind requests that had been made while the server was away.
+  // Asked once: a question put again would move its own deadline.
+  function serverDoubted() {
+    if (webSocketOpen()) {
+      if (wsPongTimer === null) pingServer();
+      return;
+    }
+    serverSilent();
+  }
+
+  // The server does not answer.
   function serverSilent() {
     if (!serverConnected) return;
     serverConnected = false;
@@ -7469,7 +7528,7 @@
       showQueuedChanges();
       // Not after a refusal of the server's own, a token it rejects or
       // a list it no longer has: asking again changes nothing there.
-      if (e.status === undefined) readListAgainSoon();
+      if (e.status === undefined || e.notTheServers) readListAgainSoon();
     }
   }
 
@@ -7481,8 +7540,9 @@
   // greeting on a WebSocket that has just opened for one. Nothing would
   // read the list again, and stored tasks would stand as current under
   // a green dot. The list is therefore read again shortly, for as long
-  // as that is so.
-  var LIST_READ_AGAIN_AFTER = 1000;
+  // as that is so; not so shortly that reads the server is slow to
+  // answer add up.
+  var LIST_READ_AGAIN_AFTER = 3000;
   var listReadAgainTimer = null;
   function readListAgainSoon() {
     if (!serverConnected || listReadAgainTimer !== null) return;
@@ -7885,8 +7945,13 @@
         // The browser looks for a new worker when the page is loaded. A
         // page that stays open, as an installed app does, is not loaded
         // again for days, so look whenever it comes back into view.
+        // Not while the server is silent: the browser's request for the
+        // worker's script is not the page's to give up, and one that
+        // waits holds a connection for a minute and more. The server
+        // names its version when the page connects to it again
+        // (onServerPageVersion).
         document.addEventListener("visibilitychange", function () {
-          if (document.visibilityState === "visible") {
+          if (document.visibilityState === "visible" && serverConnected) {
             registration.update().catch(function () {
               /* offline, or the server is unreachable */
             });
