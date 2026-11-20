@@ -93,6 +93,8 @@ function element() {
 //   socket       the page's WebSocket
 //   hidden       whether the page is out of view
 //   token        the token the device holds ("" for none)
+//   ownRefresh   true to run the page's own refreshCurrentList and
+//                showLoginScreen; what is drawn is listed in env.drawn
 //   ownSockets   true to run the page's own connectWebSocket,
 //                scheduleReconnect and probeServer against WebSockets
 //                of the test's making, listed in env.sockets
@@ -107,10 +109,13 @@ function page(options) {
       socket: null,
       hidden: false,
       ownSockets: false,
+      ownRefresh: false,
     },
     options,
   );
   env.calls = [];
+  env.drawn = [];
+  env.stored = { items: [{ id: "kept" }], savedAt: 1795124040000 };
   env.sockets = [];
   env.WebSocket = function (url) {
     const made = socket();
@@ -219,7 +224,9 @@ function page(options) {
       "function getAuthToken() { return env.localStorage.getItem('pytodo_auth_token') || ''; }",
       "function init() { env.calls.push('init'); }",
       "function authHeaders(extra) { return Object.assign({}, extra); }",
-      "function showLoginScreen() { env.calls.push('showLoginScreen'); }",
+      env.ownRefresh
+        ? functionText("showLoginScreen")
+        : "function showLoginScreen() { env.calls.push('showLoginScreen'); }",
       functionText("startPage"),
       "function onServerPageVersion(version) { env.calls.push('version ' + version); }",
       constantText("WS_MAX_DELAY"),
@@ -242,7 +249,25 @@ function page(options) {
       called("startPolling"),
       called("stopPolling"),
       called("replayOfflineQueue"),
-      called("refreshCurrentList"),
+      env.ownRefresh
+        ? functionText("refreshCurrentList")
+        : called("refreshCurrentList"),
+      "var currentListId = 'list-1';",
+      "var serverItems = [];",
+      "var cachedItems = [];",
+      "var serverBoardData = null;",
+      "var loginScreen = null, appContainer = null, loginPinInput = null, loginError = null;",
+      "var console = { error: function () {} };",
+      "function renderItems() {}",
+      "function cacheListItems(id, items) { env.calls.push('cacheListItems'); }",
+      "function showQueuedChanges() { env.drawn.push(serverItems.map(function (i) { return i.id; }).join(',')); }",
+      "function refreshBoard() {}",
+      "function refreshLists() {}",
+      "function markSynced() { env.calls.push('markSynced'); }",
+      "async function getCachedListRecord() { return env.stored; }",
+      constantText("LIST_READ_AGAIN_AFTER"),
+      "var listReadAgainTimer = null;",
+      functionText("readListAgainSoon"),
       called("fetchUndoState"),
       env.ownSockets
         ? functionText("connectWebSocket")
@@ -281,6 +306,8 @@ function page(options) {
       "  connectionNotice: connectionNotice,",
       "  savedWhen: savedWhen,",
       "  apiAnswer: apiAnswer,",
+      "  refreshCurrentList: refreshCurrentList,",
+      "  showLoginScreen: showLoginScreen,",
       "  startPage: startPage,",
       "  connectWebSocket: connectWebSocket,",
       "  scheduleReconnect: scheduleReconnect,",
@@ -1155,4 +1182,201 @@ test("back in view without a WebSocket, one is opened", () => {
   made.pageViewChanged();
   assert.equal(made.env.sockets.length, 1);
   assert.ok(made.env.calls.includes("startPolling"));
+});
+
+// --- Stored tasks under a page that counts the server as there ---
+
+function list(ids, headers) {
+  return new Response(
+    JSON.stringify({ items: ids.map((id) => ({ id: id })) }),
+    { status: 200, headers: headers || {} },
+  );
+}
+
+// Lets what was waiting on a promise go on.
+const settled = () => new Promise((resolve) => setImmediate(resolve));
+
+test("the server's own tasks are not read again", async () => {
+  let reads = 0;
+  const made = page({
+    ownRefresh: true,
+    fetch: async () => {
+      reads += 1;
+      return list(["new"]);
+    },
+  });
+  await made.refreshCurrentList();
+  assert.deepEqual(made.env.drawn, ["new"]);
+  assert.ok(made.env.calls.includes("markSynced"));
+  made.env.advance(60000);
+  await settled();
+  assert.equal(reads, 1);
+});
+
+test("stored tasks that leave the server silent are not read again here", async () => {
+  // The notice shows, and the tries for a silent server take over.
+  const made = page({
+    ownRefresh: true,
+    fetch: async () => list(["old"], FROM_STORE),
+  });
+  await made.refreshCurrentList();
+  assert.equal(made.connected(), false);
+  assert.deepEqual(made.env.drawn, ["old"]);
+  assert.equal(made.env.calls.includes("markSynced"), false);
+  assert.equal(made.env.calls.includes("cacheListItems"), false);
+  // Nothing is set to read it again.
+  assert.equal(
+    made.env.timers.some((timer) => timer.at === 1000),
+    false,
+  );
+  made.env.advance(60000);
+  await settled();
+  assert.deepEqual(made.env.drawn, ["old"]);
+});
+
+test("stored tasks under a page still counted as connected are read again", async () => {
+  // The service worker gave the stored list for a read the server was
+  // slow to answer; meanwhile the server said something else.
+  let give;
+  let reads = 0;
+  const made = page({
+    ownRefresh: true,
+    fetch: () =>
+      ++reads === 1
+        ? new Promise((resolve) => {
+            give = () => resolve(list(["old"], FROM_STORE));
+          })
+        : Promise.resolve(list(["new"])),
+  });
+  const first = made.refreshCurrentList();
+  made.serverAnswered(); // the greeting on a WebSocket just opened
+  give();
+  await first;
+  assert.equal(made.connected(), true);
+  assert.deepEqual(made.env.drawn, ["old"]);
+
+  made.env.advance(999);
+  await settled();
+  assert.equal(reads, 1);
+  made.env.advance(1);
+  await settled();
+  assert.equal(reads, 2);
+  assert.deepEqual(made.env.drawn, ["old", "new"]);
+  assert.ok(made.env.calls.includes("markSynced"));
+  // And that is the end of it.
+  made.env.advance(60000);
+  await settled();
+  assert.equal(reads, 2);
+});
+
+test("they are read again for as long as stored ones come back", async () => {
+  let reads = 0;
+  let heard = () => {};
+  const made = page({
+    ownRefresh: true,
+    fetch: async () => {
+      reads += 1;
+      heard(); // the server says something else during each read
+      return reads < 4 ? list(["old"], FROM_STORE) : list(["new"]);
+    },
+  });
+  heard = () => made.serverAnswered();
+  await made.refreshCurrentList();
+  for (let i = 0; i < 5; i++) {
+    made.env.advance(1000);
+    await settled();
+  }
+  assert.equal(reads, 4);
+  assert.equal(made.env.drawn[made.env.drawn.length - 1], "new");
+});
+
+test("a read given up under a page still counted as connected is made again", async () => {
+  let reads = 0;
+  const hangs = noAnswer([]);
+  const made = page({
+    ownRefresh: true,
+    fetch: (url, opts) =>
+      ++reads === 1 ? hangs(url, opts) : Promise.resolve(list(["new"])),
+  });
+  const first = made.refreshCurrentList();
+  made.env.advance(5000);
+  made.serverAnswered();
+  made.env.advance(5000);
+  await first;
+  assert.equal(made.connected(), true);
+  // What the device kept is shown meanwhile.
+  assert.deepEqual(made.env.drawn, ["kept"]);
+  made.env.advance(1000);
+  await settled();
+  assert.deepEqual(made.env.drawn, ["kept", "new"]);
+});
+
+test("a list the server refuses is not asked for again", async () => {
+  for (const status of [401, 404, 500]) {
+    let reads = 0;
+    const made = page({
+      ownRefresh: true,
+      fetch: async () => {
+        reads += 1;
+        return answer({}, status);
+      },
+    });
+    await made.refreshCurrentList();
+    made.env.advance(60000);
+    await settled();
+    assert.equal(reads, 1, "after a " + status);
+  }
+});
+
+test("the PIN screen is not brought up again by a read that was waiting", async () => {
+  let reads = 0;
+  let heard = () => {};
+  const made = page({
+    ownRefresh: true,
+    fetch: async () => {
+      reads += 1;
+      heard();
+      return list(["old"], FROM_STORE);
+    },
+  });
+  heard = () => made.serverAnswered();
+  await made.refreshCurrentList();
+  // The list is due to be read again in a second.
+  assert.ok(made.env.timers.some((timer) => timer.at === 1000));
+  made.showLoginScreen();
+  made.env.advance(60000);
+  await settled();
+  assert.equal(reads, 1);
+});
+
+test("a WebSocket that opens while the list comes from the store ends with the server's list", async () => {
+  // The server is back: the WebSocket opens and greets, but the read
+  // it starts is answered from the store first.
+  let give;
+  let reads = 0;
+  const made = page({
+    connected: false,
+    ownSockets: true,
+    ownRefresh: true,
+    fetch: (url) => {
+      if (url !== "/api/lists/list-1") return Promise.resolve(answer());
+      return ++reads === 1
+        ? new Promise((resolve) => {
+            give = () => resolve(list(["old"], FROM_STORE));
+          })
+        : Promise.resolve(list(["new"]));
+    },
+  });
+  made.connectWebSocket();
+  const opened = made.env.sockets[0];
+  opened.opens();
+  opened.says({ event: "hello", page_version: "" });
+  give();
+  await settled();
+  assert.equal(made.connected(), true);
+  assert.deepEqual(made.env.drawn, ["old"]);
+  made.env.advance(1000);
+  await settled();
+  assert.equal(made.connected(), true);
+  assert.equal(made.env.drawn[made.env.drawn.length - 1], "new");
 });

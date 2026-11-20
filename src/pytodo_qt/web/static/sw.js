@@ -15,6 +15,21 @@ var DATA_CACHE = "pytodo-data";
 // milliseconds; "0" when it is not known. The server sends neither.
 var SOURCE_HEADER = "X-Pytodo-Source";
 var STORED_AT_HEADER = "X-Pytodo-Stored-At";
+// How long an API read waits for the server before the stored answer
+// is given in its place, in milliseconds. A server that is away
+// without refusing the connection, a computer put to sleep, a device
+// on another network, keeps a request waiting for a minute and more.
+// Shorter than the page's own deadlines for a read (app.js), so that
+// the page gets the stored answer and not a read given up.
+var STORED_AFTER = 3000;
+// After a read that had to be answered from the store the server is
+// taken for slow for SLOW_FOR milliseconds, and a read in that time
+// waits STORED_SOON_AFTER only: a page that starts without the server
+// reads several things in turn. Not no wait at all: a server that is
+// back answers well within it, and its answer is then the one given.
+var STORED_SOON_AFTER = 300;
+var SLOW_FOR = 10000;
+var slowUntil = 0;
 var STATIC_ASSETS = [
   "/",
   "/static/style.css",
@@ -132,29 +147,69 @@ async function cacheFirst(request) {
 }
 
 // The server's answer, stored on its way to the page; or, when the
-// server gives none, the answer last stored, marked as such. The page
-// takes an unmarked answer for the server's, and tells the person when
-// it has none.
+// server gives none, or none in time, the answer last stored, marked
+// as such. The page takes an unmarked answer for the server's, and
+// tells the person when it has none.
 async function networkFirst(event) {
   var request = event.request;
-  var response;
-  try {
-    response = await fetch(request);
-  } catch (_) {
-    var cache = await caches.open(DATA_CACHE);
-    var stored = await cache.match(request);
-    return stored ? fromStore(stored) : nothingStored();
-  }
-  if (response.ok) {
-    // Kept alive until the answer is stored: the page has its copy
-    // before that.
-    event.waitUntil(
-      store(request, response.clone()).catch(function () {
-        /* a full store: the answer still reaches the page */
+  var asked = fetch(request);
+  // Whatever is given to the page, the server's answer is stored when
+  // it comes, and the worker is kept alive until then: a stored answer
+  // given in its place is then the newer one next time.
+  event.waitUntil(
+    asked
+      .then(function (response) {
+        // The server answers: it is not slow, or no longer.
+        slowUntil = 0;
+        if (response.ok) return store(request, response.clone());
+      })
+      .catch(function () {
+        /* no answer, or a full store: the page has been answered */
       }),
-    );
+  );
+
+  // A store that cannot be read is as good as empty: the read is the
+  // server's to answer.
+  var stored;
+  try {
+    var cache = await caches.open(DATA_CACHE);
+    stored = await cache.match(request);
+  } catch (_) {
+    stored = undefined;
   }
-  return response;
+  if (!stored) {
+    // Nothing to give in its place: the read waits for the server.
+    try {
+      return await asked;
+    } catch (_) {
+      return nothingStored();
+    }
+  }
+
+  var late = {};
+  var timer;
+  var first;
+  try {
+    first = await Promise.race([
+      asked,
+      new Promise(function (resolve) {
+        timer = setTimeout(
+          function () {
+            resolve(late);
+          },
+          Date.now() < slowUntil ? STORED_SOON_AFTER : STORED_AFTER,
+        );
+      }),
+    ]);
+  } catch (_) {
+    // Refused, or no network: there is nothing to wait for.
+    clearTimeout(timer);
+    return fromStore(stored);
+  }
+  clearTimeout(timer);
+  if (first !== late) return first;
+  slowUntil = Date.now() + SLOW_FOR;
+  return fromStore(stored);
 }
 
 // Stores an answer with the time it was stored.

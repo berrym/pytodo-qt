@@ -172,13 +172,18 @@ STEP_SILENT = """\
 Step 5: the server falls silent. It keeps its connections and answers
 nothing, as a computer put to sleep does.
 
-  Keep the page open and in view, and press Enter here.
-  - Within 20 seconds the notice appears at the top:
-      Can't reach the server. Showing data saved at <the time>.
-    The dot by the title is red.
-  - This terminal prints nothing while the server is silent.
+  1. Keep the page open and in view, and press Enter here.
+     - Within 20 seconds the notice appears at the top:
+         Can't reach the server. Showing data saved at <the time>.
+       The dot by the title is red.
+     - This terminal prints nothing while the server is silent.
+  2. Close the page (or the browser tab) and open the same address
+     again.
+     - Within about 5 seconds the page shows the three tasks and the
+       notice. A request to a silent server waits; the stored tasks
+       are shown in its place after 3 seconds.
 
-  Press Enter now, and once more when the notice has appeared."""
+  Press Enter now, and once more when 2 is done."""
 
 STEP_ANSWERS = """\
   The server answers again.

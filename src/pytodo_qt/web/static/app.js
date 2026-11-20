@@ -412,6 +412,10 @@
     if (loginError) loginError.textContent = "";
     stopPolling();
     disconnectWebSocket();
+    // A read of the list under way would bring this screen up again
+    // and empty what is being typed into it.
+    clearTimeout(listReadAgainTimer);
+    listReadAgainTimer = null;
   }
 
   function hideLoginScreen() {
@@ -7417,6 +7421,7 @@
       // Refresh list selector counts
       await refreshLists();
       if (fromServer) markSynced();
+      else readListAgainSoon();
     } catch (e) {
       console.error("Failed to load list:", e);
       // Fall back to IndexedDB cache
@@ -7424,7 +7429,29 @@
       serverItems = (record && record.items) || [];
       setDataSavedAt((record && record.savedAt) || 0);
       showQueuedChanges();
+      // Not after a refusal of the server's own, a token it rejects or
+      // a list it no longer has: asking again changes nothing there.
+      if (e.status === undefined) readListAgainSoon();
     }
+  }
+
+  // The tasks on screen are stored ones. That is as it should be while
+  // the server is taken for silent, and the notice says so. But a
+  // stored answer can reach a page that goes on counting the server as
+  // there: the service worker gives one for a read the server is slow
+  // to answer, and by then the server has said something else, the
+  // greeting on a WebSocket that has just opened for one. Nothing would
+  // read the list again, and stored tasks would stand as current under
+  // a green dot. The list is therefore read again shortly, for as long
+  // as that is so.
+  var LIST_READ_AGAIN_AFTER = 1000;
+  var listReadAgainTimer = null;
+  function readListAgainSoon() {
+    if (!serverConnected || listReadAgainTimer !== null) return;
+    listReadAgainTimer = setTimeout(function () {
+      listReadAgainTimer = null;
+      if (serverConnected) refreshCurrentList();
+    }, LIST_READ_AGAIN_AFTER);
   }
 
   // ====================================================================
