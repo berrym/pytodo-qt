@@ -1181,33 +1181,132 @@
   }
 
   var replayRunning = false;
+  // A run was asked for while one was under way.
+  var replayAskedFor = false;
 
-  // Sends the queued changes. One run at a time: the browser coming
-  // back online and the WebSocket reopening both ask for it.
+  // The lock every open copy of the page holds while it sends the
+  // queue: a second tab or window, or the page of a tab closed a moment
+  // ago, reads the same stored queue, and two that sent at the same
+  // time would both read the same change as the next and both send it.
+  var QUEUE_LOCK = "pytodo-queue-send";
+
+  // Runs with the lock held, once it is free: at once without the Web
+  // Locks API, as before there was a lock. The browser frees the lock
+  // of a copy that is closed.
+  function withQueueLock(run) {
+    var locks = navigator.locks;
+    if (!locks || typeof locks.request !== "function") return run();
+    return locks.request(QUEUE_LOCK, run);
+  }
+
+  // Sends the queued changes. One run at a time in this copy of the
+  // page, and across the copies one at a time by the lock. The server
+  // being found again, a WebSocket opening and the queue's own tries
+  // all ask for it; a run asked for while one is under way follows
+  // when that one ends, since what it was asked for may have come
+  // after the run had passed it.
   async function replayOfflineQueue() {
-    if (replayRunning || getOfflineQueue().length === 0) return;
+    if (replayRunning) {
+      replayAskedFor = true;
+      return;
+    }
+    if (getOfflineQueue().length === 0) return;
     replayRunning = true;
+    var result = null;
+    var asStored = JSON.stringify(getOfflineQueue());
     try {
-      // The server is asked first, with a read. A browser that found
-      // the server gone remembers it: Firefox then fails a change at
-      // once, without trying the server, until a read has reached it
-      // again. A WebSocket that opens is no such read.
-      await serverFetch(
-        API + "/status",
-        { cache: "no-store", headers: authHeaders() },
-        PROBE_DEADLINE,
-      );
-      await sendQueuedChanges();
+      result = await withQueueLock(async function () {
+        // Read again now that the lock is held: another copy may have
+        // sent the queue while this one waited, or the server may have
+        // fallen silent.
+        if (!serverConnected || getOfflineQueue().length === 0) return null;
+        // The server is asked first, with a read. A browser that found
+        // the server gone remembers it: Firefox then fails a change at
+        // once, without trying the server, until a read has reached it
+        // again. A WebSocket that opens is no such read.
+        await serverFetch(
+          API + "/status",
+          { cache: "no-store", headers: authHeaders() },
+          PROBE_DEADLINE,
+        );
+        return await sendQueuedChanges();
+      });
     } catch (e) {
       /* no answer to the read: the changes stay queued */
+    }
+    try {
+      // With the lock given back: the list is read here, and a server
+      // that is slow to answer that must not keep another copy waiting.
+      if (result) {
+        await showQueueRun(result);
+      } else if (JSON.stringify(getOfflineQueue()) !== asStored) {
+        // Another copy sent the queue while this one waited for the
+        // lock. This copy did not follow the stored queue meanwhile
+        // (followStoredQueue leaves the list to the end of a run), so
+        // the list is read now.
+        await refreshCurrentList();
+      }
+    } catch (e) {
+      /* the list could not be read; the run has ended all the same */
     } finally {
       replayRunning = false;
-      // What is left is tried again; an empty queue starts the waits
-      // short the next time.
-      sendQueueAgainSoon();
+      var again = replayAskedFor;
+      replayAskedFor = false;
+      if (
+        again &&
+        serverConnected &&
+        !pinScreenUp &&
+        getOfflineQueue().length > 0
+      ) {
+        replayOfflineQueue();
+      } else {
+        // What is left is tried again; an empty queue starts the waits
+        // short the next time.
+        sendQueueAgainSoon();
+      }
     }
   }
 
+  // The queued change that is on its way to the server, where it can
+  // be given up: its AbortController.
+  var queuedSend = null;
+
+  // The server has fallen silent with a queued change on its way to
+  // it. The change is given up, and stays queued: its run ends, and the
+  // lock goes to whichever copy sends next. Without this the run would
+  // hold the lock for as long as the browser lets the request wait,
+  // which is a minute and more.
+  function giveUpQueuedSend() {
+    if (queuedSend) queuedSend.abort();
+  }
+
+  // How long a queued change is on its way before the server is asked
+  // whether it is there, in milliseconds; after that it is asked again
+  // each time the question before has had its time (PROBE_DEADLINE).
+  //
+  // A page in view asks over its WebSocket at intervals, and so learns
+  // that the server has fallen silent. A page out of view asks nothing,
+  // and one without a WebSocket only reads its list: a change sent from
+  // such a page would wait, and hold the lock, for as long as the
+  // browser lets it. The question is therefore put for the change
+  // itself. With no answer the server is taken for silent as after any
+  // read (serverDoubted), and the change is given up: 11 s at most
+  // after it was sent.
+  var QUEUED_SEND_ASKED_AFTER = 3000;
+  var queuedSendWatch = null;
+
+  function watchQueuedSend(wait) {
+    clearTimeout(queuedSendWatch);
+    queuedSendWatch = setTimeout(function () {
+      queuedSendWatch = null;
+      probeServer();
+      watchQueuedSend(PROBE_DEADLINE);
+    }, wait);
+  }
+
+  // Sends the queue, change by change, and resolves to what became of
+  // the run: how many changes the server refused as conflicts, and how
+  // many it would not apply.
   async function sendQueuedChanges() {
     var count = getOfflineQueue().length;
     showToast(
@@ -1230,12 +1329,29 @@
         opts = QueueRules.withUpdatedAt(opts, latest[itemId]);
       }
       opts = Object.assign({}, opts, { headers: authHeaders(opts.headers) });
+      // A change that is given up may have reached the server, and is
+      // sent again later. For a tick, an edit, a move or a delete that
+      // does no harm: the server refuses the second as out of date, or
+      // as gone. A task added a second time is a second task, so an
+      // add is not given up, and waits for as long as the browser lets
+      // it (#117).
+      var givenUp = null;
+      if (QueueRules.kindOf(entry) !== "add") {
+        givenUp = new AbortController();
+        opts.signal = givenUp.signal;
+      }
       var resp;
+      queuedSend = givenUp;
+      if (givenUp) watchQueuedSend(QUEUED_SEND_ASKED_AFTER);
       try {
         resp = await serverFetch(API + entry.path, opts);
       } catch (e) {
         // No answer: the rest would fail in the same way.
         break;
+      } finally {
+        queuedSend = null;
+        clearTimeout(queuedSendWatch);
+        queuedSendWatch = null;
       }
       var outcome = QueueRules.replyOutcome(resp.status);
       if (outcome === "kept") {
@@ -1256,6 +1372,13 @@
         }
       }
     }
+    return { conflicts: conflicts, refused: refused };
+  }
+
+  // Says what became of a run that sent the queue, and reads the list.
+  async function showQueueRun(result) {
+    var conflicts = result.conflicts;
+    var refused = result.refused;
     var remaining = getOfflineQueue().length;
     if (conflicts > 0) {
       showToast(
@@ -1326,6 +1449,7 @@
     if (!serverConnected) return;
     serverConnected = false;
     showConnection();
+    giveUpQueuedSend();
     if (appReady && !pinScreenUp) waitForServer();
   }
 
@@ -7392,12 +7516,17 @@
   async function undoQueuedDelete(step, itemId, name) {
     // A run that is sending the queue may have the delete on its way to
     // the server; which of the two applies is known when the run ends.
+    // A run of this copy is waited for here; one of another copy by
+    // the lock, under which the step is taken back.
     while (replayRunning) {
       await new Promise(function (resolve) {
         setTimeout(resolve, 100);
       });
     }
-    if (takeBackQueuedStep(step)) {
+    var takenBack = await withQueueLock(async function () {
+      return takeBackQueuedStep(step);
+    });
+    if (takenBack) {
       showToast(name + " restored");
     } else {
       await restoreDeletedItem(itemId, name);

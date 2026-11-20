@@ -342,6 +342,11 @@ function page(options) {
         ? functionText("replayOfflineQueue")
         : called("replayOfflineQueue"),
       "var replayRunning = false;",
+      "var replayAskedFor = false;",
+      constantText("QUEUE_LOCK"),
+      functionText("withQueueLock"),
+      called("giveUpQueuedSend"),
+      "async function showQueueRun(result) { env.calls.push('showQueueRun'); }",
       "var QueueRules = env.QueueRules;",
       "function getOfflineQueue() { return env.queue || []; }",
       "function enqueueOfflineEdit(path, opts) { env.queue.push({ path: path, opts: opts }); }",
@@ -441,6 +446,7 @@ function page(options) {
       "  hideLoginScreen: hideLoginScreen,",
       "  pinScreenUp: function () { return pinScreenUp; },",
       "  connectWebSocket: connectWebSocket,",
+      "  probeServer: probeServer,",
       "  scheduleReconnect: scheduleReconnect,",
       "  disconnectWebSocket: disconnectWebSocket,",
       "  pageViewChanged: pageViewChanged,",
@@ -535,10 +541,53 @@ test("the browser's word that the device is online is not an answer", async () =
 test("when the server stops answering nothing more is asked at intervals", () => {
   const made = page({ connected: true });
   made.serverSilent();
+  // A queued change on its way to the server is given up as well: its
+  // run would hold the lock on the queue for as long as it waited.
   assert.deepEqual(
     made.env.calls.filter((name) => !name.startsWith("update")),
-    ["stopPolling", "scheduleReconnect"],
+    ["giveUpQueuedSend", "stopPolling", "scheduleReconnect"],
   );
+});
+
+test("no answer to the question put for a queued change gives the change up", async () => {
+  // From a page out of view, which asks nothing over its WebSocket: the
+  // question is put for the change itself (watchQueuedSend).
+  const made = page({
+    connected: true,
+    ownSockets: true,
+    hidden: true,
+    fetch: noAnswer([]),
+  });
+  made.probeServer();
+  made.env.advance(4999);
+  await settled();
+  assert.equal(made.env.calls.includes("giveUpQueuedSend"), false);
+  made.env.advance(1);
+  await settled();
+  assert.equal(made.connected(), false);
+  assert.ok(made.env.calls.includes("giveUpQueuedSend"));
+});
+
+test("with a WebSocket open, no answer to that question is put to the WebSocket first", async () => {
+  // 5 s for the question and 3 s for the WebSocket: with the 3 s before
+  // the question, a change is given up 11 s at most after it was sent.
+  const made = connected({ hidden: true, fetch: noAnswer([]) });
+  made.probeServer();
+  made.env.advance(5000);
+  await settled();
+  assert.equal(made.env.calls.includes("giveUpQueuedSend"), false);
+  assert.deepEqual(made.env.sockets[0].sent, ["ping"]);
+  made.env.advance(2999);
+  assert.equal(made.env.calls.includes("giveUpQueuedSend"), false);
+  made.env.advance(1);
+  assert.equal(made.connected(), false);
+  assert.ok(made.env.calls.includes("giveUpQueuedSend"));
+});
+
+test("a server already taken for silent gives nothing up a second time", () => {
+  const made = page({ connected: false });
+  made.serverSilent();
+  assert.deepEqual(made.env.calls, []);
 });
 
 test("when the server answers again the queue is sent and the list read", () => {
@@ -2342,20 +2391,29 @@ test("the queue is sent after a read has reached the server, not before", async 
   assert.ok(made.env.calls.includes("sendQueuedChanges"));
 });
 
-test("with no answer to that read the queue stays, and can be sent later", async () => {
+test("with no answer to that read the queue stays, and is sent when the server is found again", async () => {
   let up = false;
+  let reads = 0;
   const made = page({
     ownQueue: true,
     queue: [{ path: "/items/1/toggle" }],
     fetch: async () => {
+      reads += 1;
       if (!up) throw new TypeError("Failed to fetch");
       return answer();
     },
   });
   await made.replayOfflineQueue();
   assert.equal(made.env.calls.includes("sendQueuedChanges"), false);
-  up = true;
+  assert.equal(made.connected(), false);
+  // A run asked for while the server is taken for silent asks nothing:
+  // the page is trying the server already, and sends when it answers.
   await made.replayOfflineQueue();
+  assert.equal(reads, 1);
+  up = true;
+  made.serverAnswered();
+  await settled();
+  await settled();
   assert.ok(made.env.calls.includes("sendQueuedChanges"));
 });
 

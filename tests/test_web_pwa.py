@@ -387,8 +387,14 @@ class TestOfflineQueueRules:
         assert js.count("QueueRules.replyOutcome(") == 2
 
     def test_one_replay_at_a_time(self):
+        """One run in a copy of the page, and one across the copies by a
+        lock (#78); what a run does is tested in tests/js/queue_send.test.js."""
         js = (STATIC_DIR / "app.js").read_text()
-        assert "if (replayRunning || getOfflineQueue().length === 0) return;" in js
+        run = js.split("async function replayOfflineQueue() {")[1].split("\n  }\n")[0]
+        assert run.index("if (replayRunning) {") < run.index("replayRunning = true;")
+        assert "await withQueueLock(async function () {" in run
+        lock = js.split("function withQueueLock(run) {")[1].split("\n  }\n")[0]
+        assert "return locks.request(QUEUE_LOCK, run);" in lock
 
     def test_changes_are_queued_in_one_place(self):
         """Every change that can be queued goes through sendOrQueue, so
@@ -1780,8 +1786,8 @@ class TestNoticeUndo:
         queued = delete.split('} else if (outcome === "queued") {')[1].split("} else if")[0]
         assert "undoQueuedDelete(step, itemId, name);" in queued
         body = self._function("undoQueuedDelete")
-        assert "if (takeBackQueuedStep(step)) {" in body
-        assert 'showToast(name + " restored");' in body
+        assert "return takeBackQueuedStep(step);" in body
+        assert body.index("if (takenBack) {") < body.index('showToast(name + " restored");')
 
     def test_queued_delete_that_has_been_sent_is_restored_by_the_server(self):
         """The server answered again while the notice was showing. A run
@@ -1991,6 +1997,10 @@ class TestServerNotReached:
     def test_the_page_goes_by_the_servers_answers(self):
         """tests/js/connection.test.js, run under Node."""
         self._node("connection.test.js")
+
+    def test_one_copy_of_the_page_sends_the_queue_at_a_time(self):
+        """tests/js/queue_send.test.js, run under Node (#78)."""
+        self._node("queue_send.test.js")
 
     def test_the_queue_is_stored_twice(self):
         """tests/js/queue_copies.test.js, run under Node (#77)."""
