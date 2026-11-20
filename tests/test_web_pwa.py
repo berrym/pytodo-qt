@@ -2064,8 +2064,8 @@ class TestServerNotReached:
     def test_an_open_socket_is_asked_whether_the_server_is_there(self):
         """An open WebSocket is not taken for a server that answers."""
         js = self._app()
-        assert "var WS_PING_INTERVAL = 15000;" in js
-        assert "var WS_PONG_DEADLINE = 5000;" in js
+        assert "var WS_PING_INTERVAL = 5000;" in js
+        assert "var WS_PONG_DEADLINE = 3000;" in js
         assert "var WS_CONNECT_DEADLINE = 10000;" in js
         connect = js.split("function connectWebSocket() {")[1].split("\n  function ")[0]
         opened = connect.split("socket.onopen = function () {")[1].split("};")[0]

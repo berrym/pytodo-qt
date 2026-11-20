@@ -69,6 +69,15 @@ function socket() {
   return made;
 }
 
+function numberOf(name) {
+  return Number(/\d+/.exec(constantText(name).split("=")[1])[0]);
+}
+
+// How often an open WebSocket is asked whether the server is there, and
+// how long the server has to say anything.
+const PING = numberOf("WS_PING_INTERVAL");
+const PONG = numberOf("WS_PONG_DEADLINE");
+
 // An element of the page, as far as the notice uses one.
 function element() {
   const made = {
@@ -218,6 +227,7 @@ function page(options) {
       "var serverAnswers = 0;",
       "var wsReconnectTimer = null;",
       "var wsConnectTimer = null;",
+      "var pollTimer = env.polling ? 1 : null;",
       "var AUTH_TOKEN_KEY = 'pytodo_auth_token';",
       "var localStorage = env.localStorage;",
       "var caches = env.caches;",
@@ -230,6 +240,7 @@ function page(options) {
       functionText("startPage"),
       "function onServerPageVersion(version) { env.calls.push('version ' + version); }",
       constantText("WS_MAX_DELAY"),
+      constantText("WS_MAX_DELAY_IN_VIEW"),
       constantText("WS_CONNECT_DEADLINE"),
       "var offlineBanner = env.banner;",
       "var offlineBannerText = env.text;",
@@ -630,7 +641,7 @@ test("an open socket is asked after the interval, and not before", () => {
   const open = socket();
   const made = page({ socket: open });
   made.waitToPing();
-  made.env.advance(14999);
+  made.env.advance(PING - 1);
   assert.deepEqual(open.sent, []);
   made.env.advance(1);
   assert.deepEqual(open.sent, ["ping"]);
@@ -640,7 +651,7 @@ test("a socket that says nothing by the deadline is given up", () => {
   const open = socket();
   const made = page({ socket: open });
   made.waitToPing();
-  made.env.advance(15000 + 4999);
+  made.env.advance(PING + PONG - 1);
   assert.equal(open.closed, false);
   assert.equal(made.connected(), true);
   made.env.advance(1);
@@ -660,15 +671,15 @@ test("anything the server says in time keeps the socket", () => {
   const open = socket();
   const made = page({ socket: open });
   made.waitToPing();
-  made.env.advance(15000);
+  made.env.advance(PING);
   // The page's onmessage starts the wait again for whatever arrives.
-  made.env.advance(3000);
+  made.env.advance(PONG - 1000);
   made.waitToPing();
-  made.env.advance(5000);
+  made.env.advance(PONG);
   assert.equal(open.closed, false);
   assert.equal(made.connected(), true);
   // And it is asked again an interval after that answer.
-  made.env.advance(10000);
+  made.env.advance(PING - PONG);
   assert.deepEqual(open.sent, ["ping", "ping"]);
 });
 
@@ -687,7 +698,7 @@ test("a page that goes out of view drops the question it had put", () => {
   const open = socket();
   const made = page({ socket: open });
   made.waitToPing();
-  made.env.advance(15000);
+  made.env.advance(PING);
   assert.deepEqual(open.sent, ["ping"]);
   made.stopPinging();
   made.env.advance(600000);
@@ -700,7 +711,7 @@ test("back in view, the server is asked at once", () => {
   const made = page({ socket: open });
   made.pingServer();
   assert.deepEqual(open.sent, ["ping"]);
-  made.env.advance(5000);
+  made.env.advance(PONG);
   assert.equal(open.closed, true);
   assert.equal(made.connected(), false);
 });
@@ -732,7 +743,7 @@ test("a socket replaced meanwhile is not given up for the old one", () => {
   made.pingServer();
   const next = socket();
   made.replaceSocket(next);
-  made.env.advance(5000);
+  made.env.advance(PONG);
   assert.equal(next.closed, false);
   assert.equal(made.socket(), next);
   assert.equal(made.connected(), true);
@@ -931,39 +942,39 @@ test("a WebSocket that opens is the server's answer, and is asked after the inte
   assert.equal(made.connected(), true);
   assert.ok(made.env.calls.includes("stopPolling"));
   assert.ok(made.env.calls.includes("replayOfflineQueue"));
-  made.env.advance(15000);
+  made.env.advance(PING);
   assert.deepEqual(opened.sent, ["ping"]);
 });
 
 test("the server's answer to the question keeps the WebSocket", () => {
   const made = connected();
   const open = made.env.sockets[0];
-  made.env.advance(15000);
-  made.env.advance(4000);
+  made.env.advance(PING);
+  made.env.advance(PONG - 1000);
   open.says({ event: "pong" });
-  made.env.advance(5000);
+  made.env.advance(PONG);
   assert.equal(open.closed, false);
   assert.equal(made.socket(), open);
   assert.equal(made.connected(), true);
   // Asked again an interval after the answer.
-  made.env.advance(10000);
+  made.env.advance(PING - PONG);
   assert.deepEqual(open.sent, ["ping", "ping"]);
 });
 
 test("anything else the server sends counts as its answer too", () => {
   const made = connected();
   const open = made.env.sockets[0];
-  made.env.advance(15000);
+  made.env.advance(PING);
   open.says({ event: "refresh" });
   assert.ok(made.env.calls.includes("refreshCurrentList"));
-  made.env.advance(5000);
+  made.env.advance(PONG);
   assert.equal(open.closed, false);
 });
 
 test("no answer to the question: the WebSocket is given up and another tried", () => {
   const made = connected({ fetch: noAnswer([]) });
   const dead = made.env.sockets[0];
-  made.env.advance(20000);
+  made.env.advance(PING + PONG);
   assert.equal(made.connected(), false);
   assert.equal(made.env.banner.hidden, false);
   assert.equal(dead.closed, true);
@@ -1021,8 +1032,14 @@ test("a WebSocket that has not opened by its deadline is closed", () => {
 
 test("a WebSocket that opened in time is left alone at that deadline", () => {
   const made = connected();
-  made.env.advance(10000);
-  assert.equal(made.env.sockets[0].closed, false);
+  const open = made.env.sockets[0];
+  // The server goes on answering meanwhile.
+  for (let passed = 0; passed < 10000; passed += 2000) {
+    made.env.advance(2000);
+    open.says({ event: "pong" });
+  }
+  assert.equal(open.closed, false);
+  assert.equal(made.socket(), open);
 });
 
 test("an old WebSocket's late close does not disturb the one after it", () => {
@@ -1035,13 +1052,13 @@ test("an old WebSocket's late close does not disturb the one after it", () => {
   second.opens();
   late();
   assert.equal(made.socket(), second);
-  made.env.advance(15000);
+  made.env.advance(PING);
   assert.deepEqual(second.sent, ["ping"]);
 });
 
 // --- Trying again while the server is silent ---
 
-test("a silent server is asked after 1, 2, 4 ... seconds, at most every 30", () => {
+test("a silent server is asked after 1, 2 and 4 seconds, then every 5 while the page is in view", () => {
   // The WebSocket never opens and no request is answered.
   const asked = [];
   const hangs = noAnswer([]);
@@ -1055,7 +1072,7 @@ test("a silent server is asked after 1, 2, 4 ... seconds, at most every 30", () 
   });
   made.scheduleReconnect();
   made.env.advance(200000);
-  assert.deepEqual(asked.slice(0, 8), [1, 3, 7, 15, 31, 61, 91, 121]);
+  assert.deepEqual(asked.slice(0, 8), [1, 3, 7, 12, 17, 22, 27, 32]);
   // A WebSocket that hangs while it connects is closed at its deadline,
   // and another is opened at the next try.
   assert.ok(made.env.sockets.length >= 5, made.env.sockets.length + " tried");
@@ -1063,6 +1080,136 @@ test("a silent server is asked after 1, 2, 4 ... seconds, at most every 30", () 
     made.env.sockets.filter((tried) => !tried.closed).length <= 1,
     true,
   );
+});
+
+test("out of view the waits go on doubling, up to 30 seconds", () => {
+  // The browser holds a hidden page's timers back anyway.
+  const asked = [];
+  const hangs = noAnswer([]);
+  const made = page({
+    connected: false,
+    ownSockets: true,
+    hidden: true,
+    fetch: (url, opts) => {
+      asked.push(made.env.now / 1000);
+      return hangs(url, opts);
+    },
+  });
+  made.scheduleReconnect();
+  made.env.advance(200000);
+  assert.deepEqual(asked.slice(0, 8), [1, 3, 7, 15, 31, 61, 91, 121]);
+});
+
+test("back in view the tries start short again", () => {
+  const asked = [];
+  const hangs = noAnswer([]);
+  const made = page({
+    connected: false,
+    ownSockets: true,
+    hidden: true,
+    fetch: (url, opts) => {
+      if (url === "/api/status") asked.push(made.env.now / 1000);
+      return hangs(url, opts);
+    },
+  });
+  made.scheduleReconnect();
+  made.env.advance(100000); // tries at 1, 3, 7, 15, 31, 61 and 91; the next is due at 121
+  asked.length = 0;
+  made.env.document.hidden = false;
+  made.pageViewChanged();
+  // The try that was waiting is dropped: nothing is due at 121 s.
+  assert.equal(
+    made.env.timers.some((timer) => timer.at === 121000),
+    false,
+  );
+  made.env.advance(40000);
+  // From the return at 100 s: after 1, 2 and 4 seconds, then every 5,
+  // one try at a time.
+  assert.deepEqual(asked, [101, 103, 107, 112, 117, 122, 127, 132, 137]);
+});
+
+test("a page that goes out of view goes over to the long waits", () => {
+  // The common order on a phone: in view, the server falls silent, the
+  // phone is put away.
+  const asked = [];
+  const hangs = noAnswer([]);
+  const made = page({
+    connected: false,
+    ownSockets: true,
+    fetch: (url, opts) => {
+      if (url === "/api/status") asked.push(made.env.now / 1000);
+      return hangs(url, opts);
+    },
+  });
+  made.scheduleReconnect();
+  made.env.advance(30000);
+  made.env.document.hidden = true;
+  made.pageViewChanged();
+  made.env.advance(100000);
+  assert.deepEqual(asked, [1, 3, 7, 12, 17, 22, 27, 32, 62, 92, 122]);
+});
+
+// A page in view whose server answers over HTTP while no WebSocket can
+// be opened: each one made is closed at once. Returns the page and the
+// times, in seconds, at which WebSockets were made.
+function noWebSocket(options) {
+  const made = page(
+    Object.assign({ ownSockets: true, fetch: async () => answer() }, options),
+  );
+  const times = [];
+  made.runFor = (milliseconds) => {
+    for (let passed = 0; passed <= milliseconds; passed += 100) {
+      for (const tried of made.env.sockets) {
+        if (tried.readyState === 0) {
+          times.push(Math.round(made.env.now / 100) / 10);
+          tried.closes();
+        }
+      }
+      if (passed < milliseconds) made.env.advance(100);
+    }
+  };
+  made.connectWebSocket();
+  return { made: made, times: times };
+}
+
+test("a server that answers while no WebSocket opens is tried at the long waits", () => {
+  // The short waits are for a silent server: here the list is read at
+  // intervals meanwhile, and every try is a request to a healthy server.
+  const { made, times } = noWebSocket();
+  made.runFor(100000);
+  assert.deepEqual(times, [0, 1, 3, 7, 15, 31, 61, 91]);
+  assert.equal(made.connected(), true);
+});
+
+test("the reads at intervals keep their beat through those tries", () => {
+  const { made } = noWebSocket({ polling: true });
+  made.runFor(40000);
+  assert.equal(made.env.calls.includes("startPolling"), false);
+  const { made: idle } = noWebSocket();
+  idle.runFor(1000);
+  assert.ok(idle.env.calls.includes("startPolling"));
+});
+
+test("when that server falls silent the tries start short again", () => {
+  const { made, times } = noWebSocket();
+  made.runFor(100000); // the next try is due at 121 s
+  times.length = 0;
+  made.serverSilent();
+  made.runFor(20000);
+  assert.deepEqual(times, [101, 103, 107, 112, 117]);
+});
+
+test("back in view while the server answers, the waits are not started over", () => {
+  const { made, times } = noWebSocket();
+  made.runFor(100000); // the next try is due at 121 s
+  times.length = 0;
+  made.env.document.hidden = true;
+  made.pageViewChanged();
+  made.env.document.hidden = false;
+  made.pageViewChanged();
+  made.runFor(40000);
+  // One try at once on the return, and the one that was waiting.
+  assert.deepEqual(times, [100, 121]);
 });
 
 test("each try asks the server over HTTP as well", () => {
@@ -1131,7 +1278,7 @@ test("once the server answers the tries end", async () => {
   const sockets = made.env.sockets.length;
   const requests = asked.length;
   // Up to the first question over the WebSocket nothing more is tried.
-  made.env.advance(14000);
+  made.env.advance(PING - 1000);
   assert.equal(made.env.sockets.length, sockets);
   assert.equal(asked.length, requests);
 });
@@ -1139,7 +1286,7 @@ test("once the server answers the tries end", async () => {
 test("a WebSocket closed on purpose leaves nothing behind", () => {
   const made = connected();
   const open = made.env.sockets[0];
-  made.env.advance(15000);
+  made.env.advance(PING);
   made.disconnectWebSocket();
   assert.equal(open.closed, true);
   assert.equal(made.socket(), null);
@@ -1153,7 +1300,7 @@ test("a WebSocket closed on purpose leaves nothing behind", () => {
 test("a page that goes out of view stops asking", () => {
   const made = connected();
   const open = made.env.sockets[0];
-  made.env.advance(15000);
+  made.env.advance(PING);
   made.env.document.hidden = true;
   made.pageViewChanged();
   made.env.advance(600000);
@@ -1173,7 +1320,7 @@ test("a page that comes back into view asks at once", () => {
   assert.deepEqual(open.sent, ["ping"]);
   assert.ok(made.env.calls.includes("refreshCurrentList"));
   // The server went while the page was out of view.
-  made.env.advance(5000);
+  made.env.advance(PONG);
   assert.equal(made.connected(), false);
 });
 
@@ -1379,4 +1526,13 @@ test("a WebSocket that opens while the list comes from the store ends with the s
   await settled();
   assert.equal(made.connected(), true);
   assert.equal(made.env.drawn[made.env.drawn.length - 1], "new");
+});
+
+// --- How quickly ---
+
+test("a server that falls silent is noticed within 8 seconds, one that is back within 5", () => {
+  assert.equal(PING, 5000);
+  assert.equal(PONG, 3000);
+  assert.equal(numberOf("WS_MAX_DELAY_IN_VIEW"), 5000);
+  assert.equal(numberOf("WS_MAX_DELAY"), 30000);
 });

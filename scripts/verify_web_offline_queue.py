@@ -381,7 +381,7 @@ Step 3: other changes. The server is still stopped.
 STEP_4 = """\
 Step 4: the changes are sent. The server is running again.
 
-  Leave the page open. Within about half a minute, without anything
+  Leave the page open. Within about 10 seconds, without anything
   being touched:
   - The notice at the top goes, and the dot is green.
   - A notice reads "All changes synced".

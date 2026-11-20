@@ -173,7 +173,7 @@ Step 5: the server falls silent. It keeps its connections and answers
 nothing, as a computer put to sleep does.
 
   1. Keep the page open and in view, and press Enter here.
-     - Within 20 seconds the notice appears at the top:
+     - Within 10 seconds the notice appears at the top:
          Can't reach the server. Showing data saved at <the time>.
        The dot by the title is red.
      - This terminal prints nothing while the server is silent.
@@ -187,7 +187,7 @@ nothing, as a computer put to sleep does.
 
 STEP_ANSWERS = """\
   The server answers again.
-  - Within half a minute the notice goes and the dot is green.
+  - Within 10 seconds the notice goes and the dot is green.
 
   Press Enter to stop."""
 

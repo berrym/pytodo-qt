@@ -901,6 +901,11 @@
   // tried again after a growing wait, and the server asked with it.
   function waitForServer() {
     stopPolling();
+    // The tries start short: a try left waiting from the time the
+    // server answered may be half a minute away.
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+    wsReconnectDelay = 1000;
     scheduleReconnect();
   }
 
@@ -7480,6 +7485,9 @@
   var wsReconnectTimer = null;
   var wsReconnectDelay = 1000;
   var WS_MAX_DELAY = 30000;
+  // The longest wait between tries while the page is in view: a server
+  // that is back is found within this, whenever it comes back.
+  var WS_MAX_DELAY_IN_VIEW = 5000;
   // How long a WebSocket may take to open, in milliseconds.
   var WS_CONNECT_DEADLINE = 10000;
   // An open WebSocket says nothing of a server that went away without
@@ -7487,8 +7495,8 @@
   // the page is in view the server is asked over the WebSocket every
   // WS_PING_INTERVAL milliseconds, and has WS_PONG_DEADLINE to say
   // anything at all.
-  var WS_PING_INTERVAL = 15000;
-  var WS_PONG_DEADLINE = 5000;
+  var WS_PING_INTERVAL = 5000;
+  var WS_PONG_DEADLINE = 3000;
   var wsConnectTimer = null;
   var wsPingTimer = null;
   var wsPongTimer = null;
@@ -7555,7 +7563,8 @@
       // Whether the server still answers is asked now, and shows after
       // that in what is asked of it at intervals.
       if (serverConnected) {
-        startPolling();
+        // Reads at intervals that are under way keep their beat.
+        if (!pollTimer) startPolling();
         probeServer();
       }
       scheduleReconnect();
@@ -7624,22 +7633,32 @@
   }
 
   // Tries the WebSocket again after the current wait, which doubles up
-  // to WS_MAX_DELAY. Not without a network: the "online" event starts
+  // to WS_MAX_DELAY_IN_VIEW while the server is silent and the page in
+  // view, and to WS_MAX_DELAY otherwise: out of view the browser holds
+  // timers back anyway. Not without a network: the "online" event starts
   // it again.
   function scheduleReconnect() {
     if (wsReconnectTimer || !navigator.onLine) return;
-    wsReconnectTimer = setTimeout(function () {
-      wsReconnectTimer = null;
-      connectWebSocket();
-      // Where a WebSocket is not let through, an answer over HTTP
-      // shows that the server is back. The server is tried again after
-      // this for as long as it does not answer, whatever becomes of
-      // the WebSocket.
-      if (!serverConnected) {
-        probeServer();
-        scheduleReconnect();
-      }
-    }, wsReconnectDelay);
+    // The short limit is for a silent server. One that answers while
+    // no WebSocket can be opened is read at intervals meanwhile, and a
+    // WebSocket is tried for at the long waits.
+    var longest =
+      document.hidden || serverConnected ? WS_MAX_DELAY : WS_MAX_DELAY_IN_VIEW;
+    wsReconnectTimer = setTimeout(
+      function () {
+        wsReconnectTimer = null;
+        connectWebSocket();
+        // Where a WebSocket is not let through, an answer over HTTP
+        // shows that the server is back. The server is tried again after
+        // this for as long as it does not answer, whatever becomes of
+        // the WebSocket.
+        if (!serverConnected) {
+          probeServer();
+          scheduleReconnect();
+        }
+      },
+      Math.min(wsReconnectDelay, longest),
+    );
     wsReconnectDelay = Math.min(wsReconnectDelay * 2, WS_MAX_DELAY);
   }
 
@@ -7671,6 +7690,13 @@
       } else {
         connectWebSocket();
         if (serverConnected) startPolling();
+      }
+      if (!serverConnected) {
+        // The waits grew long while the page was out of view.
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = null;
+        wsReconnectDelay = 1000;
+        scheduleReconnect();
       }
       // A calendar left on screen overnight moves to the new day.
       if (viewMode === "calendar" && calDateIsStale()) renderCalendar();
