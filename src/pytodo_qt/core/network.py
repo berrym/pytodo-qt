@@ -10,6 +10,8 @@ server (TLS certificate SAN) and the Mobile Access Wizard (QR URL).
 from __future__ import annotations
 
 import socket
+import subprocess
+import sys
 
 
 def get_preferred_address(family: socket.AddressFamily) -> str | None:
@@ -92,17 +94,42 @@ def get_lan_ip() -> str | None:
 
 
 def get_local_hostname() -> str | None:
-    """Return the mDNS .local hostname, or None."""
+    """Return the mDNS .local hostname, or None.
+
+    The name is the one the machine answers to over mDNS wherever it is.
+    The system's host name is not always that: macOS takes it from the
+    network it is on when that network gives one ("mac.lan",
+    "dhcp-10-1-2-3.example.com"), so it changes from one network to the
+    next. On macOS the name is therefore read from the system's own
+    setting for it; elsewhere it is the first label of the host name,
+    which is what the mDNS responder publishes.
+    """
+    name = _macos_local_hostname() if sys.platform == "darwin" else None
+    if not name:
+        try:
+            name = socket.gethostname().split(".")[0]
+        except OSError:
+            return None
+    if not name or name.lower() == "localhost":
+        return None
+    return f"{name}.local"
+
+
+def _macos_local_hostname() -> str | None:
+    """The name macOS answers to over mDNS, without ".local"; None when
+    the system does not say."""
     try:
-        hostname = socket.gethostname()
-        if hostname and hostname != "localhost":
-            # Strip any existing .local suffix
-            if hostname.endswith(".local"):
-                return hostname
-            return f"{hostname}.local"
-    except OSError:
-        pass
-    return None
+        result = subprocess.run(
+            ["/usr/sbin/scutil", "--get", "LocalHostName"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    name = result.stdout.strip()
+    return name if result.returncode == 0 and name else None
 
 
 def format_url(host: str, port: int) -> str:

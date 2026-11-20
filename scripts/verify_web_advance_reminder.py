@@ -43,18 +43,17 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from aiohttp import web
-from cryptography import x509
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from pytodo_qt.core import paths  # noqa: E402
+from pytodo_qt.core import network, paths  # noqa: E402
 from pytodo_qt.core.models import (  # noqa: E402
     Database,
     TodoItem,
     create_todo_item,
     create_todo_list,
 )
-from pytodo_qt.web.server import WebServer  # noqa: E402
+from pytodo_qt.web.server import WebServer, tls_context  # noqa: E402
 
 STEPS = """\
 The list shows five tasks, numbered 1 to 5 from the top. Tap or click a
@@ -129,27 +128,34 @@ def describe(item: TodoItem) -> str:
 
 
 def application_certificate() -> tuple[ssl.SSLContext, list[str]]:
-    """Return a TLS context using the application's web certificate,
-    and the host names and addresses that certificate covers."""
+    """Return a TLS context that presents the application's web
+    certificates as the application does, and the host name and
+    addresses the machine has now that those certificates cover."""
     config_dir = paths.get_config_dir()
     cert_path = config_dir / "web_cert.pem"
     key_path = config_dir / "web_key.pem"
+    host_cert_path = config_dir / "web_host_cert.pem"
+    host_key_path = config_dir / "web_host_key.pem"
     if not cert_path.exists() or not key_path.exists():
         sys.exit(
             f"No web certificate in {config_dir}. Start the application with its "
             "web interface enabled once, so that it creates one."
         )
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(str(cert_path), str(key_path))
+    context = tls_context(cert_path, key_path, host_cert_path, host_key_path)
 
-    names = x509.load_pem_x509_certificate(
-        cert_path.read_bytes()
-    ).extensions.get_extension_for_class(x509.SubjectAlternativeName)
-    hosts = [name for name in names.value.get_values_for_type(x509.DNSName) if name != "localhost"]
+    # The certificate for addresses lists the addresses it has had as
+    # well; only what the machine has now can be opened.
+    for_addresses = WebServer._certificate_names(cert_path) or ([], [])
+    for_host_name = WebServer._certificate_names(host_cert_path) or ([], [])
+    listed_names = {name.lower() for name in for_addresses[0] + for_host_name[0]}
+    hosts = []
+    host_name = network.get_local_hostname()
+    if host_name and host_name.lower() in listed_names:
+        hosts.append(host_name)
     hosts.extend(
-        str(address)
-        for address in names.value.get_values_for_type(x509.IPAddress)
-        if address.version == 4 and not address.is_loopback
+        address
+        for address in network.get_all_local_addresses()[0]
+        if address in for_addresses[1] and not address.startswith("127.")
     )
     return context, hosts
 

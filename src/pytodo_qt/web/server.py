@@ -26,6 +26,78 @@ if TYPE_CHECKING:
 
 logger = Logger(__name__)
 
+# How long a server certificate serves, in days. Apple's systems refuse
+# a server certificate that serves for more than 825 days, whoever
+# issued it.
+_CERTIFICATE_DAYS = 825
+# A server certificate is replaced when it has fewer days left than this.
+_RENEW_DAYS_BEFORE_END = 30
+# How many names, and how many addresses, a server certificate lists at
+# most.
+_NAMES_KEPT = 16
+
+
+def tls_context(
+    address_cert: Path, address_key: Path, host_cert: Path, host_key: Path
+) -> ssl.SSLContext:
+    """The TLS context that presents the certificate for the host name
+    to a browser that asks for the server by a name that certificate
+    lists, and the certificate for addresses otherwise."""
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(str(address_cert), str(address_key))
+    names = WebServer._certificate_names(host_cert) if host_key.exists() else None
+    if names and names[0]:
+        for_host_name = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        for_host_name.load_cert_chain(str(host_cert), str(host_key))
+        host_names = {name.lower() for name in names[0]}
+
+        def choose(
+            ssl_object: ssl.SSLObject | ssl.SSLSocket,
+            server_name: str | None,
+            _context: ssl.SSLContext,
+        ) -> None:
+            # A browser names the server it asks for unless it asks by
+            # address.
+            if server_name and server_name.lower() in host_names:
+                ssl_object.context = for_host_name
+
+        context.sni_callback = choose
+    return context
+
+
+def _public_bytes(public_key: Any) -> bytes:
+    """A public key in a form two of them can be compared in."""
+    from cryptography.hazmat.primitives import serialization
+
+    return public_key.public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+
+
+def _replace_file(path: Path, content: bytes) -> None:
+    """Write a file whole or not at all: a write cut short leaves the
+    file as it was."""
+    import os
+
+    temporary = path.with_name(path.name + ".new")
+    temporary.write_bytes(content)
+    os.replace(temporary, path)
+
+
+def _ipv4_only(addresses: list[str]) -> list[str]:
+    """The IPv4 addresses among addresses, in their order."""
+    import ipaddress
+
+    kept = []
+    for address in addresses:
+        try:
+            if ipaddress.ip_address(address).version == 4:
+                kept.append(address)
+        except ValueError:
+            continue
+    return kept
+
+
 _STATIC_DIR = Path(__file__).parent / "static"
 
 # Files the SPA cannot function without; validated at app creation so a
@@ -272,53 +344,130 @@ class WebServer:
         return self._device_store
 
     def _create_ssl_context(self) -> ssl.SSLContext | None:
-        """Create TLS context using a local CA and server certificate.
+        """Create the TLS context from a local CA and two server certificates.
 
         TLS is always enabled when a config_manager is available — there is
-        no opt-out. On first run, generates a root CA key/cert (stored
-        permanently) and a server cert signed by the CA with all detected
-        local IPs in the SAN. If the local IP changes, the server cert is
-        regenerated automatically.
+        no opt-out. On first run a root CA key and certificate are generated
+        and kept.
+
+        A browser that was let through by hand ("Quick Connect") accepted
+        one certificate for one address, and is turned away by any other
+        certificate until that is accepted in turn, which the page cannot
+        bring about. A certificate is therefore replaced only when it has
+        to be, and one certificate is kept apart for the host name:
+
+        - The certificate for the host name is presented to a browser
+          that asks for the server by that name. It does not list
+          addresses, so no change of address touches it.
+        - The certificate for addresses is presented otherwise. It lists
+          the IPv4 addresses the server is reached at and keeps those it
+          has listed before, so that going back to an earlier network
+          does not replace it. No IPv6 address is listed: the server does
+          not listen on one, and the one the system prefers is temporary
+          and is replaced about daily.
         """
         if not self._config_manager:
             return None  # Test mode — no certs possible
 
+        return tls_context(*self._ensure_certificates())
+
+    def _ensure_certificates(self) -> tuple[Path, Path, Path, Path]:
+        """Create or replace what is missing or no longer usable among the
+        CA and the two server certificates, and return the paths of the
+        certificate for addresses, its key, the certificate for the host
+        name and its key."""
+        assert self._config_manager is not None
+        from ..core.network import get_all_local_addresses, get_local_hostname
+
         cert_dir = self._config_manager.config_dir
         ca_cert_path = cert_dir / "ca_cert.pem"
         ca_key_path = cert_dir / "ca_key.pem"
-        srv_cert_path = cert_dir / "web_cert.pem"
-        srv_key_path = cert_dir / "web_key.pem"
+        address_cert = cert_dir / "web_cert.pem"
+        address_key = cert_dir / "web_key.pem"
+        host_cert = cert_dir / "web_host_cert.pem"
+        host_key = cert_dir / "web_host_key.pem"
 
-        # Ensure CA exists
         if not ca_cert_path.exists() or not ca_key_path.exists():
             self._generate_ca(ca_cert_path, ca_key_path)
         # Keys written by an earlier version are readable by every
         # account on the machine.
-        make_private(ca_key_path)
-        make_private(srv_key_path)
+        for key_path in (ca_key_path, address_key, host_key):
+            make_private(key_path)
 
-        # Ensure server cert exists and covers current IPs + hostname
-        from ..core.network import get_local_hostname
+        host_name = get_local_hostname()
+        dns_names = ["localhost"] + ([host_name] if host_name else [])
+        addresses = ["127.0.0.1"] + [
+            address for address in get_all_local_addresses()[0] if address != "127.0.0.1"
+        ]
 
-        local_ips = self._get_all_local_ips()
-        local_hostname = get_local_hostname()
-        required_dns = ["localhost"]
-        if local_hostname:
-            required_dns.append(local_hostname)
+        # The host name's certificate is looked at whenever there is one,
+        # with or without a host name at this start: it is presented for
+        # the names it lists either way.
+        host_names = [host_name] if host_name else []
+        has_host_files = host_cert.exists() or host_key.exists()
 
-        if not srv_cert_path.exists() or not srv_key_path.exists():
-            self._generate_server_cert(
-                ca_cert_path, ca_key_path, srv_cert_path, srv_key_path, local_ips
+        def faults() -> tuple[str | None, str | None]:
+            for_host = (
+                self._certificate_fault(host_cert, host_key, ca_cert_path, host_names, [])
+                if host_name or has_host_files
+                else None
             )
-        elif not self._cert_covers_san(srv_cert_path, local_ips, required_dns):
-            logger.log.info("Network config changed — regenerating server certificate")
-            self._generate_server_cert(
-                ca_cert_path, ca_key_path, srv_cert_path, srv_key_path, local_ips
+            for_addresses = self._certificate_fault(
+                address_cert, address_key, ca_cert_path, [], addresses
             )
+            return for_host, for_addresses
 
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        ctx.load_cert_chain(str(srv_cert_path), str(srv_key_path))
-        return ctx
+        host_fault, address_fault = faults()
+
+        # A version before this one had a single certificate. Browsers
+        # have accepted it for the host name, so it goes on being
+        # presented for that, whatever becomes of it for addresses below.
+        # The key is written first: a copy cut short leaves no
+        # certificate, and is made again at the next start.
+        if (
+            host_fault
+            and host_name
+            and not host_cert.exists()
+            and not self._certificate_fault(address_cert, address_key, ca_cert_path, host_names, [])
+        ):
+            write_private_file(host_key, address_key.read_bytes())
+            _replace_file(host_cert, address_cert.read_bytes())
+            host_fault = None
+
+        # A CA whose key is not its certificate's cannot issue anything
+        # that passes for its own: each start would replace the server
+        # certificates again. It is found out here, when one is due, and
+        # not before: until then what it issued earlier still serves.
+        if (host_fault or address_fault) and not self._ca_fits(ca_cert_path, ca_key_path):
+            logger.log.warning(
+                "The certificate authority's key is not its certificate's: making a new one"
+            )
+            self._new_certificate_authority(ca_cert_path, ca_key_path)
+            host_fault, address_fault = faults()
+
+        if host_fault:
+            before = self._certificate_names(host_cert) or ([], [])
+            logger.log.info("Server certificate for the host name replaced: %s", host_fault)
+            self._generate_server_cert(
+                ca_cert_path,
+                ca_key_path,
+                host_cert,
+                host_key,
+                [],
+                self._names_to_keep(before[0], dns_names),
+            )
+        if address_fault:
+            before = self._certificate_names(address_cert) or ([], [])
+            logger.log.info("Server certificate for addresses replaced: %s", address_fault)
+            self._generate_server_cert(
+                ca_cert_path,
+                ca_key_path,
+                address_cert,
+                address_key,
+                self._names_to_keep(_ipv4_only(before[1]), addresses),
+                self._names_to_keep(before[0], dns_names),
+            )
+        return address_cert, address_key, host_cert, host_key
 
     @property
     def ca_cert_path(self) -> Path | None:
@@ -329,31 +478,115 @@ class WebServer:
         return p if p.exists() else None
 
     @staticmethod
-    def _get_all_local_ips() -> list[str]:
-        """Detect all local IP addresses (IPv4 + IPv6) for the cert SAN."""
-        from ..core.network import get_all_local_addresses
+    def _ca_fits(ca_cert_path: Path, ca_key_path: Path) -> bool:
+        """Whether the CA's key is the one its certificate was made for."""
+        from cryptography import x509
+        from cryptography.hazmat.primitives import serialization
 
-        ipv4, ipv6 = get_all_local_addresses()
-        # Always include loopback
-        if "127.0.0.1" not in ipv4:
-            ipv4.insert(0, "127.0.0.1")
-        return sorted(set(ipv4 + ipv6))
+        try:
+            key = serialization.load_pem_private_key(ca_key_path.read_bytes(), password=None)
+            cert = x509.load_pem_x509_certificate(ca_cert_path.read_bytes())
+            return _public_bytes(key.public_key()) == _public_bytes(cert.public_key())
+        except Exception:
+            return False
+
+    def _new_certificate_authority(self, ca_cert_path: Path, ca_key_path: Path) -> None:
+        """Make a new CA, and count it: devices that installed the one
+        before are shown as needing the new one."""
+        self._generate_ca(ca_cert_path, ca_key_path)
+        if self._config:
+            self._config.ca_generation += 1
+        if self._config_manager:
+            self._config_manager.save()
 
     @staticmethod
-    def _cert_covers_san(cert_path: Path, required_ips: list[str], required_dns: list[str]) -> bool:
-        """Check if a certificate's SAN covers all required IPs and DNS names."""
+    def _certificate_names(cert_path: Path) -> tuple[list[str], list[str]] | None:
+        """The DNS names and the addresses a certificate lists, or None
+        for a certificate that cannot be read."""
         from cryptography import x509
 
         try:
             cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
-            san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
-            cert_ips = {str(ip) for ip in san.value.get_values_for_type(x509.IPAddress)}
-            cert_dns = set(san.value.get_values_for_type(x509.DNSName))
-            return all(ip in cert_ips for ip in required_ips) and all(
-                dns in cert_dns for dns in required_dns
+            san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+        except Exception:
+            return None
+        return (
+            list(san.get_values_for_type(x509.DNSName)),
+            [str(address) for address in san.get_values_for_type(x509.IPAddress)],
+        )
+
+    @staticmethod
+    def _certificate_fault(
+        cert_path: Path,
+        key_path: Path,
+        ca_cert_path: Path,
+        dns_names: list[str],
+        addresses: list[str],
+    ) -> str | None:
+        """Why a server certificate has to be replaced, or None when it
+        serves: it is there with the key it was made for, was issued by
+        the CA in use, has begun to serve and has more than
+        _RENEW_DAYS_BEFORE_END days left, and lists every name and
+        address given."""
+        import datetime
+
+        from cryptography import x509
+        from cryptography.hazmat.primitives import serialization
+
+        if not cert_path.exists() or not key_path.exists():
+            return "there is none"
+        try:
+            cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
+            san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+        except Exception:
+            return "it cannot be read"
+        # A certificate beside another's key, or beside a damaged one,
+        # stops the server at every start.
+        try:
+            key = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
+            if _public_bytes(key.public_key()) != _public_bytes(cert.public_key()):
+                return "its key is another certificate's"
+        except Exception:
+            return "its key cannot be read"
+        try:
+            cert.verify_directly_issued_by(
+                x509.load_pem_x509_certificate(ca_cert_path.read_bytes())
             )
         except Exception:
-            return False
+            return "it was issued by another certificate authority"
+        ends = getattr(cert, "not_valid_after_utc", None) or cert.not_valid_after.replace(
+            tzinfo=datetime.UTC
+        )
+        now = datetime.datetime.now(datetime.UTC)
+        begins = getattr(cert, "not_valid_before_utc", None) or cert.not_valid_before.replace(
+            tzinfo=datetime.UTC
+        )
+        if begins > now:
+            # Made while the machine's clock was ahead.
+            return "it does not serve yet"
+        left = ends - now
+        if left < datetime.timedelta(days=_RENEW_DAYS_BEFORE_END):
+            return f"it ends in {max(left.days, 0)} days"
+        listed_names = {name.lower() for name in san.get_values_for_type(x509.DNSName)}
+        listed_addresses = {str(address) for address in san.get_values_for_type(x509.IPAddress)}
+        for name in dns_names:
+            if name.lower() not in listed_names:
+                return "the host name is new to it"
+        for address in addresses:
+            if address not in listed_addresses:
+                return "an address is new to it"
+        return None
+
+    @staticmethod
+    def _names_to_keep(before: list[str], now: list[str]) -> list[str]:
+        """The names or addresses for a new certificate: those in use
+        now, and before them those the certificate it replaces listed,
+        the oldest dropped beyond _NAMES_KEPT. A browser that comes back
+        at an earlier name then meets a certificate that still lists it."""
+        current = {name.lower() for name in now}
+        earlier = [name for name in before if name.lower() not in current]
+        room = max(_NAMES_KEPT - len(now), 0)
+        return (earlier[-room:] if room else []) + list(now)
 
     @staticmethod
     def _generate_ca(ca_cert_path: Path, ca_key_path: Path) -> None:
@@ -415,8 +648,18 @@ class WebServer:
         srv_cert_path: Path,
         srv_key_path: Path,
         local_ips: list[str],
+        dns_names: list[str] | None = None,
+        days: int = _CERTIFICATE_DAYS,
     ) -> None:
-        """Generate a server certificate signed by the local CA."""
+        """Generate a server certificate signed by the local CA.
+
+        It lists dns_names, by default "localhost" and the machine's
+        host name, and the addresses in local_ips. It serves for days,
+        counted from a day ago: a device whose clock is behind this
+        machine's, or this machine after its own clock was set back by
+        some hours, would otherwise meet a certificate that does not
+        serve yet.
+        """
         import datetime
         import ipaddress as _ipa
 
@@ -436,14 +679,15 @@ class WebServer:
 
         srv_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
-        from ..core.network import get_local_hostname
+        if dns_names is None:
+            from ..core.network import get_local_hostname
 
-        san_entries: list[x509.GeneralName] = [x509.DNSName("localhost")]
-        # Add .local hostname for mDNS (IP-change resilient)
-        local_hostname = get_local_hostname()
-        if local_hostname:
-            san_entries.append(x509.DNSName(local_hostname))
-        # Add all local IPs (IPv4 + IPv6)
+            # The .local host name, for mDNS: it outlasts a change of address.
+            local_hostname = get_local_hostname()
+            dns_names = ["localhost"] + ([local_hostname] if local_hostname else [])
+
+        san_entries: list[x509.GeneralName] = [x509.DNSName(name) for name in dns_names]
+        begins = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)
         for ip_str in local_ips:
             with contextlib.suppress(ValueError):
                 san_entries.append(x509.IPAddress(_ipa.IPv4Address(ip_str)))
@@ -456,8 +700,8 @@ class WebServer:
             .issuer_name(ca_cert.subject)
             .public_key(srv_key.public_key())
             .serial_number(x509.random_serial_number())
-            .not_valid_before(datetime.datetime.now(datetime.UTC))
-            .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=365))
+            .not_valid_before(begins)
+            .not_valid_after(begins + datetime.timedelta(days=days))
             .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
             .sign(ca_key, hashes.SHA256())
@@ -470,12 +714,10 @@ class WebServer:
                 serialization.NoEncryption(),
             ),
         )
-        srv_cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-        san_names = ["localhost"]
-        if local_hostname:
-            san_names.append(local_hostname)
-        san_names.extend(local_ips)
-        logger.log.info("Generated server certificate (SAN: %s)", ", ".join(san_names))
+        _replace_file(srv_cert_path, cert.public_bytes(serialization.Encoding.PEM))
+        logger.log.info(
+            "Generated server certificate (SAN: %s)", ", ".join([*dns_names, *local_ips])
+        )
 
     def create_app(self) -> web.Application:
         """Create and configure the aiohttp application."""
@@ -567,20 +809,12 @@ class WebServer:
         if not self._config_manager:
             return False
         cert_dir = self._config_manager.config_dir
-        self._generate_ca(cert_dir / "ca_cert.pem", cert_dir / "ca_key.pem")
-        local_ips = self._get_all_local_ips()
-        self._generate_server_cert(
-            cert_dir / "ca_cert.pem",
-            cert_dir / "ca_key.pem",
-            cert_dir / "web_cert.pem",
-            cert_dir / "web_key.pem",
-            local_ips,
-        )
-        # Increment CA generation so wizard can detect stale devices
-        if self._config:
-            self._config.ca_generation += 1
-        if self._config_manager:
-            self._config_manager.save()
+        # Counted, so that the wizard can tell the devices that have the
+        # CA before this one.
+        self._new_certificate_authority(cert_dir / "ca_cert.pem", cert_dir / "ca_key.pem")
+        # No server certificate was issued by the new CA: each is
+        # replaced.
+        self._ensure_certificates()
         logger.log.info("Certificates regenerated — devices must reinstall CA cert")
         return True
 
