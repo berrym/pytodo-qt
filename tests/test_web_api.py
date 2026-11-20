@@ -5075,6 +5075,54 @@ class TestAuth:
 
 class TestPairing:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("named", "kept"),
+        [
+            ("planner.local:8080", "planner.local:8080"),
+            ("192.168.1.20:8080", "192.168.1.20:8080"),
+            ("planner.local", "planner.local"),
+            ("[fe80::1]:8080", "[fe80::1]:8080"),
+            # Not the plain form of an address: nothing is kept.
+            ("planner.local:8080/<b>x</b>", ""),
+            ("a b", ""),
+            ("x" * 300, ""),
+        ],
+    )
+    async def test_the_address_the_browser_named_is_kept_with_the_device(self, named, kept):
+        """It is where the device is sent back to (#113). The header is
+        the device's to write, and the address is shown on the desktop."""
+        ws, _ = _make_authed_client()
+        pin = ws.pairing_pin
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
+            resp = await client.post("/api/auth", json={"pin": pin}, headers={"Host": named})
+            assert resp.status == 200
+            token = (await resp.json())["token"]
+            assert ws.device_store is not None
+            device = ws.device_store.get_device_by_token(token)
+            assert device is not None
+            assert device.address == kept
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_the_address_to_come_back_by_sends_the_browser_to_the_page(self):
+        """Without a token: a browser sends none when it opens an
+        address. Not stored by the browser: it is asked for again each
+        time a device comes back."""
+        ws, _ = _make_authed_client()
+        client = TestClient(TestServer(ws.app))
+        await client.start_server()
+        try:
+            resp = await client.get("/reconnect", allow_redirects=False)
+            assert resp.status == 302
+            assert resp.headers["Location"] == "/"
+            assert resp.headers["Cache-Control"] == "no-store"
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
     async def test_pair_with_valid_pin(self):
         ws, _ = _make_authed_client()
         pin = ws.pairing_pin

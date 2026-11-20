@@ -7,6 +7,7 @@ a UI refresh is scheduled via QTimer.singleShot(0, ...).
 
 from __future__ import annotations
 
+import re
 import time as _time
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
@@ -106,7 +107,7 @@ async def auth_middleware(request: web.Request, handler: Callable[..., Any]) -> 
 
     # Public paths: static assets, login page, pairing endpoint, CA cert
     path = request.path
-    if path in ("/", "/sw.js", "/api/auth", "/ca.pem") or path.startswith("/static/"):
+    if path in ("/", "/sw.js", "/api/auth", "/ca.pem", "/reconnect") or path.startswith("/static/"):
         return await handler(request)
 
     # Extract token from Bearer header or query param
@@ -298,6 +299,7 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_post("/api/lists/{list_id}/apply-preset", handle_apply_preset)
     # WebSocket
     app.router.add_get("/ws", handle_websocket)
+    app.router.add_get("/reconnect", handle_reconnect)
     # Undo/redo
     app.router.add_post("/api/undo", handle_undo)
     app.router.add_post("/api/redo", handle_redo)
@@ -2005,6 +2007,36 @@ async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+# A host name or an address, with or without a port: letters, digits,
+# dots and hyphens, or an IPv6 address in brackets.
+_ADDRESS = re.compile(r"^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?$")
+
+
+def _address_named(request: web.Request) -> str:
+    """The address the browser named the server by, from the Host header.
+
+    Kept with a paired device and shown on the desktop, so nothing is
+    taken that is not the plain form of an address: the header is the
+    device's to write.
+    """
+    host = request.headers.get("Host", "")
+    return host if len(host) <= 255 and _ADDRESS.match(host) else ""
+
+
+async def handle_reconnect(request: web.Request) -> web.Response:
+    """GET /reconnect — Send a browser on to the page.
+
+    The address a paired device is given to come back by. The service
+    worker leaves it to the network, so the browser asks the server
+    itself, and where it has not accepted the server's certificate it
+    shows its warning for that, in place. The page's own address would
+    be answered from the service worker's store, and nothing would
+    show. Once the server is reached there is nothing more to do than
+    open the page, where the device's token is.
+    """
+    raise web.HTTPFound("/", headers={"Cache-Control": "no-store"})
+
+
 async def handle_pair(request: web.Request) -> web.Response:
     """POST /api/auth — Validate a 6-digit pairing PIN and return a per-device token."""
     try:
@@ -2030,7 +2062,11 @@ async def handle_pair(request: web.Request) -> web.Response:
         pairing_method = "quick"
 
     device = server.validate_pin(
-        pin, client_ip, user_agent=user_agent, pairing_method=pairing_method
+        pin,
+        client_ip,
+        user_agent=user_agent,
+        pairing_method=pairing_method,
+        address=_address_named(request),
     )
     if device is None:
         return _error(401, "Invalid or expired PIN")

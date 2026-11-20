@@ -405,10 +405,27 @@ class _DeviceRow(QFrame):
         detail_parts.append(self.tr(f"paired {_time_ago(device.paired_at)}"))
         detail_parts.append(self.tr(f"last seen {_time_ago(device.last_seen)}"))
         detail_lbl = QLabel(" \u2022 ".join(detail_parts))
+        # Wrapped where the row is too narrow for it: cut off at the
+        # buttons, its last words could not be read.
+        detail_lbl.setWordWrap(True)
         detail_lbl.setStyleSheet(
             f"font-size: {font_px(10)}px; color: palette(placeholder-text); border: none; background: none;"
         )
         info.addWidget(detail_lbl)
+
+        if device.address:
+            # Two entries of one name are told apart by this: a browser
+            # that pairs at the host name and again at the IP address is
+            # two devices to the server. Plain text: the device wrote it.
+            address_lbl = QLabel(device.address)
+            address_lbl.setObjectName("device_address")
+            address_lbl.setTextFormat(Qt.TextFormat.PlainText)
+            address_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            address_lbl.setStyleSheet(
+                f"font-size: {font_px(10)}px; color: palette(placeholder-text);"
+                " border: none; background: none;"
+            )
+            info.addWidget(address_lbl)
 
         if is_stale:
             stale_lbl = QLabel(self.tr("\u26a0 Needs certificate reinstall"))
@@ -509,6 +526,7 @@ class MobileAccessWizard(QDialog):
         self._pairing_pin = ""
         self._remembered = ""
         self._reconnect_device_name = ""
+        self._reconnect_address = ""
 
         self._ensure_server_running()
         self._setup_ui()
@@ -686,8 +704,8 @@ class MobileAccessWizard(QDialog):
                     device,
                     is_stale=is_stale,
                     on_forget=lambda _checked=False, d=device: self._on_forget_device(d.id),
-                    on_reconnect=lambda _checked=False, n=display_name: self._on_reconnect_device(
-                        n
+                    on_reconnect=lambda _checked=False, d=device, n=display_name: (
+                        self._on_reconnect_device(n, d.address)
                     ),
                     on_rename=lambda _checked=False, d=device, n=display_name: (
                         self._on_rename_device(d.id, n)
@@ -1144,7 +1162,12 @@ class MobileAccessWizard(QDialog):
         layout.addWidget(title)
 
         instruction = QLabel(
-            self.tr("Scan this QR code on the device to reconnect.\nNo re-pairing needed.")
+            self.tr(
+                "Open this address on the device: scan the code, or copy the"
+                " address into its browser.\n"
+                "If the browser shows a security warning, accept it."
+                " The page then opens without a PIN."
+            )
         )
         instruction.setAlignment(Qt.AlignmentFlag.AlignCenter)
         instruction.setWordWrap(True)
@@ -1153,20 +1176,33 @@ class MobileAccessWizard(QDialog):
         )
         layout.addWidget(instruction)
 
-        if self._url:
-            qr = _qr_widget(self._url, 280)
+        url, other = self._reconnect_urls()
+        if url:
+            qr = _qr_widget(url, 280)
             layout.addWidget(qr)
 
-            url_lbl = QLabel(self._url)
+            url_lbl = QLabel(url)
+            url_lbl.setObjectName("reconnect_url")
+            url_lbl.setTextFormat(Qt.TextFormat.PlainText)
             url_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            url_lbl.setWordWrap(True)
             url_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             url_lbl.setStyleSheet(f"font-size: {font_px(11)}px;")
             layout.addWidget(url_lbl)
 
-            # Show IP fallback if using .local
-            if self._url_ip and self._url_ip != self._url:
-                fallback_lbl = QLabel(self.tr(f"IP address: {self._url_ip}"))
+            # For a browser on this computer, which cannot scan a code.
+            copy_btn = QPushButton(self.tr("Copy address"))
+            copy_btn.setObjectName("copy_reconnect_url")
+            copy_btn.setAccessibleName(self.tr("Copy the reconnect address"))
+            copy_btn.clicked.connect(lambda _checked=False, u=url, b=copy_btn: self._copy(u, b))
+            layout.addWidget(copy_btn, 0, Qt.AlignmentFlag.AlignCenter)
+
+            if other:
+                fallback_lbl = QLabel(self.tr(f"If that does not open: {other}"))
+                fallback_lbl.setObjectName("reconnect_url_other")
+                fallback_lbl.setTextFormat(Qt.TextFormat.PlainText)
                 fallback_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                fallback_lbl.setWordWrap(True)
                 fallback_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
                 fallback_lbl.setStyleSheet(
                     f"font-size: {font_px(10)}px; color: palette(placeholder-text);"
@@ -1258,10 +1294,39 @@ class MobileAccessWizard(QDialog):
 
     # --- Actions ---
 
-    def _on_reconnect_device(self, device_name: str) -> None:
-        """Show reconnect QR code for an existing device."""
+    def _on_reconnect_device(self, device_name: str, address: str = "") -> None:
+        """Show the address by which an existing device comes back."""
         self._reconnect_device_name = device_name
+        self._reconnect_address = address
         self._go_to_page(self.PAGE_RECONNECT)
+
+    def _copy(self, text: str, button: QPushButton) -> None:
+        """Put text on the clipboard, and say so on the button."""
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(text)
+        button.setText(self.tr("Copied"))
+
+    def _reconnect_urls(self) -> tuple[str | None, str | None]:
+        """The address to bring the device back by, and another to try.
+
+        The address is the one the device paired at: its browser keeps
+        the device's token for that address and no other. It ends in
+        /reconnect, which the page's service worker leaves to the
+        network: the browser then asks the server itself, and shows its
+        warning in place where it has not accepted the server's
+        certificate. The page's own address is answered from what the
+        service worker has stored, and would show nothing.
+
+        A device paired before addresses were kept has none: it gets the
+        host name's address, and the IP address as the one to try
+        instead.
+        """
+        if self._reconnect_address:
+            return f"https://{self._reconnect_address}/reconnect", None
+        first = f"{self._url}/reconnect" if self._url else None
+        other = f"{self._url_ip}/reconnect" if self._url_ip and self._url_ip != self._url else None
+        return first, other
 
     def _on_rename_device(self, device_id: str, current_name: str) -> None:
         """Prompt for a new device name and call through to the web

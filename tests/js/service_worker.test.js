@@ -749,3 +749,13 @@ test("an answer whose body is still arriving when the request is given up is not
   assert.equal(next.headers.get(sw.SOURCE_HEADER), "store");
   assert.deepEqual(await next.json(), { lists: ["Home"] });
 });
+
+test("the address a device comes back by is left to the network", () => {
+  // The browser then asks the server itself, and shows its warning in
+  // place where it has not accepted the server's certificate.
+  const sw = worker(down);
+  const made = sw.event("/reconnect");
+  sw.listeners.fetch(made);
+  assert.equal(made.answer, null);
+  assert.deepEqual(sw.fetched, []);
+});

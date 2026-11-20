@@ -243,8 +243,12 @@ class WebServer:
         client_ip: str = "",
         user_agent: str = "",
         pairing_method: str = "quick",
+        address: str = "",
     ) -> PairedDevice | None:
         """Validate a pairing PIN. Returns a new PairedDevice if valid.
+
+        address is the address the device's browser named the server by;
+        it is kept with the device, to send the device back to.
 
         On success, creates a per-device token and stores the device record.
         PIN is single-use — consumed on successful validation and regenerated.
@@ -281,6 +285,7 @@ class WebServer:
                 user_agent=user_agent,
                 pairing_method=pairing_method,
                 ca_generation=ca_gen,
+                address=address,
             )
         else:
             # Test mode — return synthetic device without persistence
@@ -289,6 +294,7 @@ class WebServer:
                 user_agent=user_agent,
                 pairing_method=pairing_method,
                 ca_generation=ca_gen,
+                address=address,
             )
         logger.log.info("Device paired: %s (%s) UA: %s", device_name, pairing_method, user_agent)
         return device

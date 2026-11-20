@@ -31,9 +31,26 @@ CREATE TABLE IF NOT EXISTS paired_devices (
     pairing_method TEXT NOT NULL,
     ca_generation INTEGER NOT NULL,
     paired_at INTEGER NOT NULL,
-    last_seen INTEGER NOT NULL
+    last_seen INTEGER NOT NULL,
+    address TEXT NOT NULL DEFAULT ''
 )
 """
+
+_COLUMNS = "id, token, device_name, user_agent, pairing_method, ca_generation, paired_at, last_seen, address"
+
+
+def _device(row: tuple) -> PairedDevice:
+    return PairedDevice(
+        id=row[0],
+        token=row[1],
+        device_name=row[2],
+        user_agent=row[3],
+        pairing_method=row[4],
+        ca_generation=row[5],
+        paired_at=row[6],
+        last_seen=row[7],
+        address=row[8],
+    )
 
 
 def _now_ms() -> int:
@@ -52,6 +69,11 @@ class PairedDevice:
     ca_generation: int = 0
     paired_at: int = field(default_factory=_now_ms)
     last_seen: int = field(default_factory=_now_ms)
+    # The address the device paired at, as its browser named the server:
+    # "planner.local:8080" or "192.168.1.20:8080". A browser keeps the
+    # token for that address only, so this is where the device has to be
+    # sent back to. Empty for a device paired before addresses were kept.
+    address: str = ""
 
 
 # --- User-Agent parsing ---
@@ -159,6 +181,7 @@ class WebDeviceStore:
             )
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute(_CREATE_TABLE)
+            self._add_missing_columns()
             self._conn.commit()
         except sqlite3.DatabaseError:
             logger.log.warning("Device database corrupt — recreating: %s", self._db_path)
@@ -175,7 +198,17 @@ class WebDeviceStore:
             )
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute(_CREATE_TABLE)
+            self._add_missing_columns()
             self._conn.commit()
+
+    def _add_missing_columns(self) -> None:
+        """Bring a table made by an earlier version up to this one."""
+        assert self._conn is not None
+        present = {row[1] for row in self._conn.execute("PRAGMA table_info(paired_devices)")}
+        if "address" not in present:
+            self._conn.execute(
+                "ALTER TABLE paired_devices ADD COLUMN address TEXT NOT NULL DEFAULT ''"
+            )
 
     def _restrict_files(self) -> None:
         """Create the database file private, and restrict what exists."""
@@ -197,6 +230,7 @@ class WebDeviceStore:
         user_agent: str,
         pairing_method: str,
         ca_generation: int,
+        address: str = "",
     ) -> PairedDevice:
         """Create and store a new paired device with a unique token."""
         assert self._conn is not None
@@ -208,12 +242,10 @@ class WebDeviceStore:
             ca_generation=ca_generation,
             paired_at=now,
             last_seen=now,
+            address=address,
         )
         self._conn.execute(
-            "INSERT INTO paired_devices"
-            " (id, token, device_name, user_agent, pairing_method,"
-            "  ca_generation, paired_at, last_seen)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            f"INSERT INTO paired_devices ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 device.id,
                 device.token,
@@ -223,6 +255,7 @@ class WebDeviceStore:
                 device.ca_generation,
                 device.paired_at,
                 device.last_seen,
+                device.address,
             ),
         )
         self._conn.commit()
@@ -232,45 +265,18 @@ class WebDeviceStore:
         """Look up a device by its auth token."""
         assert self._conn is not None
         row = self._conn.execute(
-            "SELECT id, token, device_name, user_agent, pairing_method,"
-            " ca_generation, paired_at, last_seen"
-            " FROM paired_devices WHERE token = ?",
+            f"SELECT {_COLUMNS} FROM paired_devices WHERE token = ?",
             (token,),
         ).fetchone()
-        if row is None:
-            return None
-        return PairedDevice(
-            id=row[0],
-            token=row[1],
-            device_name=row[2],
-            user_agent=row[3],
-            pairing_method=row[4],
-            ca_generation=row[5],
-            paired_at=row[6],
-            last_seen=row[7],
-        )
+        return None if row is None else _device(row)
 
     def get_all_devices(self) -> list[PairedDevice]:
         """Return all paired devices, ordered by most recently paired first."""
         assert self._conn is not None
         rows = self._conn.execute(
-            "SELECT id, token, device_name, user_agent, pairing_method,"
-            " ca_generation, paired_at, last_seen"
-            " FROM paired_devices ORDER BY paired_at DESC",
+            f"SELECT {_COLUMNS} FROM paired_devices ORDER BY paired_at DESC",
         ).fetchall()
-        return [
-            PairedDevice(
-                id=r[0],
-                token=r[1],
-                device_name=r[2],
-                user_agent=r[3],
-                pairing_method=r[4],
-                ca_generation=r[5],
-                paired_at=r[6],
-                last_seen=r[7],
-            )
-            for r in rows
-        ]
+        return [_device(row) for row in rows]
 
     def remove_device(self, device_id: str) -> bool:
         """Remove a device by ID. Returns True if a device was removed."""
@@ -329,22 +335,8 @@ class WebDeviceStore:
         """Return devices paired at an older CA generation (need cert reinstall)."""
         assert self._conn is not None
         rows = self._conn.execute(
-            "SELECT id, token, device_name, user_agent, pairing_method,"
-            " ca_generation, paired_at, last_seen"
-            " FROM paired_devices WHERE ca_generation < ?"
+            f"SELECT {_COLUMNS} FROM paired_devices WHERE ca_generation < ?"
             " ORDER BY paired_at DESC",
             (current_ca_generation,),
         ).fetchall()
-        return [
-            PairedDevice(
-                id=r[0],
-                token=r[1],
-                device_name=r[2],
-                user_agent=r[3],
-                pairing_method=r[4],
-                ca_generation=r[5],
-                paired_at=r[6],
-                last_seen=r[7],
-            )
-            for r in rows
-        ]
+        return [_device(row) for row in rows]

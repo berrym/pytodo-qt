@@ -326,3 +326,79 @@ class TestWebDeviceStore:
         store.remove_device(device.id)
         assert device.token not in store.get_active_tokens()
         store.close()
+
+
+class TestTheAddressADevicePairedAt:
+    """A browser keeps a device's token for the address it paired at and
+    no other, so that is where the device has to be sent back to
+    (#113)."""
+
+    def _make_store(self, tmp_path: Path) -> WebDeviceStore:
+        store = WebDeviceStore(tmp_path / "web_devices.db")
+        store.open()
+        return store
+
+    def test_it_is_kept_with_the_device(self, tmp_path: Path):
+        store = self._make_store(tmp_path)
+        device = store.add_device("Mac", "ua", "quick", 0, address="planner.local:8080")
+        assert device.address == "planner.local:8080"
+        found = store.get_device_by_token(device.token)
+        assert found is not None
+        assert found.address == "planner.local:8080"
+        assert [d.address for d in store.get_all_devices()] == ["planner.local:8080"]
+        store.close()
+
+    def test_it_is_there_after_the_store_is_opened_again(self, tmp_path: Path):
+        store = self._make_store(tmp_path)
+        token = store.add_device("Mac", "ua", "quick", 0, address="192.168.1.20:8080").token
+        store.close()
+        store = self._make_store(tmp_path)
+        found = store.get_device_by_token(token)
+        assert found is not None
+        assert found.address == "192.168.1.20:8080"
+        store.close()
+
+    def test_a_device_without_one_has_none(self, tmp_path: Path):
+        store = self._make_store(tmp_path)
+        assert store.add_device("Mac", "ua", "quick", 0).address == ""
+        assert PairedDevice().address == ""
+        store.close()
+
+    def test_devices_that_need_the_certificate_again_have_theirs(self, tmp_path: Path):
+        store = self._make_store(tmp_path)
+        store.add_device("Mac", "ua", "trusted", 0, address="planner.local:8080")
+        assert [d.address for d in store.get_stale_devices(1)] == ["planner.local:8080"]
+        store.close()
+
+    def test_a_table_of_an_earlier_version_gains_the_column(self, tmp_path: Path):
+        """Its devices stay, with no address."""
+        import sqlite3
+
+        path = tmp_path / "web_devices.db"
+        conn = sqlite3.connect(str(path))
+        conn.execute(
+            "CREATE TABLE paired_devices ("
+            " id TEXT PRIMARY KEY, token TEXT NOT NULL UNIQUE, device_name TEXT NOT NULL,"
+            " user_agent TEXT NOT NULL, pairing_method TEXT NOT NULL,"
+            " ca_generation INTEGER NOT NULL, paired_at INTEGER NOT NULL,"
+            " last_seen INTEGER NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO paired_devices VALUES ('id-1', 'token-1', 'Pixel', 'ua', 'quick', 0, 5, 6)"
+        )
+        conn.commit()
+        conn.close()
+
+        store = self._make_store(tmp_path)
+        before = store.get_device_by_token("token-1")
+        assert before is not None
+        assert (before.device_name, before.paired_at, before.last_seen) == ("Pixel", 5, 6)
+        assert before.address == ""
+        added = store.add_device("Mac", "ua", "quick", 0, address="planner.local:8080")
+        assert {d.address for d in store.get_all_devices()} == {"", "planner.local:8080"}
+        assert store.get_device_by_token(added.token) is not None
+        store.close()
+        # And a second opening changes nothing.
+        store = self._make_store(tmp_path)
+        assert len(store.get_all_devices()) == 2
+        store.close()
