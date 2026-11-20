@@ -108,10 +108,13 @@ function worker(serverAnswers) {
 
   // An event as the browser gives the worker, with what the worker did
   // with it.
-  function event(url, method) {
+  function event(url, method, cache) {
     const waits = [];
     const made = {
-      request: new Request(ORIGIN + url, { method: method || "GET" }),
+      request: new Request(ORIGIN + url, {
+        method: method || "GET",
+        cache: cache || "default",
+      }),
       answer: null,
       waitUntil(promise) {
         waits.push(promise);
@@ -569,4 +572,18 @@ test("what is stored for one address is not given for another", async () => {
   const other = sw.begin("/api/lists/7");
   await sw.advance(60000);
   assert.equal(other.outcome, "waiting");
+});
+
+test("a read that asks for no stored answer is left to the network", async () => {
+  // The page asks in this way whether the server is there.
+  let up = true;
+  const sw = worker(() => (up ? json({ n: 1 }) : down()));
+  await sw.read("/api/status");
+  up = false;
+  const made = sw.event("/api/status", "GET", "no-store");
+  sw.listeners.fetch(made);
+  assert.equal(made.answer, null);
+  // And the same read without that is answered from the store.
+  const stored = await sw.read("/api/status");
+  assert.equal(stored.headers.get(sw.SOURCE_HEADER), "store");
 });

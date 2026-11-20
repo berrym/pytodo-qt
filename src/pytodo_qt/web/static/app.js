@@ -325,12 +325,12 @@
   //
   // A read is given up at its deadline, READ_DEADLINE unless another is
   // passed; the deadline is for the whole answer, its body included. A
-  // change has none: giving one up says nothing of whether the server
-  // has made it.
+  // change has none unless one is passed: giving one up says nothing of
+  // whether the server has made it.
   async function serverFetch(url, opts, deadline) {
     var method = ((opts && opts.method) || "GET").toUpperCase();
     var timer = null;
-    if (method === "GET" && !(opts && opts.signal)) {
+    if ((method === "GET" || deadline) && !(opts && opts.signal)) {
       var gaveUp = new AbortController();
       opts = Object.assign({}, opts, { signal: gaveUp.signal });
       timer = setTimeout(function () {
@@ -364,9 +364,12 @@
   async function apiAnswer(path, opts, deadline) {
     if (!opts) opts = {};
     opts.headers = authHeaders(opts.headers);
+    var sentAs = opts.headers.Authorization;
     var resp = await serverFetch(API + path, opts, deadline);
-    if (resp.status === 401) {
-      showLoginScreen();
+    if (resp.status === 401 && storedTimeOf(resp) === null) {
+      // Not for a request sent before the device was paired again: the
+      // token it was refused for is not the one held now.
+      if (authHeaders().Authorization === sentAs) showLoginScreen();
       var err401 = new Error("Authentication required");
       err401.status = 401;
       err401.body = {};
@@ -402,14 +405,26 @@
   var loginError = document.getElementById("login-error");
   var appContainer = document.getElementById("app-container");
 
+  // Whether the PIN screen is up. Behind it nothing tries the server:
+  // the device holds no token the server accepts, so every request
+  // would be refused, and each refusal would come back here. The page
+  // starts again from init() once a PIN has been accepted.
+  var pinScreenUp = false;
+
   function showLoginScreen() {
+    var wasUp = pinScreenUp;
+    pinScreenUp = true;
     if (loginScreen) loginScreen.classList.remove("hidden");
     if (appContainer) appContainer.classList.add("hidden");
-    if (loginPinInput) {
-      loginPinInput.value = "";
-      loginPinInput.focus();
+    // Not when the screen is up already: a read that was under way
+    // comes back refused, and would empty what is being typed.
+    if (!wasUp) {
+      if (loginPinInput) {
+        loginPinInput.value = "";
+        loginPinInput.focus();
+      }
+      if (loginError) loginError.textContent = "";
     }
-    if (loginError) loginError.textContent = "";
     stopPolling();
     disconnectWebSocket();
     // A read of the list under way would bring this screen up again
@@ -419,60 +434,75 @@
   }
 
   function hideLoginScreen() {
+    pinScreenUp = false;
     if (loginScreen) loginScreen.classList.add("hidden");
     if (appContainer) appContainer.classList.remove("hidden");
   }
 
-  if (loginBtn) {
-    loginBtn.addEventListener("click", async function () {
-      var pin = loginPinInput ? loginPinInput.value.trim() : "";
-      if (!pin || pin.length < 4) return;
-      if (loginError) loginError.textContent = "";
-      loginBtn.disabled = true;
-      loginBtn.textContent = "Connecting...";
-      try {
-        var resp = await serverFetch(API + "/auth", {
+  // How long the server has to answer a PIN, in milliseconds. The person
+  // is waiting at the button, and a server that is not there can keep a
+  // request waiting for more than a minute. A PIN given up may have
+  // reached the server all the same: it is then used up, and the next
+  // try needs the PIN the desktop shows by then.
+  var SIGN_IN_DEADLINE = 10000;
+
+  // Sends the PIN typed on the PIN screen, and starts the page with
+  // the token the server gives for it.
+  async function signIn() {
+    var pin = loginPinInput ? loginPinInput.value.trim() : "";
+    if (!pin || pin.length < 4) return;
+    if (loginError) loginError.textContent = "";
+    loginBtn.disabled = true;
+    loginBtn.textContent = "Connecting...";
+    try {
+      // The server is asked first, with a read. A browser that found the
+      // server gone remembers it: Firefox then fails a request that it
+      // will not send twice, as this one with the PIN, at once and
+      // without trying the server, for as long as no read has reached
+      // it again. Nothing reads behind the PIN screen, so without this
+      // a right PIN would be turned away after the server is back.
+      var there = await serverFetch(
+        API + "/status",
+        { cache: "no-store" },
+        PROBE_DEADLINE,
+      );
+      if (storedTimeOf(there) !== null) {
+        throw new Error("No answer of the server's own");
+      }
+      var resp = await serverFetch(
+        API + "/auth",
+        {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ pin: pin }),
+        },
+        SIGN_IN_DEADLINE,
+      );
+      if (resp.ok) {
+        var data = await resp.json();
+        setAuthToken(data.token);
+        hideLoginScreen();
+        init();
+      } else {
+        var err = await resp.json().catch(function () {
+          return {};
         });
-        if (resp.ok) {
-          var data = await resp.json();
-          setAuthToken(data.token);
-          hideLoginScreen();
-          init();
-        } else {
-          var err = await resp.json().catch(function () {
-            return {};
-          });
-          if (loginError) loginError.textContent = err.error || "Invalid PIN";
-        }
-      } catch (e) {
-        if (loginError)
-          loginError.textContent =
-            "Connection failed — try refreshing the page";
-        // Network error during PIN — likely a stale service worker blocking
-        // connections after cert change. Unregister SW so direct browser
-        // requests can show the cert acceptance dialog.
-        if (navigator.serviceWorker) {
-          try {
-            var swRegs = await navigator.serviceWorker.getRegistrations();
-            for (var k = 0; k < swRegs.length; k++) {
-              await swRegs[k].unregister();
-            }
-            var cn = await caches.keys();
-            for (var m = 0; m < cn.length; m++) {
-              await caches.delete(cn[m]);
-            }
-          } catch (swE) {
-            /* best effort */
-          }
-        }
+        if (loginError) loginError.textContent = err.error || "Invalid PIN";
       }
-      loginBtn.disabled = false;
-      loginBtn.textContent = "Connect";
-    });
+    } catch (e) {
+      // The server went away after it asked for the PIN, or kept the
+      // request waiting to its deadline. Nothing the device has stored
+      // is touched for that.
+      if (loginError) {
+        loginError.textContent =
+          "Can't reach the server. Try again when it is back.";
+      }
+    }
+    loginBtn.disabled = false;
+    loginBtn.textContent = "Connect";
   }
+
+  if (loginBtn) loginBtn.addEventListener("click", signIn);
 
   if (loginPinInput) {
     loginPinInput.addEventListener("keydown", function (e) {
@@ -871,7 +901,7 @@
     // Undo at the server takes over once the queue has been sent.
     clearOfflineUndo();
     showConnection();
-    if (appReady) resumeWithServer();
+    if (appReady && !pinScreenUp) resumeWithServer();
   }
 
   // A request failed, or was answered from the service worker's store.
@@ -879,7 +909,7 @@
     if (!serverConnected) return;
     serverConnected = false;
     showConnection();
-    if (appReady) waitForServer();
+    if (appReady && !pinScreenUp) waitForServer();
   }
 
   // While the server answers the page listens on the WebSocket, asks at
@@ -910,9 +940,11 @@
   }
 
   // Asks the server whether it is there. What follows from the answer,
-  // or from none, is serverFetch's.
+  // or from none, is serverFetch's. The service worker leaves a read
+  // made with "no-store" to the network: what it has stored would be no
+  // answer to this.
   function probeServer() {
-    api("/status", null, PROBE_DEADLINE).catch(function () {});
+    api("/status", { cache: "no-store" }, PROBE_DEADLINE).catch(function () {});
   }
 
   // The notice, the dot and the count of unsent changes follow the
@@ -1024,6 +1056,7 @@
   // the wait that had built up. What follows is the answer's.
   window.addEventListener("online", function () {
     showConnection();
+    if (pinScreenUp) return;
     wsReconnectDelay = 1000;
     connectWebSocket();
     probeServer();
@@ -7465,6 +7498,7 @@
 
   function startPolling() {
     stopPolling();
+    if (pinScreenUp) return;
     pollTimer = setInterval(function () {
       refreshCurrentList();
     }, 3000);
@@ -7502,6 +7536,7 @@
   var wsPongTimer = null;
 
   function connectWebSocket() {
+    if (pinScreenUp) return;
     if (
       ws &&
       (ws.readyState === WebSocket.OPEN ||
@@ -7638,7 +7673,7 @@
   // timers back anyway. Not without a network: the "online" event starts
   // it again.
   function scheduleReconnect() {
-    if (wsReconnectTimer || !navigator.onLine) return;
+    if (wsReconnectTimer || !navigator.onLine || pinScreenUp) return;
     // The short limit is for a silent server. One that answers while
     // no WebSocket can be opened is read at intervals meanwhile, and a
     // WebSocket is tried for at the long waits.
@@ -7683,6 +7718,7 @@
       stopPolling();
       stopPinging();
     } else {
+      if (pinScreenUp) return;
       refreshCurrentList();
       if (webSocketOpen()) {
         // The server may have gone while the page was out of view.
@@ -7774,8 +7810,11 @@
     // moment as the first: its rows are still new to the person.
     drawnRows = { list: null, rows: {} };
     setViewMode(viewMode);
-    // Keep "last synced" text fresh
-    setInterval(updateLastSyncedText, 15000);
+    // Keep "last synced" text fresh. Once: the page starts again after
+    // each sign-in.
+    if (lastSyncedTimer === null) {
+      lastSyncedTimer = setInterval(updateLastSyncedText, 15000);
+    }
     appReady = true;
     // The reads above have shown whether the server answers.
     if (serverConnected) {
@@ -7825,6 +7864,7 @@
   }
 
   var appReady = false;
+  var lastSyncedTimer = null;
   var loadedUnderWorker = false;
 
   // Register the service worker. The page's security policy allows
@@ -7964,64 +8004,37 @@
     );
   }
 
-  // Check for existing token — if none, show login; if valid, init app
+  // Starts the page. The PIN screen is for one case only: the server
+  // itself answers that it wants a token, or refuses the one the device
+  // holds. A server that cannot be reached says nothing of the token,
+  // and a PIN typed then could not be checked: the page starts with
+  // what the device has stored, says that it cannot reach the server,
+  // and goes on trying it. Should the server then refuse the token, the
+  // PIN screen comes up at that moment (apiAnswer).
   async function startPage() {
     var token = getAuthToken();
-    if (!token) {
-      // Try without token (server might have auth disabled)
-      try {
-        var resp = await serverFetch(API + "/status");
-        if (resp.ok) {
-          init();
-          return;
-        }
-      } catch (e) {
-        /* server unreachable */
-      }
+    var resp;
+    try {
+      resp = await serverFetch(
+        API + "/status",
+        token ? { headers: { Authorization: "Bearer " + token } } : undefined,
+      );
+    } catch (e) {
+      // No answer, or none in time. The token, the service worker and
+      // what it has stored are as good as they were.
+      init();
+      return;
+    }
+    if (resp.status === 401 && storedTimeOf(resp) === null) {
+      // A token the server refuses is forgotten; the device is paired
+      // again.
+      if (token) localStorage.removeItem(AUTH_TOKEN_KEY);
       showLoginScreen();
       return;
     }
-    // Validate stored token
-    try {
-      var resp2 = await serverFetch(API + "/status", {
-        headers: { Authorization: "Bearer " + token },
-      });
-      if (resp2.ok) {
-        init();
-        return;
-      }
-      // Token rejected (401) — clear it so user re-pairs
-      if (resp2.status === 401) {
-        localStorage.removeItem(AUTH_TOKEN_KEY);
-      }
-    } catch (e) {
-      // The read was given up at its deadline: the server keeps the
-      // request waiting, as a computer put to sleep does. The page
-      // starts with what it has stored and goes on trying the server.
-      if (e && e.name === "AbortError") {
-        init();
-        return;
-      }
-      // Network error — could be cert issue with active service worker.
-      // Unregister SW so the browser handles TLS directly (allows user
-      // to accept self-signed cert warnings in Quick Connect mode).
-      if (navigator.serviceWorker) {
-        try {
-          var regs = await navigator.serviceWorker.getRegistrations();
-          for (var i = 0; i < regs.length; i++) {
-            await regs[i].unregister();
-          }
-          // Clear caches too so stale content doesn't persist
-          var cacheNames = await caches.keys();
-          for (var j = 0; j < cacheNames.length; j++) {
-            await caches.delete(cacheNames[j]);
-          }
-        } catch (swErr) {
-          /* best effort */
-        }
-      }
-    }
-    showLoginScreen();
+    // The server's answer, a stored one, or the answer the service
+    // worker makes up when it has none: the page, in each case.
+    init();
   }
   startPage();
 })();

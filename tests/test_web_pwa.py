@@ -2057,7 +2057,10 @@ class TestServerNotReached:
         assert "var READ_DEADLINE = 10000;" in js
         assert "var PROBE_DEADLINE = 5000;" in js
         noted = js.split("async function serverFetch(")[1].split("\n  }\n")[0]
-        assert 'if (method === "GET" && !(opts && opts.signal)) {' in noted
+        # A change has a deadline only where one is passed: signing in,
+        # where the person waits at the button.
+        assert 'if ((method === "GET" || deadline) && !(opts && opts.signal)) {' in noted
+        assert "var SIGN_IN_DEADLINE = 10000;" in js
         probe = js.split("function probeServer() {")[1].split("\n  }\n")[0]
         assert "PROBE_DEADLINE" in probe
 
@@ -2086,6 +2089,22 @@ class TestServerNotReached:
         hidden, shown = seen.split("} else {", 1)
         assert "stopPinging();" in hidden
         assert "pingServer();" in shown
+
+    def test_nothing_is_read_at_intervals_behind_the_pin_screen(self):
+        js = self._app()
+        polling = js.split("function startPolling() {")[1].split("\n  }\n")[0]
+        assert polling.index("if (pinScreenUp) return;") < polling.index("setInterval(")
+        online = js.split('window.addEventListener("online", function () {')[1].split("\n  });\n")[
+            0
+        ]
+        assert online.index("if (pinScreenUp) return;") < online.index("connectWebSocket();")
+
+    def test_a_second_start_adds_no_second_clock(self):
+        """The page starts again after each sign-in."""
+        js = self._app()
+        start = js.split("async function init() {")[1].split("\n  }\n")[0]
+        assert "if (lastSyncedTimer === null) {" in start
+        assert start.count("setInterval(") == 1
 
     def test_the_view_handler_is_the_one_the_browser_calls(self):
         js = self._app()

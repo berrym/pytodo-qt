@@ -102,6 +102,7 @@ function element() {
 //   socket       the page's WebSocket
 //   hidden       whether the page is out of view
 //   token        the token the device holds ("" for none)
+//   pin          what is typed into the PIN screen
 //   ownRefresh   true to run the page's own refreshCurrentList and
 //                showLoginScreen; what is drawn is listed in env.drawn
 //   ownSockets   true to run the page's own connectWebSocket,
@@ -156,8 +157,14 @@ function page(options) {
   const kept = {
     pytodo_auth_token: env.token === undefined ? "token" : env.token,
   };
+  env.pinInput = { value: env.pin || "", focus() {} };
+  env.pinError = { textContent: "" };
+  env.pinButton = { disabled: false, textContent: "Connect" };
   env.localStorage = {
     getItem: (key) => (key in kept ? kept[key] : null),
+    setItem: (key, value) => {
+      kept[key] = value;
+    },
     removeItem: (key) => {
       delete kept[key];
     },
@@ -233,10 +240,11 @@ function page(options) {
       "var caches = env.caches;",
       "function getAuthToken() { return env.localStorage.getItem('pytodo_auth_token') || ''; }",
       "function init() { env.calls.push('init'); }",
-      "function authHeaders(extra) { return Object.assign({}, extra); }",
+      functionText("authHeaders"),
+      "var pinScreenUp = false;",
       env.ownRefresh
         ? functionText("showLoginScreen")
-        : "function showLoginScreen() { env.calls.push('showLoginScreen'); }",
+        : "function showLoginScreen() { env.calls.push('showLoginScreen'); pinScreenUp = true; }",
       functionText("startPage"),
       "function onServerPageVersion(version) { env.calls.push('version ' + version); }",
       constantText("WS_MAX_DELAY"),
@@ -267,7 +275,14 @@ function page(options) {
       "var serverItems = [];",
       "var cachedItems = [];",
       "var serverBoardData = null;",
-      "var loginScreen = null, appContainer = null, loginPinInput = null, loginError = null;",
+      "var loginScreen = null, appContainer = null;",
+      "var loginPinInput = env.pinInput, loginError = env.pinError, loginBtn = env.pinButton;",
+      "function setAuthToken(token) { env.localStorage.setItem('pytodo_auth_token', token); }",
+      env.ownRefresh
+        ? functionText("hideLoginScreen")
+        : "function hideLoginScreen() { env.calls.push('hideLoginScreen'); pinScreenUp = false; }",
+      constantText("SIGN_IN_DEADLINE"),
+      functionText("signIn"),
       "var console = { error: function () {} };",
       "function renderItems() {}",
       "function cacheListItems(id, items) { env.calls.push('cacheListItems'); }",
@@ -320,6 +335,9 @@ function page(options) {
       "  refreshCurrentList: refreshCurrentList,",
       "  showLoginScreen: showLoginScreen,",
       "  startPage: startPage,",
+      "  signIn: signIn,",
+      "  hideLoginScreen: hideLoginScreen,",
+      "  pinScreenUp: function () { return pinScreenUp; },",
       "  connectWebSocket: connectWebSocket,",
       "  scheduleReconnect: scheduleReconnect,",
       "  disconnectWebSocket: disconnectWebSocket,",
@@ -863,20 +881,73 @@ function connected(options) {
 }
 
 // --- The start of the page ---
+//
+// The PIN screen is for the server's own refusal. A server that cannot
+// be reached says nothing of the token, and a PIN typed then could not
+// be checked.
+
+// What the device keeps is as it was: the service worker, its stores
+// and the token.
+function nothingLost(made, token) {
+  assert.deepEqual(made.env.workers, ["worker"]);
+  assert.deepEqual(made.env.stores, ["pytodo-static-1", "pytodo-data"]);
+  assert.equal(
+    made.env.localStorage.getItem("pytodo_auth_token"),
+    token === undefined ? "token" : token,
+  );
+}
+
+// The ways a start gets no answer of the server's own.
+const NO_ANSWER = {
+  "a request that fails": () => async () => {
+    throw new TypeError("Failed to fetch");
+  },
+  "an answer from the worker's store": () => async () => answer(FROM_STORE),
+  "the answer the worker makes up": () => async () =>
+    answer({ "X-Pytodo-Source": "none" }, 503),
+};
+
+for (const [what, network] of Object.entries(NO_ANSWER)) {
+  test(
+    "a start with a token and " + what + " goes on to the page",
+    async () => {
+      const made = page({ fetch: network() });
+      await made.startPage();
+      assert.ok(made.env.calls.includes("init"));
+      assert.equal(made.env.calls.includes("showLoginScreen"), false);
+      assert.equal(made.connected(), false);
+      nothingLost(made);
+    },
+  );
+
+  test(
+    "a start without a token and " + what + " goes on to the page",
+    async () => {
+      // The PIN screen comes up when the server is there to check a PIN.
+      const made = page({ token: "", fetch: network() });
+      await made.startPage();
+      assert.ok(made.env.calls.includes("init"));
+      assert.equal(made.env.calls.includes("showLoginScreen"), false);
+      assert.equal(made.connected(), false);
+      // What an earlier pairing left on the device is still there.
+      nothingLost(made, "");
+    },
+  );
+}
 
 test("a start whose first read is given up keeps what the device has stored", async () => {
   // The server keeps the request waiting, as a computer put to sleep
   // does. The token is as good as it was.
-  const made = page({ fetch: noAnswer([]) });
-  const start = made.startPage();
-  made.env.advance(10000);
-  await start;
-  assert.deepEqual(made.env.workers, ["worker"]);
-  assert.deepEqual(made.env.stores, ["pytodo-static-1", "pytodo-data"]);
-  assert.equal(made.env.localStorage.getItem("pytodo_auth_token"), "token");
-  assert.ok(made.env.calls.includes("init"));
-  assert.equal(made.env.calls.includes("showLoginScreen"), false);
-  assert.equal(made.connected(), false);
+  for (const token of ["token", ""]) {
+    const made = page({ token: token, fetch: noAnswer([]) });
+    const start = made.startPage();
+    made.env.advance(10000);
+    await start;
+    assert.ok(made.env.calls.includes("init"));
+    assert.equal(made.env.calls.includes("showLoginScreen"), false);
+    assert.equal(made.connected(), false);
+    nothingLost(made, token);
+  }
 });
 
 test("a start the server answers goes on to the page", async () => {
@@ -891,14 +962,18 @@ test("a start the server answers goes on to the page", async () => {
   assert.deepEqual(sent, ["Bearer token"]);
   assert.ok(made.env.calls.includes("init"));
   assert.equal(made.env.calls.includes("showLoginScreen"), false);
+  assert.equal(made.connected(), true);
 });
 
-test("a start answered from the worker's store goes on to the page, not connected", async () => {
-  const made = page({ fetch: async () => answer(FROM_STORE) });
-  await made.startPage();
-  assert.ok(made.env.calls.includes("init"));
-  assert.equal(made.connected(), false);
-  assert.deepEqual(made.env.stores, ["pytodo-static-1", "pytodo-data"]);
+test("a start the server answers with a fault of its own goes on to the page", async () => {
+  // It has not refused the token.
+  for (const status of [500, 503, 404]) {
+    const made = page({ fetch: async () => answer({}, status) });
+    await made.startPage();
+    assert.ok(made.env.calls.includes("init"), "after a " + status);
+    assert.equal(made.env.calls.includes("showLoginScreen"), false);
+    nothingLost(made);
+  }
 });
 
 test("a start the server refuses asks for the PIN and forgets the token", async () => {
@@ -908,14 +983,260 @@ test("a start the server refuses asks for the PIN and forgets the token", async 
   assert.equal(made.env.calls.includes("init"), false);
   assert.equal(made.env.localStorage.getItem("pytodo_auth_token"), null);
   // What is stored is not touched here.
+  assert.deepEqual(made.env.workers, ["worker"]);
   assert.deepEqual(made.env.stores, ["pytodo-static-1", "pytodo-data"]);
 });
 
 test("a start without a token asks for the PIN when the server wants one", async () => {
-  const made = page({ token: "", fetch: async () => answer({}, 401) });
+  const sent = [];
+  const made = page({
+    token: "",
+    fetch: async (url, opts) => {
+      sent.push(opts.headers);
+      return answer({}, 401);
+    },
+  });
   await made.startPage();
   assert.ok(made.env.calls.includes("showLoginScreen"));
   assert.equal(made.env.calls.includes("init"), false);
+  // No token is sent where there is none.
+  assert.deepEqual(sent, [undefined]);
+  nothingLost(made, "");
+});
+
+test("a start without a token goes on to the page where the server wants none", async () => {
+  const made = page({ token: "", fetch: async () => answer() });
+  await made.startPage();
+  assert.ok(made.env.calls.includes("init"));
+  assert.equal(made.env.calls.includes("showLoginScreen"), false);
+});
+
+test("a refusal that is not the server's own does not bring up the PIN screen", async () => {
+  // No such answer is made today; the rule is the page's all the same.
+  const marked = { "X-Pytodo-Source": "store", "X-Pytodo-Stored-At": "0" };
+  const made = page({ fetch: async () => answer(marked, 401) });
+  await made.startPage();
+  assert.equal(made.env.calls.includes("showLoginScreen"), false);
+  assert.equal(made.env.localStorage.getItem("pytodo_auth_token"), "token");
+  await assert.rejects(made.apiAnswer("/lists"));
+  assert.equal(made.env.calls.includes("showLoginScreen"), false);
+});
+
+test("a read the server refuses brings up the PIN screen", async () => {
+  const made = page({ fetch: async () => answer({}, 401) });
+  await assert.rejects(made.apiAnswer("/lists"), { status: 401 });
+  assert.ok(made.env.calls.includes("showLoginScreen"));
+});
+
+// --- The PIN screen ---
+
+test("the right PIN stores the token and starts the page", async () => {
+  const sent = [];
+  const made = page({
+    token: "",
+    pin: " 123456 ",
+    fetch: async (url, opts) => {
+      sent.push([url, opts.method || "GET", opts.body]);
+      if (url === "/api/status") return answer({}, 401);
+      return new Response(JSON.stringify({ token: "new-token" }), {
+        status: 200,
+      });
+    },
+  });
+  await made.signIn();
+  // The server is asked with a read before the PIN is sent.
+  assert.deepEqual(sent, [
+    ["/api/status", "GET", undefined],
+    ["/api/auth", "POST", '{"pin":"123456"}'],
+  ]);
+  assert.equal(made.env.localStorage.getItem("pytodo_auth_token"), "new-token");
+  assert.ok(made.env.calls.includes("hideLoginScreen"));
+  assert.ok(made.env.calls.includes("init"));
+  assert.equal(made.env.pinButton.disabled, false);
+  assert.equal(made.env.pinButton.textContent, "Connect");
+});
+
+test("a PIN the server refuses shows what the server says", async () => {
+  const made = page({
+    token: "",
+    pin: "123456",
+    fetch: async (url) =>
+      url === "/api/status"
+        ? answer({}, 401)
+        : new Response(JSON.stringify({ error: "Invalid PIN" }), {
+            status: 403,
+          }),
+  });
+  await made.signIn();
+  assert.equal(made.env.pinError.textContent, "Invalid PIN");
+  assert.equal(made.env.calls.includes("init"), false);
+  // No token is stored for it.
+  assert.equal(made.env.localStorage.getItem("pytodo_auth_token"), "");
+  assert.equal(made.env.pinButton.disabled, false);
+});
+
+test("a PIN sent to a server that is gone says so, and nothing stored is touched", async () => {
+  const made = page({
+    token: "",
+    pin: "123456",
+    fetch: async () => {
+      throw new TypeError("Failed to fetch");
+    },
+  });
+  await made.signIn();
+  assert.equal(
+    made.env.pinError.textContent,
+    "Can't reach the server. Try again when it is back.",
+  );
+  assert.deepEqual(made.env.workers, ["worker"]);
+  assert.deepEqual(made.env.stores, ["pytodo-static-1", "pytodo-data"]);
+  assert.equal(made.env.calls.includes("init"), false);
+  // The PIN can be sent again.
+  assert.equal(made.env.pinButton.disabled, false);
+  assert.equal(made.env.pinButton.textContent, "Connect");
+});
+
+test("a server that keeps the read before the PIN waiting gets the message after 5 s", async () => {
+  // A server that is not there can keep a request waiting for more
+  // than a minute; the person is waiting at the button.
+  const seen = [];
+  const hangs = noAnswer([]);
+  const made = page({
+    token: "",
+    pin: "123456",
+    fetch: (url, opts) => {
+      seen.push(url);
+      return hangs(url, opts);
+    },
+  });
+  const sent = made.signIn();
+  await settled();
+  assert.equal(made.env.pinButton.disabled, true);
+  assert.equal(made.env.pinButton.textContent, "Connecting...");
+  made.env.advance(4999);
+  await settled();
+  assert.equal(made.env.pinButton.disabled, true);
+  made.env.advance(1);
+  await sent;
+  assert.equal(
+    made.env.pinError.textContent,
+    "Can't reach the server. Try again when it is back.",
+  );
+  assert.equal(made.env.pinButton.disabled, false);
+  assert.equal(made.env.pinButton.textContent, "Connect");
+  // The PIN was not sent.
+  assert.deepEqual(seen, ["/api/status"]);
+  assert.equal(made.env.calls.includes("init"), false);
+  nothingLost(made, "");
+});
+
+test("a PIN the server keeps waiting is given up after 10 s, with the message", async () => {
+  const hangs = noAnswer([]);
+  const made = page({
+    token: "",
+    pin: "123456",
+    fetch: (url, opts) =>
+      url === "/api/status"
+        ? Promise.resolve(answer({}, 401))
+        : hangs(url, opts),
+  });
+  const sent = made.signIn();
+  await settled();
+  made.env.advance(9999);
+  await settled();
+  assert.equal(made.env.pinButton.disabled, true);
+  made.env.advance(1);
+  await sent;
+  assert.equal(
+    made.env.pinError.textContent,
+    "Can't reach the server. Try again when it is back.",
+  );
+  assert.equal(made.env.pinButton.disabled, false);
+  assert.equal(made.env.calls.includes("init"), false);
+});
+
+test("a read before the PIN that is answered from the store is no answer", async () => {
+  const seen = [];
+  const made = page({
+    token: "",
+    pin: "123456",
+    fetch: async (url) => {
+      seen.push(url);
+      return answer(FROM_STORE);
+    },
+  });
+  await made.signIn();
+  assert.equal(
+    made.env.pinError.textContent,
+    "Can't reach the server. Try again when it is back.",
+  );
+  assert.deepEqual(seen, ["/api/status"]);
+});
+
+test("the read before the PIN carries no token, and asks for no stored answer", async () => {
+  // The device holds no token, or one the server has refused. And what
+  // the service worker has stored would be no answer to the question.
+  const carried = [];
+  const made = page({
+    pin: "123456",
+    fetch: async (url, opts) => {
+      carried.push(
+        url +
+          " " +
+          JSON.stringify((opts && opts.headers) || {}) +
+          " " +
+          opts.cache,
+      );
+      return url === "/api/status"
+        ? answer({}, 401)
+        : new Response(JSON.stringify({ token: "new-token" }), { status: 200 });
+    },
+  });
+  await made.signIn();
+  assert.equal(carried[0], "/api/status {} no-store");
+});
+
+test("a PIN answered in time is not given up afterward", async () => {
+  const made = page({
+    token: "",
+    pin: "123456",
+    fetch: async () =>
+      new Response(JSON.stringify({ token: "new-token" }), { status: 200 }),
+  });
+  await made.signIn();
+  made.env.advance(60000);
+  await settled();
+  assert.equal(made.env.pinError.textContent, "");
+  assert.equal(made.env.localStorage.getItem("pytodo_auth_token"), "new-token");
+});
+
+test("a PIN of fewer than four characters is not sent", async () => {
+  for (const pin of ["", "12", "123", "   "]) {
+    let sent = 0;
+    const made = page({
+      token: "",
+      pin: pin,
+      fetch: async () => {
+        sent += 1;
+        return answer();
+      },
+    });
+    await made.signIn();
+    assert.equal(sent, 0);
+    assert.equal(made.env.pinButton.disabled, false);
+  }
+});
+
+test("an earlier message on the PIN screen goes when a PIN is sent", async () => {
+  const made = page({
+    token: "",
+    pin: "123456",
+    fetch: async () =>
+      new Response(JSON.stringify({ token: "new-token" }), { status: 200 }),
+  });
+  made.env.pinError.textContent = "Invalid PIN";
+  await made.signIn();
+  assert.equal(made.env.pinError.textContent, "");
 });
 
 test("the WebSocket is opened at the page's address, with the token", () => {
@@ -1212,20 +1533,23 @@ test("back in view while the server answers, the waits are not started over", ()
   assert.deepEqual(times, [100, 121]);
 });
 
-test("each try asks the server over HTTP as well", () => {
+test("each try asks the server over HTTP as well, for no stored answer", () => {
   const asked = [];
+  const how = [];
   const hangs = noAnswer([]);
   const made = page({
     connected: false,
     ownSockets: true,
     fetch: (url, opts) => {
       asked.push(url);
+      how.push(opts.cache);
       return hangs(url, opts);
     },
   });
   made.scheduleReconnect();
   made.env.advance(1000);
   assert.deepEqual(asked, ["/api/status"]);
+  assert.deepEqual(how, ["no-store"]);
   made.env.advance(2000);
   assert.equal(asked.length, 2);
 });
@@ -1535,4 +1859,233 @@ test("a server that falls silent is noticed within 8 seconds, one that is back w
   assert.equal(PONG, 3000);
   assert.equal(numberOf("WS_MAX_DELAY_IN_VIEW"), 5000);
   assert.equal(numberOf("WS_MAX_DELAY"), 30000);
+});
+
+// --- Behind the PIN screen ---
+//
+// The device holds no token the server accepts: whatever the page
+// asked would be refused, and each refusal would come back to the PIN
+// screen. Nothing tries the server until a PIN has been accepted.
+
+// A server that knows one token: a read without it is refused, and the
+// right PIN is answered with it. Every request is listed in sent, with
+// the token it carried.
+function pairingServer(sent, options) {
+  const state = Object.assign({ up: true }, options);
+  const network = async (url, opts) => {
+    const carried = ((opts && opts.headers) || {}).Authorization || "none";
+    sent.push(
+      (opts && opts.method ? opts.method + " " : "") + url + " " + carried,
+    );
+    if (!state.up) throw new TypeError("Failed to fetch");
+    if (url === "/api/auth") {
+      return new Response(JSON.stringify({ token: "new-token" }), {
+        status: 200,
+      });
+    }
+    if (carried !== "Bearer new-token") return answer({}, 401);
+    return url.startsWith("/api/lists/") ? list(["new"]) : answer();
+  };
+  network.state = state;
+  return network;
+}
+
+// A page that has started, with the PIN screen up: its own reads,
+// WebSockets and PIN screen, and no token.
+function atPinScreen(options) {
+  const sent = [];
+  const network = pairingServer(sent);
+  const made = page(
+    Object.assign(
+      { token: "", ownRefresh: true, ownSockets: true, fetch: network },
+      options,
+    ),
+  );
+  made.showLoginScreen();
+  // What is typed once the screen is up.
+  if (options && options.pin) made.env.pinInput.value = options.pin;
+  sent.length = 0;
+  return { made: made, sent: sent, server: network.state };
+}
+
+test("the right PIN starts the page, and nothing is asked before the token is held", async () => {
+  // The page took the server for silent: its answer to the PIN is the
+  // first it hears of it again.
+  const { made, sent } = atPinScreen({ connected: false, pin: "123456" });
+  await made.signIn();
+  await settled();
+  made.env.advance(2000);
+  await settled();
+  assert.deepEqual(sent, ["/api/status none", "POST /api/auth none"]);
+  assert.equal(made.pinScreenUp(), false);
+  assert.ok(made.env.calls.includes("init"));
+  assert.equal(made.connected(), true);
+  // No WebSocket without the token either: the start that follows
+  // opens one with it.
+  assert.equal(made.env.sockets.length, 0);
+});
+
+test("a PIN sent to a server that is gone starts nothing behind the PIN screen", async () => {
+  const { made, sent, server } = atPinScreen({ pin: "123456" });
+  server.up = false;
+  await made.signIn();
+  assert.equal(
+    made.env.pinError.textContent,
+    "Can't reach the server. Try again when it is back.",
+  );
+  assert.equal(made.connected(), false);
+  assert.deepEqual(made.env.timers, []);
+  // The server comes back; the page leaves it alone, and what is typed.
+  server.up = true;
+  made.env.advance(60000);
+  await settled();
+  // The read that came first got no answer: the PIN was not sent.
+  assert.deepEqual(sent, ["/api/status none"]);
+  assert.equal(made.env.sockets.length, 0);
+  assert.equal(made.env.pinInput.value, "123456");
+  assert.equal(
+    made.env.pinError.textContent,
+    "Can't reach the server. Try again when it is back.",
+  );
+});
+
+test("then the right PIN starts the page", async () => {
+  const { made, sent, server } = atPinScreen({ pin: "123456" });
+  server.up = false;
+  await made.signIn();
+  server.up = true;
+  await made.signIn();
+  await settled();
+  made.env.advance(2000);
+  await settled();
+  assert.deepEqual(sent, [
+    "/api/status none",
+    "/api/status none",
+    "POST /api/auth none",
+  ]);
+  assert.equal(made.pinScreenUp(), false);
+  assert.equal(made.env.pinError.textContent, "");
+});
+
+test("a page that starts without the server brings the PIN screen up when the server refuses, and then is still", async () => {
+  // No token, no server: the page started, and goes on trying.
+  const sent = [];
+  const network = pairingServer(sent, { up: false });
+  const made = page({
+    token: "",
+    connected: false,
+    ownRefresh: true,
+    ownSockets: true,
+    fetch: network,
+  });
+  made.scheduleReconnect();
+  network.state.up = true;
+  made.env.advance(1000);
+  await settled();
+  // The server refuses a WebSocket without a token.
+  made.env.sockets.forEach((tried) => tried.closes());
+  await settled();
+  assert.equal(made.pinScreenUp(), true);
+
+  made.env.pinInput.value = "123";
+  const requests = sent.length;
+  const sockets = made.env.sockets.length;
+  made.env.advance(60000);
+  await settled();
+  assert.equal(sent.length, requests);
+  assert.equal(made.env.sockets.length, sockets);
+  assert.equal(made.env.pinInput.value, "123");
+  const polling = made.env.calls.filter((name) => name.endsWith("Polling"));
+  assert.equal(polling[polling.length - 1], "stopPolling");
+});
+
+test("the PIN screen empties its field when it comes up, not when it is up", () => {
+  const made = page({ token: "", ownRefresh: true });
+  made.env.pinInput.value = "left from before";
+  made.env.pinError.textContent = "Invalid PIN";
+  made.showLoginScreen();
+  assert.equal(made.env.pinInput.value, "");
+  assert.equal(made.env.pinError.textContent, "");
+  made.env.pinInput.value = "1234";
+  made.env.pinError.textContent = "Invalid PIN";
+  made.showLoginScreen();
+  assert.equal(made.env.pinInput.value, "1234");
+  assert.equal(made.env.pinError.textContent, "Invalid PIN");
+  made.hideLoginScreen();
+  made.showLoginScreen();
+  assert.equal(made.env.pinInput.value, "");
+});
+
+test("a read refused for a token the device no longer holds does not bring the PIN screen back", async () => {
+  // Sent before the PIN was accepted, answered after.
+  let refuse;
+  const made = page({
+    token: "",
+    ownRefresh: true,
+    fetch: () =>
+      new Promise((resolve) => {
+        refuse = () => resolve(answer({}, 401));
+      }),
+  });
+  const read = made.apiAnswer("/lists");
+  made.env.localStorage.setItem("pytodo_auth_token", "new-token");
+  refuse();
+  await assert.rejects(read, { status: 401 });
+  assert.equal(made.pinScreenUp(), false);
+});
+
+test("a read refused for the token the device holds brings the PIN screen up", async () => {
+  const made = page({ ownRefresh: true, fetch: async () => answer({}, 401) });
+  await assert.rejects(made.apiAnswer("/lists"), { status: 401 });
+  assert.equal(made.pinScreenUp(), true);
+});
+
+test("behind the PIN screen no WebSocket is opened and no try is set", () => {
+  const { made } = atPinScreen();
+  made.connectWebSocket();
+  made.scheduleReconnect();
+  assert.equal(made.env.sockets.length, 0);
+  assert.deepEqual(made.env.timers, []);
+  // Nor when the server is heard from, or lost.
+  made.serverSilent();
+  made.serverAnswered();
+  assert.equal(made.env.sockets.length, 0);
+  assert.deepEqual(made.env.timers, []);
+  assert.equal(made.env.calls.includes("replayOfflineQueue"), false);
+});
+
+test("a page that comes back into view behind the PIN screen asks nothing", async () => {
+  const { made, sent } = atPinScreen();
+  made.env.document.hidden = true;
+  made.pageViewChanged();
+  made.env.document.hidden = false;
+  made.pageViewChanged();
+  await settled();
+  assert.deepEqual(sent, []);
+  assert.equal(made.env.sockets.length, 0);
+});
+
+test("once the PIN screen is gone the page tries the server as before", () => {
+  const { made } = atPinScreen();
+  made.hideLoginScreen();
+  made.connectWebSocket();
+  assert.equal(made.env.sockets.length, 1);
+});
+
+test("a token refused in mid-use closes the WebSocket and stops asking over it", async () => {
+  // The device was removed at the desktop while its page was open.
+  const made = connected({
+    ownRefresh: true,
+    fetch: async () => answer({}, 401),
+  });
+  const open = made.env.sockets[0];
+  await assert.rejects(made.apiAnswer("/lists"), { status: 401 });
+  assert.equal(made.pinScreenUp(), true);
+  assert.equal(open.closed, true);
+  assert.equal(made.socket(), null);
+  // No question over the WebSocket is left to be put, and no try.
+  made.env.advance(60000);
+  await settled();
+  assert.deepEqual(open.sent, []);
+  assert.equal(made.env.sockets.length, 1);
 });

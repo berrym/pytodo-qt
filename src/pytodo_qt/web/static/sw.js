@@ -129,6 +129,11 @@ function onFetch(event) {
 
   // API reads: network-first, fall back to the last response stored.
   if (url.pathname.startsWith("/api/")) {
+    // A read that asks for no stored answer is the network's alone. The
+    // page asks in this way whether the server is there: a stored
+    // answer would be no answer to that, and a request the page makes
+    // itself ends when the page gives it up.
+    if (request.cache === "no-store") return;
     event.respondWith(networkFirst(event));
     return;
   }
