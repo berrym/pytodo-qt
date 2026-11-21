@@ -7104,9 +7104,13 @@ class TestPlainHttpOnTheHttpsPort:
     async def test_a_connection_still_waiting_for_its_first_byte_is_closed_by_the_stop(
         self, tmp_path: Path
     ):
-        # What the loop watches without the server.
+        # What the loop watches without the server. A selector loop only:
+        # the proactor loop on Windows watches no sockets, and its
+        # _selector is the IOCP proactor, which has no map.
         loop = asyncio.get_running_loop()
         selector = getattr(loop, "_selector", None)
+        if not hasattr(selector, "get_map"):
+            selector = None
         watched = len(selector.get_map()) if selector is not None else 0
         server = self._server(tmp_path)
         port = _free_port()
