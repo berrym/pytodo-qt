@@ -840,26 +840,211 @@ test("addIdOf: the id an add carries, and none for an add of an earlier version"
   );
 });
 
-test("withAddId gives the add queued at that time an id, and no other change", () => {
-  const queue = [add(1, "Milk"), tick(2, ITEM_A, 100), add(3, "Bread")];
-  const given = rules.withAddId(queue, 3, "new-id");
-  assert.deepEqual(stamps(given), [1, 2, 3]);
-  assert.deepEqual(JSON.parse(given[2].opts.body), {
-    reminder: "Bread",
-    parse_nlp: true,
-    id: "new-id",
-  });
-  assert.equal(given[0], queue[0]);
-  assert.equal(given[1], queue[1]);
-  // The queue given is left as it was.
-  assert.equal(rules.addIdOf(queue[2]), null);
+// --- The id a change is known by, and the marks on it (#76) ---
+
+const sent = (queued) => Object.assign({}, queued, { sent: true });
+const waiting = (queued) => Object.assign({}, queued, { waiting: true });
+const bodyOf = (queued) => JSON.parse(queued.opts.body);
+const edit = (ts, id, fields) => change(ts, "/items/" + id, "PUT", fields);
+
+test("hasItsId: an add by its id, a change to a task by its change id", () => {
+  assert.equal(rules.hasItsId(subtask(1, "Oat", ITEM_A, "abc")), true);
+  assert.equal(rules.hasItsId(add(1, "Milk")), false);
+  assert.equal(rules.hasItsId(tick(1, ITEM_A, 100)), false);
+  assert.equal(
+    rules.hasItsId(edit(1, ITEM_A, { change_id: "c1", priority: 1 })),
+    true,
+  );
+  assert.equal(rules.changeIdOf(edit(1, ITEM_A, { change_id: "c1" })), "c1");
+  assert.equal(rules.changeIdOf(edit(1, ITEM_A, { change_id: 7 })), null);
+  // A request of no known kind has no id to have.
+  assert.equal(rules.hasItsId(change(1, "/lists/" + LIST, "DELETE")), true);
 });
 
-test("withAddId leaves an add that has an id, and a change that is no add", () => {
-  const queue = [subtask(1, "Oat", ITEM_A, "kept"), tick(2, ITEM_A, 100)];
-  assert.deepEqual(rules.withAddId(queue, 1, "other"), queue);
-  assert.deepEqual(rules.withAddId(queue, 2, "other"), queue);
-  assert.deepEqual(rules.withAddId(queue, 9, "other"), queue);
+test("withItsId gives a change the id of its kind, and leaves one that has it", () => {
+  assert.equal(bodyOf(rules.withItsId(add(1, "Milk"), "new")).id, "new");
+  const ticked = rules.withItsId(tick(1, ITEM_A, 100), "new");
+  assert.deepEqual(bodyOf(ticked), { updated_at: 100, change_id: "new" });
+  const has = edit(1, ITEM_A, { change_id: "kept", priority: 1 });
+  assert.equal(rules.withItsId(has, "new"), has);
+  // The change given is left as it was.
+  const before = tick(1, ITEM_A, 100);
+  rules.withItsId(before, "new");
+  assert.deepEqual(bodyOf(before), { updated_at: 100 });
+});
+
+test("withItsId: a change without a body gets one, and says what it is", () => {
+  const bare = {
+    path: "/items/" + ITEM_A,
+    opts: { method: "DELETE" },
+    timestamp: 1,
+  };
+  const given = rules.withItsId(bare, "new");
+  assert.deepEqual(bodyOf(given), { change_id: "new" });
+  assert.equal(given.opts.headers["Content-Type"], "application/json");
+  assert.equal(bare.opts.body, undefined);
+  // A type that is named already stands.
+  const typed = rules.withItsId(
+    {
+      path: "/items/" + ITEM_A,
+      opts: { method: "DELETE", headers: { "Content-Type": "text/x" } },
+      timestamp: 1,
+    },
+    "new",
+  );
+  assert.equal(typed.opts.headers["Content-Type"], "text/x");
+});
+
+test("readyToSend marks the change as sent, and gives it its id where it has none", () => {
+  const queue = [add(1, "Milk"), tick(2, ITEM_A, 100), add(3, "Bread")];
+  let made = 0;
+  const ready = rules.readyToSend(queue, 2, () => "made-" + ++made);
+  assert.deepEqual(stamps(ready), [1, 2, 3]);
+  assert.equal(ready[1].sent, true);
+  assert.equal(bodyOf(ready[1]).change_id, "made-1");
+  assert.equal(ready[0], queue[0]);
+  assert.equal(ready[2], queue[2]);
+  // The queue given is left as it was.
+  assert.equal(queue[1].sent, undefined);
+});
+
+test("readyToSend makes no id for a change that has one, and leaves one that is ready", () => {
+  const has = edit(1, ITEM_A, { change_id: "kept", priority: 1 });
+  let made = 0;
+  const ready = rules.readyToSend([has], 1, () => "made-" + ++made);
+  assert.equal(made, 0);
+  assert.equal(bodyOf(ready[0]).change_id, "kept");
+  assert.equal(ready[0].sent, true);
+  const again = rules.readyToSend(ready, 1, () => "made-" + ++made);
+  assert.equal(again[0], ready[0]);
+  assert.equal(made, 0);
+  // A change that is not in the queue: nothing is touched.
+  assert.deepEqual(
+    rules.readyToSend(ready, 9, () => "x"),
+    ready,
+  );
+});
+
+test("waitingOf: the changes that are shown; allWaiting marks them all", () => {
+  const queue = [waiting(tick(1, ITEM_A, 100)), tick(2, ITEM_B, 100)];
+  assert.deepEqual(stamps(rules.waitingOf(queue)), [1]);
+  const marked = rules.allWaiting(queue);
+  assert.deepEqual(stamps(rules.waitingOf(marked)), [1, 2]);
+  assert.equal(marked[0], queue[0]);
+  assert.equal(queue[1].waiting, undefined);
+  // Where every change is marked, the queue itself comes back.
+  assert.equal(rules.allWaiting(marked), marked);
+  assert.equal(rules.allWaiting([]).length, 0);
+});
+
+// --- A change that has gone out is delivered as it is ---
+
+test("withChange: a second tick does not take back a tick that has gone out", () => {
+  const out = sent(tick(1, ITEM_A, 100));
+  const queue = rules.withChange([out], tick(2, ITEM_A, 100));
+  assert.deepEqual(stamps(queue), [1, 2]);
+  // A third takes the second back, which has not gone out.
+  assert.deepEqual(stamps(rules.withChange(queue, tick(3, ITEM_A, 100))), [1]);
+});
+
+test("withChange: an edit is not merged into an edit that has gone out", () => {
+  const out = sent(edit(1, ITEM_A, { change_id: "c1", priority: 1 }));
+  const queue = rules.withChange(
+    [out],
+    edit(2, ITEM_A, { change_id: "c2", notes: "x" }),
+  );
+  assert.deepEqual(stamps(queue), [1, 2]);
+  assert.deepEqual(bodyOf(queue[0]), { change_id: "c1", priority: 1 });
+  assert.deepEqual(bodyOf(queue[1]), { change_id: "c2", notes: "x" });
+});
+
+test("withChange: an edit merged into one that has not gone out keeps that one's id", () => {
+  const queue = rules.withChange(
+    [edit(1, ITEM_A, { change_id: "c1", priority: 1 })],
+    edit(2, ITEM_A, { change_id: "c2", notes: "x" }),
+  );
+  assert.deepEqual(stamps(queue), [1]);
+  assert.deepEqual(bodyOf(queue[0]), {
+    change_id: "c1",
+    priority: 1,
+    notes: "x",
+  });
+});
+
+test("withChange: a delete leaves a change to the task that has gone out, and drops the others", () => {
+  const queue = rules.withChange(
+    [
+      sent(edit(1, ITEM_A, { change_id: "c1", priority: 1 })),
+      edit(2, ITEM_A, { change_id: "c2", notes: "x" }),
+      tick(3, ITEM_B, 100),
+    ],
+    remove(4, ITEM_A),
+  );
+  assert.deepEqual(stamps(queue), [1, 3, 4]);
+});
+
+test("carrierOf: the queued change that carries a change after it was put into the queue", () => {
+  const own = tick(5, ITEM_A, 100);
+  assert.equal(rules.carrierOf(rules.withChange([], own), own), 5);
+  // Merged into an earlier edit that has not gone out.
+  const merged = edit(6, ITEM_A, { notes: "x" });
+  assert.equal(
+    rules.carrierOf(
+      rules.withChange([edit(2, ITEM_A, { priority: 1 })], merged),
+      merged,
+    ),
+    2,
+  );
+  // Not into one that has: it is in the queue by itself.
+  assert.equal(
+    rules.carrierOf(
+      rules.withChange([sent(edit(2, ITEM_A, { priority: 1 }))], merged),
+      merged,
+    ),
+    6,
+  );
+  // A second tick that took the first back is carried by none.
+  const second = tick(7, ITEM_A, 100);
+  assert.equal(
+    rules.carrierOf(rules.withChange([tick(3, ITEM_A, 100)], second), second),
+    null,
+  );
+  // Nor by a tick of the same task that has gone out and stays.
+  const third = tick(8, ITEM_A, 100);
+  assert.equal(
+    rules.carrierOf(
+      rules.withChange(
+        [sent(tick(3, ITEM_A, 100)), tick(4, ITEM_A, 100)],
+        third,
+      ),
+      third,
+    ),
+    null,
+  );
+  // An edit of another task, or a change of another kind, is no carrier.
+  assert.equal(
+    rules.carrierOf([edit(2, ITEM_B, { priority: 1 }), tick(3, ITEM_A, 100)], {
+      path: "/items/" + ITEM_A,
+      opts: { method: "PUT", body: "{}" },
+      timestamp: 9,
+    }),
+    null,
+  );
+});
+
+test("withStepTakenBack: a change that has gone out is not taken back", () => {
+  // The server may have applied it.
+  const before = [];
+  const after = [tick(1, ITEM_A, 100)];
+  assert.deepEqual(rules.withStepTakenBack(after, before, after), []);
+  assert.equal(rules.withStepTakenBack([sent(after[0])], before, after), null);
+});
+
+test("replyOutcome: a delete of a task the server no longer has is done", () => {
+  assert.equal(rules.replyOutcome(404, "delete"), "sent");
+  assert.equal(rules.replyOutcome(404, "toggle"), "refused");
+  assert.equal(rules.replyOutcome(404), "refused");
+  assert.equal(rules.replyOutcome(409, "delete"), "conflict");
 });
 
 test("queuedAdds: a subtask waiting to be added names the task it was added to", () => {

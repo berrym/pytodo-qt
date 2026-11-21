@@ -284,7 +284,7 @@ class TestWebAddedIds:
             storage = DatabaseStorage(db_path)
             storage.open()
             try:
-                assert storage.get_schema_version() == 25
+                assert storage.get_schema_version() == SCHEMA_VERSION
                 assert storage.get_web_added_ids() == {}
             finally:
                 storage.close()
@@ -312,7 +312,7 @@ class TestWebAddedIds:
             storage = DatabaseStorage(db_path)
             storage.open()
             try:
-                assert storage.get_schema_version() == 25
+                assert storage.get_schema_version() == SCHEMA_VERSION
                 loaded = storage.load_database()
                 (lst,) = loaded.lists.values()
                 assert lst.name == "Home"
@@ -389,6 +389,119 @@ class TestWebAddedIds:
         for shared in (db.to_dict(), db.to_dict_for_sync(), db.to_dict_for_device(allowed)):
             assert "web_added_ids" not in shared
             assert str(1795000000000) not in str(shared)
+
+
+class TestWebChangeIds:
+    """v26 keeps, for each item, the ids of the changes the web page
+    last made to it (#76)."""
+
+    def _storage(self, tmpdir: str) -> DatabaseStorage:
+        storage = DatabaseStorage(Path(tmpdir) / "test.db")
+        storage.open()
+        return storage
+
+    def _db(self) -> tuple[Database, TodoItem, TodoItem]:
+        db = Database()
+        lst = create_todo_list("Home")
+        first = create_todo_item("Buy milk")
+        second = create_todo_item("Buy bread")
+        lst.add_item(first)
+        lst.add_item(second)
+        db.add_list(lst)
+        return db, first, second
+
+    def test_ids_are_saved_and_loaded_in_the_order_they_were_applied(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = self._storage(tmpdir)
+            try:
+                db, first, second = self._db()
+                db.web_change_ids = {first.id: ["c", "a", "b"], second.id: ["z"]}
+                storage.save_database(db)
+            finally:
+                storage.close()
+            storage = self._storage(tmpdir)
+            try:
+                loaded = storage.load_database()
+            finally:
+                storage.close()
+            assert loaded.web_change_ids == {first.id: ["c", "a", "b"], second.id: ["z"]}
+
+    def test_a_later_save_replaces_what_was_stored(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = self._storage(tmpdir)
+            try:
+                db, first, _second = self._db()
+                db.web_change_ids = {first.id: ["a", "b"]}
+                storage.save_database(db)
+                db.web_change_ids[first.id] = ["b", "c"]
+                storage.save_database(db)
+                assert storage.get_web_change_ids() == {first.id: ["b", "c"]}
+            finally:
+                storage.close()
+
+    def test_the_ids_of_an_item_that_is_gone_go_with_it(self):
+        """A deleted item keeps them while it is on record; one that has
+        been collected does not."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = self._storage(tmpdir)
+            try:
+                db, first, second = self._db()
+                first.mark_deleted()
+                gone = uuid4()
+                db.web_change_ids = {first.id: ["a"], second.id: ["b"], gone: ["c"]}
+                storage.save_database(db)
+                assert storage.get_web_change_ids() == {first.id: ["a"], second.id: ["b"]}
+            finally:
+                storage.close()
+
+    def test_an_item_and_the_ids_of_its_changes_are_saved_together_or_not_at_all(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = self._storage(tmpdir)
+            try:
+                db, first, _second = self._db()
+                db.web_change_ids = {first.id: [object()]}  # type: ignore[list-item]
+                with pytest.raises(sqlite3.Error):
+                    storage.save_database(db)
+                assert storage.load_database().lists == {}
+                assert storage.get_web_change_ids() == {}
+            finally:
+                storage.close()
+
+    def test_a_database_of_the_version_before_gains_the_table_and_keeps_its_data(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            db, first, _second = self._db()
+            db.web_added_ids = {first.id: 1795000000000}
+            storage.save_database(db)
+            storage.close()
+            raw = sqlite3.connect(db_path)
+            raw.execute("DROP TABLE web_applied_changes")
+            raw.execute("UPDATE metadata SET value = '25' WHERE key = 'schema_version'")
+            raw.commit()
+            raw.close()
+
+            storage = DatabaseStorage(db_path)
+            storage.open()
+            try:
+                assert storage.get_schema_version() == 26
+                loaded = storage.load_database()
+                assert loaded.total_items() == 2
+                assert loaded.web_added_ids == {first.id: 1795000000000}
+                assert loaded.web_change_ids == {}
+                storage._migrate_schema_to_26()
+                assert storage.get_schema_version() == 26
+            finally:
+                storage.close()
+
+    def test_the_ids_are_no_part_of_what_is_synced_or_exported(self):
+        db, first, _second = self._db()
+        db.web_change_ids = {first.id: ["a-change-of-the-page"]}
+        allowed = set(db.lists)
+        for shared in (db.to_dict(), db.to_dict_for_sync(), db.to_dict_for_device(allowed)):
+            assert "web_change_ids" not in shared
+            assert "a-change-of-the-page" not in str(shared)
 
 
 class TestSchemaMigrationToV24:

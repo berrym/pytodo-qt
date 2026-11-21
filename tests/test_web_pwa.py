@@ -171,11 +171,15 @@ class TestAppJsOfflineQueue:
         assert "offlineBanner" in js
         assert "offline-banner" in js
 
-    def test_a_change_is_queued_when_the_server_does_not_answer(self):
+    def test_every_change_is_queued_before_it_is_sent(self):
+        """One way to the server (#76): a change is stored in the queue
+        first and sent from it, whether or not the server is there. What
+        that does is tested in tests/js/queue_send.test.js."""
         js = self._read_app()
         send = js.split("async function sendOrQueue(")[1].split("\n  }\n")[0]
-        assert "if (serverConnected) {" in send
-        assert "enqueueOfflineEdit(path, opts);" in send
+        assert send.index("enqueueOfflineEdit(path, opts);") < send.index("await changeSent(")
+        assert "await api(" not in send
+        assert "serverFetch(" not in send
 
     def test_add_queues_when_offline(self):
         js = self._read_app()
@@ -383,8 +387,10 @@ class TestOfflineQueueRules:
     def test_page_script_uses_the_rules(self):
         js = (STATIC_DIR / "app.js").read_text()
         assert "window.PytodoOfflineQueue" in js
-        # One rule for what a reply means, at first sending and at replay.
-        assert js.count("QueueRules.replyOutcome(") == 2
+        # One rule for what a reply means, in the one place that sends.
+        assert js.count("QueueRules.replyOutcome(") == 1
+        run = js.split("async function sendQueuedChanges() {")[1].split("\n  }\n")[0]
+        assert "QueueRules.replyOutcome(resp.status, kind)" in run
 
     def test_one_replay_at_a_time(self):
         """One run in a copy of the page, and one across the copies by a
@@ -464,7 +470,7 @@ class TestQueuedChangesShown:
 
     def test_tasks_waiting_to_be_added_are_drawn(self):
         js = self._app()
-        assert "QueueRules.queuedAdds(getOfflineQueue(), currentListId)" in js
+        assert "QueueRules.queuedAdds(waitingChanges(), currentListId)" in js
         assert "item.provisional ? createQueuedAddCard(item) : createBoardCard(item)" in js
 
     def test_a_task_waiting_to_be_added_can_only_be_removed(self):
@@ -2014,6 +2020,23 @@ class TestServerNotReached:
         sheet = sheet.split("addSubInput.addEventListener")[0]
         assert "await sendOrQueue(" in sheet
         assert "parent_id: itemId," in sheet
+
+    def test_only_changes_that_wait_are_shown_and_counted(self):
+        """A change the server answers at once is in the queue for a
+        moment only: what the page draws and counts is read through
+        waitingChanges, never from the queue itself."""
+        js = self._app()
+        for name in (
+            "showQueuedChanges",
+            "updatePendingBadge",
+            "updateConnectionIndicator",
+            "renderItems",
+            "refreshBoard",
+            "refreshSettings",
+        ):
+            body = re.split(rf"(?:async )?function {name}\(", js)[1].split("\n  }\n")[0]
+            assert "getOfflineQueue()" not in body, name
+            assert "waitingChanges()" in body, name
 
     def test_the_queue_is_stored_twice(self):
         """tests/js/queue_copies.test.js, run under Node (#77)."""

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 25
+SCHEMA_VERSION = 26
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -199,6 +199,17 @@ CREATE TABLE IF NOT EXISTS web_added_items (
 )
 """
 
+# For each item, the ids of the changes the web page last made to it
+# (Database.web_change_ids), in the order they were applied.
+_CREATE_WEB_APPLIED_CHANGES_TABLE = """
+CREATE TABLE IF NOT EXISTS web_applied_changes (
+    item_id TEXT NOT NULL,
+    change_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    PRIMARY KEY (item_id, change_id)
+)
+"""
+
 _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_lists_deleted ON lists(deleted)",
     "CREATE INDEX IF NOT EXISTS idx_lists_name ON lists(name)",
@@ -318,6 +329,7 @@ class DatabaseStorage:
         conn.execute(_CREATE_NOTIFICATION_LOG_TABLE)
         conn.execute(_CREATE_NOTIFIED_ITEMS_TABLE)
         conn.execute(_CREATE_WEB_ADDED_ITEMS_TABLE)
+        conn.execute(_CREATE_WEB_APPLIED_CHANGES_TABLE)
 
         for index_sql in _CREATE_INDEXES:
             conn.execute(index_sql)
@@ -352,6 +364,7 @@ class DatabaseStorage:
         self._migrate_schema_to_23()
         self._migrate_schema_to_24()
         self._migrate_schema_to_25()
+        self._migrate_schema_to_26()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -798,6 +811,18 @@ class DatabaseStorage:
             return
         self.set_schema_version(25)
         logger.log.info("Migrated schema -> 25: web_added_items")
+
+    def _migrate_schema_to_26(self) -> None:
+        """Migrate schema to version 26 (ids of the changes the web page made).
+
+        The web_applied_changes table is created with the rest of the
+        schema and starts empty: no change made before this version
+        carries an id.
+        """
+        if self.get_schema_version() >= 26:
+            return
+        self.set_schema_version(26)
+        logger.log.info("Migrated schema -> 26: web_applied_changes")
 
     def get_schema_version(self) -> int:
         """Get current schema version."""
@@ -1254,6 +1279,7 @@ class DatabaseStorage:
             db.focus_sessions = []
 
         db.web_added_ids = self.get_web_added_ids()
+        db.web_change_ids = self.get_web_change_ids()
 
         logger.log.info(
             "Loaded database: %d lists, %d total items, %d focus sessions",
@@ -1290,6 +1316,21 @@ class DatabaseStorage:
                 [(str(item_id), added_at) for item_id, added_at in db.web_added_ids.items()],
             )
 
+            # The ids of the changes applied to the items that are still
+            # there, in the same transaction for the same reason. Those
+            # of an item that has been collected go with it.
+            stored = {item_id for lst in db.lists.values() for item_id in lst.items}
+            self.connection.execute("DELETE FROM web_applied_changes")
+            self.connection.executemany(
+                "INSERT INTO web_applied_changes (item_id, change_id, position) VALUES (?, ?, ?)",
+                [
+                    (str(item_id), change_id, position)
+                    for item_id, change_ids in db.web_change_ids.items()
+                    if item_id in stored
+                    for position, change_id in enumerate(dict.fromkeys(change_ids))
+                ],
+            )
+
         logger.log.info(
             "Saved database: %d lists, %d total items, %d focus sessions",
             len(db.lists),
@@ -1301,6 +1342,16 @@ class DatabaseStorage:
         """The id of every item the web page has added, with the time it was added."""
         cursor = self.connection.execute("SELECT item_id, added_at FROM web_added_items")
         return {UUID(row["item_id"]): row["added_at"] for row in cursor}
+
+    def get_web_change_ids(self) -> dict[UUID, list[str]]:
+        """For each item, the ids of the changes the web page last made to it, oldest first."""
+        cursor = self.connection.execute(
+            "SELECT item_id, change_id FROM web_applied_changes ORDER BY item_id, position"
+        )
+        change_ids: dict[UUID, list[str]] = {}
+        for row in cursor:
+            change_ids.setdefault(UUID(row["item_id"]), []).append(row["change_id"])
+        return change_ids
 
     # Device operations
 

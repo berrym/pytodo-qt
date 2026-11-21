@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from aiohttp import WSCloseCode, WSMsgType
@@ -5852,6 +5852,304 @@ class TestSecurityHeaders:
             assert resp.headers["Referrer-Policy"] == "no-referrer"
         finally:
             await client.close()
+
+
+# ===========================================================================
+# Changes delivered more than once (#76)
+# ===========================================================================
+
+
+class TestChangeIds:
+    """The page gives every change an id and may deliver it twice: its
+    answer was lost, or the request was given up while the server was
+    silent. The second delivery was refused as out of date, the item
+    having changed since the page saw it, by that same change, and the
+    page told of a conflict where there was none. A change whose id is
+    among those last applied to the item is answered as done."""
+
+    def _setup(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        lst.board_columns = ["To Do", "Doing", "Done"]
+        item = next(iter(lst.items.values()))
+        return db, lst, item
+
+    async def _twice(self, client, method, path, body):
+        first = await client.request(method, path, json=body)
+        await asyncio.sleep(0.005)
+        second = await client.request(method, path, json=body)
+        return first.status, second.status, await second.json()
+
+    @pytest.mark.asyncio
+    async def test_a_tick_delivered_twice_is_applied_once(self):
+        db, _lst, item = self._setup()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            body = {"updated_at": item.updated_at, "change_id": "tick-1"}
+            first, second, data = await self._twice(
+                client, "PATCH", f"/api/items/{item.id}/toggle", body
+            )
+        finally:
+            await client.close()
+        assert (first, second) == (200, 200)
+        assert data["already_applied"] is True
+        # The answer is the item as it is now, with the time to go on from.
+        assert data["complete"] is True
+        assert data["updated_at"] == item.updated_at
+        assert item.complete is True
+        assert db.web_change_ids == {item.id: ["tick-1"]}
+
+    @pytest.mark.asyncio
+    async def test_without_an_id_the_second_delivery_is_refused_as_before(self):
+        db, _lst, item = self._setup()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            first, second, _ = await self._twice(
+                client, "PATCH", f"/api/items/{item.id}/toggle", {"updated_at": item.updated_at}
+            )
+        finally:
+            await client.close()
+        assert (first, second) == (200, 409)
+        assert item.complete is True
+        assert db.web_change_ids == {}
+
+    @pytest.mark.asyncio
+    async def test_an_edit_and_a_move_delivered_twice_are_applied_once(self):
+        db, _lst, item = self._setup()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            seen = item.updated_at
+            first, second, data = await self._twice(
+                client,
+                "PUT",
+                f"/api/items/{item.id}",
+                {"updated_at": seen, "change_id": "edit-1", "priority": 1},
+            )
+            assert (first, second, data.get("already_applied")) == (200, 200, True)
+            assert item.priority == 1
+            seen = item.updated_at
+            first, second, data = await self._twice(
+                client,
+                "PATCH",
+                f"/api/items/{item.id}/move",
+                {"updated_at": seen, "change_id": "move-1", "column": "Doing"},
+            )
+            assert (first, second, data.get("already_applied")) == (200, 200, True)
+            assert item.board_column == "Doing"
+        finally:
+            await client.close()
+        assert db.web_change_ids[item.id] == ["edit-1", "move-1"]
+
+    @pytest.mark.asyncio
+    async def test_a_delete_delivered_twice_is_answered_as_done(self):
+        db, _lst, item = self._setup()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            body = {"updated_at": item.updated_at, "change_id": "delete-1"}
+            first, second, data = await self._twice(client, "DELETE", f"/api/items/{item.id}", body)
+        finally:
+            await client.close()
+        assert (first, second) == (200, 200)
+        assert data == {"ok": True, "already_applied": True}
+        assert item.deleted is True
+
+    @pytest.mark.asyncio
+    async def test_a_delete_of_an_item_deleted_elsewhere_is_answered_as_done(self):
+        """That is what it asks for; it was "not found" before."""
+        db, lst, item = self._setup()
+        item.mark_deleted()
+        hidden = next(iter(list(db.lists.values())[1].items.values()))
+        hidden.mark_deleted()
+        list(db.lists.values())[1].private = True
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            resp = await client.delete(f"/api/items/{item.id}", json={"updated_at": 1})
+            assert resp.status == 200
+            assert await resp.json() == {"ok": True, "already_applied": True}
+            # An item that was never there, or is in a list the page may
+            # not see, is not found.
+            resp = await client.delete(f"/api/items/{uuid4()}", json={})
+            assert resp.status == 404
+            resp = await client.delete(f"/api/items/{hidden.id}", json={})
+            assert resp.status == 404
+        finally:
+            await client.close()
+        assert lst.items[item.id].deleted is True
+
+    @pytest.mark.asyncio
+    async def test_a_recurring_item_ticked_twice_by_one_change_moves_on_once(self):
+        """Its state after the first delivery is "not done" again, so
+        only the id tells that the change has been applied."""
+        db, _lst, item = self._setup()
+        item.recurrence_type = "daily"
+        item.due_date = date.today()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            body = {"updated_at": item.updated_at, "change_id": "tick-1"}
+            first, second, data = await self._twice(
+                client, "PATCH", f"/api/items/{item.id}/toggle", body
+            )
+        finally:
+            await client.close()
+        assert (first, second, data.get("already_applied")) == (200, 200, True)
+        assert item.recurrence_count == 1
+
+    @pytest.mark.asyncio
+    async def test_another_change_made_on_an_old_state_is_still_refused(self):
+        db, _lst, item = self._setup()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            seen = item.updated_at
+            resp = await client.patch(
+                f"/api/items/{item.id}/toggle", json={"updated_at": seen, "change_id": "tick-1"}
+            )
+            assert resp.status == 200
+            await asyncio.sleep(0.005)
+            resp = await client.put(
+                f"/api/items/{item.id}",
+                json={"updated_at": seen, "change_id": "edit-1", "priority": 1},
+            )
+            assert resp.status == 409
+        finally:
+            await client.close()
+        assert item.priority == 2
+        # A change that was refused is not on record: sent again on the
+        # item's present state, it is applied.
+        assert db.web_change_ids[item.id] == ["tick-1"]
+
+    @pytest.mark.asyncio
+    async def test_a_change_that_is_refused_is_applied_when_sent_again_on_the_present_state(self):
+        db, _lst, item = self._setup()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            body = {"updated_at": item.updated_at, "change_id": "move-1", "column": "Nowhere"}
+            resp = await client.patch(f"/api/items/{item.id}/move", json=body)
+            assert resp.status == 400
+            body["column"] = "Doing"
+            resp = await client.patch(f"/api/items/{item.id}/move", json=body)
+            assert resp.status == 200
+            assert "already_applied" not in await resp.json()
+        finally:
+            await client.close()
+        assert item.board_column == "Doing"
+
+    @pytest.mark.asyncio
+    async def test_the_ids_of_the_last_eight_changes_are_kept_for_an_item(self):
+        db, _lst, item = self._setup()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            first_seen = item.updated_at
+            for number in range(9):
+                resp = await client.put(
+                    f"/api/items/{item.id}",
+                    json={
+                        "updated_at": item.updated_at,
+                        "change_id": f"edit-{number}",
+                        "priority": 1 + number % 3,
+                    },
+                )
+                assert resp.status == 200
+                await asyncio.sleep(0.003)
+            assert db.web_change_ids[item.id] == [f"edit-{n}" for n in range(1, 9)]
+            # The second of them is still known; the first no longer,
+            # and is refused as the stale change it now is.
+            resp = await client.put(
+                f"/api/items/{item.id}",
+                json={"updated_at": first_seen, "change_id": "edit-1", "priority": 3},
+            )
+            assert (resp.status, (await resp.json()).get("already_applied")) == (200, True)
+            resp = await client.put(
+                f"/api/items/{item.id}",
+                json={"updated_at": first_seen, "change_id": "edit-0", "priority": 3},
+            )
+            assert resp.status == 409
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_an_id_is_of_one_item_only(self):
+        db, lst, item = self._setup()
+        other = list(lst.items.values())[1]
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            for one in (item, other):
+                resp = await client.patch(
+                    f"/api/items/{one.id}/toggle",
+                    json={"updated_at": one.updated_at, "change_id": "same"},
+                )
+                assert resp.status == 200
+                assert "already_applied" not in await resp.json()
+        finally:
+            await client.close()
+        assert item.complete is True
+        assert other.complete is True
+
+    @pytest.mark.asyncio
+    async def test_what_is_no_id_is_taken_for_none(self):
+        db, _lst, item = self._setup()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            for bad in ("", 7, ["x"], None, "x" * 65):
+                resp = await client.put(
+                    f"/api/items/{item.id}",
+                    json={"updated_at": item.updated_at, "change_id": bad, "priority": 1},
+                )
+                assert resp.status == 200, bad
+                assert "already_applied" not in await resp.json()
+                await asyncio.sleep(0.003)
+        finally:
+            await client.close()
+        assert db.web_change_ids == {}
+
+    @pytest.mark.asyncio
+    async def test_with_the_desktop_running_a_second_delivery_is_no_undo_step(self):
+        from pytodo_qt.web.api import main_window_key
+
+        db, lst, item = self._setup()
+        pushed = []
+        saves = []
+
+        class Stack:
+            def push(self, command) -> None:
+                pushed.append(command)
+                command.redo()
+
+        class Window:
+            _database = db
+            _undo_stack = Stack()
+
+            def _save_database(self) -> None:
+                # What a save stores: the id is on record by now.
+                saves.append(list(db.web_change_ids.get(item.id, [])))
+
+            def _refresh_ui(self) -> None:
+                pass
+
+        client = await _make_client(db)
+        client.server.app[main_window_key] = Window()
+        await client.start_server()
+        try:
+            body = {"updated_at": item.updated_at, "change_id": "tick-1"}
+            first, second, data = await self._twice(
+                client, "PATCH", f"/api/items/{item.id}/toggle", body
+            )
+        finally:
+            await client.close()
+        assert (first, second, data.get("already_applied")) == (200, 200, True)
+        assert len(pushed) == 1
+        assert saves == [["tick-1"]]
+        assert item.complete is True
 
 
 # ===========================================================================

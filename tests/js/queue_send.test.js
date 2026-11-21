@@ -124,9 +124,14 @@ function server() {
     model.received.push(change);
     model.bodies.push(opts.body);
     const reply = () =>
-      new Response(JSON.stringify({ updated_at: "after " + change }), {
-        status: model.status || 200,
-      });
+      new Response(
+        JSON.stringify(
+          model.error
+            ? { error: model.error }
+            : { updated_at: "after " + change },
+        ),
+        { status: model.status || 200 },
+      );
     if (!model.slow) return Promise.resolve(reply());
     return new Promise((resolve, reject) => {
       const held = { change: change, givenUp: false };
@@ -152,7 +157,17 @@ function server() {
 //   listRead   what a read of the list waits for
 // Time stands still until env.advance(milliseconds) moves it.
 function page(disk, network, options) {
-  const env = Object.assign({ disk: disk, calls: [], toasts: [] }, options);
+  const env = Object.assign(
+    {
+      disk: disk,
+      calls: [],
+      toasts: [],
+      draws: 0,
+      undo: [],
+      refusedAs: [],
+    },
+    options,
+  );
   env.QueueRules = QueueRules;
   env.fetch = network.fetch;
   env.now = 0;
@@ -197,11 +212,25 @@ function page(disk, network, options) {
       "function probeServer() { env.calls.push('probeServer at ' + env.now); }",
       functionText("watchQueuedSend"),
       "function getOfflineQueue() { return env.disk.queue.slice(); }",
-      "function saveOfflineQueue(queue) { env.disk.queue = queue.slice(); }",
+      // Stores the queue; env.draws counts the times the list is drawn
+      // again for it.
+      "function saveOfflineQueue(queue, quiet) { env.disk.queue = queue.slice(); if (!quiet) env.draws += 1; }",
       // Ids in the order they are made, by any copy on the device.
       "function newItemId() { env.disk.ids += 1; return 'made-' + env.disk.ids; }",
-      functionText("giveQueuedAddAnId"),
-      "function authHeaders(extra) { return Object.assign({}, extra || {}); }",
+      "var Date = { now: function () { return 1795200000000 + env.now; } };",
+      "function storedTimeOf() { return null; }",
+      "function tokenRefused(sentAs) { env.refusedAs.push(sentAs); pinScreenUp = true; }",
+      "function pushOfflineUndo() { env.undo.push('step'); }",
+      "function clearOfflineUndo() { env.undo.push('cleared'); }",
+      functionText("waitingChanges"),
+      functionText("queueWaitsFromHere"),
+      functionText("enqueueOfflineEdit"),
+      functionText("sendOrQueue"),
+      "var changeFates = {};",
+      functionText("changeSent"),
+      functionText("queueRunsEnded"),
+      functionText("readyQueuedChange"),
+      "function authHeaders(extra) { return Object.assign({ Authorization: 'Bearer token' }, extra || {}); }",
       "async function serverFetch(url, opts) { return env.fetch(url, opts || {}); }",
       "function showToast(text) { env.toasts.push(text); }",
       "async function refreshCurrentList() { env.calls.push('refreshCurrentList'); if (env.listRead) await env.listRead(); }",
@@ -226,6 +255,7 @@ function page(disk, network, options) {
       "return {",
       "  env: env,",
       "  send: replayOfflineQueue,",
+      "  change: sendOrQueue,",
       "  undo: undoQueuedDelete,",
       "  running: function () { return replayRunning; },",
       "  onItsWay: function () { return queuedSend !== null; },",
@@ -241,29 +271,35 @@ const ITEM_A = "11111111-1111-1111-1111-111111111111";
 const ITEM_B = "22222222-2222-2222-2222-222222222222";
 const LIST = "33333333-3333-3333-3333-333333333333";
 
-const tick = (timestamp, item) => ({
+// Changes that have waited for the server, each with the id the page
+// gave it; id null for one queued by an earlier version of the page.
+const withId = (name, id, timestamp, fields) =>
+  JSON.stringify(
+    Object.assign(
+      id === null ? {} : { [name]: id || "given-" + timestamp },
+      fields,
+    ),
+  );
+const tick = (timestamp, item, id) => ({
   path: "/items/" + item + "/toggle",
-  opts: { method: "PATCH", body: "{}" },
+  opts: { method: "PATCH", body: withId("change_id", id, timestamp, {}) },
   timestamp: timestamp,
+  waiting: true,
 });
-const remove = (timestamp, item) => ({
+const remove = (timestamp, item, id) => ({
   path: "/items/" + item,
-  opts: { method: "DELETE" },
+  opts: { method: "DELETE", body: withId("change_id", id, timestamp, {}) },
   timestamp: timestamp,
+  waiting: true,
 });
-// A task waiting to be added, with the id the page gave it; null for
-// one queued by an earlier version of the page, which gave none.
 const add = (timestamp, text, id) => ({
   path: "/lists/" + LIST + "/items",
   opts: {
     method: "POST",
-    body: JSON.stringify(
-      id === null
-        ? { reminder: text }
-        : { id: id || "given-" + timestamp, reminder: text },
-    ),
+    body: withId("id", id, timestamp, { reminder: text }),
   },
   timestamp: timestamp,
+  waiting: true,
 });
 
 const TICK_A = "PATCH /items/" + ITEM_A + "/toggle";
@@ -694,15 +730,52 @@ test("another copy of the page sends the id the first one stored", async () => {
   );
 });
 
-test("an add that has its id keeps it, and other changes are given none", async () => {
+test("a change that has its id keeps it", async () => {
   const disk = device([add(1, "Buy milk"), tick(2, ITEM_A)]);
   const network = server();
   await page(disk, network).send();
   assert.deepEqual(
     network.bodies.map((body) => JSON.parse(body)),
-    [{ id: "given-1", reminder: "Buy milk" }, {}],
+    [{ id: "given-1", reminder: "Buy milk" }, { change_id: "given-2" }],
   );
   assert.equal(disk.ids, 0);
+});
+
+test("a tick without an id is given one, and stored with it, before it is sent", async () => {
+  // Queued by an earlier version of the page.
+  const disk = device([tick(1, ITEM_A, null)]);
+  const network = server();
+  network.slow = true;
+  const made = page(disk, network);
+  const run = made.send();
+  await settled();
+  assert.equal(JSON.parse(disk.queue[0].opts.body).change_id, "made-1");
+  assert.equal(disk.queue[0].sent, true);
+  made.silent();
+  await run;
+  network.slow = false;
+  made.found();
+  await made.send();
+  assert.deepEqual(
+    network.bodies.map((body) => JSON.parse(body).change_id),
+    ["made-1", "made-1"],
+  );
+});
+
+test("a change is marked as sent in the stored queue before its request is made", async () => {
+  const disk = device([tick(1, ITEM_A)]);
+  const network = server();
+  let storedWhenSent = null;
+  const send = network.fetch;
+  network.fetch = (url, opts) => {
+    if (opts.method === "PATCH") storedWhenSent = disk.queue[0].sent;
+    return send(url, opts);
+  };
+  const made = page(disk, network);
+  await made.send();
+  assert.equal(storedWhenSent, true);
+  // The undo steps of the page hold the queue as it was before that.
+  assert.deepEqual(made.env.undo, ["cleared"]);
 });
 
 test("nothing is given up when nothing is on its way", async () => {
@@ -883,4 +956,276 @@ test("without the Web Locks API the undo works as before", async () => {
   await made.undo(7, ITEM_A, "Call the bank");
   assert.deepEqual(disk.queue, []);
   assert.deepEqual(made.env.toasts, ["Call the bank restored"]);
+});
+
+// --- One way to the server ---
+//
+// A change is put into the queue first and sent from it at once. Sent
+// past the queue, as it was while the server answered, it was lost with
+// a page loaded again, and overtook changes that were still waiting.
+
+const toggle = { method: "PATCH", body: "{}" };
+const ofItem = (item) => "/items/" + item + "/toggle";
+
+test("a change made while the server answers is in the stored queue while it is on its way", async () => {
+  const disk = device([]);
+  const network = server();
+  network.slow = true;
+  const made = page(disk, network);
+  const done = made.change(ofItem(ITEM_A), toggle);
+  await settled();
+  assert.equal(disk.queue.length, 1);
+  assert.equal(disk.queue[0].sent, true);
+  assert.equal(JSON.parse(disk.queue[0].opts.body).change_id, "made-1");
+  // Not shown as "Not sent": the server is answering it.
+  assert.equal(disk.queue[0].waiting, undefined);
+  network.answer();
+  assert.equal(await done, "sent");
+  assert.deepEqual(disk.queue, []);
+  // Whoever made the change says what became of it; the run says nothing.
+  assert.deepEqual(made.env.toasts, []);
+  assert.deepEqual(made.env.undo, ["cleared"]);
+});
+
+test("a change the server refuses as out of date says so, and the list is read", async () => {
+  const disk = device([]);
+  const network = server();
+  network.status = 409;
+  const made = page(disk, network);
+  assert.equal(await made.change(ofItem(ITEM_A), toggle), "conflict");
+  assert.deepEqual(disk.queue, []);
+  assert.deepEqual(made.env.toasts, ["Updated elsewhere \u2014 refreshing"]);
+  assert.ok(made.env.calls.includes("refreshCurrentList"));
+});
+
+test("a change the server will not accept shows the server's reason", async () => {
+  const disk = device([]);
+  const network = server();
+  network.status = 400;
+  network.error = "Invalid column name";
+  const made = page(disk, network);
+  assert.equal(await made.change(ofItem(ITEM_A), toggle), "refused");
+  assert.deepEqual(disk.queue, []);
+  assert.deepEqual(made.env.toasts, ["Invalid column name"]);
+});
+
+test("a change made without the server waits, is shown, and can be taken back", async () => {
+  const disk = device([]);
+  const network = server();
+  const made = page(disk, network, { connected: false });
+  const step = {};
+  assert.equal(await made.change(ofItem(ITEM_A), toggle, step), "queued");
+  assert.deepEqual(network.received, []);
+  assert.equal(disk.queue.length, 1);
+  assert.equal(disk.queue[0].waiting, true);
+  assert.equal(disk.queue[0].sent, undefined);
+  assert.deepEqual(step.before, []);
+  assert.equal(step.after.length, 1);
+  assert.deepEqual(made.env.undo, ["step"]);
+  assert.deepEqual(made.env.calls, ["sendQueueAgainSoon"]);
+});
+
+test("a change that went out and got no answer waits, and is not taken back by an Undo in the page", async () => {
+  // The server may have applied it.
+  const disk = device([]);
+  const network = server();
+  network.slow = true;
+  const made = page(disk, network);
+  const step = {};
+  const done = made.change(ofItem(ITEM_A), toggle, step);
+  await settled();
+  network.lose();
+  assert.equal(await done, "queued");
+  assert.equal(disk.queue.length, 1);
+  assert.equal(disk.queue[0].sent, true);
+  assert.equal(disk.queue[0].waiting, true);
+  // The notice of the change still has what it needs to say so.
+  assert.equal(step.after.length, 1);
+  assert.equal(made.env.undo.includes("step"), false);
+  assert.ok(made.env.draws > 0);
+});
+
+test("a change given up when the server falls silent is kept in the same way", async () => {
+  const disk = device([]);
+  const network = server();
+  network.slow = true;
+  const made = page(disk, network);
+  const done = made.change(ofItem(ITEM_A), toggle);
+  await settled();
+  made.silent();
+  assert.equal(await done, "queued");
+  assert.equal(disk.queue[0].waiting, true);
+  assert.equal(network.waiting[0].givenUp, true);
+});
+
+test("a new change goes out after the changes that are waiting, not past them", async () => {
+  const disk = device([tick(1, ITEM_A)]);
+  const network = server();
+  const made = page(disk, network);
+  assert.equal(
+    await made.change("/items/" + ITEM_A, {
+      method: "PUT",
+      body: JSON.stringify({ priority: 1, updated_at: 5 }),
+    }),
+    "sent",
+  );
+  assert.deepEqual(network.received, [TICK_A, "PUT /items/" + ITEM_A]);
+  // The edit goes on from the time the tick's answer gave.
+  assert.equal(JSON.parse(network.bodies[1]).updated_at, "after " + TICK_A);
+  // The tick had waited: the run tells of it, once it has ended.
+  await settled();
+  assert.deepEqual(made.env.toasts, [
+    "Syncing 1 offline change...",
+    "All changes synced",
+  ]);
+});
+
+test("a change made while a run is under way is sent, and its maker told", async () => {
+  const disk = device([tick(1, ITEM_A)]);
+  const network = server();
+  network.slow = true;
+  const made = page(disk, network);
+  const run = made.send();
+  await settled();
+  const done = made.change(ofItem(ITEM_B), toggle);
+  await settled();
+  network.answer();
+  await settled();
+  network.answer();
+  assert.equal(await done, "sent");
+  await run;
+  assert.deepEqual(network.received, [TICK_A, TICK_B]);
+});
+
+test("a second tick takes back a tick that is waiting and has not gone out", async () => {
+  const disk = device([]);
+  const network = server();
+  const made = page(disk, network, { connected: false });
+  await made.change(ofItem(ITEM_A), toggle);
+  assert.equal(await made.change(ofItem(ITEM_A), toggle), "queued");
+  assert.deepEqual(disk.queue, []);
+  assert.deepEqual(network.received, []);
+});
+
+test("a second tick that takes a waiting tick back sends nothing, with the server there", async () => {
+  const disk = device([tick(1, ITEM_A)]);
+  const network = server();
+  const made = page(disk, network);
+  assert.equal(await made.change(ofItem(ITEM_A), toggle), "queued");
+  assert.deepEqual(disk.queue, []);
+  assert.deepEqual(network.received, []);
+});
+
+test("a second tick does not take back a tick that is on its way: both go out", async () => {
+  const disk = device([]);
+  const network = server();
+  network.slow = true;
+  const made = page(disk, network);
+  const first = made.change(ofItem(ITEM_A), toggle);
+  await settled();
+  const second = made.change(ofItem(ITEM_A), toggle);
+  await settled();
+  assert.equal(disk.queue.length, 2);
+  network.answer();
+  await settled();
+  network.answer();
+  assert.deepEqual(await Promise.all([first, second]), ["sent", "sent"]);
+  assert.deepEqual(network.received, [TICK_A, TICK_A]);
+  const ids = network.bodies.map((body) => JSON.parse(body).change_id);
+  assert.notEqual(ids[0], ids[1]);
+});
+
+test("another copy of the page sends the change: its maker hears that it is sent", async () => {
+  const disk = device([]);
+  const network = server();
+  network.slow = true;
+  const other = page(disk, network);
+  const made = page(disk, network);
+  // The other copy holds the lock, asking the server for a change of
+  // its own.
+  const others = other.change(ofItem(ITEM_B), toggle);
+  await settled();
+  const done = made.change(ofItem(ITEM_A), toggle);
+  await settled();
+  network.answer();
+  await settled();
+  network.answer();
+  assert.equal(await others, "sent");
+  assert.equal(await done, "sent");
+  assert.deepEqual(network.received, [TICK_B, TICK_A]);
+  assert.deepEqual(disk.queue, []);
+});
+
+// --- What a run says ---
+
+test("a run that leaves changes marks them as waiting, and they are drawn", async () => {
+  const disk = device([]);
+  const network = server();
+  network.status = 503;
+  const made = page(disk, network);
+  assert.equal(await made.change(ofItem(ITEM_A), toggle), "queued");
+  assert.equal(disk.queue[0].waiting, true);
+  assert.ok(made.env.draws >= 2);
+  // Nothing had waited when the run began: it says nothing.
+  assert.deepEqual(made.env.toasts, []);
+});
+
+test("a run tells of the changes that had waited, not of one made a moment ago", async () => {
+  const disk = device([tick(1, ITEM_A)]);
+  const network = server();
+  network.status = 409;
+  const made = page(disk, network);
+  assert.equal(await made.change(ofItem(ITEM_B), toggle), "conflict");
+  await settled();
+  assert.deepEqual(made.env.toasts, [
+    "Syncing 1 offline change...",
+    "Updated elsewhere \u2014 refreshing",
+    "1 change conflicted (data updated elsewhere)",
+  ]);
+});
+
+// --- The server refuses the device while the queue is sent ---
+
+test("a change the server answers with a refusal of the token: the PIN screen, and the change is kept", async () => {
+  const disk = device([tick(1, ITEM_A), tick(2, ITEM_B)]);
+  const network = server();
+  network.status = 401;
+  const made = page(disk, network);
+  await made.send();
+  assert.deepEqual(made.env.refusedAs, ["Bearer token"]);
+  // The change after it is not sent: it would be refused as well.
+  assert.deepEqual(network.received, [TICK_A]);
+  assert.equal(disk.queue.length, 2);
+  assert.deepEqual(made.env.toasts, [
+    "Syncing 2 offline changes...",
+    "2 changes still pending",
+  ]);
+});
+
+// --- A delete of a task the server no longer has ---
+
+test('a delete answered "not found" is done: the task is gone', async () => {
+  const disk = device([remove(1, ITEM_A)]);
+  const network = server();
+  network.status = 404;
+  const made = page(disk, network);
+  await made.send();
+  assert.deepEqual(disk.queue, []);
+  assert.deepEqual(made.env.toasts, [
+    "Syncing 1 offline change...",
+    "All changes synced",
+  ]);
+});
+
+test('any other change answered "not found" could not be applied', async () => {
+  const disk = device([tick(1, ITEM_A)]);
+  const network = server();
+  network.status = 404;
+  const made = page(disk, network);
+  await made.send();
+  assert.deepEqual(disk.queue, []);
+  assert.deepEqual(made.env.toasts, [
+    "Syncing 1 offline change...",
+    "1 change could not be applied",
+  ]);
 });

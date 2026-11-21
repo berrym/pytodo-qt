@@ -283,6 +283,58 @@ async def _optional_body(request: web.Request) -> dict[str, Any] | None:
     return await _required_body(request)
 
 
+# How many of the changes last applied to an item are remembered by
+# their ids.
+_CHANGE_IDS_KEPT = 8
+
+
+def _change_id(body: dict[str, Any]) -> str | None:
+    """The id the page gave a change; None for a request that names none.
+
+    The page gives every change it sends an id of its own, and may
+    deliver the same change more than once: its answer was lost, or the
+    request was given up while the server was silent. Applied once, the
+    change is answered as done the second time. Without this the second
+    delivery was refused as out of date, the item having changed since
+    the page saw it, by that same change; and the page told of a
+    conflict where there was none.
+    """
+    value = body.get("change_id")
+    return value if isinstance(value, str) and 0 < len(value) <= 64 else None
+
+
+def _change_was_applied(db: Database, item_id: UUID, change_id: str | None) -> bool:
+    """Whether the change of that id is among those last applied to the item."""
+    return change_id is not None and change_id in db.web_change_ids.get(item_id, ())
+
+
+def _record_change(db: Database, item_id: UUID, change_id: str | None) -> None:
+    """Remember a change that is being applied to an item, by its id.
+
+    The ids of the last few changes are kept for each item. A change is
+    delivered again before anything else the same page sends for the
+    item, so its id is still among them unless as many changes from
+    other devices came in between; the item has then changed elsewhere
+    in fact, and the second delivery is refused as any stale change is.
+    """
+    if change_id is None:
+        return
+    kept = db.web_change_ids.setdefault(item_id, [])
+    kept.append(change_id)
+    del kept[:-_CHANGE_IDS_KEPT]
+
+
+def _is_deleted_item(db: Database, item_id: UUID) -> bool:
+    """Whether an item that was not found is a deleted one of a list the page may see.
+
+    Asked where _find_item_and_list found no item of the id: one that is
+    still on record in such a list is then a deleted one.
+    """
+    return any(
+        item_id in lst.items for lst in db.lists.values() if not (lst.deleted or lst.private)
+    )
+
+
 def _conflict_response(current_data: dict[str, Any]) -> web.Response:
     """Return a 409 Conflict response with the entity's current state."""
     return web.json_response(
@@ -988,6 +1040,9 @@ async def handle_update_item(request: web.Request) -> web.Response:
     if body is None:
         return _error(400, "Invalid JSON body")
 
+    change_id = _change_id(body)
+    if _change_was_applied(db, item_id, change_id):
+        return web.json_response({**_item_to_json(item), "already_applied": True})
     client_updated_at = body.get("updated_at")
     if (
         client_updated_at is not None
@@ -996,6 +1051,8 @@ async def handle_update_item(request: web.Request) -> web.Response:
     ):
         return _conflict_response(_item_to_json(item))
 
+    # On record before the save, which stores it with the item.
+    _record_change(db, item_id, change_id)
     window = request.app.get(main_window_key)
     if window:
         from ..gui.commands import WebUpdateItemCommand
@@ -1020,11 +1077,18 @@ async def handle_delete_item(request: web.Request) -> web.Response:
 
     item, lst = _find_item_and_list(db, item_id)
     if item is None:
+        # Deleted already: that is what this request asks for, whether it
+        # is its own second delivery or the item was deleted elsewhere.
+        if _is_deleted_item(db, item_id):
+            return web.json_response({"ok": True, "already_applied": True})
         return _error(404, "Item not found")
 
     body = await _optional_body(request)
     if body is None:
         return _error(400, "Invalid JSON body")
+    change_id = _change_id(body)
+    if _change_was_applied(db, item_id, change_id):
+        return web.json_response({"ok": True, "already_applied": True})
     client_updated_at = body.get("updated_at")
     if (
         client_updated_at is not None
@@ -1033,6 +1097,8 @@ async def handle_delete_item(request: web.Request) -> web.Response:
     ):
         return _conflict_response(_item_to_json(item))
 
+    # On record before the save, which stores it with the item.
+    _record_change(db, item_id, change_id)
     window = request.app.get(main_window_key)
     if window and lst:
         from ..gui.commands import DeleteItemsCommand
@@ -1070,6 +1136,9 @@ async def handle_toggle_item(request: web.Request) -> web.Response:
     body = await _optional_body(request)
     if body is None:
         return _error(400, "Invalid JSON body")
+    change_id = _change_id(body)
+    if _change_was_applied(db, item_id, change_id):
+        return web.json_response({**_item_to_json(item), "already_applied": True})
     client_updated_at = body.get("updated_at")
     if (
         client_updated_at is not None
@@ -1078,6 +1147,8 @@ async def handle_toggle_item(request: web.Request) -> web.Response:
     ):
         return _conflict_response(_item_to_json(item))
 
+    # On record before the save, which stores it with the item.
+    _record_change(db, item_id, change_id)
     window = request.app.get(main_window_key)
     if window and lst:
         already_exhausted = (
@@ -1141,6 +1212,9 @@ async def handle_move_item(request: web.Request) -> web.Response:
     if body is None:
         return _error(400, "Invalid JSON body")
 
+    change_id = _change_id(body)
+    if _change_was_applied(db, item_id, change_id):
+        return web.json_response({**_item_to_json(item), "already_applied": True})
     client_updated_at = body.get("updated_at")
     if (
         client_updated_at is not None
@@ -1153,6 +1227,8 @@ async def handle_move_item(request: web.Request) -> web.Response:
     if not lst or column not in lst.board_columns:
         return _error(400, "Invalid column name")
 
+    # On record before the save, which stores it with the item.
+    _record_change(db, item_id, change_id)
     window = request.app.get(main_window_key)
     if window:
         from ..gui.commands import MoveToColumnCommand

@@ -300,6 +300,8 @@ function page(options) {
         ? functionText("showLoginScreen")
         : "function showLoginScreen() { env.calls.push('showLoginScreen'); pinScreenUp = true; }",
       "async function restoreQueue() { env.calls.push('restoreQueue'); }",
+      called("queueWaitsFromHere"),
+      called("queueRunsEnded"),
       functionText("startPage"),
       functionText("tokenRefused"),
       constantText("DATA_CACHE"),
@@ -349,8 +351,6 @@ function page(options) {
       "async function showQueueRun(result) { env.calls.push('showQueueRun'); }",
       "var QueueRules = env.QueueRules;",
       "function getOfflineQueue() { return env.queue || []; }",
-      "function enqueueOfflineEdit(path, opts) { env.queue.push({ path: path, opts: opts }); }",
-      "function pushOfflineUndo() {}",
       "function showToast() {}",
       "async function sendQueuedChanges() { env.calls.push('sendQueuedChanges'); if (env.sends) env.sends(); }",
       constantText("QUEUE_AGAIN_AFTER"),
@@ -358,7 +358,6 @@ function page(options) {
       "var queueAgainTimer = null;",
       "var queueAgainWait = QUEUE_AGAIN_AFTER;",
       functionText("sendQueueAgainSoon"),
-      functionText("sendOrQueue"),
       env.ownRefresh
         ? functionText("refreshCurrentList")
         : called("refreshCurrentList"),
@@ -441,7 +440,6 @@ function page(options) {
       "  listRecordIsKept: listRecordIsKept,",
       "  listIsServers: function () { return listIsServers; },",
       "  replayOfflineQueue: replayOfflineQueue,",
-      "  sendOrQueue: sendOrQueue,",
       "  serverDoubted: serverDoubted,",
       "  hideLoginScreen: hideLoginScreen,",
       "  pinScreenUp: function () { return pinScreenUp; },",
@@ -1129,10 +1127,17 @@ test("the queue of unsent changes is settled before the server is asked, and bef
     },
   });
   await made.startPage();
+  // What an earlier page left in the queue could not be sent then: it
+  // is marked as waiting, and so is shown, before anything is drawn.
   const order = made.env.calls.filter((name) =>
-    ["restoreQueue", "fetch", "init"].includes(name),
+    ["restoreQueue", "queueWaitsFromHere", "fetch", "init"].includes(name),
   );
-  assert.deepEqual(order, ["restoreQueue", "fetch", "init"]);
+  assert.deepEqual(order, [
+    "restoreQueue",
+    "queueWaitsFromHere",
+    "fetch",
+    "init",
+  ]);
 });
 
 test("a start the server answers with a fault of its own goes on to the page", async () => {
@@ -2417,14 +2422,47 @@ test("with no answer to that read the queue stays, and is sent when the server i
   assert.ok(made.env.calls.includes("sendQueuedChanges"));
 });
 
-test("a refusal of the token is an answer: the sending goes on to keep the changes", async () => {
+test("the server refuses the device at that read: the PIN screen, and the changes are kept", async () => {
+  // Kept quietly before, with no PIN screen: the queue was tried again
+  // and again with a token the server no longer took.
   const made = page({
     ownQueue: true,
     queue: [{ path: "/items/1/toggle" }],
     fetch: async () => answer({}, 401),
   });
   await made.replayOfflineQueue();
-  assert.ok(made.env.calls.includes("sendQueuedChanges"));
+  assert.equal(made.env.calls.includes("sendQueuedChanges"), false);
+  assert.ok(made.env.calls.includes("showLoginScreen"));
+  assert.equal(made.env.localStorage.getItem("pytodo_auth_token"), null);
+  assert.equal(made.env.queue.length, 1);
+});
+
+test("a refusal that is not the server's own at that read is no refusal of the device", async () => {
+  const marked = { "X-Pytodo-Source": "store", "X-Pytodo-Stored-At": "0" };
+  const made = page({
+    ownQueue: true,
+    queue: [{ path: "/items/1/toggle" }],
+    fetch: async () => answer(marked, 401),
+  });
+  await made.replayOfflineQueue();
+  assert.equal(made.env.calls.includes("showLoginScreen"), false);
+  assert.equal(made.env.localStorage.getItem("pytodo_auth_token"), "token");
+});
+
+test("a run that ends says so, whether or not it sent anything", async () => {
+  // Whoever waits to hear of a change is told then (queueRunsEnded).
+  for (const queue of [[], [{ path: "/items/1/toggle" }]]) {
+    const made = page({
+      ownQueue: true,
+      queue: queue,
+      fetch: async () => answer(),
+    });
+    await made.replayOfflineQueue();
+    assert.deepEqual(
+      made.env.calls.filter((name) => name === "queueRunsEnded"),
+      ["queueRunsEnded"],
+    );
+  }
 });
 
 test("an empty queue asks nothing", async () => {
@@ -2606,47 +2644,6 @@ test("behind the PIN screen the queue is not tried", async () => {
   made.env.advance(300000);
   await settled();
   assert.deepEqual(reads, [0]);
-});
-
-test("a change that fails under a connected page is queued, and sent again after 3 s", async () => {
-  // Firefox fails a change at once after the server is back, until a
-  // read has reached it; a connection reset does the same.
-  const sent = [];
-  const made = page({
-    ownQueue: true,
-    socket: socket(),
-    queue: [],
-    fetch: async (url, opts) => {
-      sent.push((opts.method || "GET") + " " + url);
-      if (opts.method === "PATCH") throw new TypeError("Failed to fetch");
-      return answer();
-    },
-  });
-  const outcome = await made.sendOrQueue("/items/1/toggle", {
-    method: "PATCH",
-  });
-  assert.equal(outcome, "queued");
-  assert.equal(made.env.queue.length, 1);
-  assert.equal(made.connected(), true);
-  await pass(made, 3000);
-  assert.ok(made.env.calls.includes("sendQueuedChanges"));
-  assert.deepEqual(sent, ["PATCH /api/items/1/toggle", "GET /api/status"]);
-});
-
-test("a change that is sent starts no try", async () => {
-  const made = page({
-    ownQueue: true,
-    socket: socket(),
-    queue: [],
-    fetch: async () => answer(),
-  });
-  assert.equal(
-    await made.sendOrQueue("/items/1/toggle", { method: "PATCH" }),
-    "sent",
-  );
-  made.env.advance(300000);
-  await settled();
-  assert.equal(made.env.calls.includes("sendQueuedChanges"), false);
 });
 
 // --- A token the server refuses: what the device has stored ---

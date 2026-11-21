@@ -7,7 +7,23 @@
  *
  * A queued change is { path, opts, timestamp }: the API path, the
  * request (method, headers, body as a JSON string), and the time it was
- * queued, which also identifies it.
+ * queued, which also identifies it. Two marks may stand on it:
+ *
+ *   sent     it has gone out to the server at least once. Whether the
+ *            server applied it is not known until its answer comes, so
+ *            it is delivered again as it is: nothing is merged into it
+ *            and nothing cancels it (withChange), and it cannot be
+ *            taken back (withStepTakenBack).
+ *   waiting  it could not be sent at once: it was made without the
+ *            server, or a run that sent the queue ended with it still
+ *            here. Only a waiting change is shown as "Not sent" and
+ *            counted (waitingOf). Every change goes through the queue,
+ *            and one that the server answers at once is in it for a
+ *            moment only, and is not shown.
+ *
+ * Its body carries an id of the page's making: "id" for a task that is
+ * added, "change_id" for a change to a task. The server applies an id
+ * once, however often it is delivered.
  *
  * Two things follow from the queue. What is sent: withChange combines a
  * new change with those already queued, withStepTakenBack undoes one
@@ -44,9 +60,12 @@
   //   "refused"   the server will not accept it, now or later
   //   "kept"      not applied this time; worth sending again
   // A request that got no answer at all has no status, and is "kept".
-  function replyOutcome(status) {
+  function replyOutcome(status, kind) {
     if (status === undefined || status === null) return "kept";
     if (status >= 200 && status < 300) return "sent";
+    // A delete of a task the server no longer has: the task is gone,
+    // which is what the delete was for.
+    if (status === 404 && kind === "delete") return "sent";
     if (status === 409) return "conflict";
     // Not signed in, timed out, asked to slow down, or a server fault.
     if (status === 401 || status === 408 || status === 429 || status >= 500) {
@@ -150,7 +169,8 @@
       for (i = 0; i < result.length; i++) {
         if (
           itemIdOf(result[i].path) === itemId &&
-          kindOf(result[i]) === "toggle"
+          kindOf(result[i]) === "toggle" &&
+          !result[i].sent
         ) {
           result.splice(i, 1);
           return result;
@@ -160,8 +180,10 @@
       return result;
     }
     if (kind === "delete") {
+      // A change that has gone out stays: the server may have applied
+      // it, and its answer gives the delete the time to go on from.
       result = result.filter(function (queued) {
-        return itemIdOf(queued.path) !== itemId;
+        return itemIdOf(queued.path) !== itemId || queued.sent;
       });
       result.push(change);
       return result;
@@ -174,7 +196,11 @@
         break;
       }
     }
-    if (previous === -1 || kindOf(result[previous]) !== kind) {
+    if (
+      previous === -1 ||
+      kindOf(result[previous]) !== kind ||
+      result[previous].sent
+    ) {
       result.push(change);
       return result;
     }
@@ -184,6 +210,8 @@
     var added = bodyOf(change);
     for (var key in added) {
       if (key === "updated_at" && merged.updated_at !== undefined) continue;
+      // The change is the earlier one still, with more in it.
+      if (key === "change_id" && merged.change_id !== undefined) continue;
       merged[key] = added[key];
     }
     var combined = copyOf(result[previous]);
@@ -219,10 +247,17 @@
     var inAfter = timesOf(after);
     var added = {};
     var i;
+    var sent = {};
+    for (i = 0; i < queue.length; i++) {
+      if (queue[i].sent) sent[queue[i].timestamp] = true;
+    }
     for (i = 0; i < after.length; i++) {
       var time = after[i].timestamp;
       if (inBefore[time]) continue;
       if (!inQueue[time]) return null;
+      // Gone out to the server, which may have applied it: taking it
+      // out of the queue would not take it back there.
+      if (sent[time]) return null;
       added[time] = true;
     }
     var result = queue.filter(function (queued) {
@@ -458,26 +493,98 @@
     return typeof id === "string" && id ? id : null;
   }
 
-  // The queue with an id given to the add that was queued at the time
-  // given, where it has none. The server creates a task of an id once,
-  // however often its add is delivered: an add with no id would be a
-  // second task the second time.
-  function withAddId(queue, timestamp, id) {
+  // The id the page gave a change to a task; null where it has none.
+  function changeIdOf(change) {
+    var id = bodyOf(change).change_id;
+    return typeof id === "string" && id ? id : null;
+  }
+
+  // Whether a change has the id the server knows it by: "id" for an
+  // add, "change_id" for a change to a task. A request of no known kind
+  // has none to have.
+  function hasItsId(change) {
+    var kind = kindOf(change);
+    if (kind === null) return true;
+    return (kind === "add" ? addIdOf(change) : changeIdOf(change)) !== null;
+  }
+
+  // A change with the id given to it, where it has none. A change that
+  // has no body gets one: a delete or a tick of a task whose time the
+  // page does not know is sent without.
+  function withItsId(change, id) {
+    if (hasItsId(change)) return change;
+    var body = bodyOf(change);
+    body[kindOf(change) === "add" ? "id" : "change_id"] = id;
+    var given = copyOf(change);
+    given.opts = copyOf(given.opts || {});
+    given.opts.body = JSON.stringify(body);
+    var headers = copyOf(given.opts.headers || {});
+    if (!headers["Content-Type"]) headers["Content-Type"] = "application/json";
+    given.opts.headers = headers;
+    return given;
+  }
+
+  // The queue with the change that was queued at the time given made
+  // ready to go out: it has its id (newId makes one where it has
+  // none, as for a change queued by an earlier version of the page),
+  // and is marked as sent. Stored in this form before the request is
+  // made, the change carries the same id whenever it is sent again, by
+  // this copy of the page or another, and is the same change to the
+  // server.
+  function readyToSend(queue, timestamp, newId) {
     return queue.map(function (queued) {
-      if (
-        queued.timestamp !== timestamp ||
-        kindOf(queued) !== "add" ||
-        addIdOf(queued)
-      ) {
-        return queued;
-      }
-      var body = bodyOf(queued);
-      body.id = id;
-      var given = copyOf(queued);
-      given.opts = copyOf(given.opts);
-      given.opts.body = JSON.stringify(body);
-      return given;
+      if (queued.timestamp !== timestamp) return queued;
+      if (queued.sent && hasItsId(queued)) return queued;
+      var ready = copyOf(
+        hasItsId(queued) ? queued : withItsId(queued, newId()),
+      );
+      ready.sent = true;
+      return ready;
     });
+  }
+
+  // The changes that are shown as "Not sent" and counted (see the head
+  // of this file).
+  function waitingOf(queue) {
+    return queue.filter(function (queued) {
+      return Boolean(queued.waiting);
+    });
+  }
+
+  // The queue with every change marked as waiting. The given queue is
+  // returned itself where every change is marked already.
+  function allWaiting(queue) {
+    var marked = false;
+    var result = queue.map(function (queued) {
+      if (queued.waiting) return queued;
+      marked = true;
+      var waiting = copyOf(queued);
+      waiting.waiting = true;
+      return waiting;
+    });
+    return marked ? result : queue;
+  }
+
+  // The time of the queued change that carries a change after it was
+  // put into the queue (withChange): its own, that of the earlier
+  // change it was merged into, or null where it took an earlier change
+  // back and left none (a second tick).
+  function carrierOf(queue, change) {
+    var kind = kindOf(change);
+    var itemId = itemIdOf(change.path);
+    var merged = null;
+    for (var i = 0; i < queue.length; i++) {
+      if (queue[i].timestamp === change.timestamp) return change.timestamp;
+      if (
+        itemId &&
+        (kind === "update" || kind === "move") &&
+        itemIdOf(queue[i].path) === itemId &&
+        kindOf(queue[i]) === kind
+      ) {
+        merged = queue[i].timestamp;
+      }
+    }
+    return merged;
   }
 
   // Whether the copy of the queue kept in IndexedDB is the one to go
@@ -517,7 +624,13 @@
     savedIsNewer: savedIsNewer,
     placedAdds: placedAdds,
     addIdOf: addIdOf,
-    withAddId: withAddId,
+    changeIdOf: changeIdOf,
+    hasItsId: hasItsId,
+    withItsId: withItsId,
+    readyToSend: readyToSend,
+    waitingOf: waitingOf,
+    allWaiting: allWaiting,
+    carrierOf: carrierOf,
   };
 
   if (typeof module !== "undefined" && module.exports) {

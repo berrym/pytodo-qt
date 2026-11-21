@@ -330,6 +330,11 @@ class Database:
     # the item has since been deleted and its record collected. Kept on
     # this device only: it is no part of what is synced or exported.
     web_added_ids: dict[UUID, int] = field(default_factory=dict)
+    # For each item, the ids of the changes the web page last made to
+    # it, oldest first. The page gives a change its id and may deliver
+    # it twice; one that is here is answered as done and not applied
+    # again. Kept on this device only, as web_added_ids is.
+    web_change_ids: dict[UUID, list[str]] = field(default_factory=dict)
 
     @property
     def active_list(self) -> TodoList | None:

@@ -1036,7 +1036,7 @@
   // Draws the current list from what the server last sent and the
   // queued changes.
   function showQueuedChanges() {
-    var queue = getOfflineQueue();
+    var queue = waitingChanges();
     var columns = serverBoardData ? serverBoardData.board_columns : [];
     cachedItems = QueueRules.withQueuedChanges(serverItems, queue, columns);
     cachedBoardData = QueueRules.boardWithQueuedChanges(serverBoardData, queue);
@@ -1068,6 +1068,24 @@
     return hex;
   }
 
+  // The changes that could not be sent at once: those that are shown
+  // as "Not sent" and counted. Every change goes through the queue; one
+  // that the server answers at once is in it for a moment only, and is
+  // not among these (offline-queue.js).
+  function waitingChanges() {
+    return QueueRules.waitingOf(getOfflineQueue());
+  }
+
+  // Marks what is in the queue as waiting. quiet as for saveOfflineQueue.
+  function queueWaitsFromHere(quiet) {
+    var queue = getOfflineQueue();
+    var waiting = QueueRules.allWaiting(queue);
+    if (waiting !== queue) saveOfflineQueue(waiting, quiet);
+  }
+
+  // Puts a change into the queue. Returns the time of the queued change
+  // that carries it: its own, that of an earlier change it was merged
+  // into, or null where it took an earlier change back.
   function enqueueOfflineEdit(path, opts) {
     var queue = getOfflineQueue();
     var change = {
@@ -1075,13 +1093,11 @@
       opts: opts,
       timestamp: QueueRules.newTimestamp(queue, Date.now()),
     };
-    saveOfflineQueue(QueueRules.withChange(queue, change));
-  }
-
-  function removeFromOfflineQueue(index) {
-    var queue = getOfflineQueue();
-    queue.splice(index, 1);
-    saveOfflineQueue(queue);
+    var after = QueueRules.withChange(queue, change);
+    // Made without the server: it waits from the start.
+    if (!serverConnected) after = QueueRules.allWaiting(after);
+    saveOfflineQueue(after);
+    return QueueRules.carrierOf(after, change);
   }
 
   function removeQueuedChange(timestamp, quiet) {
@@ -1132,45 +1148,87 @@
     }
   }
 
-  // Sends a change to the server, or queues it when the server cannot
-  // be reached. Resolves to what became of it:
+  // Sends a change to the server. Resolves to what became of it:
   //   "sent"      applied by the server
   //   "queued"    kept, to be sent when the server answers again
   //   "conflict"  the item was changed elsewhere; the list is reloaded
   //   "refused"   the server will not accept it; its reason is shown
   // step, when given, receives the queue before and after a change that
   // is queued: what the Undo of a notice about that change takes back.
+  //
+  // Every change is put into the queue first, and sent from it at
+  // once where the server is there. There is one way to the server:
+  // from the moment it is made a change is stored on the device, goes
+  // out after the changes made before it, by one copy of the page at a
+  // time, and is given up, and kept, when the server falls silent.
+  // Sent past the queue, as a change was while the server answered, it
+  // was none of that: a page loaded again lost it, and it overtook
+  // changes to the same task that were still waiting.
   async function sendOrQueue(path, opts, step) {
-    if (serverConnected) {
-      try {
-        await api(path, opts);
-        return "sent";
-      } catch (e) {
-        var outcome = QueueRules.replyOutcome(e.status);
-        if (outcome === "conflict") {
-          showToast("Updated elsewhere \u2014 refreshing");
-          await refreshCurrentList();
-          return "conflict";
-        }
-        if (outcome === "refused") {
-          showToast(e.message || "The change could not be saved");
-          await refreshCurrentList();
-          return "refused";
-        }
-      }
-    }
     var before = getOfflineQueue();
-    enqueueOfflineEdit(path, opts);
+    var carrier = enqueueOfflineEdit(path, opts);
     var after = getOfflineQueue();
-    pushOfflineUndo(before, after);
+    var fate = { outcome: "queued" };
+    if (serverConnected && carrier !== null) fate = await changeSent(carrier);
+    if (fate.outcome === "sent") return "sent";
+    if (fate.outcome === "conflict") {
+      showToast("Updated elsewhere \u2014 refreshing");
+      await refreshCurrentList();
+      return "conflict";
+    }
+    if (fate.outcome === "refused") {
+      showToast(fate.message || "The change could not be saved");
+      await refreshCurrentList();
+      return "refused";
+    }
     if (step) {
       step.before = before;
       step.after = after;
+    }
+    // A change that has gone out, with no answer yet, is not taken
+    // back by an Undo in the page: the server may have applied it.
+    var stillQueued = getOfflineQueue().filter(function (queued) {
+      return queued.timestamp === carrier;
+    });
+    if (stillQueued.length === 0 || !stillQueued[0].sent) {
+      pushOfflineUndo(before, after);
     }
     // Queued under a page that counts the server as there: nothing else
     // would send it.
     sendQueueAgainSoon();
     return "queued";
+  }
+
+  // The changes whose sender waits to hear what became of them: the
+  // time of the queued change, and what to call with its fate
+  // ({outcome, message}).
+  var changeFates = {};
+
+  // Has the queue sent, and resolves to the fate of the change queued
+  // at that time: as the server answered it, or "queued" where the
+  // runs have ended with it still in the queue.
+  function changeSent(timestamp) {
+    return new Promise(function (resolve) {
+      changeFates[timestamp] = resolve;
+      replayOfflineQueue();
+    });
+  }
+
+  // No run is under way and none follows. What is still queued could
+  // not be sent at once: it waits from here on, and is shown. Whoever
+  // waits to hear of a change is told: it is still queued, or it is
+  // gone from the queue, which another copy of the page has then sent.
+  function queueRunsEnded() {
+    queueWaitsFromHere();
+    var pending = changeFates;
+    changeFates = {};
+    var queued = {};
+    getOfflineQueue().forEach(function (entry) {
+      queued[entry.timestamp] = true;
+    });
+    Object.keys(pending).forEach(function (timestamp) {
+      pending[timestamp]({ outcome: queued[timestamp] ? "queued" : "sent" });
+    });
   }
 
   // The queue is sent when the server is found again (resumeWithServer)
@@ -1226,7 +1284,10 @@
       replayAskedFor = true;
       return;
     }
-    if (getOfflineQueue().length === 0) return;
+    if (getOfflineQueue().length === 0) {
+      queueRunsEnded();
+      return;
+    }
     replayRunning = true;
     var result = null;
     var asStored = JSON.stringify(getOfflineQueue());
@@ -1240,11 +1301,18 @@
         // the server gone remembers it: Firefox then fails a change at
         // once, without trying the server, until a read has reached it
         // again. A WebSocket that opens is no such read.
-        await serverFetch(
+        var sentAs = authHeaders().Authorization;
+        var there = await serverFetch(
           API + "/status",
           { cache: "no-store", headers: authHeaders() },
           PROBE_DEADLINE,
         );
+        // The server refuses the device: the changes are kept, and
+        // sent once it has been paired again.
+        if (there.status === 401 && storedTimeOf(there) === null) {
+          tokenRefused(sentAs);
+          return null;
+        }
         return await sendQueuedChanges();
       });
     } catch (e) {
@@ -1276,6 +1344,7 @@
       ) {
         replayOfflineQueue();
       } else {
+        queueRunsEnded();
         // What is left is tried again; an empty queue starts the waits
         // short the next time.
         sendQueueAgainSoon();
@@ -1321,13 +1390,21 @@
   }
 
   // Sends the queue, change by change, and resolves to what became of
-  // the run: how many changes the server refused as conflicts, and how
-  // many it would not apply.
+  // the run, as far as nobody waits to hear of a change by itself
+  // (changeFates): how many changes had waited when the run began, how
+  // many the server refused as conflicts, and how many it would not
+  // apply.
   async function sendQueuedChanges() {
-    var count = getOfflineQueue().length;
-    showToast(
-      "Syncing " + count + " offline change" + (count > 1 ? "s" : "") + "...",
-    );
+    var waited = waitingChanges().length;
+    if (waited > 0) {
+      showToast(
+        "Syncing " +
+          waited +
+          " offline change" +
+          (waited > 1 ? "s" : "") +
+          "...",
+      );
+    }
     var tried = {}; // timestamps of the changes sent in this run
     var heldItems = {}; // items with a change that stays queued
     var latest = {}; // item id → updated_at from the replies of this run
@@ -1339,17 +1416,9 @@
       var entry = QueueRules.nextToSend(getOfflineQueue(), tried, heldItems);
       if (!entry) break;
       tried[entry.timestamp] = true;
-      // An add queued by an earlier version of the page has no id. It
-      // is given one, and stored with it, before it is sent: sent again
-      // after that, by this copy of the page or another, it carries the
-      // same id, and is the same task to the server.
-      if (
-        QueueRules.kindOf(entry) === "add" &&
-        QueueRules.addIdOf(entry) === null
-      ) {
-        entry = giveQueuedAddAnId(entry.timestamp);
-        if (!entry) continue;
-      }
+      entry = readyQueuedChange(entry);
+      if (!entry) continue;
+      var kind = QueueRules.kindOf(entry);
       var itemId = QueueRules.itemIdOf(entry.path);
       var opts = entry.opts || {};
       if (itemId && latest[itemId] !== undefined) {
@@ -1357,9 +1426,8 @@
       }
       opts = Object.assign({}, opts, { headers: authHeaders(opts.headers) });
       // A change that is given up may have reached the server, and is
-      // sent again later. That does no harm: the server refuses a
-      // second tick, edit, move or delete as out of date, or as gone,
-      // and creates the task of an add once, by its id.
+      // sent again later. That does no harm: the server applies a
+      // change once, by the id it carries.
       var givenUp = new AbortController();
       opts.signal = givenUp.signal;
       var resp;
@@ -1375,7 +1443,13 @@
         clearTimeout(queuedSendWatch);
         queuedSendWatch = null;
       }
-      var outcome = QueueRules.replyOutcome(resp.status);
+      if (resp.status === 401) {
+        // The server refuses the device: the PIN screen comes up, and
+        // the changes are kept for when it has been paired again.
+        tokenRefused(opts.headers.Authorization);
+        break;
+      }
+      var outcome = QueueRules.replyOutcome(resp.status, kind);
       if (outcome === "kept") {
         if (itemId) heldItems[itemId] = true;
         continue;
@@ -1383,38 +1457,57 @@
       // Removed as soon as the server has answered, so that a page
       // closed during the run does not send the change a second time.
       removeQueuedChange(entry.timestamp, true);
-      if (outcome === "conflict") conflicts++;
-      if (outcome === "refused") refused++;
-      if (outcome === "sent" && itemId) {
-        try {
-          var data = await resp.json();
-          if (data && data.updated_at) latest[itemId] = data.updated_at;
-        } catch (e) {
-          /* no parseable body */
-        }
+      var fate = { outcome: outcome };
+      var answer = null;
+      try {
+        answer = await resp.json();
+      } catch (e) {
+        /* no parseable body */
+      }
+      if (outcome === "refused" && answer) fate.message = answer.error;
+      if (outcome === "sent" && itemId && answer && answer.updated_at) {
+        latest[itemId] = answer.updated_at;
+      }
+      var tell = changeFates[entry.timestamp];
+      if (tell) {
+        // Whoever made the change is waiting, and says what became of it.
+        delete changeFates[entry.timestamp];
+        tell(fate);
+      } else {
+        if (outcome === "conflict") conflicts++;
+        if (outcome === "refused") refused++;
       }
     }
-    return { conflicts: conflicts, refused: refused };
+    return { waited: waited, conflicts: conflicts, refused: refused };
   }
 
-  // Gives the add that was queued at that time an id, in the stored
-  // queue, and returns the add as it is stored now; null where it is no
-  // longer queued.
-  function giveQueuedAddAnId(timestamp) {
+  // Makes a queued change ready to go out, in the stored queue: it has
+  // the id the server knows it by, and is marked as sent, before the
+  // request is made (QueueRules.readyToSend). Returns the change as it
+  // is stored now; null where it is no longer queued.
+  function readyQueuedChange(entry) {
+    if (entry.sent && QueueRules.hasItsId(entry)) return entry;
     saveOfflineQueue(
-      QueueRules.withAddId(getOfflineQueue(), timestamp, newItemId()),
+      QueueRules.readyToSend(getOfflineQueue(), entry.timestamp, newItemId),
       true,
     );
+    // The undo steps kept here hold the queue as it was before this
+    // change went out; putting one back would take a change out of the
+    // queue that the server may have applied.
+    clearOfflineUndo();
     var stored = getOfflineQueue().filter(function (queued) {
-      return queued.timestamp === timestamp;
+      return queued.timestamp === entry.timestamp;
     });
     return stored.length > 0 ? stored[0] : null;
   }
 
-  // Says what became of a run that sent the queue, and reads the list.
+  // Says what became of a run that sent changes which had waited, and
+  // reads the list. A run that sent only changes made a moment ago says
+  // nothing: sendOrQueue has told whoever made them.
   async function showQueueRun(result) {
     var conflicts = result.conflicts;
     var refused = result.refused;
+    if (result.waited === 0 && conflicts === 0 && refused === 0) return;
     var remaining = getOfflineQueue().length;
     if (conflicts > 0) {
       showToast(
@@ -1445,7 +1538,7 @@
   // Pending changes badge on nav
   function updatePendingBadge() {
     var badge = document.getElementById("nav-pending-badge");
-    var queue = getOfflineQueue();
+    var queue = waitingChanges();
     if (badge) {
       badge.textContent = String(queue.length);
       badge.classList.toggle("hidden", queue.length === 0);
@@ -1584,7 +1677,7 @@
 
   function updateConnectionIndicator() {
     if (!connectionDot) return;
-    var queue = getOfflineQueue();
+    var queue = waitingChanges();
     var hasPending = queue.length > 0;
     connectionDot.classList.remove("online", "pending", "offline");
     if (!serverConnected) {
@@ -3350,7 +3443,7 @@
     // were added: the server reads their dates and priority when they
     // are sent, so they have no place in the sort yet.
     var waiting = currentListId
-      ? QueueRules.queuedAdds(getOfflineQueue(), currentListId)
+      ? QueueRules.queuedAdds(waitingChanges(), currentListId)
       : [];
 
     // Skip re-render if data hasn't changed (eliminates poll flicker)
@@ -3720,7 +3813,7 @@
       serverBoardData = await api("/lists/" + currentListId + "/board");
       cachedBoardData = QueueRules.boardWithQueuedChanges(
         serverBoardData,
-        getOfflineQueue(),
+        waitingChanges(),
       );
       renderBoard(cachedBoardData, force);
     } catch (e) {
@@ -6803,7 +6896,7 @@
       return i.parent_id === itemId;
     });
     var waitingSubtasks = QueueRules.queuedAdds(
-      getOfflineQueue(),
+      waitingChanges(),
       currentListId,
     ).filter(function (queued) {
       return queued.parent_id === itemId;
@@ -7382,7 +7475,7 @@
     var offlineRow = document.getElementById("settings-offline-row");
     var offlineCount = document.getElementById("settings-offline-count");
     var queueSection = document.getElementById("settings-queue-section");
-    var queue = getOfflineQueue();
+    var queue = waitingChanges();
     if (offlineRow)
       offlineRow.style.display = queue.length > 0 ? "flex" : "none";
     if (offlineCount) offlineCount.textContent = String(queue.length);
@@ -7505,7 +7598,7 @@
     var queueList = document.getElementById("settings-queue-list");
     if (!queueList) return;
     queueList.innerHTML = "";
-    queue.forEach(function (entry, idx) {
+    queue.forEach(function (entry) {
       var row = document.createElement("div");
       row.className = "queue-item";
 
@@ -7524,7 +7617,7 @@
       removeBtn.title = "Remove";
       removeBtn.innerHTML = "&times;";
       removeBtn.addEventListener("click", function () {
-        removeFromOfflineQueue(idx);
+        removeQueuedChange(entry.timestamp);
         clearOfflineUndo();
         refreshSettings();
       });
@@ -8688,6 +8781,8 @@
   // PIN screen comes up at that moment (apiAnswer).
   async function startPage() {
     await restoreQueue();
+    // What an earlier page left in the queue could not be sent then.
+    queueWaitsFromHere(true);
     var token = getAuthToken();
     var resp;
     try {
