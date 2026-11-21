@@ -1625,6 +1625,88 @@
     api("/status", { cache: "no-store" }, PROBE_DEADLINE).catch(function () {});
   }
 
+  // --- What cannot be done without the server ---
+  //
+  // A change to a task is kept and sent later. A change to what the
+  // tasks are kept in is not: creating, renaming and deleting a list,
+  // renaming a column, its limit and its deletion, a board layout, the
+  // sort order, a restore from the trash, and the Undo and Redo of what
+  // the server did. Each refers to a state that every waiting change
+  // was made on. Their controls stay where they are and, while the
+  // server cannot be reached, look disabled, say why, and do nothing:
+  // pressed, they failed with a notice before.
+  var NEEDS_SERVER = "Not available while the server can't be reached";
+
+  // Marks a control as one that needs the server. It follows the
+  // connection from then on (showServerOnlyControls).
+  function needsServer(control) {
+    control.setAttribute("data-needs-server", "");
+    showWhetherAvailable(control, serverConnected);
+    return control;
+  }
+
+  // The look of a control that needs the server: while it is not
+  // available, muted text on the page's own fill inside a dashed line
+  // (style.css, .needs-server-off), with the reason in words where it
+  // has a line for it.
+  function showWhetherAvailable(control, available) {
+    control.classList.toggle("needs-server-off", !available);
+    if (available) control.removeAttribute("aria-disabled");
+    else control.setAttribute("aria-disabled", "true");
+    // The list of a select opens before any click is heard: it is
+    // disabled as the browser does it, and the line above it says why.
+    if (control.tagName === "SELECT") control.disabled = !available;
+    var reason = control.querySelector(".needs-server-reason");
+    if (reason) reason.classList.toggle("hidden", available);
+  }
+
+  function showServerOnlyControls() {
+    document
+      .querySelectorAll("[data-needs-server]")
+      .forEach(function (control) {
+        showWhetherAvailable(control, serverConnected);
+      });
+    document.querySelectorAll(".needs-server-note").forEach(function (note) {
+      note.classList.toggle("hidden", serverConnected);
+    });
+    updateUndoButtons();
+  }
+
+  // A line for the top of a sheet whose controls need the server,
+  // shown while it cannot be reached.
+  function createNeedsServerNote(text) {
+    var note = document.createElement("p");
+    note.className = "needs-server-note";
+    note.setAttribute("role", "status");
+    note.textContent = text;
+    note.classList.toggle("hidden", serverConnected);
+    return note;
+  }
+
+  // For a change that needs the server and was begun while it was
+  // there: a name being typed, a question being answered, a key. True,
+  // having said why, when the server cannot be reached.
+  function withoutServer() {
+    if (serverConnected) return false;
+    showToast(NEEDS_SERVER);
+    return true;
+  }
+
+  // A control that is not available does nothing when it is pressed,
+  // whatever is listening on it, and says why. Before any listener of
+  // the control itself: it is asked first, on the document.
+  function refuseWithoutServer(e) {
+    var control =
+      e.target && e.target.closest
+        ? e.target.closest(".needs-server-off")
+        : null;
+    if (!control) return;
+    e.preventDefault();
+    e.stopPropagation();
+    showToast(NEEDS_SERVER);
+  }
+  document.addEventListener("click", refuseWithoutServer, true);
+
   // The notice, the dot and the count of unsent changes follow the
   // state.
   function showConnection() {
@@ -1644,6 +1726,7 @@
     }
     updateConnectionIndicator();
     updatePendingBadge();
+    showServerOnlyControls();
   }
 
   // What the notice says while the server does not answer. savedAt is
@@ -1875,6 +1958,9 @@
     { dimension: "priority", reverse: false },
   ];
   var sortUpdatedAt = 0;
+  // The order the server last gave or took, as text: what a save that
+  // fails goes back to.
+  var confirmedSortTiers = JSON.stringify(currentSortTiers);
 
   // Fetch sort tiers from API (non-blocking, falls back to defaults)
   function fetchSortTiers() {
@@ -1885,6 +1971,7 @@
       .then(function (data) {
         if (data && data.sort_tiers && data.sort_tiers.length === 3) {
           currentSortTiers = data.sort_tiers;
+          confirmedSortTiers = JSON.stringify(currentSortTiers);
           if (data.updated_at != null) sortUpdatedAt = data.updated_at;
           updateSortButtonLabel();
         }
@@ -1990,7 +2077,12 @@
     animateSheetClose(sortSheet);
   }
 
+  // Sends the order just chosen and shows the tasks in it. An order
+  // the server did not take is not kept: the last one it confirmed is
+  // put back, with a notice. It was dropped without a word before, and
+  // came back at the next read.
   function saveSortTiers() {
+    var sent = JSON.stringify(currentSortTiers);
     var payload = { tiers: currentSortTiers, updated_at: sortUpdatedAt };
     serverFetch(API + "/sort", {
       method: "PUT",
@@ -2002,23 +2094,33 @@
           return r.json().then(function (data) {
             if (data.current && data.current.sort_tiers) {
               currentSortTiers = data.current.sort_tiers;
+              confirmedSortTiers = JSON.stringify(currentSortTiers);
               if (data.current.updated_at != null)
                 sortUpdatedAt = data.current.updated_at;
               syncSortSheetUI();
+              showSortOrder();
             }
             showToast("Sort was changed elsewhere — refreshed");
           });
         }
-        return r.ok ? r.json() : null;
-      })
-      .then(function (data) {
-        if (data && data.updated_at != null) sortUpdatedAt = data.updated_at;
+        if (!r.ok || storedTimeOf(r) !== null) throw new Error("not saved");
+        return r.json().then(function (data) {
+          confirmedSortTiers = sent;
+          if (data && data.updated_at != null) sortUpdatedAt = data.updated_at;
+        });
       })
       .catch(function () {
-        /* best-effort save */
+        currentSortTiers = JSON.parse(confirmedSortTiers);
+        syncSortSheetUI();
+        showSortOrder();
+        showToast("The sort order was not saved");
       });
+    showSortOrder();
+  }
+
+  // The sort button's label and the current view, in the current order.
+  function showSortOrder() {
     updateSortButtonLabel();
-    // Re-render current view with new sort order
     if (viewMode === "list") {
       renderItems(cachedItems, true);
     } else if (cachedBoardData) {
@@ -2027,6 +2129,7 @@
   }
 
   if (sortBtn) {
+    needsServer(sortBtn);
     sortBtn.addEventListener("click", function () {
       openSortSheet();
     });
@@ -2038,12 +2141,28 @@
     if (sortBackdrop) sortBackdrop.addEventListener("click", closeSortSheet);
   }
 
+  // The sheet may be open when the server is lost.
+  var sortSheetBody = document.getElementById("sort-sheet-body");
+  if (sortSheetBody) {
+    sortSheetBody.insertBefore(
+      createNeedsServerNote(
+        "The sort order can't be changed while the server can't be reached.",
+      ),
+      sortSheetBody.firstChild,
+    );
+  }
+
   // Tier dimension change with auto-swap (no duplicates)
   for (var si = 0; si < sortTierSelects.length; si++) {
+    needsServer(sortTierSelects[si]);
     sortTierSelects[si].addEventListener(
       "change",
       (function (changedIdx) {
         return function () {
+          if (withoutServer()) {
+            syncSortSheetUI();
+            return;
+          }
           var newDim = sortTierSelects[changedIdx].value;
           // Find if another tier already has this dimension
           for (var k = 0; k < currentSortTiers.length; k++) {
@@ -2064,6 +2183,7 @@
 
   // Direction toggle buttons
   for (var di = 0; di < sortDirBtns.length; di++) {
+    needsServer(sortDirBtns[di]);
     sortDirBtns[di].addEventListener(
       "click",
       (function (tierIdx) {
@@ -2079,6 +2199,7 @@
 
   // Board layout preset button
   if (boardLayoutBtn) {
+    needsServer(boardLayoutBtn);
     boardLayoutBtn.addEventListener("click", function () {
       openPresetPicker();
     });
@@ -2189,6 +2310,14 @@
       label.className = "ctx-label";
       label.textContent = action.label;
       btn.appendChild(label);
+      if (action.needsServer) {
+        // The reason in words under the label, while it applies.
+        var reason = document.createElement("span");
+        reason.className = "needs-server-reason";
+        reason.textContent = NEEDS_SERVER;
+        label.appendChild(reason);
+        needsServer(btn);
+      }
 
       if (action.checked !== undefined) {
         var check = document.createElement("span");
@@ -2653,6 +2782,7 @@
     actions.push({
       icon: "\u270F\uFE0F",
       label: "Rename",
+      needsServer: true,
       onTap: function () {
         promptRenameColumn(colName);
       },
@@ -2663,6 +2793,7 @@
       actions.push({
         icon: "\u{1F522}",
         label: "Set WIP Limit",
+        needsServer: true,
         onTap: function () {
           promptWipLimit(colName);
         },
@@ -2678,6 +2809,7 @@
       actions.push({
         icon: "\u{1F5D1}\uFE0F",
         label: "Delete",
+        needsServer: true,
         danger: true,
         onTap: function () {
           var msg =
@@ -2695,6 +2827,7 @@
             {
               icon: "\u{1F5D1}\uFE0F",
               label: "Delete Column",
+              needsServer: true,
               danger: true,
               onTap: function () {
                 deleteColumn(colName);
@@ -2735,6 +2868,7 @@
   }
 
   async function renameColumn(oldName, newName) {
+    if (withoutServer()) return;
     var colFields = { action: "rename", old_name: oldName, new_name: newName };
     var colUa = getListUpdatedAt(currentListId);
     if (colUa !== undefined) colFields.updated_at = colUa;
@@ -2757,6 +2891,7 @@
   }
 
   async function setWipLimit(colName, limit) {
+    if (withoutServer()) return;
     var wipFields = { action: "set_wip_limit", name: colName, limit: limit };
     var wipUa = getListUpdatedAt(currentListId);
     if (wipUa !== undefined) wipFields.updated_at = wipUa;
@@ -2779,6 +2914,7 @@
   }
 
   async function deleteColumn(colName) {
+    if (withoutServer()) return;
     var delColFields = { action: "remove", name: colName };
     var delColUa = getListUpdatedAt(currentListId);
     if (delColUa !== undefined) delColFields.updated_at = delColUa;
@@ -2825,6 +2961,7 @@
         icon: isActive ? "\u2713" : "\u25AB",
         label: preset.name,
         checked: isActive,
+        needsServer: true,
         onTap: function () {
           applyPreset(preset.columns, preset.name);
         },
@@ -2835,6 +2972,7 @@
   }
 
   async function applyPreset(columns, presetName) {
+    if (withoutServer()) return;
     var presetFields = { columns: columns };
     var presetUa = getListUpdatedAt(currentListId);
     if (presetUa !== undefined) presetFields.updated_at = presetUa;
@@ -7544,6 +7682,11 @@
         return;
       }
       if (trashEmpty) trashEmpty.style.display = "none";
+      trashList.appendChild(
+        createNeedsServerNote(
+          "Tasks can't be restored while the server can't be reached.",
+        ),
+      );
 
       items.forEach(function (item) {
         var row = document.createElement("div");
@@ -7565,6 +7708,7 @@
         var restoreBtn = document.createElement("button");
         restoreBtn.className = "trash-restore-btn";
         restoreBtn.textContent = "Restore";
+        needsServer(restoreBtn);
         restoreBtn.addEventListener("click", async function () {
           try {
             await api("/items/" + item.id + "/restore", { method: "PATCH" });
@@ -7794,38 +7938,39 @@
 
   // Changes are waiting that the server has not seen: undo and redo act
   // on those, whether or not the browser reports the device offline.
+  // Undo and Redo are of the changes still waiting in the page while
+  // it has such steps, and of what the server did otherwise.
   function undoIsOffline() {
-    return (
-      !serverConnected ||
-      offlineUndoStack.length > 0 ||
-      offlineRedoStack.length > 0
-    );
+    return offlineUndoStack.length > 0 || offlineRedoStack.length > 0;
   }
 
+  // Undo and Redo: of the changes still waiting in the page, where
+  // there are such steps; else of what the server did, which needs the
+  // server.
   function updateUndoButtons() {
-    if (undoIsOffline()) {
-      if (undoBtn) {
-        undoBtn.disabled = offlineUndoStack.length === 0;
-        undoBtn.title = offlineUndoStack.length > 0 ? "Undo (offline)" : "Undo";
+    var steps = undoIsOffline();
+    var unavailable = !steps && !serverConnected;
+    [
+      [undoBtn, offlineUndoStack, "Undo", "can_undo", "undo_text"],
+      [redoBtn, offlineRedoStack, "Redo", "can_redo", "redo_text"],
+    ].forEach(function (one) {
+      var btn = one[0];
+      if (!btn) return;
+      showWhetherAvailable(btn, !unavailable);
+      if (unavailable) {
+        // Not "disabled": a disabled button says nothing when pressed.
+        btn.disabled = false;
+        btn.title = NEEDS_SERVER;
+      } else if (steps) {
+        btn.disabled = one[1].length === 0;
+        btn.title = one[1].length > 0 ? one[2] + " (offline)" : one[2];
+      } else {
+        btn.disabled = !serverUndoState[one[3]];
+        btn.title = serverUndoState[one[4]]
+          ? one[2] + ": " + serverUndoState[one[4]]
+          : one[2];
       }
-      if (redoBtn) {
-        redoBtn.disabled = offlineRedoStack.length === 0;
-        redoBtn.title = offlineRedoStack.length > 0 ? "Redo (offline)" : "Redo";
-      }
-    } else {
-      if (undoBtn) {
-        undoBtn.disabled = !serverUndoState.can_undo;
-        undoBtn.title = serverUndoState.undo_text
-          ? "Undo: " + serverUndoState.undo_text
-          : "Undo";
-      }
-      if (redoBtn) {
-        redoBtn.disabled = !serverUndoState.can_redo;
-        redoBtn.title = serverUndoState.redo_text
-          ? "Redo: " + serverUndoState.redo_text
-          : "Redo";
-      }
-    }
+    });
   }
 
   async function fetchUndoState() {
@@ -7861,6 +8006,7 @@
       offlineUndoAction();
       return;
     }
+    if (withoutServer()) return;
     try {
       var resp = await api("/undo", {
         method: "POST",
@@ -7883,6 +8029,7 @@
       offlineRedoAction();
       return;
     }
+    if (withoutServer()) return;
     try {
       var resp = await api("/redo", {
         method: "POST",
@@ -7967,6 +8114,13 @@
   function renderListSheetBody(lists) {
     if (!listSheetBody) return;
     listSheetBody.innerHTML = "";
+    // Another list can be chosen without the server; the lists
+    // themselves cannot be changed.
+    listSheetBody.appendChild(
+      createNeedsServerNote(
+        "Lists can't be created, renamed or deleted while the server can't be reached.",
+      ),
+    );
     lists.forEach(function (lst) {
       var row = document.createElement("div");
       row.className = "list-row" + (lst.id === currentListId ? " active" : "");
@@ -8007,6 +8161,7 @@
       renameBtn.className = "list-action-btn";
       renameBtn.title = "Rename";
       renameBtn.innerHTML = "&#9998;";
+      needsServer(renameBtn);
       renameBtn.addEventListener("click", function (e) {
         e.stopPropagation();
         startRenameList(lst.id, lst.name, name);
@@ -8017,6 +8172,7 @@
       deleteBtn.className = "list-action-btn danger";
       deleteBtn.title = "Delete";
       deleteBtn.innerHTML = "&times;";
+      needsServer(deleteBtn);
       deleteBtn.addEventListener("click", function (e) {
         e.stopPropagation();
         confirmDeleteList(lst.id, lst.name, lst.item_count);
@@ -8051,7 +8207,9 @@
 
     async function commitRename() {
       var newName = input.value.trim();
-      if (newName && newName !== currentName) {
+      if (newName && newName !== currentName && withoutServer()) {
+        nameEl.textContent = currentName;
+      } else if (newName && newName !== currentName) {
         var renameFields = { name: newName };
         var renameUa = getListUpdatedAt(listId);
         if (renameUa !== undefined) renameFields.updated_at = renameUa;
@@ -8102,6 +8260,7 @@
     else msg += "?";
 
     if (!confirm(msg)) return;
+    if (withoutServer()) return;
 
     (async function () {
       var delListFields = {};
@@ -8146,6 +8305,7 @@
   }
 
   if (listCreateBtn) {
+    needsServer(listCreateBtn);
     listCreateBtn.addEventListener("click", async function () {
       var name = listCreateInput.value.trim();
       if (!name) return;

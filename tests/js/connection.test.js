@@ -302,6 +302,9 @@ function page(options) {
       "async function restoreQueue() { env.calls.push('restoreQueue'); }",
       called("queueWaitsFromHere"),
       called("flushPendingItemFields"),
+      // The controls that need the server follow the state; counted
+      // apart, so that what else a change of state does stays in view.
+      "function showServerOnlyControls() { env.controlsShown = (env.controlsShown || 0) + 1; }",
       called("queueRunsEnded"),
       functionText("startPage"),
       functionText("tokenRefused"),
@@ -3152,4 +3155,14 @@ test("the id of an added task is a random UUID, another each time", () => {
   // Every byte is written in two digits.
   const zeros = idMaker({ getRandomValues: (bytes) => bytes.fill(0) });
   assert.equal(zeros(), "00000000-0000-4000-8000-000000000000");
+});
+
+// --- The controls that need the server ---
+
+test("the controls that need the server follow each change of the connection", () => {
+  const made = page({ connected: true });
+  made.serverSilent();
+  assert.equal(made.env.controlsShown, 1);
+  made.serverAnswered();
+  assert.equal(made.env.controlsShown, 2);
 });

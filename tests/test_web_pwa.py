@@ -2050,6 +2050,84 @@ class TestServerNotReached:
             assert "getOfflineQueue()" not in body, name
             assert "waitingChanges()" in body, name
 
+    def test_what_needs_the_server_says_so_without_it(self):
+        """tests/js/needs_server.test.js, run under Node (#76)."""
+        self._node("needs_server.test.js")
+
+    def test_every_control_that_changes_lists_columns_or_order_needs_the_server(self):
+        """Each of the page's requests that is not queued has its control
+        marked: without the server it looks disabled and says why,
+        where it failed with a notice before."""
+        js = self._app()
+        for marked in (
+            "needsServer(listCreateBtn);",
+            "needsServer(renameBtn);",
+            "needsServer(deleteBtn);",
+            "needsServer(restoreBtn);",
+            "needsServer(sortBtn);",
+            "needsServer(boardLayoutBtn);",
+        ):
+            assert js.count(marked) == 1, marked
+        # The actions of the column menu, and each board layout.
+        column = js.split("function openColumnContextMenu(")[1].split(
+            "function promptRenameColumn("
+        )[0]
+        assert column.count("needsServer: true,") == 4
+        for label in ('"Rename"', '"Set WIP Limit"', '"Delete"', '"Delete Column"'):
+            assert f"label: {label},\n" in column
+        presets = js.split("async function openPresetPicker(")[1].split("\n  }\n")[0]
+        assert "needsServer: true," in presets
+        # A task's own actions are queued, and are not marked.
+        tasks = js.split("function buildItemContextActions(")[1].split("\n  }\n")[0]
+        assert "needsServer" not in tasks
+        # The sort sheet may be open when the server is lost.
+        assert "needsServer(sortTierSelects[si]);" in js
+        assert "needsServer(sortDirBtns[di]);" in js
+        # The lists, the trash and the sort sheet say it in a line as well.
+        assert js.count("createNeedsServerNote(") == 4
+        # A change begun with the server is refused without it: a name
+        # being typed, a question being answered, a key.
+        for begun in ("renameColumn(", "setWipLimit(", "deleteColumn(", "applyPreset("):
+            body = js.split("async function " + begun)[1].split("\n  }\n")[0]
+            assert "if (withoutServer()) return;" in body, begun
+        assert "newName !== currentName && withoutServer()" in js
+        assert "if (!confirm(msg)) return;\n    if (withoutServer()) return;" in js
+        # One listener refuses a press on any of them, before their own.
+        assert 'document.addEventListener("click", refuseWithoutServer, true);' in js
+
+    def test_a_control_that_needs_the_server_keeps_its_text_readable(self):
+        """Muted text on no fill, not faded: 4.5:1 on every surface such
+        a control stands on, in both themes; the reason's text as well."""
+        contrast = TestCalendarContrast()
+        css = (STATIC_DIR / "style.css").read_text()
+        rule = css.split(".needs-server-off,")[1].split("}")[0]
+        assert "color: var(--text-secondary) !important;" in rule
+        # The page's own fill under it, wherever the control stands:
+        # on the colored header muted text alone could not be read.
+        assert "background: var(--bg) !important;" in rule
+        # Nothing that makes the label harder to read.
+        assert (
+            "line-through"
+            not in css.split(".needs-server-off,")[1]
+            .split(".needs-server-note {")[0]
+            .split("*/")[-1]
+        )
+        # A sign of the state that is not a color, at 3:1 on the fill.
+        assert "outline: 1px dashed var(--border);" in css
+        assert "opacity: 1 !important;" in rule
+        assert rule.count("opacity") == 1
+        for name in (".needs-server-reason {", ".needs-server-note {"):
+            block = css.split(name)[1].split("}")[0]
+            assert "color: var(--text-secondary);" in block
+            assert "opacity" not in block
+        for theme, colors in contrast._themes().items():
+            # The control's text on its fill; the reason and the line of
+            # a sheet on the surfaces they stand on.
+            for surface in ("bg", "bg-secondary", "bg-card", "surface"):
+                ratio = contrast._contrast(colors["text-secondary"], colors[surface])
+                assert ratio >= 4.5, (theme, surface, round(ratio, 2))
+            assert contrast._contrast(colors["border"], colors["bg"]) >= 3, theme
+
     def test_the_queue_is_stored_twice(self):
         """tests/js/queue_copies.test.js, run under Node (#77)."""
         self._node("queue_copies.test.js")

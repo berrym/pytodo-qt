@@ -262,6 +262,11 @@ def _web_pairs() -> list[Pair]:
             ("border on bg", c["border"], c["bg"]),
             ("border on surface", c["border"], c["surface"]),
             ("accent on bg (focus ring)", c["accent"], c["bg"]),
+            # A control that needs the server, while the server cannot
+            # be reached, is filled with bg wherever it stands: its text
+            # is "text-secondary on bg" and its dashed line "border on
+            # bg", both above. On the header it lies on the accent color.
+            ("bg on accent (an unavailable control on the header)", c["bg"], c["accent"]),
         ]
         for label, fg, bg in ui_pairs:
             out.append(Pair(label, theme_name, fg, bg, THRESHOLD_UI, "ui"))

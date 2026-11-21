@@ -2845,6 +2845,62 @@ body {
   color: var(--danger);
 }
 
+/* A control that needs the server, while the server cannot be
+   reached. As on the desktop, it takes the page's own color as its
+   fill and the muted text color, which keeps 4.5:1 on that fill: on
+   the colored header, where muted text alone could not be read, it
+   lies there as a flat chip. A dashed line around it says the same
+   without color, since some controls are muted to begin with; it is
+   drawn inside the control, on its fill, where the border color keeps
+   3:1. Nothing is faded or struck through: what a control shows is
+   still read. The reason is said in words where there is room: under
+   the label of a menu action, and in a line at the top of a sheet. */
+.needs-server-off,
+.needs-server-off:hover,
+.needs-server-off:active {
+  /* Over whatever the control's own rules say for it and for its
+     hover: this is its state, not its kind. */
+  color: var(--text-secondary) !important;
+  background: var(--bg) !important;
+  border-color: transparent !important;
+  cursor: not-allowed !important;
+  /* A disabled select is faded by some browsers. */
+  opacity: 1 !important;
+  -webkit-text-fill-color: var(--text-secondary);
+}
+
+/* Not while it has the keyboard's focus: the focus ring is an outline
+   too, and is the one to be seen then. */
+.needs-server-off:not(:focus-visible) {
+  outline: 1px dashed var(--border);
+  outline-offset: -1px;
+}
+
+/* A menu action has its reason in words under it. */
+.context-menu-action.needs-server-off:not(:focus-visible) {
+  outline: none;
+}
+
+.needs-server-off .ctx-icon {
+  filter: grayscale(1);
+}
+
+.needs-server-reason {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.needs-server-note {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 .context-menu-action .ctx-icon {
   width: 24px;
   text-align: center;
