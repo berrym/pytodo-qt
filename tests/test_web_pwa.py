@@ -2277,9 +2277,25 @@ class TestServerNotReached:
         opened = connect.split("socket.onopen = function () {")[1].split("};")[0]
         assert "waitToPing();" in opened
         heard = connect.split("socket.onmessage = function (e) {")[1].split("try {")[0]
-        # Anything the server says is an answer.
-        assert "serverAnswered();" in heard
         assert "waitToPing();" in heard
+        # Nor is one that answers: only an answer over HTTP shows that
+        # the server is reached (#120). A WebSocket that opens while
+        # the server is taken for silent has it asked over HTTP.
+        assert "serverAnswered();" not in connect
+        assert "if (!serverConnected) probeServer();" in opened
+        assert js.count("serverAnswered();") == 1
+        fetch = js.split("async function serverFetch(url, opts, deadline) {")[1].split("\n  }\n")[0]
+        assert "if (storedTimeOf(resp) === null) serverAnswered();" in fetch
+        assert fetch.count("if (heard === serverAnswers) serverUnanswered(url);") == 2
+        # A request that came to nothing has the server asked over
+        # HTTP, not over the WebSocket; the question itself with no
+        # answer is the server's silence.
+        unanswered = js.split("function serverUnanswered(url) {")[1].split("\n  }\n")[0]
+        assert 'if (url === API + "/status") serverSilent();' in unanswered
+        assert "else serverDoubted();" in unanswered
+        doubted = js.split("function serverDoubted() {")[1].split("\n  }\n")[0]
+        assert "probeServer()" in doubted
+        assert "pingServer" not in doubted and "webSocketOpen" not in doubted
         # A socket that does not open in time is closed, and tried again.
         assert "WebSocket.CONNECTING) socket.close();" in connect
 

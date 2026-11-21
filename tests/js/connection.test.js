@@ -407,7 +407,13 @@ function page(options) {
       env.ownSockets
         ? functionText("scheduleReconnect")
         : called("scheduleReconnect"),
-      env.ownSockets ? functionText("probeServer") : called("probeServer"),
+      "var doubtAsked = false;",
+      // The question put to the server over HTTP: the page's own where
+      // a test is of it or of the WebSocket (ownProbe, ownSockets),
+      // else only written down.
+      env.ownSockets || env.ownProbe
+        ? functionText("probeServer")
+        : "function probeServer() { env.calls.push('probeServer'); return Promise.resolve(); }",
       functionText("disconnectWebSocket"),
       functionText("pageViewChanged"),
       functionText("api"),
@@ -420,6 +426,7 @@ function page(options) {
       functionText("storedTimeOf"),
       functionText("serverFetch"),
       functionText("serverAnswered"),
+      functionText("serverUnanswered"),
       functionText("serverDoubted"),
       functionText("serverSilent"),
       functionText("resumeWithServer"),
@@ -511,22 +518,63 @@ test("a stored answer of unknown time, and one made up, have the time 0", () => 
 
 // --- The state follows the answers ---
 
-test("an answer from the store means the server did not answer", async () => {
-  const made = page({ fetch: async () => answer(FROM_STORE) });
+// A read that came to nothing does not make the server silent by
+// itself: the server is asked directly (#120), and these tests let
+// that question be put (ownProbe).
+const asking = (network) => {
+  const asked = [];
+  const made = page({
+    ownProbe: true,
+    fetch: (url, opts) => {
+      asked.push(url);
+      return network(url, opts);
+    },
+  });
+  return { made: made, asked: asked };
+};
+
+test("an answer from the store is not the server's: the server is asked, and gives no answer", async () => {
+  const { made, asked } = asking(async () => answer(FROM_STORE));
   const resp = await made.serverFetch("/api/lists", {});
   assert.equal(resp.status, 200);
+  await settled();
+  assert.deepEqual(asked, ["/api/lists", "/api/status"]);
   assert.equal(made.connected(), false);
   assert.equal(made.env.banner.hidden, false);
 });
 
-test("a request that fails means the server did not answer", async () => {
-  const made = page({
-    fetch: async () => {
-      throw new TypeError("Failed to fetch");
-    },
+test("an answer from the store with the server there: asked, it answers, and nothing is said", async () => {
+  // The read was slow, and the worker gave what it had.
+  const { made, asked } = asking(async (url) =>
+    url === "/api/status" ? answer() : answer(FROM_STORE),
+  );
+  await made.serverFetch("/api/lists", {});
+  await settled();
+  assert.deepEqual(asked, ["/api/lists", "/api/status"]);
+  assert.equal(made.connected(), true);
+  // The state never changed: nothing was drawn for it.
+  assert.equal(made.env.calls.includes("giveUpQueuedSend"), false);
+});
+
+test("a request that fails: the server is asked, and gives no answer", async () => {
+  const { made, asked } = asking(async () => {
+    throw new TypeError("Failed to fetch");
   });
   await assert.rejects(made.serverFetch("/api/lists", {}), TypeError);
+  await settled();
+  assert.deepEqual(asked, ["/api/lists", "/api/status"]);
   assert.equal(made.connected(), false);
+});
+
+test("the question itself with no answer makes the server silent at once", async () => {
+  // Nothing more is asked after it.
+  const { made, asked } = asking(async () => {
+    throw new TypeError("Failed to fetch");
+  });
+  await assert.rejects(made.serverFetch("/api/status", {}), TypeError);
+  assert.equal(made.connected(), false);
+  await settled();
+  assert.deepEqual(asked, ["/api/status"]);
 });
 
 test("the server's own answer means it is there, a refusal included", async () => {
@@ -582,20 +630,20 @@ test("no answer to the question put for a queued change gives the change up", as
   assert.ok(made.env.calls.includes("giveUpQueuedSend"));
 });
 
-test("with a WebSocket open, no answer to that question is put to the WebSocket first", async () => {
-  // 5 s for the question and 3 s for the WebSocket: with the 3 s before
-  // the question, a change is given up 11 s at most after it was sent.
+test("with a WebSocket open, no answer to that question makes the server silent all the same", async () => {
+  // 5 s for the question: with the 3 s before it, a change is given up
+  // 8 s at most after it was sent. The WebSocket is not asked: one that
+  // answers shows only that it is alive (#120).
   const made = connected({ hidden: true, fetch: noAnswer([]) });
   made.probeServer();
-  made.env.advance(5000);
+  made.env.advance(4999);
   await settled();
   assert.equal(made.env.calls.includes("giveUpQueuedSend"), false);
-  assert.deepEqual(made.env.sockets[0].sent, ["ping"]);
-  made.env.advance(2999);
-  assert.equal(made.env.calls.includes("giveUpQueuedSend"), false);
   made.env.advance(1);
+  await settled();
   assert.equal(made.connected(), false);
   assert.ok(made.env.calls.includes("giveUpQueuedSend"));
+  assert.deepEqual(made.env.sockets[0].sent, []);
 });
 
 test("a server already taken for silent gives nothing up a second time", () => {
@@ -754,8 +802,8 @@ function noAnswer(seen) {
     });
 }
 
-test("a read with no answer is given up at its deadline", async () => {
-  const made = page({ fetch: noAnswer([]) });
+test("a read with no answer is given up at its deadline, and the server is asked", async () => {
+  const { made, asked } = asking(noAnswer([]));
   const read = made.serverFetch("/api/lists", {});
   let outcome = "waiting";
   read.catch((error) => {
@@ -767,6 +815,15 @@ test("a read with no answer is given up at its deadline", async () => {
   assert.equal(made.connected(), true);
   made.env.advance(1);
   await assert.rejects(read, { name: "AbortError" });
+  await settled();
+  // The question has its own 5 s.
+  assert.deepEqual(asked, ["/api/lists", "/api/status"]);
+  assert.equal(made.connected(), true);
+  made.env.advance(4999);
+  await settled();
+  assert.equal(made.connected(), true);
+  made.env.advance(1);
+  await settled();
   assert.equal(made.connected(), false);
   assert.equal(made.env.banner.hidden, false);
 });
@@ -948,6 +1005,8 @@ test("a read given up after the server has answered another says nothing", async
   made.env.advance(7000);
   await assert.rejects(old, { name: "AbortError" });
   assert.equal(made.connected(), true);
+  await settled();
+  assert.equal(made.env.calls.includes("probeServer"), false);
   // The notice was never shown.
   assert.equal(made.env.text.textContent, "");
 });
@@ -967,36 +1026,61 @@ test("a stored answer that arrives after the server's own says nothing", async (
   await made.serverFetch("/api/status", {});
   release();
   await old;
+  await settled();
   assert.equal(made.connected(), true);
+  // The server is not asked on its account either.
+  assert.equal(made.env.calls.includes("probeServer"), false);
 });
 
-test("with no answer since, the first read given up makes the server silent", async () => {
-  const made = page({ fetch: noAnswer([]) });
+test("while the server is taken for silent a read that comes to nothing asks nothing", async () => {
+  // The tries for a silent server ask it.
+  const made = page({
+    connected: false,
+    fetch: async () => answer(FROM_STORE),
+  });
+  await made.serverFetch("/api/lists/1", {});
+  await settled();
+  assert.equal(made.env.calls.includes("probeServer"), false);
+  assert.equal(made.connected(), false);
+});
+
+test("with no answer since, reads given up put the question once", async () => {
+  const { made, asked } = asking(noAnswer([]));
   const first = made.serverFetch("/api/lists/1", {});
   const second = made.serverFetch("/api/lists/1", {});
   made.env.advance(10000);
   await assert.rejects(first);
   await assert.rejects(second);
+  await settled();
+  assert.deepEqual(asked, ["/api/lists/1", "/api/lists/1", "/api/status"]);
+  made.env.advance(5000);
+  await settled();
   assert.equal(made.connected(), false);
+  // The next read that comes to nothing asks again: the question is
+  // over.
+  assert.deepEqual(asked.length, 3);
 });
 
-test("an answer whose body is cut off at the deadline makes the server silent", async () => {
-  // The fetch gives the answer; its body never ends.
-  const made = page({
-    fetch: (url, opts) =>
-      Promise.resolve({
-        status: 200,
-        ok: true,
-        headers: new Headers(),
-        json: () =>
-          new Promise((resolve, reject) => {
-            opts.signal.addEventListener("abort", () =>
-              reject(
-                new DOMException("The operation was aborted.", "AbortError"),
-              ),
-            );
-          }),
-      }),
+test("an answer whose body is cut off at the deadline: the server is asked", async () => {
+  // The fetch gives the answer; its body never ends. The server went
+  // away in the middle of it, and gives the question no answer.
+  let reads = 0;
+  const { made, asked } = asking((url, opts) => {
+    reads += 1;
+    if (reads > 1) return noAnswer([])(url, opts);
+    return Promise.resolve({
+      status: 200,
+      ok: true,
+      headers: new Headers(),
+      json: () =>
+        new Promise((resolve, reject) => {
+          opts.signal.addEventListener("abort", () =>
+            reject(
+              new DOMException("The operation was aborted.", "AbortError"),
+            ),
+          );
+        }),
+    });
   });
   const read = made.apiAnswer("/lists/1");
   await null;
@@ -1005,6 +1089,11 @@ test("an answer whose body is cut off at the deadline makes the server silent", 
   assert.equal(made.connected(), true);
   made.env.advance(10000);
   await assert.rejects(read, { name: "AbortError" });
+  await settled();
+  assert.deepEqual(asked, ["/api/lists/1", "/api/status"]);
+  assert.equal(made.connected(), true);
+  made.env.advance(5000);
+  await settled();
   assert.equal(made.connected(), false);
 });
 
@@ -1449,20 +1538,65 @@ test("the WebSocket is opened at the page's address, with the token", () => {
   assert.equal(made.env.sockets.length, 1);
 });
 
-test("a WebSocket that opens is the server's answer, and is asked after the interval", () => {
+test("a WebSocket that opens is not the server's answer: the server is asked over HTTP", async () => {
+  const asked = [];
   const made = page({
     connected: false,
     ownSockets: true,
-    fetch: async () => answer(),
+    fetch: async (url) => {
+      asked.push(url);
+      return answer();
+    },
   });
   made.connectWebSocket();
   const opened = made.env.sockets[0];
   opened.opens();
-  assert.equal(made.connected(), true);
+  assert.equal(made.connected(), false);
   assert.ok(made.env.calls.includes("stopPolling"));
   assert.ok(made.env.calls.includes("replayOfflineQueue"));
+  await settled();
+  assert.deepEqual(asked, ["/api/status"]);
+  assert.equal(made.connected(), true);
   made.env.advance(PING);
   assert.deepEqual(opened.sent, ["ping"]);
+});
+
+test("a WebSocket that opens and answers while no read gets through leaves the server silent", async () => {
+  // Seen with a connection that outlived its server (#119, #120): the
+  // page showed stored tasks as current for as long as that lasted.
+  const made = page({
+    connected: false,
+    ownSockets: true,
+    fetch: noAnswer([]),
+  });
+  made.connectWebSocket();
+  const opened = made.env.sockets[0];
+  opened.opens();
+  opened.says({ event: "hello", page_version: "" });
+  made.env.advance(PING);
+  opened.says({ event: "pong" });
+  made.env.advance(5000);
+  await settled();
+  opened.says({ event: "pong" });
+  assert.equal(made.connected(), false);
+  // The WebSocket is kept: it is alive.
+  assert.equal(opened.closed, false);
+});
+
+test("with the server reached, a WebSocket that opens asks nothing over HTTP", async () => {
+  const asked = [];
+  const made = page({
+    connected: true,
+    ownSockets: true,
+    fetch: async (url) => {
+      asked.push(url);
+      return answer();
+    },
+  });
+  made.connectWebSocket();
+  made.env.sockets[0].opens();
+  await settled();
+  assert.deepEqual(asked, []);
 });
 
 test("the server's answer to the question keeps the WebSocket", () => {
@@ -1502,13 +1636,15 @@ test("no answer to the question: the WebSocket is given up and another tried", (
   assert.equal(made.env.sockets.length, 2);
 });
 
-test("a message while the server was taken for silent brings the page back", () => {
+test("a message on the WebSocket while the server is taken for silent does not bring the page back", () => {
+  // An answer over HTTP does (serverFetch).
   const made = connected();
   made.serverSilent();
   assert.equal(made.connected(), false);
   made.env.sockets[0].says({ event: "pong" });
-  assert.equal(made.connected(), true);
-  assert.equal(made.env.banner.hidden, true);
+  made.env.sockets[0].says({ event: "hello", page_version: "" });
+  assert.equal(made.connected(), false);
+  assert.equal(made.env.banner.hidden, false);
 });
 
 test("the greeting names the version of the page the server has", () => {
@@ -1895,21 +2031,21 @@ test("the server's own tasks are not read again", async () => {
 });
 
 test("stored tasks that leave the server silent are not read again here", async () => {
-  // The notice shows, and the tries for a silent server take over.
+  // The server is asked and gives no answer: the notice shows, and the
+  // tries for a silent server take over.
   const made = page({
     ownRefresh: true,
+    ownProbe: true,
     fetch: async () => list(["old"], FROM_STORE),
   });
   await made.refreshCurrentList();
+  await settled();
   assert.equal(made.connected(), false);
   assert.deepEqual(made.env.drawn, ["old"]);
   assert.equal(made.env.calls.includes("markSynced"), false);
   assert.equal(made.env.calls.includes("storeListAnswer"), false);
-  // Nothing is set to read it again.
-  assert.equal(
-    made.env.timers.some((timer) => timer.at === AGAIN),
-    false,
-  );
+  // The read set for a page still counted as connected does nothing
+  // once it is not.
   made.env.advance(60000);
   await settled();
   assert.deepEqual(made.env.drawn, ["old"]);
@@ -2031,8 +2167,9 @@ test("the PIN screen is not brought up again by a read that was waiting", async 
 });
 
 test("a WebSocket that opens while the list comes from the store ends with the server's list", async () => {
-  // The server is back: the WebSocket opens and greets, but the read
-  // it starts is answered from the store first.
+  // The server is back: the WebSocket opens and greets, the server is
+  // asked and answers, but the read that follows is answered from the
+  // store first.
   let give;
   let reads = 0;
   const made = page({
@@ -2052,6 +2189,8 @@ test("a WebSocket that opens while the list comes from the store ends with the s
   const opened = made.env.sockets[0];
   opened.opens();
   opened.says({ event: "hello", page_version: "" });
+  await settled();
+  assert.equal(made.connected(), true);
   give();
   await settled();
   assert.equal(made.connected(), true);
@@ -2322,87 +2461,142 @@ test("a token refused in mid-use closes the WebSocket and stops asking over it",
 
 // --- A WebSocket that answers, and a read that came to nothing ---
 //
-// The two say opposite things of the same server. The WebSocket is
-// asked, and its silence decides.
+// The two say opposite things of the same server. The server is asked
+// over HTTP, and that answer decides: the WebSocket is no witness that
+// the server is reached (#120).
 
-test("a stored answer under an open WebSocket puts the question to it, and no more", async () => {
+// A page with an open WebSocket, whose own question to the server is
+// put through the network given.
+const underWebSocket = (network) => {
   const open = socket();
-  const made = page({ socket: open, fetch: async () => answer(FROM_STORE) });
+  const asked = [];
+  const made = page({
+    socket: open,
+    ownProbe: true,
+    fetch: (url, opts) => {
+      asked.push(url);
+      return network(url, opts);
+    },
+  });
+  return { made: made, open: open, asked: asked };
+};
+const STATUS = "/api/status";
+
+test("a stored answer under an open WebSocket puts the question to the server, not to the WebSocket", async () => {
+  const { made, open, asked } = underWebSocket(async (url) =>
+    url === STATUS ? answer() : answer(FROM_STORE),
+  );
   await made.serverFetch("/api/lists/1", {});
+  await settled();
+  assert.deepEqual(asked, ["/api/lists/1", STATUS]);
+  assert.deepEqual(open.sent, []);
+  // The server answered: it is there.
   assert.equal(made.connected(), true);
-  assert.deepEqual(open.sent, ["ping"]);
-  // The page's onmessage takes the answer: the server is there.
-  made.waitToPing();
-  made.env.advance(PONG);
   assert.equal(open.closed, false);
-  assert.equal(made.connected(), true);
 });
 
-test("no answer over the WebSocket to that question: the server is silent", async () => {
-  const open = socket();
-  const made = page({ socket: open, fetch: async () => answer(FROM_STORE) });
+test("no answer to that question: the server is silent, and the WebSocket is kept", async () => {
+  const { made, open } = underWebSocket(async () => answer(FROM_STORE));
   await made.serverFetch("/api/lists/1", {});
-  made.env.advance(PONG - 1);
-  assert.equal(made.connected(), true);
-  made.env.advance(1);
-  assert.equal(open.closed, true);
+  await settled();
   assert.equal(made.connected(), false);
   assert.equal(made.env.banner.hidden, false);
+  assert.equal(open.closed, false);
+  assert.deepEqual(open.sent, []);
 });
 
 test("the question is put once, however many reads come to nothing", async () => {
-  // Put again, it would move its own deadline, and a dead WebSocket
-  // would never be found out.
-  const open = socket();
-  const made = page({ socket: open, fetch: async () => answer(FROM_STORE) });
+  const hangs = noAnswer([]);
+  const { made, asked } = underWebSocket((url, opts) =>
+    url === STATUS ? hangs(url, opts) : Promise.resolve(answer(FROM_STORE)),
+  );
   await made.serverFetch("/api/lists/1", {});
-  made.env.advance(PONG - 500);
+  made.env.advance(2500);
   await made.serverFetch("/api/lists/1", {});
-  await made.serverFetch("/api/status", {});
-  assert.deepEqual(open.sent, ["ping"]);
-  made.env.advance(500);
+  await made.serverFetch("/api/lists/2", {});
+  await settled();
+  assert.deepEqual(
+    asked.filter((url) => url === STATUS),
+    [STATUS],
+  );
+  // Its deadline is not moved by the later reads.
+  made.env.advance(2499);
+  await settled();
+  assert.equal(made.connected(), true);
+  made.env.advance(1);
+  await settled();
   assert.equal(made.connected(), false);
+});
+
+test("a question that was answered is put again for the next read that comes to nothing", async () => {
+  const { made, asked } = underWebSocket(async (url) =>
+    url === STATUS ? answer() : answer(FROM_STORE),
+  );
+  await made.serverFetch("/api/lists/1", {});
+  await settled();
+  await made.serverFetch("/api/lists/1", {});
+  await settled();
+  assert.deepEqual(
+    asked.filter((url) => url === STATUS),
+    [STATUS, STATUS],
+  );
 });
 
 test("a request that fails under an open WebSocket puts the question too", async () => {
-  const open = socket();
-  const made = page({
-    socket: open,
-    fetch: async () => {
-      throw new TypeError("Failed to fetch");
-    },
+  const { made, open, asked } = underWebSocket(async (url) => {
+    if (url === STATUS) return answer();
+    throw new TypeError("Failed to fetch");
   });
   await assert.rejects(made.serverFetch("/api/lists/1", {}));
+  await settled();
+  assert.deepEqual(asked, ["/api/lists/1", STATUS]);
   assert.equal(made.connected(), true);
-  assert.deepEqual(open.sent, ["ping"]);
+  assert.deepEqual(open.sent, []);
 });
 
 test("a read given up under an open WebSocket puts the question too", async () => {
-  const open = socket();
-  const made = page({ socket: open, fetch: noAnswer([]) });
+  const { made, open, asked } = underWebSocket(noAnswer([]));
   const read = made.serverFetch("/api/lists/1", {});
   made.env.advance(10000);
   await assert.rejects(read, { name: "AbortError" });
+  await settled();
+  assert.deepEqual(asked, ["/api/lists/1", STATUS]);
   assert.equal(made.connected(), true);
-  assert.deepEqual(open.sent, ["ping"]);
-});
-
-test("without a WebSocket a read that came to nothing makes the server silent", async () => {
-  const made = page({ fetch: async () => answer(FROM_STORE) });
-  await made.serverFetch("/api/lists/1", {});
+  assert.deepEqual(open.sent, []);
+  made.env.advance(5000);
+  await settled();
   assert.equal(made.connected(), false);
 });
 
-test("a WebSocket that is still connecting is no witness", async () => {
-  const connecting = socket();
-  connecting.readyState = 0;
+test("without a WebSocket the rule is the same: asked, and silent with no answer", async () => {
+  const asked = [];
   const made = page({
-    socket: connecting,
-    fetch: async () => answer(FROM_STORE),
+    ownProbe: true,
+    fetch: async (url) => {
+      asked.push(url);
+      return answer(FROM_STORE);
+    },
   });
   await made.serverFetch("/api/lists/1", {});
+  await settled();
+  assert.deepEqual(asked, ["/api/lists/1", STATUS]);
   assert.equal(made.connected(), false);
-  assert.deepEqual(connecting.sent, []);
+});
+
+test("a WebSocket is no witness, open or still connecting", async () => {
+  for (const state of [0, 1]) {
+    const waiting = socket();
+    waiting.readyState = state;
+    const made = page({
+      socket: waiting,
+      ownProbe: true,
+      fetch: async () => answer(FROM_STORE),
+    });
+    await made.serverFetch("/api/lists/1", {});
+    await settled();
+    assert.equal(made.connected(), false);
+    assert.deepEqual(waiting.sent, []);
+  }
 });
 
 // --- The changes not yet sent ---
@@ -2507,48 +2701,49 @@ test("an empty queue asks nothing", async () => {
   assert.equal(asked, 0);
 });
 
-test("the question is put at once, between two of the regular ones", async () => {
-  // In a page in view the next regular question is always waiting.
-  const open = socket();
-  const made = page({ socket: open, fetch: async () => answer(FROM_STORE) });
+test("the regular question over the WebSocket keeps its beat through a read that came to nothing", async () => {
+  // In a page in view the next regular question is always waiting. It
+  // is of the WebSocket, and is neither brought forward nor dropped.
+  const { made, open } = underWebSocket(async (url) =>
+    url === STATUS ? answer() : answer(FROM_STORE),
+  );
   made.waitToPing();
   made.env.advance(1000);
   await made.serverFetch("/api/lists/1", {});
+  await settled();
+  assert.deepEqual(open.sent, []);
+  made.env.advance(PING - 1000);
   assert.deepEqual(open.sent, ["ping"]);
-  made.env.advance(PONG - 1);
   assert.equal(made.connected(), true);
-  made.env.advance(1);
-  assert.equal(open.closed, true);
-  assert.equal(made.connected(), false);
-  // The regular question was replaced, not left to be put as well.
-  assert.deepEqual(open.sent, ["ping"]);
 });
 
 test("an answer whose body is cut off under an open WebSocket puts the question", async () => {
-  const open = socket();
-  const made = page({
-    socket: open,
-    fetch: (url, opts) =>
-      Promise.resolve({
-        status: 200,
-        ok: true,
-        headers: new Headers(),
-        json: () =>
-          new Promise((resolve, reject) => {
-            opts.signal.addEventListener("abort", () =>
-              reject(
-                new DOMException("The operation was aborted.", "AbortError"),
-              ),
-            );
-          }),
-      }),
+  let reads = 0;
+  const { made, open, asked } = underWebSocket((url, opts) => {
+    reads += 1;
+    if (reads > 1) return Promise.resolve(answer());
+    return Promise.resolve({
+      status: 200,
+      ok: true,
+      headers: new Headers(),
+      json: () =>
+        new Promise((resolve, reject) => {
+          opts.signal.addEventListener("abort", () =>
+            reject(
+              new DOMException("The operation was aborted.", "AbortError"),
+            ),
+          );
+        }),
+    });
   });
   const read = made.apiAnswer("/lists/1");
   await settled();
   made.env.advance(10000);
   await assert.rejects(read, { name: "AbortError" });
+  await settled();
+  assert.deepEqual(asked, ["/api/lists/1", STATUS]);
   assert.equal(made.connected(), true);
-  assert.deepEqual(open.sent, ["ping"]);
+  assert.deepEqual(open.sent, []);
 });
 
 test("a list the service worker has nothing stored for is read again", async () => {
@@ -2614,18 +2809,19 @@ async function pass(made, milliseconds) {
   }
 }
 
-test("a sending whose read got no answer is tried again after 3 s", async () => {
+test("a sending whose read got no answer leaves the server silent, though its WebSocket answers", async () => {
+  // That read is the question itself. The queue is sent when the
+  // server is found again (resumeWithServer), not at the 3 s of a
+  // sending that left changes behind.
   const { made, reads, server } = withQueue();
   server.up = false;
   await made.replayOfflineQueue();
   assert.equal(made.env.calls.includes("sendQueuedChanges"), false);
-  assert.equal(made.connected(), true);
+  assert.equal(made.connected(), false);
   server.up = true;
-  await pass(made, 2500);
+  await pass(made, 30000);
   assert.deepEqual(reads, [0]);
-  await pass(made, 500);
-  assert.deepEqual(reads, [0, 3]);
-  assert.ok(made.env.calls.includes("sendQueuedChanges"));
+  assert.equal(made.env.calls.includes("sendQueuedChanges"), false);
 });
 
 test("changes the server keeps refusing for now are tried at growing waits", async () => {

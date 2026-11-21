@@ -365,11 +365,11 @@
       resp = await fetch(url, opts);
     } catch (e) {
       if (timer !== null) clearTimeout(timer);
-      if (heard === serverAnswers) serverDoubted();
+      if (heard === serverAnswers) serverUnanswered(url);
       throw e;
     }
     if (storedTimeOf(resp) === null) serverAnswered();
-    else if (heard === serverAnswers) serverDoubted();
+    else if (heard === serverAnswers) serverUnanswered(url);
     return resp;
   }
 
@@ -1550,9 +1550,9 @@
   // and one without a WebSocket only reads its list: a change sent from
   // such a page would wait, and hold the lock, for as long as the
   // browser lets it. The question is therefore put for the change
-  // itself. With no answer the server is taken for silent as after any
-  // read (serverDoubted), and the change is given up: 11 s at most
-  // after it was sent.
+  // itself. With no answer the server is taken for silent
+  // (probeServer), and the change is given up: 8 s at most after it
+  // was sent.
   var QUEUED_SEND_ASKED_AFTER = 3000;
   var queuedSendWatch = null;
 
@@ -1721,8 +1721,11 @@
     }
   }
 
-  // The server gave an answer of its own, the WebSocket opened, or
-  // something arrived on it.
+  // The server gave an answer of its own over HTTP. Nothing else says
+  // that it is reached: a WebSocket that opens, or answers, does not.
+  // One was seen to answer every "ping" while no read of the page got
+  // through to the server, and the page showed stored tasks as current
+  // for as long as that lasted (#120).
   function serverAnswered() {
     serverAnswers += 1;
     if (serverConnected) return;
@@ -1734,19 +1737,27 @@
   }
 
   // A request failed, got no answer by its deadline, or was answered
-  // from the service worker's store. Where a WebSocket is open the
-  // server is asked over it, and only its silence there counts: an
-  // answer over the WebSocket and a read that came to nothing say
-  // opposite things of the same server, and the page went back and
-  // forth between them for as long as reads waited in the browser
-  // behind requests that had been made while the server was away.
-  // Asked once: a question put again would move its own deadline.
+  // from the service worker's store, and the server has said nothing
+  // since it was made. Where it was the question whether the server is
+  // there (/status), the server is silent. After any other request the
+  // question is put (serverDoubted), and its answer decides.
+  function serverUnanswered(url) {
+    if (url === API + "/status") serverSilent();
+    else serverDoubted();
+  }
+
+  // A request other than the question came to nothing. That alone says
+  // little of the server as it is: the request may have waited in the
+  // browser behind others made while the server was away. The server
+  // is asked directly, over HTTP, whatever its WebSocket does. Asked
+  // once for however many requests come to nothing meanwhile.
+  var doubtAsked = false;
   function serverDoubted() {
-    if (webSocketOpen()) {
-      if (wsPongTimer === null) pingServer();
-      return;
-    }
-    serverSilent();
+    if (!serverConnected || doubtAsked) return;
+    doubtAsked = true;
+    probeServer().then(function () {
+      doubtAsked = false;
+    });
   }
 
   // The server does not answer.
@@ -1785,12 +1796,18 @@
     scheduleReconnect();
   }
 
-  // Asks the server whether it is there. What follows from the answer,
-  // or from none, is serverFetch's. The service worker leaves a read
-  // made with "no-store" to the network: what it has stored would be no
-  // answer to this.
+  // Asks the server whether it is there, over HTTP. What follows from
+  // the answer, or from none by PROBE_DEADLINE, is serverFetch's: the
+  // server is there, or silent (serverUnanswered). The service worker
+  // leaves a read made with "no-store" to the network: what it has
+  // stored would be no answer to this. The promise ends when the
+  // question does, answered or not.
   function probeServer() {
-    api("/status", { cache: "no-store" }, PROBE_DEADLINE).catch(function () {});
+    return api("/status", { cache: "no-store" }, PROBE_DEADLINE).catch(
+      function () {
+        /* no answer: serverFetch has seen to it */
+      },
+    );
   }
 
   // --- What cannot be done without the server ---
@@ -8685,7 +8702,8 @@
   // closing it: a computer put to sleep, a network that dropped. While
   // the page is in view the server is asked over the WebSocket every
   // WS_PING_INTERVAL milliseconds, and has WS_PONG_DEADLINE to say
-  // anything at all.
+  // anything at all. No answer shows that the server is gone; an
+  // answer shows only that the WebSocket is alive.
   var WS_PING_INTERVAL = 5000;
   var WS_PONG_DEADLINE = 3000;
   var wsConnectTimer = null;
@@ -8726,13 +8744,16 @@
       clearTimeout(wsConnectTimer);
       wsReconnectDelay = 1000;
       stopPolling();
-      serverAnswered();
+      // A WebSocket that opens does not show that the server is
+      // reached (serverAnswered): where the page takes it for silent,
+      // it is asked over HTTP now.
+      if (!serverConnected) probeServer();
       replayOfflineQueue();
       waitToPing();
     };
     socket.onmessage = function (e) {
-      // Anything the server says shows that it is there.
-      serverAnswered();
+      // The WebSocket is alive; what that says of the server is no
+      // more than that (serverAnswered).
       if (ws === socket) waitToPing();
       try {
         var msg = JSON.parse(e.data);
