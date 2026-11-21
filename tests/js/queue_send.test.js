@@ -128,7 +128,9 @@ function server() {
         JSON.stringify(
           model.error
             ? { error: model.error }
-            : { updated_at: "after " + change },
+            : model.current
+              ? { current: model.current }
+              : { updated_at: "after " + change },
         ),
         { status: model.status || 200 },
       );
@@ -168,6 +170,15 @@ function page(disk, network, options) {
     },
     options,
   );
+  // The line of the task sheet that says what became of an edit.
+  env.indicator = {
+    textContent: "",
+    className: "",
+    isConnected: true,
+    appendChild(label) {
+      env.indicator.textContent += label;
+    },
+  };
   env.QueueRules = QueueRules;
   env.fetch = network.fetch;
   env.now = 0;
@@ -226,6 +237,25 @@ function page(disk, network, options) {
       functionText("queueWaitsFromHere"),
       functionText("enqueueOfflineEdit"),
       functionText("sendOrQueue"),
+      functionText("queueChange"),
+      // The task sheet: its line for what became of an edit, and what
+      // it knows of a task.
+      "var document = { getElementById: function (id) { return id === 'detail-save-indicator' ? env.indicator : null; } };",
+      "var saveDebounceTimer = null;",
+      "var pendingItemFields = {};",
+      "var lastSavedFields = null;",
+      "function getItemUpdatedAt(itemId) { return env.timeUnknown ? undefined : 5; }",
+      "function updateCachedItemTimestamp(itemId, at) { env.calls.push('seen at ' + at); }",
+      "function showDetailConflict(itemId, current) { env.calls.push('conflict with ' + JSON.stringify(current)); }",
+      "function createUnsentLabel() { return 'Not sent'; }",
+      functionText("flushPendingItemFields"),
+      functionText("sendItemFields"),
+      functionText("saveItemFieldForce"),
+      // The board: a card picked up to be moved.
+      "var moveMode = env.moving || null;",
+      "var cachedBoardData = { board_columns: ['To Do', 'Doing', 'Done'] };",
+      "function exitMoveMode() { moveMode = null; }",
+      functionText("executeDrop"),
       "var changeFates = {};",
       functionText("changeSent"),
       functionText("queueRunsEnded"),
@@ -256,6 +286,12 @@ function page(disk, network, options) {
       "  env: env,",
       "  send: replayOfflineQueue,",
       "  change: sendOrQueue,",
+      "  edit: sendItemFields,",
+      "  editLater: function (itemId, fields) { pendingItemFields[itemId] = fields; },",
+      "  flush: flushPendingItemFields,",
+      "  force: saveItemFieldForce,",
+      "  lastSaved: function () { return lastSavedFields; },",
+      "  drop: executeDrop,",
       "  undo: undoQueuedDelete,",
       "  running: function () { return replayRunning; },",
       "  onItsWay: function () { return queuedSend !== null; },",
@@ -1228,4 +1264,236 @@ test('any other change answered "not found" could not be applied', async () => {
     "Syncing 1 offline change...",
     "1 change could not be applied",
   ]);
+});
+
+// --- The task sheet ---
+//
+// An edit made in the sheet was sent past the queue, and dropped with
+// "Save failed" where the server gave no answer. It goes through the
+// queue as every change does, and the sheet says what became of it.
+
+const EDIT_A = "PUT /items/" + ITEM_A;
+
+test("an edit in the task sheet is sent through the queue, and the sheet says it is saved", async () => {
+  const disk = device([]);
+  const network = server();
+  const made = page(disk, network);
+  await made.edit(ITEM_A, { notes: "by Friday" });
+  assert.deepEqual(network.received, [EDIT_A]);
+  assert.deepEqual(JSON.parse(network.bodies[0]), {
+    notes: "by Friday",
+    updated_at: 5,
+    change_id: "made-1",
+  });
+  assert.equal(made.env.indicator.textContent, "Saved \u2713");
+  assert.deepEqual(made.env.calls, [
+    "seen at after " + EDIT_A,
+    "refreshCurrentList",
+  ]);
+  assert.deepEqual(disk.queue, []);
+  // Nothing is said of it but in the sheet.
+  assert.deepEqual(made.env.toasts, []);
+});
+
+test('without the server the edit is kept, and the sheet says "Not sent"', async () => {
+  const disk = device([]);
+  const network = server();
+  const made = page(disk, network, { connected: false });
+  await made.edit(ITEM_A, { notes: "by Friday" });
+  assert.deepEqual(network.received, []);
+  assert.equal(made.env.indicator.textContent, "Not sent");
+  assert.equal(disk.queue.length, 1);
+  assert.equal(disk.queue[0].waiting, true);
+  assert.equal(disk.queue[0].path, "/items/" + ITEM_A);
+  assert.deepEqual(JSON.parse(disk.queue[0].opts.body), {
+    notes: "by Friday",
+    updated_at: 5,
+  });
+  assert.deepEqual(made.env.toasts, []);
+});
+
+test("an edit given up when the server falls silent is kept in the same way", async () => {
+  const disk = device([]);
+  const network = server();
+  network.slow = true;
+  const made = page(disk, network);
+  const done = made.edit(ITEM_A, { notes: "by Friday" });
+  await settled();
+  assert.equal(made.env.indicator.textContent, "Saving...");
+  made.silent();
+  await done;
+  assert.equal(made.env.indicator.textContent, "Not sent");
+  assert.equal(disk.queue.length, 1);
+});
+
+test("a second edit made without the server is merged into the first", async () => {
+  const disk = device([]);
+  const made = page(disk, server(), { connected: false });
+  await made.edit(ITEM_A, { notes: "by Friday" });
+  await made.edit(ITEM_A, { priority: 1 });
+  assert.equal(disk.queue.length, 1);
+  assert.deepEqual(JSON.parse(disk.queue[0].opts.body), {
+    notes: "by Friday",
+    updated_at: 5,
+    priority: 1,
+  });
+});
+
+test("an edit of a task changed elsewhere shows the sheet's own choice, with the task as the server has it", async () => {
+  const disk = device([]);
+  const network = server();
+  network.status = 409;
+  network.current = { id: ITEM_A, updated_at: 9, notes: "by Monday" };
+  const made = page(disk, network);
+  await made.edit(ITEM_A, { notes: "by Friday" });
+  assert.deepEqual(made.env.calls, [
+    'conflict with {"id":"' + ITEM_A + '","updated_at":9,"notes":"by Monday"}',
+  ]);
+  // Refresh or Force Save is offered in the sheet: no notice, and the
+  // list is left as it is until one is chosen.
+  assert.deepEqual(made.env.toasts, []);
+  assert.deepEqual(disk.queue, []);
+  // Force Save sends what was last edited.
+  assert.deepEqual(made.lastSaved(), { notes: "by Friday", updated_at: 5 });
+});
+
+test("Force Save sends the edit again on the task's present state", async () => {
+  const disk = device([]);
+  const network = server();
+  const made = page(disk, network);
+  await made.edit(ITEM_A, { notes: "by Friday" });
+  await made.force(ITEM_A, { notes: "by Friday", force: true, updated_at: 9 });
+  assert.deepEqual(JSON.parse(network.bodies[1]), {
+    notes: "by Friday",
+    force: true,
+    updated_at: 9,
+    change_id: "made-2",
+  });
+  assert.equal(made.env.indicator.textContent, "Saved \u2713");
+  // What Force Save would send again is the edit, not itself.
+  assert.deepEqual(made.lastSaved(), { notes: "by Friday", updated_at: 5 });
+});
+
+test("an edit the server will not accept shows the server's reason in the sheet", async () => {
+  const disk = device([]);
+  const network = server();
+  network.status = 400;
+  network.error = "Invalid due date";
+  const made = page(disk, network);
+  await made.edit(ITEM_A, { due_date: "soon" });
+  assert.equal(made.env.indicator.textContent, "Save failed: Invalid due date");
+  assert.deepEqual(disk.queue, []);
+});
+
+test("a task whose time the page does not know is edited without one", async () => {
+  const disk = device([]);
+  const network = server();
+  const made = page(disk, network, { timeUnknown: true });
+  await made.edit(ITEM_A, { notes: "x" });
+  assert.deepEqual(JSON.parse(network.bodies[0]), {
+    notes: "x",
+    change_id: "made-1",
+  });
+});
+
+test("a sheet that was closed meanwhile is not written to", async () => {
+  const disk = device([]);
+  const network = server();
+  network.slow = true;
+  const made = page(disk, network);
+  const done = made.edit(ITEM_A, { notes: "by Friday" });
+  await settled();
+  // Closed, or opened for another task: its line is another one.
+  made.env.indicator.isConnected = false;
+  made.env.indicator.textContent = "of another task";
+  network.answer();
+  await done;
+  assert.equal(made.env.indicator.textContent, "of another task");
+  assert.ok(made.env.calls.includes("refreshCurrentList"));
+});
+
+test("the edits the sheet has waiting are all in the queue before the first is answered", async () => {
+  // As the page goes out of view: it may not come back.
+  const disk = device([]);
+  const made = page(disk, server(), { connected: false });
+  made.editLater(ITEM_A, { notes: "one" });
+  made.editLater(ITEM_B, { notes: "two" });
+  const flushed = made.flush();
+  assert.deepEqual(
+    disk.queue.map((queued) => queued.path),
+    ["/items/" + ITEM_A, "/items/" + ITEM_B],
+  );
+  await flushed;
+  // Nothing is left waiting in the page.
+  await made.flush();
+  assert.equal(disk.queue.length, 2);
+});
+
+test("an edit that was waiting in the sheet is sent once, however often the sheet is flushed", async () => {
+  const disk = device([]);
+  const network = server();
+  const made = page(disk, network);
+  made.editLater(ITEM_A, { notes: "one" });
+  await made.flush();
+  await made.flush();
+  assert.deepEqual(network.received, [EDIT_A]);
+});
+
+// --- A card moved on the board ---
+
+const MOVE_A = "PATCH /items/" + ITEM_A + "/move";
+const moving = (from) => ({ itemId: ITEM_A, sourceColumn: from });
+
+test("a card dropped on a column is sent through the queue", async () => {
+  const disk = device([]);
+  const network = server();
+  const made = page(disk, network, { moving: moving("To Do") });
+  await made.drop("Doing");
+  assert.deepEqual(network.received, [MOVE_A]);
+  assert.deepEqual(JSON.parse(network.bodies[0]), {
+    column: "Doing",
+    updated_at: 5,
+    change_id: "made-1",
+  });
+  assert.deepEqual(made.env.toasts, ['Moved to "Doing"']);
+  assert.ok(made.env.calls.includes("refreshCurrentList"));
+});
+
+test("without the server the move is kept, and the notice says so", async () => {
+  // "Move failed" before, and the card went back to its column.
+  const disk = device([]);
+  const network = server();
+  const made = page(disk, network, {
+    connected: false,
+    moving: moving("To Do"),
+  });
+  await made.drop("Done");
+  assert.deepEqual(network.received, []);
+  assert.equal(disk.queue.length, 1);
+  assert.equal(disk.queue[0].waiting, true);
+  assert.deepEqual(made.env.toasts, ['Moved to "Done" (completed) (offline)']);
+  // Drawn again with the card in its new column.
+  assert.ok(made.env.draws > 0);
+});
+
+test("a move out of the last column says the task is no longer done", async () => {
+  const made = page(device([]), server(), { moving: moving("Done") });
+  await made.drop("To Do");
+  assert.deepEqual(made.env.toasts, ['Moved to "To Do" (marked incomplete)']);
+});
+
+test("a move the server refuses says the server's reason, and no more", async () => {
+  const network = server();
+  network.status = 400;
+  network.error = "Invalid column name";
+  const made = page(device([]), network, { moving: moving("To Do") });
+  await made.drop("Doing");
+  assert.deepEqual(made.env.toasts, ["Invalid column name"]);
+});
+
+test("a drop with no card picked up does nothing", async () => {
+  const network = server();
+  const made = page(device([]), network);
+  await made.drop("Doing");
+  assert.deepEqual(network.received, []);
 });

@@ -177,9 +177,12 @@ class TestAppJsOfflineQueue:
         that does is tested in tests/js/queue_send.test.js."""
         js = self._read_app()
         send = js.split("async function sendOrQueue(")[1].split("\n  }\n")[0]
-        assert send.index("enqueueOfflineEdit(path, opts);") < send.index("await changeSent(")
-        assert "await api(" not in send
-        assert "serverFetch(" not in send
+        assert "await queueChange(path, opts, step);" in send
+        queue = js.split("async function queueChange(")[1].split("\n  }\n")[0]
+        assert queue.index("enqueueOfflineEdit(path, opts);") < queue.index("await changeSent(")
+        for body in (send, queue):
+            assert "await api(" not in body
+            assert "serverFetch(" not in body
 
     def test_add_queues_when_offline(self):
         js = self._read_app()
@@ -406,8 +409,16 @@ class TestOfflineQueueRules:
         """Every change that can be queued goes through sendOrQueue, so
         that a failed request and an offline device are handled alike."""
         js = (STATIC_DIR / "app.js").read_text()
-        # Seven since "Add subtask" in the task sheet is queued too (#117).
-        assert js.count("await sendOrQueue(") == 7
+        # "Add subtask" in the task sheet since #117, a card dropped on
+        # the board since #76.
+        assert js.count("await sendOrQueue(") == 8
+        # The task sheet's edits go the same way, and say in the sheet
+        # what became of them (#76).
+        assert js.count("await queueChange(") == 2
+        for name in ("sendItemFields", "executeDrop", "saveItemFieldForce"):
+            body = re.split(rf"(?:async )?function {name}\(", js)[1].split("\n  }\n")[0]
+            assert "api(" not in body, name
+            assert "serverFetch(" not in body, name
         # enqueueOfflineEdit: its definition and its one caller.
         assert js.count("enqueueOfflineEdit(") == 2
 
@@ -1774,7 +1785,8 @@ class TestNoticeUndo:
             assert '"/undo"' not in body, name
 
     def test_a_queued_change_hands_its_step_to_the_caller(self):
-        body = self._function("sendOrQueue")
+        assert "await queueChange(path, opts, step);" in self._function("sendOrQueue")
+        body = self._function("queueChange")
         assert "step.before = before;" in body
         assert "step.after = after;" in body
         assert "var outcome = await sendOrQueue(path, opts, step);" in self._function("onDelete")

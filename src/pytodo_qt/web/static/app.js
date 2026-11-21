@@ -1165,22 +1165,30 @@
   // was none of that: a page loaded again lost it, and it overtook
   // changes to the same task that were still waiting.
   async function sendOrQueue(path, opts, step) {
+    var fate = await queueChange(path, opts, step);
+    if (fate.outcome === "conflict") {
+      showToast("Updated elsewhere \u2014 refreshing");
+      await refreshCurrentList();
+    } else if (fate.outcome === "refused") {
+      showToast(fate.message || "The change could not be saved");
+      await refreshCurrentList();
+    }
+    return fate.outcome;
+  }
+
+  // Puts a change into the queue, has it sent, and resolves to its
+  // fate without saying anything of it: {outcome, message, answer},
+  // where outcome is as for sendOrQueue, message the server's reason
+  // for a refusal, and answer what the server sent back (for a
+  // conflict, with the task as the server has it in "current"). The
+  // task sheet tells of its own edits in its own place.
+  async function queueChange(path, opts, step) {
     var before = getOfflineQueue();
     var carrier = enqueueOfflineEdit(path, opts);
     var after = getOfflineQueue();
     var fate = { outcome: "queued" };
     if (serverConnected && carrier !== null) fate = await changeSent(carrier);
-    if (fate.outcome === "sent") return "sent";
-    if (fate.outcome === "conflict") {
-      showToast("Updated elsewhere \u2014 refreshing");
-      await refreshCurrentList();
-      return "conflict";
-    }
-    if (fate.outcome === "refused") {
-      showToast(fate.message || "The change could not be saved");
-      await refreshCurrentList();
-      return "refused";
-    }
+    if (fate.outcome !== "queued") return fate;
     if (step) {
       step.before = before;
       step.after = after;
@@ -1196,7 +1204,7 @@
     // Queued under a page that counts the server as there: nothing else
     // would send it.
     sendQueueAgainSoon();
-    return "queued";
+    return fate;
   }
 
   // The changes whose sender waits to hear what became of them: the
@@ -1457,13 +1465,13 @@
       // Removed as soon as the server has answered, so that a page
       // closed during the run does not send the change a second time.
       removeQueuedChange(entry.timestamp, true);
-      var fate = { outcome: outcome };
       var answer = null;
       try {
         answer = await resp.json();
       } catch (e) {
         /* no parseable body */
       }
+      var fate = { outcome: outcome, answer: answer };
       if (outcome === "refused" && answer) fate.message = answer.error;
       if (outcome === "sent" && itemId && answer && answer.updated_at) {
         latest[itemId] = answer.updated_at;
@@ -3017,23 +3025,24 @@
     var dropFields = { column: targetColumn };
     var dropUa = getItemUpdatedAt(itemId);
     if (dropUa !== undefined) dropFields.updated_at = dropUa;
-    try {
-      await api("/items/" + itemId + "/move", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(dropFields),
-      });
-      await refreshCurrentList();
-      var msg = 'Moved to "' + targetColumn + '"';
-      if (isCompletionCol && !wasInCompletionCol) {
-        msg += " (completed)";
-      } else if (!isCompletionCol && wasInCompletionCol) {
-        msg += " (marked incomplete)";
-      }
-      showToast(msg);
-    } catch (e) {
-      showToast("Move failed: " + e.message);
+    // Sent or queued as a move from a task's menu is: without the
+    // server the card stays in its new column, marked "Not sent".
+    var outcome = await sendOrQueue("/items/" + itemId + "/move", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dropFields),
+    });
+    // Refused: sendOrQueue has said why, and the board is drawn again.
+    if (outcome !== "sent" && outcome !== "queued") return;
+    if (outcome === "sent") await refreshCurrentList();
+    var msg = 'Moved to "' + targetColumn + '"';
+    if (isCompletionCol && !wasInCompletionCol) {
+      msg += " (completed)";
+    } else if (!isCompletionCol && wasInCompletionCol) {
+      msg += " (marked incomplete)";
     }
+    if (outcome === "queued") msg += " (offline)";
+    showToast(msg);
   }
 
   // ====================================================================
@@ -6995,6 +7004,8 @@
     var saveInd = document.createElement("div");
     saveInd.className = "detail-save-indicator";
     saveInd.id = "detail-save-indicator";
+    // An edit made without the server is waiting to be sent.
+    if (item.unsent) saveInd.appendChild(createUnsentLabel());
     detailBody.appendChild(saveInd);
 
     // Delete button
@@ -7196,42 +7207,66 @@
     saveDebounceTimer = setTimeout(flushPendingItemFields, 500);
   }
 
+  // Sends what the task sheet has waiting. Each edit is in the queue
+  // before the first of them is answered: called as the page goes out
+  // of view, nothing typed is left behind in the page alone.
   async function flushPendingItemFields() {
+    clearTimeout(saveDebounceTimer);
     var waiting = pendingItemFields;
     pendingItemFields = {};
-    var itemIds = Object.keys(waiting);
-    for (var i = 0; i < itemIds.length; i++) {
-      await sendItemFields(itemIds[i], waiting[itemIds[i]]);
-    }
+    await Promise.all(
+      Object.keys(waiting).map(function (itemId) {
+        return sendItemFields(itemId, waiting[itemId]);
+      }),
+    );
   }
 
+  // Sends an edit made in the task sheet, through the queue as every
+  // change goes, and says in the sheet what became of it. Without the
+  // server the edit is kept and shown as "Not sent"; it was dropped
+  // with "Save failed" before.
   async function sendItemFields(itemId, fields) {
     var indicator = document.getElementById("detail-save-indicator");
     if (indicator) {
       indicator.textContent = "Saving...";
       indicator.className = "detail-save-indicator";
     }
-    var ua = getItemUpdatedAt(itemId);
-    if (ua !== undefined) fields.updated_at = ua;
-    lastSavedFields = Object.assign({}, fields);
-    try {
-      var result = await api("/items/" + itemId, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fields),
-      });
-      updateCachedItemTimestamp(itemId, result.updated_at);
+    if (fields.updated_at === undefined) {
+      fields.updated_at = getItemUpdatedAt(itemId);
+    }
+    // What Force Save sends again, should the server refuse this as
+    // out of date.
+    if (!fields.force) lastSavedFields = Object.assign({}, fields);
+    var fate = await queueChange("/items/" + itemId, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fields),
+    });
+    // The sheet may have been closed meanwhile, or opened for another
+    // task: its line is then another one, and nothing is written there.
+    if (indicator && !indicator.isConnected) indicator = null;
+    if (fate.outcome === "sent") {
+      if (fate.answer && fate.answer.updated_at) {
+        updateCachedItemTimestamp(itemId, fate.answer.updated_at);
+      }
       if (indicator) indicator.textContent = "Saved \u2713";
+      var saved = indicator;
       setTimeout(function () {
-        if (indicator) indicator.textContent = "";
+        if (saved && saved.textContent === "Saved \u2713")
+          saved.textContent = "";
       }, 2000);
       await refreshCurrentList();
-    } catch (e) {
-      if (e.status === 409) {
-        showDetailConflict(itemId, e.body.current);
-      } else {
-        if (indicator) indicator.textContent = "Save failed";
+    } else if (fate.outcome === "conflict") {
+      showDetailConflict(itemId, (fate.answer && fate.answer.current) || {});
+    } else if (fate.outcome === "queued") {
+      if (indicator) {
+        indicator.textContent = "";
+        indicator.appendChild(createUnsentLabel());
       }
+    } else if (indicator) {
+      indicator.textContent = fate.message
+        ? "Save failed: " + fate.message
+        : "Save failed";
     }
   }
 
@@ -7266,27 +7301,9 @@
     indicator.appendChild(forceBtn);
   }
 
-  async function saveItemFieldForce(itemId, fields) {
-    var indicator = document.getElementById("detail-save-indicator");
-    if (indicator) {
-      indicator.textContent = "Saving...";
-      indicator.className = "detail-save-indicator";
-    }
-    try {
-      var result = await api("/items/" + itemId, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fields),
-      });
-      updateCachedItemTimestamp(itemId, result.updated_at);
-      if (indicator) indicator.textContent = "Saved \u2713";
-      setTimeout(function () {
-        if (indicator) indicator.textContent = "";
-      }, 2000);
-      await refreshCurrentList();
-    } catch (e) {
-      if (indicator) indicator.textContent = "Save failed";
-    }
+  // Force Save: the edit again, on the task as the server has it now.
+  function saveItemFieldForce(itemId, fields) {
+    return sendItemFields(itemId, fields);
   }
 
   function closeDetailSheet() {
@@ -8478,6 +8495,9 @@
   // The page went out of view, or came back into it.
   function pageViewChanged() {
     if (document.hidden) {
+      // An edit of the task sheet that waits out its half second goes
+      // into the queue now: the page may not come back.
+      flushPendingItemFields();
       stopPolling();
       stopPinging();
     } else {

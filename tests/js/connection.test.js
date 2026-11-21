@@ -301,6 +301,7 @@ function page(options) {
         : "function showLoginScreen() { env.calls.push('showLoginScreen'); pinScreenUp = true; }",
       "async function restoreQueue() { env.calls.push('restoreQueue'); }",
       called("queueWaitsFromHere"),
+      called("flushPendingItemFields"),
       called("queueRunsEnded"),
       functionText("startPage"),
       functionText("tokenRefused"),
@@ -1802,6 +1803,18 @@ test("a WebSocket closed on purpose leaves nothing behind", () => {
 });
 
 // --- Out of view and back ---
+
+test("a page that goes out of view puts the task sheet's waiting edit into the queue", () => {
+  // It may not come back: the edit is not left in the page alone.
+  const made = connected();
+  made.env.document.hidden = true;
+  made.pageViewChanged();
+  assert.ok(made.env.calls.includes("flushPendingItemFields"));
+  made.env.calls.length = 0;
+  made.env.document.hidden = false;
+  made.pageViewChanged();
+  assert.equal(made.env.calls.includes("flushPendingItemFields"), false);
+});
 
 test("a page that goes out of view stops asking", () => {
   const made = connected();
