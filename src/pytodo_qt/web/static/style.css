@@ -947,6 +947,8 @@ body {
 /* Empty states */
 #empty-msg,
 #board-empty-msg,
+#not-stored-msg,
+#board-not-stored-msg,
 #search-empty {
   text-align: center;
   color: var(--text-secondary);

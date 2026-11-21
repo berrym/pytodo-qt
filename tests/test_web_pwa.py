@@ -433,16 +433,22 @@ class TestQueuedChangesShown:
     def test_list_and_board_are_drawn_through_the_queue(self):
         js = self._app()
         assert "QueueRules.withQueuedChanges(serverItems, queue, columns)" in js
-        # The board: when the queue changes, and when the board is loaded.
-        assert js.count("QueueRules.boardWithQueuedChanges(") == 2
+        # The board is built from the list's own answer and drawn in one
+        # place; no second read brings a board of its own (#121).
+        assert js.count("QueueRules.boardWithQueuedChanges(") == 1
+        assert js.count("QueueRules.boardOfList(") == 2
+        assert "serverBoardData = QueueRules.boardOfList(data);" in js
+        assert "/board" not in js
 
     def test_server_data_is_kept_apart_from_what_is_shown(self):
         """What is stored for offline use, and what the queue is applied
         to, is the server's answer; storing the shown items would apply
         a queued change twice on the next visit."""
         js = self._app()
-        assert "cacheListItems(currentListId, serverItems);" in js
-        assert "cacheListItems(currentListId, cachedItems)" not in js
+        assert "if (fromServer) storeListAnswer(listId, data);" in js
+        assert "storeListAnswer(listId, cachedItems" not in js
+        store = js.split("async function storeListAnswer(listId, data) {")[1].split("\n  }\n")[0]
+        assert "items: data.items || []," in store
 
     def test_page_follows_a_queue_stored_by_another_copy(self):
         """Two copies of the page share the stored queue. When one sends
@@ -572,7 +578,7 @@ class TestRowEntryAnimation:
         """A list emptied and filled again shows its rows as new."""
         body = self._function("renderItems")
         assert body.index("drawnRows = { list: currentListId, rows: rows };") < body.index(
-            'if (emptyMsg) emptyMsg.classList.remove("hidden");'
+            'emptyMsg.classList.toggle("hidden", listNotStored || listPending);'
         )
 
     def test_first_appearance_of_the_list_keeps_the_animation(self):
@@ -2043,12 +2049,47 @@ class TestServerNotReached:
             "updatePendingBadge",
             "updateConnectionIndicator",
             "renderItems",
-            "refreshBoard",
             "refreshSettings",
         ):
             body = re.split(rf"(?:async )?function {name}\(", js)[1].split("\n  }\n")[0]
             assert "getOfflineQueue()" not in body, name
             assert "waitingChanges()" in body, name
+
+    def test_every_list_is_kept_for_use_without_the_server(self):
+        """tests/js/stored_lists.test.js, run under Node (#121)."""
+        self._node("stored_lists.test.js")
+
+    def test_a_list_that_is_not_stored_says_so(self):
+        """Not shown as a list without tasks, and not as the board of
+        the list shown before (#121)."""
+        html = (STATIC_DIR / "index.html").read_text()
+        for line in ("not-stored-msg", "board-not-stored-msg"):
+            assert f'<p id="{line}" class="hidden" role="status">' in html
+        assert html.count("This list isn't stored on this device yet.") == 2
+        js = self._app()
+        items = re.split(r"function renderItems\(", js)[1].split("\n  }\n")[0]
+        assert 'notStoredMsg.classList.toggle("hidden", !listNotStored);' in items
+        assert 'emptyMsg.classList.toggle("hidden", listNotStored || listPending);' in items
+        # Drawn again when that changes, though the tasks are the same: none.
+        assert "fingerprint([waiting, items, listNotStored, listPending])" in items
+        board = re.split(r"function renderBoard\(", js)[1].split("\n  }\n")[0]
+        assert 'boardNotStoredMsg.classList.toggle("hidden", !boardNotStored);' in board
+        assert "fingerprint([data, boardNotStored])" in board
+        # The board is drawn whatever it holds: the cards of the list
+        # shown before do not stay where there is none to show.
+        shown = js.split("function showQueuedChanges() {")[1].split("\n  }\n")[0]
+        assert "} else {\n      renderBoard(cachedBoardData);" in shown
+        # Both lines are written as the line of an empty list is.
+        css = (STATIC_DIR / "style.css").read_text()
+        rule = css.split("#empty-msg,")[1].split("}")[0]
+        assert "#not-stored-msg," in rule and "#board-not-stored-msg," in rule
+        assert "color: var(--text-secondary);" in rule
+        # Forgotten with the rest when the server refuses the device.
+        clear = js.split("async function clearStoredLists() {")[1].split("\n  }\n")[0]
+        assert "storedCopies = {};" in clear
+        shown_data = js.split("function clearShownData() {")[1].split("\n  }\n")[0]
+        assert "listNotStored = false;" in shown_data
+        assert "boardNotStored = false;" in shown_data
 
     def test_what_needs_the_server_says_so_without_it(self):
         """tests/js/needs_server.test.js, run under Node (#76)."""
@@ -2189,7 +2230,7 @@ class TestServerNotReached:
         js = self._app()
         refresh = js.split("async function refreshCurrentList() {")[1].split("\n  }\n")[0]
         assert "if (fromServer) markSynced();" in refresh
-        assert "if (fromServer) cacheListItems(currentListId, serverItems);" in refresh
+        assert "if (fromServer) storeListAnswer(listId, data);" in refresh
         assert "setDataSavedAt(answer.savedAt);" in refresh
 
     def test_a_socket_closed_on_purpose_is_not_tried_again(self):

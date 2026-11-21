@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import json
 import re
 import time as _time
 from datetime import date, datetime, time, timedelta
@@ -403,6 +405,25 @@ def setup_routes(app: web.Application) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _list_stamp(lst: TodoList) -> str:
+    """A short digest of what ``GET /api/lists/{id}`` answers for a list.
+
+    The page keeps a copy of every list for use without the server. It
+    stores this stamp with each copy and reads a list again only where
+    the stamp in ``GET /api/lists`` differs from the one it stored: the
+    list's own time of change does not move when one of its tasks does.
+    """
+    content = [
+        lst.name,
+        lst.board_columns,
+        lst.wip_limits,
+        lst.updated_at,
+        [_item_to_json(item) for item in lst.active_items()],
+    ]
+    text = json.dumps(content, sort_keys=True, separators=(",", ":"))
+    return hashlib.blake2b(text.encode(), digest_size=8).hexdigest()
+
+
 async def handle_get_lists(request: web.Request) -> web.Response:
     """GET /api/lists — Return all non-private lists with item counts."""
     db: Database = request.app[database_key]
@@ -423,6 +444,7 @@ async def handle_get_lists(request: web.Request) -> web.Response:
                 "board_columns": lst.board_columns,
                 "is_private": False,
                 "updated_at": lst.updated_at,
+                "stamp": _list_stamp(lst),
             }
         )
     return web.json_response({"lists": result})
@@ -458,6 +480,8 @@ async def handle_get_list(request: web.Request) -> web.Response:
             "board_columns": lst.board_columns,
             "wip_limits": lst.wip_limits,
             "updated_at": lst.updated_at,
+            # Of the whole list, whatever the query left of it.
+            "stamp": _list_stamp(lst),
             "items": [_item_to_json(i) for i in items],
         }
     )

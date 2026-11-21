@@ -406,6 +406,63 @@
     return rows;
   }
 
+  // The board of a list, from what the server answers for the list:
+  // its id, name and time of change, its columns, their limits, and
+  // its tasks. A task is a card in its column, or in the first column
+  // where its column is not one of the list's; a subtask is no card,
+  // and stands under its parent. This is the server's own board answer,
+  // field for field and in the same order: the page reads the list
+  // once for both views, and builds the board from a stored list as
+  // well. The tasks given are not altered.
+  function boardOfList(list) {
+    var columns = list.board_columns || [];
+    var items = list.items || [];
+    var cards = {};
+    columns.forEach(function (name) {
+      cards[name] = [];
+    });
+    var subtasks = {};
+    items.forEach(function (item) {
+      if (!item.parent_id) return;
+      if (!subtasks[item.parent_id]) subtasks[item.parent_id] = [];
+      subtasks[item.parent_id].push(item);
+    });
+    if (columns.length > 0) {
+      items.forEach(function (item) {
+        if (item.parent_id) return;
+        var known = Object.prototype.hasOwnProperty.call(
+          cards,
+          item.board_column,
+        );
+        var card = Object.assign({}, item, {
+          subtasks: subtasks[item.id] || [],
+        });
+        cards[known ? item.board_column : columns[0]].push(card);
+      });
+    }
+    return {
+      id: list.id,
+      name: list.name,
+      board_columns: columns,
+      wip_limits: list.wip_limits || {},
+      updated_at: list.updated_at,
+      columns: cards,
+    };
+  }
+
+  // Whether the copy of a list kept for use without the server is still
+  // the list: it has the stamp the server now gives for the list, and
+  // was stored less than renewedAfter milliseconds ago. A copy that is
+  // the list is read again once in that time all the same, so that it
+  // never grows as old as the stored data that is swept. kept is
+  // {stamp, savedAt}, or nothing where no copy is kept.
+  function listCopyIsCurrent(kept, stamp, now, renewedAfter) {
+    if (!kept || kept.stamp === undefined || kept.stamp !== stamp) return false;
+    // A time that is yet to come is no time of a save: the device's
+    // clock was set back.
+    return kept.savedAt <= now && now - kept.savedAt < renewedAfter;
+  }
+
   // The board as the page shows it: the cards of every column with the
   // queued changes applied, each in the column it then belongs to, and
   // the tasks waiting to be added at the top of the first column, where
@@ -616,6 +673,8 @@
     withStepTakenBack: withStepTakenBack,
     withQueuedChanges: withQueuedChanges,
     queuedAdds: queuedAdds,
+    boardOfList: boardOfList,
+    listCopyIsCurrent: listCopyIsCurrent,
     boardWithQueuedChanges: boardWithQueuedChanges,
     newTimestamp: newTimestamp,
     replyOutcome: replyOutcome,

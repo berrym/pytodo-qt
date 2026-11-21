@@ -17,6 +17,18 @@
   // shows: the same with the queued changes applied (showQueuedChanges).
   var serverItems = [];
   var serverBoardData = null;
+  // The list chosen is not stored on this device, and the server was
+  // not reached for it: there is nothing of it to show.
+  var listNotStored = false;
+  // No board of it is stored either; so too for a copy of the list
+  // that was stored before columns were kept with the tasks.
+  var boardNotStored = false;
+  // Nothing of the list chosen is known yet: it is not stored here,
+  // and its read is on its way. Neither line is shown, and not the
+  // line of a list without tasks.
+  var listPending = false;
+  // The list whose tasks are on screen; null where none are.
+  var shownListId = null;
   var cachedItems = [];
   var cachedBoardData = null;
   var allTags = [];
@@ -152,6 +164,8 @@
   var emptyMsg = document.getElementById("empty-msg");
   var boardContainer = document.getElementById("board-container");
   var boardEmptyMsg = document.getElementById("board-empty-msg");
+  var notStoredMsg = document.getElementById("not-stored-msg");
+  var boardNotStoredMsg = document.getElementById("board-not-stored-msg");
   var boardLayoutBtn = document.getElementById("board-layout-btn");
   var addSheet = document.getElementById("add-sheet");
   var addForm = document.getElementById("add-form");
@@ -490,6 +504,10 @@
     cachedLists = [];
     dataSavedAt = null;
     listIsServers = false;
+    listNotStored = false;
+    boardNotStored = false;
+    listPending = false;
+    shownListId = null;
     lastItemsFingerprint = "";
     lastListsFingerprint = "";
     lastBoardFingerprint = "";
@@ -729,18 +747,133 @@
     });
   }
 
-  async function cacheListItems(listId, items) {
+  // --- Every list is kept for use without the server ---
+  //
+  // What the server answers for a list is stored here whole: its tasks,
+  // its columns and their limits, with the server's stamp of the list
+  // and the time. The list view and the board are both drawn from it.
+  // The list on screen is stored at every read. The others are read
+  // and stored in the background (storeLists) whenever the server's
+  // stamp for one differs from the stamp stored, so that any list can
+  // be opened without the server, visited before or not.
+
+  // The stamp and time of each stored copy, by list id; null until
+  // they have been read from IndexedDB.
+  var storedCopies = null;
+
+  async function storeListAnswer(listId, data) {
+    var record = {
+      listId: listId,
+      name: data.name,
+      updated_at: data.updated_at,
+      items: data.items || [],
+      board_columns: data.board_columns || [],
+      wip_limits: data.wip_limits || {},
+      stamp: data.stamp,
+      savedAt: Date.now(),
+    };
+    // Known as stored where IndexedDB cannot be had as well: the
+    // service worker has the answer, and the list is not read again
+    // at every turn.
+    if (storedCopies !== null) {
+      storedCopies[listId] = { stamp: record.stamp, savedAt: record.savedAt };
+    }
     var db = await openIDB();
     if (!db) return;
     try {
       var tx = db.transaction("listItems", "readwrite");
-      tx.objectStore("listItems").put({
-        listId: listId,
-        items: items,
-        savedAt: Date.now(),
-      });
+      tx.objectStore("listItems").put(record);
     } catch (e) {
       /* best-effort */
+    }
+  }
+
+  // The stamp and time of every copy stored, by list id.
+  async function readStoredCopies() {
+    var db = await openIDB();
+    if (!db) return {};
+    return new Promise(function (resolve) {
+      var copies = {};
+      try {
+        var tx = db.transaction("listItems", "readonly");
+        var walk = tx.objectStore("listItems").openCursor();
+        walk.onsuccess = function () {
+          var cursor = walk.result;
+          if (!cursor) {
+            resolve(copies);
+            return;
+          }
+          copies[cursor.value.listId] = {
+            stamp: cursor.value.stamp,
+            savedAt: cursor.value.savedAt,
+          };
+          cursor.continue();
+        };
+        walk.onerror = function () {
+          resolve(copies);
+        };
+      } catch (e) {
+        resolve(copies);
+      }
+    });
+  }
+
+  // A copy that is still the list is read again after this long, in
+  // milliseconds: a day, the interval of the sweep, so that no copy of
+  // a list the server has comes near the age at which stored data is
+  // swept (KEPT_FOR).
+  var LIST_COPY_RENEWED_AFTER = 86400000;
+
+  // One round at a time; lists given while it runs are gone through
+  // when it ends.
+  var storingLists = false;
+  var listsToStore = null;
+
+  // Reads and stores every list whose stored copy is not the list as
+  // the server now has it. lists is the server's own answer to
+  // /lists. One list at a time, and none once the server gives no
+  // answer of its own: the round ends, and the next answer to /lists
+  // starts another.
+  async function storeLists(lists) {
+    listsToStore = lists;
+    if (storingLists) return;
+    storingLists = true;
+    try {
+      while (listsToStore !== null) {
+        var round = listsToStore;
+        listsToStore = null;
+        if (storedCopies === null) storedCopies = await readStoredCopies();
+        for (var i = 0; i < round.length; i++) {
+          var lst = round[i];
+          // The list on screen is read, and stored, by its own reads.
+          if (lst.id === currentListId) continue;
+          if (
+            QueueRules.listCopyIsCurrent(
+              storedCopies[lst.id],
+              lst.stamp,
+              Date.now(),
+              LIST_COPY_RENEWED_AFTER,
+            )
+          ) {
+            continue;
+          }
+          if (!serverConnected || pinScreenUp) return;
+          var answer;
+          try {
+            answer = await apiAnswer("/lists/" + lst.id);
+          } catch (e) {
+            // The server's own refusal: the list is gone, and the next
+            // answer to /lists no longer has it. Anything else is no
+            // answer of the server's.
+            if (e.status !== undefined && !e.notTheServers) continue;
+            return;
+          }
+          if (pinScreenUp || answer.savedAt !== null) return;
+          await storeListAnswer(lst.id, answer.data);
+        }
+      }
+    } finally {
+      storingLists = false;
     }
   }
 
@@ -768,6 +901,7 @@
   // Empties the copy kept here. Resolves when that is done, or cannot
   // be done.
   async function clearStoredLists() {
+    storedCopies = {};
     var db = await openIDB();
     if (!db) return;
     await new Promise(function (resolve) {
@@ -1042,7 +1176,7 @@
     cachedBoardData = QueueRules.boardWithQueuedChanges(serverBoardData, queue);
     if (viewMode !== "board") {
       renderItems(cachedItems);
-    } else if (cachedBoardData && cachedBoardData.columns) {
+    } else {
       renderBoard(cachedBoardData);
     }
     if (viewMode === "calendar") refreshCalendar();
@@ -1924,7 +2058,7 @@
     });
 
     if (mode === "board") {
-      refreshBoard(true);
+      renderBoard(cachedBoardData, true);
     } else if (mode === "calendar") {
       renderCalendar();
     } else {
@@ -3594,7 +3728,7 @@
       : [];
 
     // Skip re-render if data hasn't changed (eliminates poll flicker)
-    var fp = fingerprint([waiting, items]);
+    var fp = fingerprint([waiting, items, listNotStored, listPending]);
     if (!force && fp === lastItemsFingerprint) return;
     if (!force && redrawHeld()) return;
     lastItemsFingerprint = fp;
@@ -3612,8 +3746,13 @@
     }
 
     itemsContainer.innerHTML = "";
+    // A list that is not stored here is not a list without tasks. The
+    // line stays above tasks added to it since, which are shown.
+    if (notStoredMsg) notStoredMsg.classList.toggle("hidden", !listNotStored);
     if ((!items || items.length === 0) && waiting.length === 0) {
-      if (emptyMsg) emptyMsg.classList.remove("hidden");
+      if (emptyMsg) {
+        emptyMsg.classList.toggle("hidden", listNotStored || listPending);
+      }
       return;
     }
     if (emptyMsg) emptyMsg.classList.add("hidden");
@@ -3954,36 +4093,29 @@
   // Render: kanban board view
   // ====================================================================
 
-  async function refreshBoard(force) {
-    if (!currentListId) return;
-    try {
-      serverBoardData = await api("/lists/" + currentListId + "/board");
-      cachedBoardData = QueueRules.boardWithQueuedChanges(
-        serverBoardData,
-        waitingChanges(),
-      );
-      renderBoard(cachedBoardData, force);
-    } catch (e) {
-      console.error("Board load failed:", e);
-    }
-  }
-
   function renderBoard(data, force) {
     if (!boardContainer) return;
 
     // Skip re-render if data hasn't changed (eliminates poll flicker)
-    var fp = fingerprint(data);
+    var fp = fingerprint([data, boardNotStored]);
     if (!force && fp === lastBoardFingerprint) return;
     if (!force && redrawHeld()) return;
     lastBoardFingerprint = fp;
 
     boardContainer.innerHTML = "";
 
-    if (!data || !data.board_columns || data.board_columns.length === 0) {
-      if (boardEmptyMsg) boardEmptyMsg.classList.remove("hidden");
-      return;
+    // No board to show: the list is not stored here, which is said as
+    // that, or it has no columns.
+    if (boardNotStoredMsg) {
+      boardNotStoredMsg.classList.toggle("hidden", !boardNotStored);
     }
-    if (boardEmptyMsg) boardEmptyMsg.classList.add("hidden");
+    if (boardEmptyMsg) {
+      boardEmptyMsg.classList.toggle(
+        "hidden",
+        !data || data.board_columns.length > 0,
+      );
+    }
+    if (!data || data.board_columns.length === 0) return;
 
     var totalColumns = data.board_columns.length;
 
@@ -8355,6 +8487,7 @@
       if (answer.savedAt === null && (!currentListId || listIsServers)) {
         sweepStoredData(lists);
       }
+      if (answer.savedAt === null) storeLists(lists);
     } catch (e) {
       console.error("Failed to load lists:", e);
       // Fall back to IndexedDB cache
@@ -8365,34 +8498,84 @@
     }
   }
 
+  // Shows what is stored here of the list on screen: its tasks and
+  // its board, or that nothing of it is stored. record is the list's
+  // stored copy, or null. While the list's read is on its way
+  // (waiting) nothing is said of a list that is not stored: the read
+  // may bring it.
+  function showStoredCopy(listId, record, waiting) {
+    listIsServers = false;
+    serverItems = (record && record.items) || [];
+    // A copy stored before columns were kept with the tasks has no
+    // board to show.
+    serverBoardData =
+      record && record.board_columns
+        ? QueueRules.boardOfList({
+            id: listId,
+            name: record.name,
+            updated_at: record.updated_at,
+            board_columns: record.board_columns,
+            wip_limits: record.wip_limits,
+            items: serverItems,
+          })
+        : null;
+    // Said as that, and not shown as a list without tasks, or as the
+    // list shown before.
+    listNotStored = !waiting && !record;
+    boardNotStored = !waiting && serverBoardData === null;
+    listPending = waiting && !record;
+    setDataSavedAt((record && record.savedAt) || 0);
+    showQueuedChanges();
+  }
+
   async function refreshCurrentList() {
     if (!currentListId) {
       serverItems = [];
       cachedItems = [];
+      serverBoardData = null;
+      listNotStored = false;
+      boardNotStored = false;
+      listPending = false;
+      shownListId = null;
       renderItems([]);
       return;
     }
+    // Another list may be chosen while this one is read: its answer is
+    // then no longer the list on screen, and the read begun for the
+    // other list shows that one.
+    var listId = currentListId;
+    // Another list than the one on screen: what is stored of it is
+    // shown at once, so that the tasks of the list shown before do not
+    // stand under its name while it is read. Without the server that
+    // can be as long as a read is waited for.
+    if (shownListId !== null && shownListId !== listId) {
+      var kept = await getCachedListRecord(listId);
+      if (listId !== currentListId) return;
+      shownListId = listId;
+      showStoredCopy(listId, kept, serverConnected);
+    }
     try {
-      var answer = await apiAnswer("/lists/" + currentListId);
+      var answer = await apiAnswer("/lists/" + listId);
       // The server refused the device while this was on its way (see
       // refreshLists).
-      if (pinScreenUp) return;
+      if (pinScreenUp || listId !== currentListId) return;
       var data = answer.data;
       var fromServer = answer.savedAt === null;
       listIsServers = fromServer;
       serverItems = data.items || [];
-      serverBoardData = {
-        board_columns: data.board_columns || [],
-        wip_limits: data.wip_limits || {},
-        columns: null,
-      };
+      // The board is built from the same answer: one read for both
+      // views, and the board follows wherever the list does.
+      serverBoardData = QueueRules.boardOfList(data);
+      listNotStored = false;
+      boardNotStored = false;
+      listPending = false;
+      shownListId = listId;
 
       // Kept for use without the server, with the time of this answer.
-      if (fromServer) cacheListItems(currentListId, serverItems);
+      if (fromServer) storeListAnswer(listId, data);
       setDataSavedAt(answer.savedAt);
 
       showQueuedChanges();
-      if (viewMode === "board") await refreshBoard();
 
       // Refresh list selector counts
       await refreshLists();
@@ -8400,12 +8583,11 @@
       else readListAgainSoon();
     } catch (e) {
       console.error("Failed to load list:", e);
-      listIsServers = false;
       // Fall back to IndexedDB cache
-      var record = await getCachedListRecord(currentListId);
-      serverItems = (record && record.items) || [];
-      setDataSavedAt((record && record.savedAt) || 0);
-      showQueuedChanges();
+      var record = await getCachedListRecord(listId);
+      if (listId !== currentListId) return;
+      shownListId = listId;
+      showStoredCopy(listId, record, false);
       // Not after a refusal of the server's own, a token it rejects or
       // a list it no longer has: asking again changes nothing there.
       if (e.status === undefined || e.notTheServers) readListAgainSoon();

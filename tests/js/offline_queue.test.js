@@ -1238,3 +1238,213 @@ test("placedAdds: a subtask whose task is not among the top-level tasks shown is
 test("placedAdds: nothing waiting, and no task shown", () => {
   assert.deepEqual(rules.placedAdds([], []), { atTop: [], under: {} });
 });
+
+// --- The board of a list (#121) ---
+
+const BOARD_COLUMNS = ["To Do", "Doing", "Done"];
+const BOARD_LIST = "99999999-9999-9999-9999-999999999999";
+const boardCard = (id, column, parent) => ({
+  id: id,
+  board_column: column,
+  parent_id: parent || null,
+});
+// A list as the server answers it.
+const listOf = (limits, items, columns) => ({
+  id: BOARD_LIST,
+  name: "Home",
+  updated_at: 77,
+  board_columns: columns || BOARD_COLUMNS,
+  wip_limits: limits,
+  items: items,
+});
+const idsIn = (board) =>
+  Object.keys(board.columns).map((name) => [
+    name,
+    board.columns[name].map((one) => one.id),
+  ]);
+
+test("boardOfList: each task is a card in its column, in the order given", () => {
+  const board = rules.boardOfList(
+    listOf({ Doing: 2 }, [
+      boardCard("a", "Doing"),
+      boardCard("b", "To Do"),
+      boardCard("c", "Doing"),
+    ]),
+  );
+  assert.deepEqual(idsIn(board), [
+    ["To Do", ["b"]],
+    ["Doing", ["a", "c"]],
+    ["Done", []],
+  ]);
+});
+
+test("boardOfList: the board has the list's id, name, time of change, columns and limits", () => {
+  // The id places the tasks waiting to be added; the time of change
+  // goes with a change to the columns.
+  const board = rules.boardOfList(listOf({ Doing: 2 }, []));
+  assert.deepEqual(board, {
+    id: BOARD_LIST,
+    name: "Home",
+    board_columns: BOARD_COLUMNS,
+    wip_limits: { Doing: 2 },
+    updated_at: 77,
+    columns: { "To Do": [], Doing: [], Done: [] },
+  });
+});
+
+test("boardOfList: a task whose column is not one of the list's is in the first", () => {
+  const board = rules.boardOfList(
+    listOf({}, [
+      boardCard("a", "Backlog"),
+      boardCard("b", ""),
+      boardCard("c", undefined),
+      // The name of something every object has is no column.
+      boardCard("d", "toString"),
+    ]),
+  );
+  assert.deepEqual(idsIn(board), [
+    ["To Do", ["a", "b", "c", "d"]],
+    ["Doing", []],
+    ["Done", []],
+  ]);
+});
+
+test("boardOfList: a subtask is no card, and stands under its parent whatever its column", () => {
+  const board = rules.boardOfList(
+    listOf({}, [
+      boardCard("p", "Doing"),
+      boardCard("s1", "Done", "p"),
+      boardCard("q", "To Do"),
+      boardCard("s2", "To Do", "p"),
+    ]),
+  );
+  assert.deepEqual(idsIn(board), [
+    ["To Do", ["q"]],
+    ["Doing", ["p"]],
+    ["Done", []],
+  ]);
+  assert.deepEqual(
+    board.columns.Doing[0].subtasks.map((one) => one.id),
+    ["s1", "s2"],
+  );
+  assert.deepEqual(board.columns["To Do"][0].subtasks, []);
+});
+
+test("boardOfList: the tasks given are not altered", () => {
+  const items = [boardCard("p", "Doing"), boardCard("s", "Doing", "p")];
+  const before = JSON.stringify(items);
+  rules.boardOfList(listOf({}, items));
+  assert.equal(JSON.stringify(items), before);
+});
+
+test("boardOfList: a list without columns has no cards", () => {
+  const board = rules.boardOfList(listOf({}, [boardCard("a", "Doing")], []));
+  assert.deepEqual(board.columns, {});
+  assert.deepEqual(board.board_columns, []);
+});
+
+test("boardOfList: an answer without columns, limits or tasks is a board without them", () => {
+  assert.deepEqual(rules.boardOfList({ id: BOARD_LIST }), {
+    id: BOARD_LIST,
+    name: undefined,
+    board_columns: [],
+    wip_limits: {},
+    updated_at: undefined,
+    columns: {},
+  });
+});
+
+test("boardOfList: the queued changes are applied to it as to the server's board", () => {
+  const board = rules.boardOfList(
+    listOf({}, [
+      Object.assign(boardCard(ITEM_A, "To Do"), { complete: false }),
+    ]),
+  );
+  const shown = rules.boardWithQueuedChanges(board, [tick(1, ITEM_A, 100)]);
+  assert.deepEqual(
+    shown.columns.Done.map((one) => one.id),
+    [ITEM_A],
+  );
+});
+
+test("boardOfList: a task waiting to be added is a card of it, a waiting subtask stands in its task's card", () => {
+  const board = rules.boardOfList(listOf({}, [boardCard(ITEM_A, "Doing")]));
+  const queue = [
+    {
+      path: "/lists/" + BOARD_LIST + "/items",
+      opts: {
+        method: "POST",
+        body: JSON.stringify({ id: "new-1", reminder: "Buy milk" }),
+      },
+      timestamp: 1,
+      waiting: true,
+    },
+    {
+      path: "/lists/" + BOARD_LIST + "/items",
+      opts: {
+        method: "POST",
+        body: JSON.stringify({
+          id: "new-2",
+          reminder: "Find the form",
+          parent_id: ITEM_A,
+        }),
+      },
+      timestamp: 2,
+      waiting: true,
+    },
+  ];
+  const shown = rules.boardWithQueuedChanges(board, queue);
+  assert.deepEqual(
+    shown.columns["To Do"].map((one) => one.reminder),
+    ["Buy milk"],
+  );
+  assert.deepEqual(
+    shown.columns.Doing[0].subtasks.map((one) => one.reminder),
+    ["Find the form"],
+  );
+});
+
+// --- The copy of a list kept for use without the server (#121) ---
+
+const ONE_DAY = 86400000;
+
+test("listCopyIsCurrent: a copy with the server's stamp, stored within the day", () => {
+  const kept = { stamp: "abc", savedAt: 1000 };
+  assert.equal(rules.listCopyIsCurrent(kept, "abc", 1000, ONE_DAY), true);
+  assert.equal(
+    rules.listCopyIsCurrent(kept, "abc", 1000 + ONE_DAY - 1, ONE_DAY),
+    true,
+  );
+});
+
+test("listCopyIsCurrent: no copy, another stamp, or none at all", () => {
+  assert.equal(rules.listCopyIsCurrent(undefined, "abc", 1000, ONE_DAY), false);
+  assert.equal(
+    rules.listCopyIsCurrent(
+      { stamp: "abd", savedAt: 1000 },
+      "abc",
+      1000,
+      ONE_DAY,
+    ),
+    false,
+  );
+  // A copy stored before stamps were kept, and a server that gives
+  // none: neither says that the copy is the list.
+  assert.equal(
+    rules.listCopyIsCurrent({ savedAt: 1000 }, undefined, 1000, ONE_DAY),
+    false,
+  );
+});
+
+test("listCopyIsCurrent: a copy a day old is read again, so that none is swept", () => {
+  const kept = { stamp: "abc", savedAt: 1000 };
+  assert.equal(
+    rules.listCopyIsCurrent(kept, "abc", 1000 + ONE_DAY, ONE_DAY),
+    false,
+  );
+});
+
+test("listCopyIsCurrent: a time of storing that is yet to come is none", () => {
+  const kept = { stamp: "abc", savedAt: 5000 };
+  assert.equal(rules.listCopyIsCurrent(kept, "abc", 1000, ONE_DAY), false);
+});

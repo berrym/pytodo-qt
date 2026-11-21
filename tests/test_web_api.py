@@ -14,7 +14,11 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import json
+import shutil
+import subprocess
 from datetime import date, timedelta
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -6644,3 +6648,146 @@ class TestAnalyticsCycleTime:
             assert resp.status == 503
         finally:
             await client.close()
+
+
+class TestListStamp:
+    """The page keeps a copy of every list for use without the server,
+    and reads a list again only where its stamp has changed (#121). The
+    list's own time of change does not move when one of its tasks does."""
+
+    async def _stamps(self, db) -> dict[str, str]:
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            data = await (await client.get("/api/lists")).json()
+        finally:
+            await client.close()
+        return {entry["name"]: entry["stamp"] for entry in data["lists"]}
+
+    @pytest.mark.asyncio
+    async def test_both_list_answers_give_the_same_stamp(self):
+        db = _make_db_with_data()
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            lists = (await (await client.get("/api/lists")).json())["lists"]
+            for entry in lists:
+                one = await (await client.get(f"/api/lists/{entry['id']}")).json()
+                assert one["stamp"] == entry["stamp"]
+                # Of the whole list, whatever a query leaves of it.
+                some = await (await client.get(f"/api/lists/{entry['id']}?status=completed")).json()
+                assert some["stamp"] == entry["stamp"]
+        finally:
+            await client.close()
+        assert len({entry["stamp"] for entry in lists}) == len(lists) == 2
+
+    @pytest.mark.asyncio
+    async def test_a_list_that_has_not_changed_keeps_its_stamp(self):
+        db = _make_db_with_data()
+        assert await self._stamps(db) == await self._stamps(db)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "change",
+        ["rename a task", "tick a task", "move a task", "add a task", "delete a task",
+         "columns", "limits", "rename the list"],
+    )  # fmt: skip
+    async def test_any_change_to_the_list_changes_its_stamp_and_no_other(self, change):
+        db = _make_db_with_data()
+        lst = next(one for one in db.lists.values() if one.name == "Shopping")
+        item = next(iter(lst.items.values()))
+        before = await self._stamps(db)
+        # The list's own time of change is left as it was: the stamp
+        # does not rest on it.
+        if change == "rename a task":
+            item.reminder = "Buy oat milk"
+        elif change == "tick a task":
+            item.complete = not item.complete
+        elif change == "move a task":
+            item.board_column = "Done"
+        elif change == "add a task":
+            lst.add_item(create_todo_item("Buy tea"))
+        elif change == "delete a task":
+            item.deleted = True
+        elif change == "columns":
+            lst.board_columns = ["To Do", "Review", "Done"]
+        elif change == "limits":
+            lst.wip_limits = {"In Progress": 2}
+        else:
+            lst.name = "Groceries"
+        after = await self._stamps(db)
+        name = "Groceries" if change == "rename the list" else "Shopping"
+        assert after[name] != before["Shopping"]
+        assert after["Work"] == before["Work"]
+
+    @pytest.mark.asyncio
+    async def test_the_pages_board_is_the_servers_board(self):
+        """The page builds the board from the list's answer
+        (boardOfList in offline-queue.js) and no longer reads the board
+        answer. The two are the same, card for card."""
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("Node.js is not installed")
+        db = Database()
+        lst = create_todo_list("Home")
+        lst.board_columns = ["To Do", "Doing", "Review", "Done"]
+        lst.wip_limits = {"Doing": 2}
+        parent = None
+        for name, column in (
+            ("Call the bank", "To Do"),
+            ("Write the report", "Doing"),
+            ("Water the plants", "Done"),
+            ("Pack", "Doing"),
+            ("Old column", "Backlog"),
+            ("No column", ""),
+        ):
+            item = create_todo_item(name)
+            item.board_column = column
+            lst.add_item(item)
+            if name == "Pack":
+                parent = item
+        assert parent is not None
+        for name in ("socks", "charger"):
+            child = create_todo_item(name)
+            child.parent_id = parent.id
+            child.board_column = "Done"
+            lst.add_item(child)
+        gone = create_todo_item("Deleted")
+        gone.deleted = True
+        lst.add_item(gone)
+        db.add_list(lst)
+        client = await _make_client(db)
+        await client.start_server()
+        try:
+            answer = await (await client.get(f"/api/lists/{lst.id}")).json()
+            board = await (await client.get(f"/api/lists/{lst.id}/board")).json()
+        finally:
+            await client.close()
+        rules = Path(__file__).parent.parent / "src/pytodo_qt/web/static/offline-queue.js"
+        script = (
+            "const rules = require(process.argv[1]);"
+            "const list = JSON.parse(require('fs').readFileSync(0, 'utf8'));"
+            "process.stdout.write(JSON.stringify("
+            "rules.boardOfList(list)));"
+        )
+        result = subprocess.run(
+            [node, "-e", script, str(rules)],
+            input=json.dumps(answer),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        built = json.loads(result.stdout)
+        # Field for field: the list's id places the tasks waiting to
+        # be added, and its time of change goes with a column change.
+        assert built == board
+        # What the comparison rests on: cards in three columns, one of
+        # them with subtasks, and two tasks sent to the first column.
+        titles = {
+            name: [card["reminder"] for card in cards] for name, cards in board["columns"].items()
+        }
+        assert titles["To Do"] == ["Call the bank", "Old column", "No column"]
+        assert titles["Review"] == []
+        pack = next(card for card in board["columns"]["Doing"] if card["reminder"] == "Pack")
+        assert [sub["reminder"] for sub in pack["subtasks"]] == ["socks", "charger"]

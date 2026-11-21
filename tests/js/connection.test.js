@@ -379,9 +379,12 @@ function page(options) {
       functionText("signIn"),
       "var console = { error: function () {} };",
       "function renderItems() {}",
-      "function cacheListItems(id, items) { env.calls.push('cacheListItems'); }",
+      "var listNotStored = false, boardNotStored = false;",
+      "var listPending = false, shownListId = null;",
+      functionText("showStoredCopy"),
+      "function storeListAnswer(id, data) { env.calls.push('storeListAnswer'); env.storedAs = id; }",
+      "function storeLists(lists) { env.calls.push('storeLists'); }",
       "function showQueuedChanges() { env.drawn.push(serverItems.map(function (i) { return i.id; }).join(',')); }",
-      "function refreshBoard() {}",
       env.ownLists
         ? functionText("refreshLists")
         : "function refreshLists() {}",
@@ -443,6 +446,10 @@ function page(options) {
       "  sweepStoredData: sweepStoredData,",
       "  listRecordIsKept: listRecordIsKept,",
       "  listIsServers: function () { return listIsServers; },",
+      "  board: function () { return serverBoardData; },",
+      "  notStored: function () { return { list: listNotStored, board: boardNotStored }; },",
+      "  pending: function () { return listPending; },",
+      "  chooseList: function (id) { currentListId = id; },",
       "  replayOfflineQueue: replayOfflineQueue,",
       "  serverDoubted: serverDoubted,",
       "  hideLoginScreen: hideLoginScreen,",
@@ -1892,7 +1899,7 @@ test("stored tasks that leave the server silent are not read again here", async 
   assert.equal(made.connected(), false);
   assert.deepEqual(made.env.drawn, ["old"]);
   assert.equal(made.env.calls.includes("markSynced"), false);
-  assert.equal(made.env.calls.includes("cacheListItems"), false);
+  assert.equal(made.env.calls.includes("storeListAnswer"), false);
   // Nothing is set to read it again.
   assert.equal(
     made.env.timers.some((timer) => timer.at === AGAIN),
@@ -2901,7 +2908,7 @@ test("a list that comes back behind the PIN screen is not shown", async () => {
   answerNow();
   await read;
   assert.deepEqual(made.env.drawn, []);
-  assert.equal(made.env.calls.includes("cacheListItems"), false);
+  assert.equal(made.env.calls.includes("storeListAnswer"), false);
   assert.equal(made.env.calls.includes("markSynced"), false);
 });
 
@@ -3165,4 +3172,356 @@ test("the controls that need the server follow each change of the connection", (
   assert.equal(made.env.controlsShown, 1);
   made.serverAnswered();
   assert.equal(made.env.controlsShown, 2);
+});
+
+// --- The board comes with the list (#121) ---
+
+// A list as the server answers it, with its columns.
+function listWithBoard(cards) {
+  return new Response(
+    JSON.stringify({
+      board_columns: ["To Do", "Done"],
+      wip_limits: { "To Do": 3 },
+      stamp: "s1",
+      items: cards.map((pair) => ({ id: pair[0], board_column: pair[1] })),
+    }),
+    { status: 200 },
+  );
+}
+
+const cardsOf = (board) =>
+  Object.keys(board.columns).map((name) => [
+    name,
+    board.columns[name].map((one) => one.id),
+  ]);
+
+test("the board is built from the list's own answer: one read for both views", async () => {
+  const asked = [];
+  const made = page({
+    ownRefresh: true,
+    fetch: async (url) => {
+      asked.push(url);
+      return listWithBoard([
+        ["a", "Done"],
+        ["b", "To Do"],
+      ]);
+    },
+  });
+  await made.refreshCurrentList();
+  assert.deepEqual(asked, ["/api/lists/list-1"]);
+  assert.deepEqual(cardsOf(made.board()), [
+    ["To Do", ["b"]],
+    ["Done", ["a"]],
+  ]);
+  assert.deepEqual(made.board().wip_limits, { "To Do": 3 });
+  assert.deepEqual(made.notStored(), { list: false, board: false });
+  // Stored whole, under the list that was read.
+  assert.equal(made.env.storedAs, "list-1");
+});
+
+test("an answer for a list no longer on screen is not shown, and not stored", async () => {
+  let made = null;
+  made = page({
+    ownRefresh: true,
+    fetch: async () => {
+      // Another list is chosen while this one is read.
+      made.chooseList("list-2");
+      return listWithBoard([["a", "Done"]]);
+    },
+  });
+  await made.refreshCurrentList();
+  assert.deepEqual(made.env.drawn, []);
+  assert.equal(made.board(), null);
+  assert.equal(made.env.calls.includes("storeListAnswer"), false);
+});
+
+test("without the server the board is built from the stored copy of the list", async () => {
+  const made = page({
+    ownRefresh: true,
+    connected: false,
+    fetch: async () => {
+      throw new TypeError("Failed to fetch");
+    },
+  });
+  made.env.stored = {
+    items: [
+      { id: "a", board_column: "Done" },
+      { id: "b", board_column: "To Do" },
+    ],
+    board_columns: ["To Do", "Done"],
+    wip_limits: { Done: 5 },
+    savedAt: 5,
+  };
+  await made.refreshCurrentList();
+  assert.deepEqual(made.env.drawn, ["a,b"]);
+  assert.deepEqual(cardsOf(made.board()), [
+    ["To Do", ["b"]],
+    ["Done", ["a"]],
+  ]);
+  assert.deepEqual(made.board().wip_limits, { Done: 5 });
+  assert.deepEqual(made.notStored(), { list: false, board: false });
+});
+
+test("a list with nothing stored is said to be that, and shows no other list's board", async () => {
+  let fails = false;
+  const made = page({
+    ownRefresh: true,
+    fetch: async () => {
+      if (fails) throw new TypeError("Failed to fetch");
+      return listWithBoard([["a", "Done"]]);
+    },
+  });
+  await made.refreshCurrentList();
+  assert.notEqual(made.board(), null);
+  // Another list is chosen, and the server is gone.
+  fails = true;
+  made.chooseList("list-2");
+  made.env.stored = null;
+  await made.refreshCurrentList();
+  // Drawn at once, with nothing said yet, and again when the read has
+  // failed.
+  assert.deepEqual(made.env.drawn, ["a", "", ""]);
+  assert.equal(made.board(), null);
+  assert.deepEqual(made.notStored(), { list: true, board: true });
+  // The server is back: the list is shown, and nothing says otherwise.
+  fails = false;
+  await made.refreshCurrentList();
+  assert.deepEqual(made.notStored(), { list: false, board: false });
+  assert.notEqual(made.board(), null);
+});
+
+test("a copy stored before columns were kept shows its tasks and no board", async () => {
+  const made = page({
+    ownRefresh: true,
+    connected: false,
+    fetch: async () => {
+      throw new TypeError("Failed to fetch");
+    },
+  });
+  made.env.stored = { items: [{ id: "a" }], savedAt: 5 };
+  await made.refreshCurrentList();
+  assert.deepEqual(made.env.drawn, ["a"]);
+  assert.equal(made.board(), null);
+  assert.deepEqual(made.notStored(), { list: false, board: true });
+});
+
+test("another list chosen while the stored copy is read: the copy is not shown", async () => {
+  let made = null;
+  made = page({
+    ownRefresh: true,
+    connected: false,
+    fetch: async () => {
+      made.chooseList("list-2");
+      throw new TypeError("Failed to fetch");
+    },
+  });
+  made.env.stored = { items: [{ id: "a" }], board_columns: [], savedAt: 5 };
+  await made.refreshCurrentList();
+  assert.deepEqual(made.env.drawn, []);
+  assert.deepEqual(made.notStored(), { list: false, board: false });
+});
+
+test("the lists are stored after the server's own answer to /lists only", async () => {
+  const made = page({
+    ownLists: true,
+    fetch: async () =>
+      new Response(JSON.stringify({ lists: [{ id: "list-1" }] }), {
+        status: 200,
+      }),
+  });
+  await made.refreshLists();
+  assert.equal(made.env.calls.includes("storeLists"), true);
+  const stored = page({
+    ownLists: true,
+    fetch: async () =>
+      new Response(JSON.stringify({ lists: [{ id: "list-1" }] }), {
+        status: 200,
+        headers: FROM_STORE,
+      }),
+  });
+  await stored.refreshLists();
+  assert.equal(stored.env.calls.includes("storeLists"), false);
+});
+
+test("another list chosen: what is stored of it is shown at once, before its read answers", async () => {
+  // Without that the tasks of the list shown before stand under its
+  // name for as long as the read takes: by a host name that no longer
+  // answers, as long as a read is waited for.
+  let answers = null;
+  let reads = 0;
+  const made = page({
+    ownRefresh: true,
+    fetch: () => {
+      reads += 1;
+      if (reads === 1) return Promise.resolve(listWithBoard([["a", "Done"]]));
+      return new Promise((resolve) => {
+        answers = resolve;
+      });
+    },
+  });
+  await made.refreshCurrentList();
+  made.chooseList("list-2");
+  made.env.stored = {
+    items: [{ id: "kept", board_column: "To Do" }],
+    board_columns: ["To Do", "Done"],
+    wip_limits: {},
+    updated_at: 9,
+    name: "Work",
+    savedAt: 5,
+  };
+  const read = made.refreshCurrentList();
+  await settled();
+  // The read has not answered yet.
+  assert.deepEqual(made.env.drawn, ["a", "kept"]);
+  assert.deepEqual(cardsOf(made.board()), [
+    ["To Do", ["kept"]],
+    ["Done", []],
+  ]);
+  assert.equal(made.board().id, "list-2");
+  assert.equal(made.board().updated_at, 9);
+  // Something of the list is shown: it is not one still to come.
+  assert.equal(made.pending(), false);
+  answers(listWithBoard([["new", "Done"]]));
+  await read;
+  assert.deepEqual(made.env.drawn, ["a", "kept", "new"]);
+});
+
+test("another list chosen, with nothing stored of it: nothing is said while the server may answer", async () => {
+  let answers = null;
+  let reads = 0;
+  const made = page({
+    ownRefresh: true,
+    fetch: () => {
+      reads += 1;
+      if (reads === 1) return Promise.resolve(listWithBoard([["a", "Done"]]));
+      return new Promise((resolve, reject) => {
+        answers = { resolve: resolve, reject: reject };
+      });
+    },
+  });
+  await made.refreshCurrentList();
+  made.chooseList("list-2");
+  made.env.stored = null;
+  const read = made.refreshCurrentList();
+  await settled();
+  // The other list's tasks and board are gone at once.
+  assert.deepEqual(made.env.drawn, ["a", ""]);
+  assert.equal(made.board(), null);
+  // Not said to be missing, and not shown as a list without tasks.
+  assert.deepEqual(made.notStored(), { list: false, board: false });
+  assert.equal(made.pending(), true);
+  // The read fails: now it is said.
+  answers.reject(new TypeError("Failed to fetch"));
+  await read;
+  assert.deepEqual(made.notStored(), { list: true, board: true });
+  assert.equal(made.pending(), false);
+});
+
+test("another list chosen without the server, with nothing stored of it: said at once", async () => {
+  let reads = 0;
+  const made = page({
+    ownRefresh: true,
+    fetch: () => {
+      reads += 1;
+      if (reads === 1) return Promise.resolve(listWithBoard([["a", "Done"]]));
+      // Never answered: the browser waits for the host.
+      return new Promise(() => {});
+    },
+  });
+  await made.refreshCurrentList();
+  made.serverSilent();
+  made.chooseList("list-2");
+  made.env.stored = null;
+  made.refreshCurrentList();
+  await settled();
+  assert.deepEqual(made.notStored(), { list: true, board: true });
+  assert.equal(made.pending(), false);
+  assert.equal(made.board(), null);
+});
+
+test("the list on screen is read without its stored copy being shown first", async () => {
+  // At the start, and at every later read of the same list.
+  const made = page({
+    ownRefresh: true,
+    fetch: async () => listWithBoard([["a", "Done"]]),
+  });
+  made.env.stored = { items: [{ id: "kept" }], board_columns: [], savedAt: 5 };
+  await made.refreshCurrentList();
+  await made.refreshCurrentList();
+  assert.deepEqual(made.env.drawn, ["a", "a"]);
+});
+
+test("the list answered while another's stored copy was read is not shown", async () => {
+  let made = null;
+  let reads = 0;
+  made = page({
+    ownRefresh: true,
+    fetch: async () => {
+      reads += 1;
+      return listWithBoard([["a" + reads, "Done"]]);
+    },
+  });
+  await made.refreshCurrentList();
+  made.chooseList("list-2");
+  // A third list is chosen while the stored copy of the second is read.
+  Object.defineProperty(made.env, "stored", {
+    get() {
+      made.chooseList("list-3");
+      return { items: [{ id: "kept" }], board_columns: [], savedAt: 5 };
+    },
+  });
+  await made.refreshCurrentList();
+  assert.deepEqual(made.env.drawn, ["a1"]);
+  assert.equal(reads, 1);
+});
+
+test("another list chosen, with nothing stored of it: the server's answer is the list", async () => {
+  let reads = 0;
+  let answers = null;
+  const made = page({
+    ownRefresh: true,
+    fetch: () => {
+      reads += 1;
+      if (reads === 1) return Promise.resolve(listWithBoard([["a", "Done"]]));
+      return new Promise((resolve) => {
+        answers = resolve;
+      });
+    },
+  });
+  await made.refreshCurrentList();
+  made.chooseList("list-2");
+  made.env.stored = null;
+  const read = made.refreshCurrentList();
+  await settled();
+  assert.equal(made.pending(), true);
+  // A list without tasks: said as that from here on.
+  answers(listWithBoard([]));
+  await read;
+  assert.equal(made.pending(), false);
+  assert.deepEqual(made.notStored(), { list: false, board: false });
+});
+
+test("a page that started without the server shows a chosen list's stored copy at once as well", async () => {
+  const made = page({
+    ownRefresh: true,
+    connected: false,
+    fetch: () =>
+      new Promise((resolve, reject) => {
+        // The first read fails; the next is never answered.
+        if (made.env.drawn.length === 0)
+          reject(new TypeError("Failed to fetch"));
+      }),
+  });
+  made.env.stored = { items: [{ id: "first" }], board_columns: [], savedAt: 5 };
+  await made.refreshCurrentList();
+  assert.deepEqual(made.env.drawn, ["first"]);
+  made.chooseList("list-2");
+  made.env.stored = {
+    items: [{ id: "second" }],
+    board_columns: [],
+    savedAt: 5,
+  };
+  made.refreshCurrentList();
+  await settled();
+  assert.deepEqual(made.env.drawn, ["first", "second"]);
 });
