@@ -2,13 +2,19 @@
 
 SQLite-backed storage for paired mobile devices.
 
-Each device that pairs via PIN gets a unique auth token stored here.
+Each device that pairs via PIN gets a unique auth token. The token is
+given to the device once, in the answer to its pairing, and only a hash
+of it is stored here: a copy of the file that leaves the protection of
+its permissions (a backup, a copied configuration directory, a disk
+read from another system) holds nothing a device could present (#85).
 The database lives in the config directory alongside TLS certificates,
 separate from the main todo database.
 """
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import re
 import secrets
 import sqlite3
@@ -38,18 +44,38 @@ CREATE TABLE IF NOT EXISTS paired_devices (
 
 _COLUMNS = "id, token, device_name, user_agent, pairing_method, ca_generation, paired_at, last_seen, address"
 
+# What is read back of a device: everything but its token, which is not
+# kept.
+_READ = "id, device_name, user_agent, pairing_method, ca_generation, paired_at, last_seen, address"
+
+# The form of a stored token: this prefix and the hex SHA-256 of the
+# token. A token as issued (secrets.token_urlsafe) has no colon, so a
+# row an earlier version wrote is told apart by the prefix.
+TOKEN_HASH_PREFIX = "sha256:"
+
+
+def token_hash(token: str) -> str:
+    """What is stored, and looked up, for ``token``.
+
+    One SHA-256 without salt: a token is 32 random bytes, so there is
+    nothing to guess, and a slow hash would add its time to every
+    request for nothing.
+    """
+    return TOKEN_HASH_PREFIX + hashlib.sha256(token.encode("utf-8")).hexdigest()
+
 
 def _device(row: tuple) -> PairedDevice:
+    """A device read back from the store: without a token."""
     return PairedDevice(
         id=row[0],
-        token=row[1],
-        device_name=row[2],
-        user_agent=row[3],
-        pairing_method=row[4],
-        ca_generation=row[5],
-        paired_at=row[6],
-        last_seen=row[7],
-        address=row[8],
+        token="",
+        device_name=row[1],
+        user_agent=row[2],
+        pairing_method=row[3],
+        ca_generation=row[4],
+        paired_at=row[5],
+        last_seen=row[6],
+        address=row[7],
     )
 
 
@@ -62,6 +88,9 @@ class PairedDevice:
     """A mobile device that has paired via PIN."""
 
     id: str = field(default_factory=lambda: str(uuid4()))
+    # The token as issued, on the device that add_device returns, to be
+    # given to the device once; empty on a device read back from the
+    # store, which keeps only its hash.
     token: str = field(default_factory=lambda: secrets.token_urlsafe(32))
     device_name: str = ""
     user_agent: str = ""
@@ -168,10 +197,11 @@ class WebDeviceStore:
 
         If the database is corrupt, renames it and creates a fresh one.
 
-        The database holds the token of every paired device. Its file is
-        created for this account only, and SQLite gives the files it
-        keeps beside it the same permissions; files an earlier version
-        created are restricted.
+        The database holds a hash of every paired device's token. Its
+        file is created for this account only, and SQLite gives the files
+        it keeps beside it the same permissions; files an earlier version
+        created are restricted. Tokens an earlier version stored as issued
+        are replaced by their hashes (_hash_stored_tokens).
         """
         self._restrict_files()
         try:
@@ -179,10 +209,7 @@ class WebDeviceStore:
                 str(self._db_path),
                 check_same_thread=False,
             )
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute(_CREATE_TABLE)
-            self._add_missing_columns()
-            self._conn.commit()
+            self._prepare()
         except sqlite3.DatabaseError:
             logger.log.warning("Device database corrupt — recreating: %s", self._db_path)
             if self._conn:
@@ -196,10 +223,51 @@ class WebDeviceStore:
                 str(self._db_path),
                 check_same_thread=False,
             )
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute(_CREATE_TABLE)
-            self._add_missing_columns()
-            self._conn.commit()
+            self._prepare()
+        # The file set aside as corrupt held tokens as an earlier
+        # version stored them; the store is open without it.
+        with contextlib.suppress(OSError):
+            self._db_path.with_suffix(".db.corrupt").unlink(missing_ok=True)
+
+    def _prepare(self) -> None:
+        """Bring an open database to this version's form."""
+        assert self._conn is not None
+        # What is deleted or overwritten is overwritten with zeros, not
+        # left in free pages, where a copy of the file would keep it.
+        self._conn.execute("PRAGMA secure_delete=ON")
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute(_CREATE_TABLE)
+        self._add_missing_columns()
+        self._conn.commit()
+        self._hash_stored_tokens()
+
+    def _hash_stored_tokens(self) -> None:
+        """Replace each token an earlier version stored as issued by its
+        hash, so that paired devices go on working.
+
+        In one transaction: a row is converted with all the others or not
+        at all. A converted row is not converted again. Then the file is
+        rebuilt (VACUUM) and the write-ahead log emptied into it and cut
+        to nothing, so that no copy of a token as issued is left in a
+        free page or a log frame.
+        """
+        assert self._conn is not None
+        with self._conn:
+            rows = self._conn.execute(
+                "SELECT id, token FROM paired_devices WHERE substr(token, 1, ?) != ?",
+                (len(TOKEN_HASH_PREFIX), TOKEN_HASH_PREFIX),
+            ).fetchall()
+            for device_id, token in rows:
+                self._conn.execute(
+                    "UPDATE paired_devices SET token = ? WHERE id = ?",
+                    (token_hash(token), device_id),
+                )
+        if not rows:
+            return
+        # Outside any transaction: VACUUM cannot run in one.
+        self._conn.execute("VACUUM")
+        self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        logger.log.info("Device tokens: %d stored as hashes", len(rows))
 
     def _add_missing_columns(self) -> None:
         """Bring a table made by an earlier version up to this one."""
@@ -232,7 +300,11 @@ class WebDeviceStore:
         ca_generation: int,
         address: str = "",
     ) -> PairedDevice:
-        """Create and store a new paired device with a unique token."""
+        """Create and store a new paired device with a unique token.
+
+        The device returned carries the token as issued, to be given to
+        the device; the store keeps only its hash.
+        """
         assert self._conn is not None
         now = _now_ms()
         device = PairedDevice(
@@ -248,7 +320,7 @@ class WebDeviceStore:
             f"INSERT INTO paired_devices ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 device.id,
-                device.token,
+                token_hash(device.token),
                 device.device_name,
                 device.user_agent,
                 device.pairing_method,
@@ -262,11 +334,17 @@ class WebDeviceStore:
         return device
 
     def get_device_by_token(self, token: str) -> PairedDevice | None:
-        """Look up a device by its auth token."""
+        """Look up a device by the token it presents.
+
+        The hash of what is presented is looked up. The time the lookup
+        takes depends on the hash only, which tells nothing of a token.
+        """
         assert self._conn is not None
+        if not token:
+            return None
         row = self._conn.execute(
-            f"SELECT {_COLUMNS} FROM paired_devices WHERE token = ?",
-            (token,),
+            f"SELECT {_READ} FROM paired_devices WHERE token = ?",
+            (token_hash(token),),
         ).fetchone()
         return None if row is None else _device(row)
 
@@ -274,7 +352,7 @@ class WebDeviceStore:
         """Return all paired devices, ordered by most recently paired first."""
         assert self._conn is not None
         rows = self._conn.execute(
-            f"SELECT {_COLUMNS} FROM paired_devices ORDER BY paired_at DESC",
+            f"SELECT {_READ} FROM paired_devices ORDER BY paired_at DESC",
         ).fetchall()
         return [_device(row) for row in rows]
 
@@ -311,12 +389,6 @@ class WebDeviceStore:
         )
         self._conn.commit()
 
-    def get_active_tokens(self) -> set[str]:
-        """Return the set of all active device tokens."""
-        assert self._conn is not None
-        rows = self._conn.execute("SELECT token FROM paired_devices").fetchall()
-        return {r[0] for r in rows}
-
     def remove_inactive_devices(self, max_age_ms: int) -> int:
         """Remove devices not seen within *max_age_ms* milliseconds.
 
@@ -335,8 +407,7 @@ class WebDeviceStore:
         """Return devices paired at an older CA generation (need cert reinstall)."""
         assert self._conn is not None
         rows = self._conn.execute(
-            f"SELECT {_COLUMNS} FROM paired_devices WHERE ca_generation < ?"
-            " ORDER BY paired_at DESC",
+            f"SELECT {_READ} FROM paired_devices WHERE ca_generation < ? ORDER BY paired_at DESC",
             (current_ca_generation,),
         ).fetchall()
         return [_device(row) for row in rows]

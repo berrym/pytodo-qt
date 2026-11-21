@@ -265,13 +265,15 @@ class TestDeviceDatabase:
         finally:
             again.close()
 
-    def test_database_set_aside_as_corrupt_is_restricted(self, tmp_path: Path):
+    def test_database_set_aside_as_corrupt_is_not_left_behind(self, tmp_path: Path):
+        """It held tokens as an earlier version kept them: once the fresh
+        store is open, it is removed (#85). The fresh file is private."""
         (tmp_path / "web_devices.db").write_bytes(b"not a database" * 100)
         (tmp_path / "web_devices.db").chmod(0o644)
         store = WebDeviceStore(tmp_path / "web_devices.db")
         store.open()
         try:
-            assert mode_of(tmp_path / "web_devices.db.corrupt") == 0o600
+            assert not (tmp_path / "web_devices.db.corrupt").exists()
             assert mode_of(tmp_path / "web_devices.db") == 0o600
         finally:
             store.close()
