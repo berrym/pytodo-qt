@@ -7,6 +7,7 @@
   var VIEW_MODE_KEY = "pytodo_view_mode";
   var CAL_VIEW_KEY = "pytodo_cal_view";
   var INSTALL_DISMISSED_KEY = "pytodo_install_dismissed";
+  var OFFLINE_TOLD_KEY = "pytodo_offline_use_told";
   var AUTH_TOKEN_KEY = "pytodo_auth_token";
   var COLLAPSED_PARENTS_KEY = "pytodo_collapsed_parents";
   var THEME_KEY = "pytodo_theme";
@@ -7901,6 +7902,7 @@
     }
     var serverUrl = document.getElementById("settings-server-url");
     if (serverUrl) serverUrl.textContent = location.host;
+    showOfflineUse();
 
     // Offline queue
     var offlineRow = document.getElementById("settings-offline-row");
@@ -9093,6 +9095,7 @@
       lastSyncedTimer = setInterval(updateLastSyncedText, 15000);
     }
     appReady = true;
+    tellOfflineUseOnce();
     // The reads above have shown whether the server answers.
     if (serverConnected) {
       connectWebSocket();
@@ -9144,9 +9147,123 @@
   var lastSyncedTimer = null;
   var loadedUnderWorker = false;
 
+  // --- Offline use ---
+  //
+  // The page can be opened without the server only where a service
+  // worker holds its files. A browser installs one only where it trusts
+  // the server's certificate: Chrome refuses it on a device where the
+  // certificate warning was dismissed instead of the application's
+  // certificate being installed. The refusal was written to the console
+  // and nowhere else, so that on a phone nothing showed it. What became
+  // of the worker is kept here, shown in the page's Settings, and said
+  // once per device where the browser refused.
+
+  // What became of the worker; null until it is known. state is "on"
+  // (installed), "refused" (the browser would not install it; words
+  // are its own), "plain" (the page is not opened over HTTPS) or "none"
+  // (the browser offers no service workers here).
+  var workerFound = null;
+
+  // What the page's Settings say of offline use: the value of the row,
+  // why it is not available, and what makes it available.
+  function offlineUseText(found) {
+    if (found === null) return { value: "Checking\u2026", why: "", how: "" };
+    if (found.state === "on") return { value: "Available", why: "", how: "" };
+    var meaning =
+      " This page can't be opened without the server on this device." +
+      " Tasks on screen and changes you make while it is open are kept.";
+    if (found.state === "plain") {
+      return {
+        value: "Not available",
+        why: "This page is not opened over HTTPS." + meaning,
+        how: "",
+      };
+    }
+    if (found.state === "none") {
+      return {
+        value: "Not available",
+        why:
+          "This browser does not offer it here (in a private window, for one)." +
+          meaning,
+        how: "",
+      };
+    }
+    // Refused. The browser's words name the certificate where that is
+    // the ground; anything else is given as the browser said it.
+    if (/certificate/i.test(found.words)) {
+      return {
+        value: "Not available",
+        why: "This device does not trust the server's certificate." + meaning,
+        how:
+          "To make it available, install the app's certificate: on the" +
+          " computer, in PyTodo-Qt choose Tools \u2192 Mobile Setup and" +
+          " follow Trusted Connect.",
+      };
+    }
+    return {
+      value: "Not available",
+      why: "The browser refused it: " + found.words + "." + meaning,
+      how: "",
+    };
+  }
+
+  // The browser's reason for a refusal, as one line: without the
+  // addresses it repeats, and without a full stop.
+  function refusalWords(err) {
+    return String((err && err.message) || err || "no reason given")
+      .replace(/\s*\(?'?https?:\/\/[^\s')]*'?\)?/g, "")
+      .replace(/\s+/g, " ")
+      .replace(/^ /, "")
+      .replace(/[.\s]+$/, "");
+  }
+
+  // The row in the page's Settings.
+  function showOfflineUse() {
+    var said = offlineUseText(workerFound);
+    var value = document.getElementById("settings-offline-use");
+    var why = document.getElementById("settings-offline-why");
+    var how = document.getElementById("settings-offline-how");
+    if (value) value.textContent = said.value;
+    if (why) {
+      why.textContent = said.why;
+      why.classList.toggle("hidden", said.why === "");
+    }
+    if (how) {
+      how.textContent = said.how;
+      how.classList.toggle("hidden", said.how === "");
+    }
+  }
+
+  // The worker's fate is known. A refusal is said once per device, and
+  // again after offline use had become available in between; not
+  // before the page has started or behind the PIN screen, where it is
+  // said when the page has started (init).
+  function workerIs(found) {
+    workerFound = found;
+    showOfflineUse();
+    tellOfflineUseOnce();
+  }
+
+  function tellOfflineUseOnce() {
+    if (workerFound === null || pinScreenUp || !appReady) return;
+    if (workerFound.state === "on") {
+      localStorage.removeItem(OFFLINE_TOLD_KEY);
+      return;
+    }
+    if (workerFound.state !== "refused") return;
+    if (localStorage.getItem(OFFLINE_TOLD_KEY)) return;
+    localStorage.setItem(OFFLINE_TOLD_KEY, "1");
+    showToast("Offline use isn't available on this device. See More for why.");
+  }
+
   // Register the service worker. The page's security policy allows
   // scripts from this origin only, so this cannot be an inline script.
   // A worker is for HTTPS: over plain HTTP sw.js removes itself.
+  if (location.protocol !== "https:") {
+    workerIs({ state: "plain", words: "" });
+  } else if (!navigator.serviceWorker) {
+    workerIs({ state: "none", words: "" });
+  }
   if (navigator.serviceWorker && location.protocol === "https:") {
     // A worker that controlled the page as it loaded means a later
     // change of controller is a new version of the page. Otherwise it
@@ -9159,6 +9276,7 @@
     navigator.serviceWorker
       .register("/sw.js")
       .then(function (registration) {
+        workerIs({ state: "on", words: "" });
         // The browser looks for a new worker when the page is loaded. A
         // page that stays open, as an installed app does, is not loaded
         // again for days, so look whenever it comes back into view.
@@ -9177,6 +9295,7 @@
       })
       .catch(function (err) {
         console.warn("SW registration failed:", err);
+        workerIs({ state: "refused", words: refusalWords(err) });
       });
   }
 

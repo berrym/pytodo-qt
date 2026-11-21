@@ -310,3 +310,67 @@ class TestReconnectAddress:
         other = content.findChild(QLabel, "reconnect_url_other")
         assert other is not None
         assert "https://192.168.1.20:8080/reconnect" in other.text()
+
+
+class TestCertificateSteps:
+    """The steps of Trusted Connect that install the application's
+    certificate on a device (#75). Without the certificate a browser
+    may refuse the page's service worker, and the page then cannot be
+    opened without the server."""
+
+    def test_the_android_steps_name_the_android_settings_app(self):
+        """ "Open Settings" was read as the browser's settings, where no
+        entry for certificates exists."""
+        from pytodo_qt.gui.dialogs.web_connect import android_certificate_steps
+
+        steps = android_certificate_steps()
+        assert len(steps) == 3
+        assert steps[0] == "Scan the QR code to download the certificate"
+        assert "Android Settings app" in steps[1]
+        assert "not the browser's settings" in steps[1]
+        assert 'search for "certificate"' in steps[1]
+        assert steps[2].startswith("Choose CA certificate")
+        assert not any(step.startswith("Open Settings") for step in steps)
+
+    def test_the_note_under_them_gives_the_usual_path(self):
+        from pytodo_qt.gui.dialogs.web_connect import android_certificate_note
+
+        note = android_certificate_note()
+        assert note.startswith("Steps vary by manufacturer and Android version.")
+        path = [
+            "Security & privacy",
+            "More security & privacy",
+            "Encryption & credentials",
+            "Install a certificate",
+            "CA certificate.",
+        ]
+        assert " \u2192 ".join(path) in note
+
+    def test_the_ios_steps_are_as_they_were(self):
+        from pytodo_qt.gui.dialogs.web_connect import ios_certificate_steps
+
+        steps = ios_certificate_steps()
+        assert len(steps) == 4
+        assert steps[1] == "Open Settings \u2192 General \u2192 VPN & Device Management"
+        assert steps[3].endswith("Certificate Trust Settings \u2192 Enable")
+
+    def test_the_steps_are_texts_of_the_wizard_for_translation(self):
+        """They were plain strings among translated ones."""
+        import inspect
+
+        from pytodo_qt.gui.dialogs import web_connect
+
+        for steps in (
+            web_connect.ios_certificate_steps,
+            web_connect.android_certificate_steps,
+            web_connect.android_certificate_note,
+        ):
+            source = inspect.getsource(steps)
+            assert "_wizard_text(" in source
+        assert 'QCoreApplication.translate("MobileAccessWizard", text)' in inspect.getsource(
+            web_connect._wizard_text
+        )
+        page = inspect.getsource(web_connect.MobileAccessWizard._build_trusted_steps_page)
+        assert "enumerate(ios_certificate_steps(), 1)" in page
+        assert "enumerate(android_certificate_steps(), 1)" in page
+        assert "QLabel(android_certificate_note())" in page

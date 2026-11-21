@@ -2059,6 +2059,52 @@ class TestServerNotReached:
             assert "getOfflineQueue()" not in body, name
             assert "waitingChanges()" in body, name
 
+    def test_the_page_says_whether_it_can_be_used_without_the_server(self):
+        """tests/js/offline_use.test.js, run under Node (#75)."""
+        self._node("offline_use.test.js")
+
+    def test_what_became_of_the_worker_is_kept_and_shown(self):
+        """A browser that does not trust the server's certificate
+        refuses the page's service worker. That was written to the
+        console and nowhere else (#75)."""
+        js = self._app()
+        register = js.split("// Register the service worker.")[1].split(
+            "// What the page read before its first worker was in place"
+        )[0]
+        # Each way it can go is kept.
+        assert 'workerIs({ state: "plain", words: "" });' in register
+        assert 'workerIs({ state: "none", words: "" });' in register
+        assert 'workerIs({ state: "on", words: "" });' in register
+        assert 'workerIs({ state: "refused", words: refusalWords(err) });' in register
+        assert register.index('if (location.protocol !== "https:") {') < register.index(
+            "} else if (!navigator.serviceWorker) {"
+        )
+        # Shown in the page's Settings, under Connection.
+        html = (STATIC_DIR / "index.html").read_text()
+        connection = html.split('id="settings-connection"')[1].split("</div>\n          </div>")[0]
+        assert "<span>Offline use</span>" in connection
+        for line in ("settings-offline-use", "settings-offline-why", "settings-offline-how"):
+            assert f'id="{line}"' in connection
+        settings = js.split("async function refreshSettings() {")[1].split("\n  }\n")[0]
+        assert "showOfflineUse();" in settings
+        # Said once the page has started, not before.
+        start = js.split("async function init() {")[1].split("\n  }\n")[0]
+        assert start.index("appReady = true;") < start.index("tellOfflineUseOnce();")
+
+    def test_the_lines_under_a_settings_row_are_read_as_text(self):
+        """Why offline use is not available, and what makes it so: not
+        smaller than the rows, and at 4.5:1 on the page in both themes."""
+        contrast = TestCalendarContrast()
+        css = (STATIC_DIR / "style.css").read_text()
+        rule = css.split(".settings-note {")[1].split("}")[0]
+        assert "font-size: 14px;" in rule
+        assert "color: var(--text-secondary);" in rule
+        assert "opacity" not in rule
+        for theme, colors in contrast._themes().items():
+            for surface in ("bg", "bg-secondary", "bg-card", "surface"):
+                ratio = contrast._contrast(colors["text-secondary"], colors[surface])
+                assert ratio >= 4.5, (theme, surface, round(ratio, 2))
+
     def test_every_change_not_queued_goes_one_way_and_can_be_given_up(self):
         """The changes sent straight to the server had no deadline and
         nothing to give them up: one on its way when the server stopped

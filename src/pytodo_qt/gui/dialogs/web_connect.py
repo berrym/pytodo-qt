@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QCoreApplication, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
@@ -261,6 +261,52 @@ def _browser_warning_visual(ip: str) -> QFrame:
     layout.addWidget(reassurance)
 
     return frame
+
+
+def _wizard_text(text: str) -> str:
+    """A text of the Mobile Access Wizard that is made outside its class."""
+    return QCoreApplication.translate("MobileAccessWizard", text)
+
+
+def ios_certificate_steps() -> list[str]:
+    """The steps that install the application's certificate on iOS and
+    iPadOS, in order (Trusted Connect)."""
+    return [
+        _wizard_text("Scan the QR code \u2014 tap Allow when prompted"),
+        _wizard_text("Open Settings \u2192 General \u2192 VPN & Device Management"),
+        _wizard_text("Tap the PyTodo-Qt profile \u2192 Install \u2192 Enter passcode"),
+        _wizard_text(
+            "Settings \u2192 General \u2192 About \u2192 Certificate Trust Settings \u2192 Enable"
+        ),
+    ]
+
+
+def android_certificate_steps() -> list[str]:
+    """The steps that install the application's certificate on Android,
+    in order (Trusted Connect).
+
+    "Settings" is the Android Settings app. Read as the settings of the
+    browser the QR code was scanned into, the step led nowhere: Chrome
+    has no such entry.
+    """
+    return [
+        _wizard_text("Scan the QR code to download the certificate"),
+        _wizard_text(
+            "Open the Android Settings app (not the browser's settings)"
+            ' \u2192 search for "certificate"'
+        ),
+        _wizard_text("Choose CA certificate \u2192 select the downloaded file \u2192 Install"),
+    ]
+
+
+def android_certificate_note() -> str:
+    """What stands under the Android steps: where the entry usually is."""
+    return _wizard_text(
+        "Steps vary by manufacturer and Android version. The usual path is"
+        " Security & privacy \u2192 More security & privacy \u2192"
+        " Encryption & credentials \u2192 Install a certificate \u2192"
+        " CA certificate."
+    )
 
 
 def _time_ago(timestamp_ms: int) -> str:
@@ -953,16 +999,7 @@ class MobileAccessWizard(QDialog):
             ios_layout = QVBoxLayout(ios_widget)
             ios_layout.setContentsMargins(8, 8, 8, 8)
             ios_layout.setSpacing(4)
-            for i, text in enumerate(
-                [
-                    "Scan the QR code \u2014 tap Allow when prompted",
-                    "Open Settings \u2192 General \u2192 VPN & Device Management",
-                    "Tap the PyTodo-Qt profile \u2192 Install \u2192 Enter passcode",
-                    "Settings \u2192 General \u2192 About \u2192"
-                    " Certificate Trust Settings \u2192 Enable",
-                ],
-                1,
-            ):
+            for i, text in enumerate(ios_certificate_steps(), 1):
                 lbl = QLabel(f"{i}. {text}")
                 lbl.setWordWrap(True)
                 lbl.setStyleSheet(f"font-size: {font_px(11)}px; padding: 4px 0;")
@@ -974,25 +1011,13 @@ class MobileAccessWizard(QDialog):
             android_layout = QVBoxLayout(android_widget)
             android_layout.setContentsMargins(8, 8, 8, 8)
             android_layout.setSpacing(4)
-            for i, text in enumerate(
-                [
-                    "Scan the QR code to download the certificate",
-                    'Open Settings \u2192 search for "certificate"',
-                    "Choose CA certificate \u2192 select the downloaded file \u2192 Install",
-                ],
-                1,
-            ):
+            for i, text in enumerate(android_certificate_steps(), 1):
                 lbl = QLabel(f"{i}. {text}")
                 lbl.setWordWrap(True)
                 lbl.setStyleSheet(f"font-size: {font_px(11)}px; padding: 4px 0;")
                 android_layout.addWidget(lbl)
 
-            android_caveat = QLabel(
-                self.tr(
-                    "Steps vary by manufacturer and Android version."
-                    ' If these don\'t match, search Settings for "certificate".'
-                )
-            )
+            android_caveat = QLabel(android_certificate_note())
             android_caveat.setWordWrap(True)
             android_caveat.setStyleSheet(
                 f"font-size: {font_px(10)}px; font-style: italic; padding: 4px 0;"

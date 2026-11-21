@@ -1755,6 +1755,15 @@ body {
   border-bottom: none;
 }
 
+/* A line under a row that says why, and what to do: read as text,
+   so not smaller than the rows and not fainter than their labels. */
+.settings-note {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
 .settings-value {
   font-weight: 500;
   color: var(--text);
