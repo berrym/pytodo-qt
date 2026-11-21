@@ -139,6 +139,7 @@ function page(options) {
     options,
   );
   env.calls = [];
+  env.toasts = [];
   env.QueueRules = QueueRules;
   env.drawn = [];
   env.stored = { items: [{ id: "kept" }], savedAt: 1795124040000 };
@@ -355,7 +356,7 @@ function page(options) {
       "async function showQueueRun(result) { env.calls.push('showQueueRun'); }",
       "var QueueRules = env.QueueRules;",
       "function getOfflineQueue() { return env.queue || []; }",
-      "function showToast() {}",
+      "function showToast(text) { env.toasts.push(text); }",
       "async function sendQueuedChanges() { env.calls.push('sendQueuedChanges'); if (env.sends) env.sends(); }",
       constantText("QUEUE_AGAIN_AFTER"),
       constantText("QUEUE_AGAIN_AT_MOST"),
@@ -401,6 +402,15 @@ function page(options) {
       "var listReadAgainTimer = null;",
       functionText("readListAgainSoon"),
       called("fetchUndoState"),
+      called("fetchSortTiers"),
+      // The changes sent straight to the server (#122).
+      /  var NO_ANSWER =\s*"[^"]*";/.exec(source)[0],
+      constantText("QUEUED_SEND_ASKED_AFTER"),
+      "var serverOnlySends = [];",
+      "var serverOnlyWatch = null;",
+      functionText("giveUpServerOnly"),
+      functionText("watchServerOnly"),
+      functionText("serverOnly"),
       env.ownSockets
         ? functionText("connectWebSocket")
         : called("connectWebSocket"),
@@ -461,6 +471,8 @@ function page(options) {
       "  notStored: function () { return { list: listNotStored, board: boardNotStored }; },",
       "  pending: function () { return listPending; },",
       "  readsBegun: function () { return listReadsBegun; },",
+      "  serverOnly: serverOnly,",
+      "  onTheirWay: function () { return serverOnlySends.length; },",
       "  chooseList: function (id) { currentListId = id; },",
       "  replayOfflineQueue: replayOfflineQueue,",
       "  serverDoubted: serverDoubted,",
@@ -664,6 +676,9 @@ test("when the server answers again the queue is sent and the list read", () => 
       "replayOfflineQueue",
       "refreshCurrentList",
       "fetchUndoState",
+      // A change sent straight to the server may have been given up
+      // meanwhile (#122): the sort order is read as well.
+      "fetchSortTiers",
     ],
   );
   // The next wait for the WebSocket starts short again.
@@ -3749,4 +3764,209 @@ test("each read of the list is counted as it begins", async () => {
   made.chooseList(null);
   await made.refreshCurrentList();
   assert.equal(made.readsBegun(), 1);
+});
+
+// --- A change that goes straight to the server (#122) ---
+//
+// List, column, layout, sort, restore, Undo and Redo are not queued.
+// One on its way when the server stops answering waited for as long as
+// the browser lets a request wait, a minute and more.
+
+const NO_ANSWER_SAID =
+  "No answer from the server. What it did will show when it is reached again.";
+
+// What became of a change: its answer, or the error it ended with.
+const outcomeOf = (sending) =>
+  sending.then(
+    (data) => ({ data: data }),
+    (error) => ({
+      status: error.status,
+      noAnswer: Boolean(error.noAnswer),
+      name: error.name,
+    }),
+  );
+
+test("a change the server answers gives its answer, and nothing is said", async () => {
+  const seen = [];
+  const made = page({
+    fetch: async (url, opts) => {
+      seen.push([url, opts.method, Boolean(opts.signal)]);
+      return new Response(JSON.stringify({ updated_at: 7 }), { status: 200 });
+    },
+  });
+  const outcome = await outcomeOf(
+    made.serverOnly("/lists/1", { method: "PUT", body: "{}" }),
+  );
+  assert.deepEqual(outcome, { data: { updated_at: 7 } });
+  // It can be given up, and has no deadline of its own.
+  assert.deepEqual(seen, [["/api/lists/1", "PUT", true]]);
+  assert.deepEqual(made.env.toasts, []);
+  assert.equal(made.onTheirWay(), 0);
+  // Nothing is left to ask the server for it.
+  made.env.advance(60000);
+  assert.equal(made.env.calls.includes("probeServer"), false);
+});
+
+test("while a change is on its way the server is asked after 3 s, then every 5", async () => {
+  const made = page({ fetch: noAnswer([]) });
+  made.serverOnly("/lists/1", { method: "PUT" }).catch(() => {});
+  await settled();
+  const asked = () =>
+    made.env.calls.filter((name) => name === "probeServer").length;
+  made.env.advance(2999);
+  assert.equal(asked(), 0);
+  made.env.advance(1);
+  assert.equal(asked(), 1);
+  made.env.advance(4999);
+  assert.equal(asked(), 1);
+  made.env.advance(1);
+  assert.equal(asked(), 2);
+});
+
+test("two changes on their way are watched as one", async () => {
+  const made = page({ fetch: noAnswer([]) });
+  made.serverOnly("/lists/1", { method: "PUT" }).catch(() => {});
+  made.env.advance(2000);
+  made.serverOnly("/sort", { method: "PUT" }).catch(() => {});
+  await settled();
+  // The second does not put the first question off.
+  made.env.advance(1000);
+  assert.equal(
+    made.env.calls.filter((name) => name === "probeServer").length,
+    1,
+  );
+  assert.equal(made.onTheirWay(), 2);
+});
+
+test("the server falls silent: every change on its way is given up at once, and says so once each", async () => {
+  const made = page({ fetch: noAnswer([]) });
+  const first = outcomeOf(made.serverOnly("/lists/1", { method: "PUT" }));
+  const second = outcomeOf(made.serverOnly("/undo", { method: "POST" }));
+  await settled();
+  made.serverSilent();
+  assert.deepEqual(await first, {
+    status: undefined,
+    noAnswer: true,
+    name: "AbortError",
+  });
+  assert.equal((await second).noAnswer, true);
+  // Not a failure: the server may have made the change.
+  assert.deepEqual(made.env.toasts, [NO_ANSWER_SAID, NO_ANSWER_SAID]);
+  assert.equal(made.onTheirWay(), 0);
+  // The watch ends with them.
+  made.env.calls.length = 0;
+  made.env.advance(60000);
+  assert.equal(made.env.calls.includes("probeServer"), false);
+});
+
+test("the question put for a change gets no answer: the change is given up 8 s after it was sent", async () => {
+  const made = page({ ownProbe: true, fetch: noAnswer([]) });
+  const sending = outcomeOf(made.serverOnly("/lists/1", { method: "PUT" }));
+  let ended = false;
+  sending.then(() => {
+    ended = true;
+  });
+  await settled();
+  made.env.advance(3000);
+  await settled();
+  made.env.advance(4999);
+  await settled();
+  assert.equal(ended, false);
+  assert.equal(made.connected(), true);
+  made.env.advance(1);
+  await settled();
+  assert.equal(made.connected(), false);
+  assert.equal((await sending).noAnswer, true);
+  assert.deepEqual(made.env.toasts, [NO_ANSWER_SAID]);
+});
+
+test("a change that fails outright has no answer either, and says the same", async () => {
+  const made = page({
+    fetch: async () => {
+      throw new TypeError("Failed to fetch");
+    },
+  });
+  const outcome = await outcomeOf(
+    made.serverOnly("/lists/1", { method: "PUT" }),
+  );
+  assert.deepEqual(outcome, {
+    status: undefined,
+    noAnswer: true,
+    name: "TypeError",
+  });
+  assert.deepEqual(made.env.toasts, [NO_ANSWER_SAID]);
+});
+
+test("a refusal of the server's own is the caller's to tell: nothing is said here", async () => {
+  for (const status of [400, 404, 409, 500]) {
+    const made = page({
+      fetch: async () =>
+        new Response(JSON.stringify({ error: "no" }), { status: status }),
+    });
+    const outcome = await outcomeOf(
+      made.serverOnly("/lists/1", { method: "PUT" }),
+    );
+    assert.deepEqual(outcome, {
+      status: status,
+      noAnswer: false,
+      name: "Error",
+    });
+    assert.deepEqual(made.env.toasts, []);
+  }
+});
+
+test("an answer that is not the server's own is no answer", async () => {
+  // What the service worker makes up where it has nothing stored.
+  const made = page({
+    fetch: async () => answer({ "X-Pytodo-Source": "none" }, 503),
+  });
+  const outcome = await outcomeOf(
+    made.serverOnly("/lists/1", { method: "PUT" }),
+  );
+  assert.equal(outcome.noAnswer, true);
+  assert.deepEqual(made.env.toasts, [NO_ANSWER_SAID]);
+});
+
+test("a change that ends leaves the others on their way, and watched", async () => {
+  let answers = null;
+  let calls = 0;
+  const hangs = noAnswer([]);
+  const made = page({
+    fetch: (url, opts) =>
+      ++calls === 1
+        ? new Promise((resolve) => {
+            answers = () => resolve(new Response("{}", { status: 200 }));
+          })
+        : hangs(url, opts),
+  });
+  const first = made.serverOnly("/lists/1", { method: "PUT" });
+  made.serverOnly("/sort", { method: "PUT" }).catch(() => {});
+  await settled();
+  answers();
+  await first;
+  assert.equal(made.onTheirWay(), 1);
+  made.env.advance(3000);
+  assert.ok(made.env.calls.includes("probeServer"));
+});
+
+test("a change sent after the one before has ended is watched from its own start", async () => {
+  let calls = 0;
+  const hangs = noAnswer([]);
+  const made = page({
+    fetch: (url, opts) =>
+      ++calls === 1
+        ? Promise.resolve(new Response("{}", { status: 200 }))
+        : hangs(url, opts),
+  });
+  await made.serverOnly("/lists/1", { method: "PUT" });
+  made.env.advance(2000);
+  made.serverOnly("/sort", { method: "PUT" }).catch(() => {});
+  await settled();
+  const asked = () =>
+    made.env.calls.filter((name) => name === "probeServer").length;
+  // Not at the 3 s of the first, which is over.
+  made.env.advance(1000);
+  assert.equal(asked(), 0);
+  made.env.advance(2000);
+  assert.equal(asked(), 1);
 });

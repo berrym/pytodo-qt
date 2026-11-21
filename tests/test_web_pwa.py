@@ -1807,7 +1807,7 @@ class TestNoticeUndo:
         )
         assert "restoreDeletedItem(itemId, name);" in sent
         body = self._function("restoreDeletedItem")
-        assert 'await api("/items/" + itemId + "/restore", { method: "PATCH" });' in body
+        assert 'await serverOnly("/items/" + itemId + "/restore", { method: "PATCH" });' in body
         assert 'showToast(name + " restored");' in body
 
     def test_queued_delete_is_taken_out_of_the_queue(self):
@@ -2058,6 +2058,52 @@ class TestServerNotReached:
             body = re.split(rf"(?:async )?function {name}\(", js)[1].split("\n  }\n")[0]
             assert "getOfflineQueue()" not in body, name
             assert "waitingChanges()" in body, name
+
+    def test_every_change_not_queued_goes_one_way_and_can_be_given_up(self):
+        """The changes sent straight to the server had no deadline and
+        nothing to give them up: one on its way when the server stopped
+        answering waited for as long as the browser lets a request wait
+        (#122). Each goes through serverOnly, which the server's
+        silence gives up."""
+        js = self._app()
+        for sent in (
+            'serverOnly("/sort", {',
+            'serverOnly("/undo", {',
+            'serverOnly("/redo", {',
+            'serverOnly("/lists", {',
+            'serverOnly("/items/" + item.id + "/restore", {',
+            'serverOnly("/items/" + itemId + "/restore", { method: "PATCH" })',
+        ):
+            assert js.count(sent) == 1, sent
+        assert js.count('serverOnly("/lists/" + currentListId + "/columns", {') == 3
+        assert js.count('"/lists/" + currentListId + "/apply-preset",') == 1
+        assert js.count('serverOnly("/lists/" + listId, {') == 2
+        assert js.count("serverOnly(") == 13  # the twelve, and the function
+        # No change is sent past it and past the queue: what is left of
+        # api() with a method is the preview of a task being typed, a
+        # question, which has the deadline of a read.
+        direct = re.findall(r"\bapi\(\s*\"[^\"]*\",\s*\{\s*method:", js)
+        assert [re.sub(r"\s+", " ", found) for found in direct] == ['api( "/parse", { method:']
+        parse = js.split('"/parse",')[1].split(");")[0]
+        assert "READ_DEADLINE," in parse
+        assert 'serverFetch(API + "/sort", {\n      method' not in js
+        # Given up with a queued change on its way, when the server
+        # falls silent.
+        silent = js.split("function serverSilent() {")[1].split("\n  }\n")[0]
+        assert silent.index("giveUpQueuedSend();") < silent.index("giveUpServerOnly();")
+        # The server may have made the change: its state is read when
+        # it is reached again, the sort order with the rest.
+        resume = js.split("function resumeWithServer() {")[1].split("\n  }\n")[0]
+        for read in ("refreshCurrentList();", "fetchUndoState();", "fetchSortTiers();"):
+            assert read in resume
+        # Where no answer came the person has been told, once: no
+        # caller says that the change failed.
+        # (Undo and Redo say nothing of an error of any kind.)
+        assert js.count("e.noAnswer = true;") == 1
+        assert js.count("e.noAnswer") == 11
+        sending = js.split("async function serverOnly(path, opts) {")[1].split("\n  }\n")[0]
+        assert "showToast(NO_ANSWER);" in sending
+        assert "No answer from the server. What it did will show when it is reached again." in js
 
     def test_every_list_is_kept_for_use_without_the_server(self):
         """tests/js/stored_lists.test.js, run under Node (#121)."""

@@ -1766,6 +1766,7 @@
     serverConnected = false;
     showConnection();
     giveUpQueuedSend();
+    giveUpServerOnly();
     if (appReady && !pinScreenUp) waitForServer();
   }
 
@@ -1782,6 +1783,11 @@
     replayOfflineQueue();
     refreshCurrentList();
     fetchUndoState();
+    // A change sent straight to the server may have been given up
+    // while the server was silent, with its outcome unknown: the sort
+    // order is read here, as the list, the lists and the undo state
+    // are above.
+    fetchSortTiers();
   }
 
   // While it does not, nothing is asked at intervals: the WebSocket is
@@ -1808,6 +1814,72 @@
         /* no answer: serverFetch has seen to it */
       },
     );
+  }
+
+  // --- A change that goes straight to the server ---
+  //
+  // The changes that are not queued (see below: what cannot be done
+  // without the server) are sent here. One that is on its way when the
+  // server stops answering is not left to wait for as long as the
+  // browser lets a request wait, a minute and more: the server is
+  // asked whether it is there while the change waits, as for a queued
+  // change (watchQueuedSend), and the change is given up when the
+  // server is taken for silent. The server may have made the change
+  // before it fell silent, so nothing is said of a failure: the page
+  // shows the server's state when it is reached again.
+  var NO_ANSWER =
+    "No answer from the server. What it did will show when it is reached again.";
+
+  // The changes on their way straight to the server, each by the
+  // AbortController that gives it up.
+  var serverOnlySends = [];
+  var serverOnlyWatch = null;
+
+  // The server has fallen silent: every such change is given up.
+  function giveUpServerOnly() {
+    serverOnlySends.slice().forEach(function (givenUp) {
+      givenUp.abort();
+    });
+  }
+
+  // While such a change is on its way the server is asked whether it
+  // is there: after QUEUED_SEND_ASKED_AFTER, then each time the
+  // question before has had its time. One watch for however many; it
+  // ends with the last of them (serverOnly).
+  function watchServerOnly(wait) {
+    clearTimeout(serverOnlyWatch);
+    serverOnlyWatch = setTimeout(function () {
+      serverOnlyWatch = null;
+      probeServer();
+      watchServerOnly(PROBE_DEADLINE);
+    }, wait);
+  }
+
+  // Sends a change straight to the server, and gives its answer as
+  // api() does. Where the server gave no answer of its own (the
+  // request failed, or was given up) the person is told so here, once,
+  // and the error says it (noAnswer): the caller has nothing to add,
+  // and nothing to put back.
+  async function serverOnly(path, opts) {
+    var givenUp = new AbortController();
+    opts = Object.assign({}, opts, { signal: givenUp.signal });
+    serverOnlySends.push(givenUp);
+    if (serverOnlyWatch === null) watchServerOnly(QUEUED_SEND_ASKED_AFTER);
+    try {
+      return await api(path, opts);
+    } catch (e) {
+      if (e.status === undefined || e.notTheServers) {
+        e.noAnswer = true;
+        showToast(NO_ANSWER);
+      }
+      throw e;
+    } finally {
+      serverOnlySends.splice(serverOnlySends.indexOf(givenUp), 1);
+      if (serverOnlySends.length === 0) {
+        clearTimeout(serverOnlyWatch);
+        serverOnlyWatch = null;
+      }
+    }
   }
 
   // --- What cannot be done without the server ---
@@ -2155,10 +2227,21 @@
       })
       .then(function (data) {
         if (data && data.sort_tiers && data.sort_tiers.length === 3) {
+          // Another order than the one on screen: the tasks are drawn
+          // in it. So after a save whose answer never came, and at a
+          // start where the list was drawn before this was answered.
+          var other =
+            JSON.stringify(data.sort_tiers) !==
+            JSON.stringify(currentSortTiers);
           currentSortTiers = data.sort_tiers;
           confirmedSortTiers = JSON.stringify(currentSortTiers);
           if (data.updated_at != null) sortUpdatedAt = data.updated_at;
-          updateSortButtonLabel();
+          if (other) {
+            syncSortSheetUI();
+            showSortOrder();
+          } else {
+            updateSortButtonLabel();
+          }
         }
       })
       .catch(function () {
@@ -2263,38 +2346,39 @@
   }
 
   // Sends the order just chosen and shows the tasks in it. An order
-  // the server did not take is not kept: the last one it confirmed is
-  // put back, with a notice. It was dropped without a word before, and
+  // the server refuses is not kept: the last one it confirmed is put
+  // back, with a notice. It was dropped without a word before, and
   // came back at the next read.
   function saveSortTiers() {
     var sent = JSON.stringify(currentSortTiers);
     var payload = { tiers: currentSortTiers, updated_at: sortUpdatedAt };
-    serverFetch(API + "/sort", {
+    serverOnly("/sort", {
       method: "PUT",
-      headers: authHeaders({ "Content-Type": "application/json" }),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     })
-      .then(function (r) {
-        if (r.status === 409) {
-          return r.json().then(function (data) {
-            if (data.current && data.current.sort_tiers) {
-              currentSortTiers = data.current.sort_tiers;
-              confirmedSortTiers = JSON.stringify(currentSortTiers);
-              if (data.current.updated_at != null)
-                sortUpdatedAt = data.current.updated_at;
-              syncSortSheetUI();
-              showSortOrder();
-            }
-            showToast("Sort was changed elsewhere — refreshed");
-          });
-        }
-        if (!r.ok || storedTimeOf(r) !== null) throw new Error("not saved");
-        return r.json().then(function (data) {
-          confirmedSortTiers = sent;
-          if (data && data.updated_at != null) sortUpdatedAt = data.updated_at;
-        });
+      .then(function (data) {
+        confirmedSortTiers = sent;
+        if (data && data.updated_at != null) sortUpdatedAt = data.updated_at;
       })
-      .catch(function () {
+      .catch(function (e) {
+        // No answer: the server may have taken the order. It stays as
+        // chosen, and is read when the server is reached again
+        // (resumeWithServer).
+        if (e.noAnswer) return;
+        var theirs = e.status === 409 && e.body ? e.body.current : null;
+        if (theirs && theirs.sort_tiers) {
+          currentSortTiers = theirs.sort_tiers;
+          confirmedSortTiers = JSON.stringify(currentSortTiers);
+          if (theirs.updated_at != null) sortUpdatedAt = theirs.updated_at;
+          syncSortSheetUI();
+          showSortOrder();
+        }
+        if (e.status === 409) {
+          showToast("Sort was changed elsewhere \u2014 refreshed");
+          return;
+        }
+        // The server's own refusal: the last order it confirmed.
         currentSortTiers = JSON.parse(confirmedSortTiers);
         syncSortSheetUI();
         showSortOrder();
@@ -3058,7 +3142,7 @@
     var colUa = getListUpdatedAt(currentListId);
     if (colUa !== undefined) colFields.updated_at = colUa;
     try {
-      await api("/lists/" + currentListId + "/columns", {
+      await serverOnly("/lists/" + currentListId + "/columns", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(colFields),
@@ -3069,7 +3153,7 @@
       if (e.status === 409) {
         showToast("Board was modified \u2014 refreshing");
         await refreshCurrentList();
-      } else {
+      } else if (!e.noAnswer) {
         showToast("Rename failed: " + e.message);
       }
     }
@@ -3081,7 +3165,7 @@
     var wipUa = getListUpdatedAt(currentListId);
     if (wipUa !== undefined) wipFields.updated_at = wipUa;
     try {
-      await api("/lists/" + currentListId + "/columns", {
+      await serverOnly("/lists/" + currentListId + "/columns", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(wipFields),
@@ -3092,7 +3176,7 @@
       if (e.status === 409) {
         showToast("Board was modified \u2014 refreshing");
         await refreshCurrentList();
-      } else {
+      } else if (!e.noAnswer) {
         showToast("Failed: " + e.message);
       }
     }
@@ -3104,7 +3188,7 @@
     var delColUa = getListUpdatedAt(currentListId);
     if (delColUa !== undefined) delColFields.updated_at = delColUa;
     try {
-      await api("/lists/" + currentListId + "/columns", {
+      await serverOnly("/lists/" + currentListId + "/columns", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(delColFields),
@@ -3115,7 +3199,7 @@
       if (e.status === 409) {
         showToast("Board was modified \u2014 refreshing");
         await refreshCurrentList();
-      } else {
+      } else if (!e.noAnswer) {
         showToast("Delete failed: " + e.message);
       }
     }
@@ -3162,11 +3246,14 @@
     var presetUa = getListUpdatedAt(currentListId);
     if (presetUa !== undefined) presetFields.updated_at = presetUa;
     try {
-      var result = await api("/lists/" + currentListId + "/apply-preset", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(presetFields),
-      });
+      var result = await serverOnly(
+        "/lists/" + currentListId + "/apply-preset",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(presetFields),
+        },
+      );
       await refreshCurrentList();
       var msg = 'Applied "' + presetName + '"';
       if (result.remapped > 0) {
@@ -3182,7 +3269,7 @@
       if (e.status === 409) {
         showToast("Board was modified \u2014 refreshing");
         await refreshCurrentList();
-      } else {
+      } else if (!e.noAnswer) {
         showToast("Failed: " + e.message);
       }
     }
@@ -6763,11 +6850,17 @@
       }
       parseDebounceTimer = setTimeout(async function () {
         try {
-          var result = await api("/parse", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: text }),
-          });
+          // A question, though it is put with POST: given up at the
+          // deadline of a read.
+          var result = await api(
+            "/parse",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text: text }),
+            },
+            READ_DEADLINE,
+          );
           renderEntityChips(result);
         } catch (e) {
           // Parsing preview is best-effort
@@ -7894,13 +7987,15 @@
         needsServer(restoreBtn);
         restoreBtn.addEventListener("click", async function () {
           try {
-            await api("/items/" + item.id + "/restore", { method: "PATCH" });
+            await serverOnly("/items/" + item.id + "/restore", {
+              method: "PATCH",
+            });
             haptic(10);
             showToast("Item restored");
             refreshTrash();
             refreshCurrentList();
           } catch (e) {
-            showToast("Failed to restore item");
+            if (!e.noAnswer) showToast("Failed to restore item");
           }
         });
         row.appendChild(restoreBtn);
@@ -8084,8 +8179,9 @@
   // be someone else's.
   async function restoreDeletedItem(itemId, name) {
     try {
-      await api("/items/" + itemId + "/restore", { method: "PATCH" });
+      await serverOnly("/items/" + itemId + "/restore", { method: "PATCH" });
     } catch (e) {
+      if (e.noAnswer) return;
       if (e.status === 404) {
         // Not deleted at the server: brought back already.
         showToast("Nothing to undo");
@@ -8191,7 +8287,7 @@
     }
     if (withoutServer()) return;
     try {
-      var resp = await api("/undo", {
+      var resp = await serverOnly("/undo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
@@ -8214,7 +8310,7 @@
     }
     if (withoutServer()) return;
     try {
-      var resp = await api("/redo", {
+      var resp = await serverOnly("/redo", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
@@ -8397,7 +8493,7 @@
         var renameUa = getListUpdatedAt(listId);
         if (renameUa !== undefined) renameFields.updated_at = renameUa;
         try {
-          await api("/lists/" + listId, {
+          await serverOnly("/lists/" + listId, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(renameFields),
@@ -8414,7 +8510,7 @@
               ? e.body.current.name
               : currentName;
           } else {
-            showToast("Failed to rename list");
+            if (!e.noAnswer) showToast("Failed to rename list");
             nameEl.textContent = currentName;
           }
         }
@@ -8450,7 +8546,7 @@
       var delListUa = getListUpdatedAt(listId);
       if (delListUa !== undefined) delListFields.updated_at = delListUa;
       try {
-        await api("/lists/" + listId, {
+        await serverOnly("/lists/" + listId, {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(delListFields),
@@ -8471,7 +8567,7 @@
           showToast("List was modified \u2014 refreshing");
           await refreshLists();
           renderListSheetBody(cachedLists);
-        } else {
+        } else if (!e.noAnswer) {
           showToast("Failed to delete list");
         }
       }
@@ -8493,7 +8589,7 @@
       var name = listCreateInput.value.trim();
       if (!name) return;
       try {
-        var result = await api("/lists", {
+        var result = await serverOnly("/lists", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name: name }),
@@ -8506,7 +8602,7 @@
         renderListSheetBody(cachedLists);
         refreshCurrentList();
       } catch (e) {
-        showToast(e.message || "Failed to create list");
+        if (!e.noAnswer) showToast(e.message || "Failed to create list");
       }
     });
   }

@@ -134,7 +134,7 @@ function page(options) {
       "function showToast(text) { env.toasts.push(text); }",
       "function offlineUndoAction() { env.did.push('undo in the page'); }",
       "function offlineRedoAction() { env.did.push('redo in the page'); }",
-      "async function api(path) { env.did.push(path); return { ok: false }; }",
+      "async function serverOnly(path) { env.did.push(path); return { ok: false }; }",
       "function haptic() {}",
       "function closeContextMenu() { env.menuClosed = true; }",
       "function showContextMenu() {}",
@@ -435,20 +435,20 @@ test("Undo and Redo by key take a waiting change back without the server", async
 
 // --- The sort order ---
 
-// The page as far as saving the sort order goes. `answers` are what
-// the server says to each save, in order: "fails", or an answer.
-function sorting(answers) {
-  const env = { toasts: [], shown: [], sent: [], answers: answers };
-  env.fetch = async (url, opts) => {
-    env.sent.push(JSON.parse(opts.body).tiers.map((tier) => tier.dimension));
-    const answer = env.answers.shift();
-    if (answer === "fails") throw new TypeError("Failed to fetch");
-    return {
-      ok: answer.status === 200,
-      status: answer.status,
-      stored: answer.stored || null,
-      json: async () => answer.body || {},
-    };
+// The page as far as saving and reading the sort order goes. `answers`
+// are what becomes of each save, in order: "no answer" (the request
+// failed or was given up; serverOnly has told the person), or what the
+// server answered: {status, body}. `read` is what a read of the order
+// gives.
+function sorting(answers, read) {
+  const env = {
+    toasts: [],
+    shown: [],
+    sent: [],
+    synced: 0,
+    labels: 0,
+    answers: answers,
+    read: read,
   };
   return new Function(
     "env",
@@ -457,16 +457,26 @@ function sorting(answers) {
       "var currentSortTiers = [{ dimension: 'completion', reverse: false }, { dimension: 'due_date', reverse: false }, { dimension: 'priority', reverse: false }];",
       "var sortUpdatedAt = 1;",
       "var confirmedSortTiers = JSON.stringify(currentSortTiers);",
+      // A change sent straight to the server (connection.test.js).
+      "async function serverOnly(path, opts) {",
+      "  env.sent.push(JSON.parse(opts.body).tiers.map(function (tier) { return tier.dimension; }));",
+      "  var answer = env.answers.shift();",
+      "  if (answer === 'no answer') { var none = new Error('no answer'); none.noAnswer = true; throw none; }",
+      "  if (answer.status !== 200) { var refused = new Error('refused'); refused.status = answer.status; refused.body = answer.body || {}; throw refused; }",
+      "  return answer.body || {};",
+      "}",
       "function authHeaders(headers) { return headers; }",
-      "function serverFetch(url, opts) { return env.fetch(url, opts); }",
-      "function storedTimeOf(resp) { return resp.stored; }",
-      "function syncSortSheetUI() {}",
+      "async function serverFetch() { if (!env.read) throw new TypeError('Failed to fetch'); return { ok: true, json: async function () { return env.read; } }; }",
+      "function syncSortSheetUI() { env.synced += 1; }",
+      "function updateSortButtonLabel() { env.labels += 1; }",
       "function showToast(text) { env.toasts.push(text); }",
       "function showSortOrder() { env.shown.push(currentSortTiers[0].dimension); }",
       functionText("saveSortTiers"),
+      functionText("fetchSortTiers"),
       "return {",
       "  env: env,",
       "  choose: function (dimension) { currentSortTiers[0].dimension = dimension; saveSortTiers(); },",
+      "  read: fetchSortTiers,",
       "  first: function () { return currentSortTiers[0].dimension; },",
       "  stamp: function () { return sortUpdatedAt; },",
       "};",
@@ -475,6 +485,11 @@ function sorting(answers) {
 }
 
 const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
+const tiers = (first) => [
+  { dimension: first, reverse: false },
+  { dimension: "due_date", reverse: false },
+  { dimension: "priority", reverse: false },
+];
 
 test("an order the server takes is kept", async () => {
   const made = sorting([{ status: 200, body: { updated_at: 2 } }]);
@@ -486,8 +501,28 @@ test("an order the server takes is kept", async () => {
   assert.deepEqual(made.env.shown, ["priority"]);
 });
 
-test("an order whose save gets no answer is put back, with a notice", async () => {
-  const made = sorting(["fails"]);
+test("an order whose save gets no answer stays as chosen, and is not called a failure", async () => {
+  // The server may have taken it (#122). The person was told that no
+  // answer came by the sending itself.
+  const made = sorting(["no answer"]);
+  made.choose("priority");
+  await settled();
+  assert.equal(made.first(), "priority");
+  assert.deepEqual(made.env.shown, ["priority"]);
+  assert.deepEqual(made.env.toasts, []);
+});
+
+test("it is not the order the server has confirmed: a refusal after it goes back further", async () => {
+  const made = sorting(["no answer", { status: 400 }]);
+  made.choose("priority");
+  await settled();
+  made.choose("name");
+  await settled();
+  assert.equal(made.first(), "completion");
+});
+
+test("a refusal of the server puts the last confirmed order back, with a notice", async () => {
+  const made = sorting([{ status: 400 }]);
   made.choose("priority");
   // Shown at once, as before.
   assert.deepEqual(made.env.shown, ["priority"]);
@@ -497,37 +532,21 @@ test("an order whose save gets no answer is put back, with a notice", async () =
   assert.deepEqual(made.env.toasts, ["The sort order was not saved"]);
 });
 
-test("an answer made up without the server is no save", async () => {
-  const made = sorting([{ status: 200, stored: 5, body: {} }]);
-  made.choose("priority");
-  await settled();
-  assert.equal(made.first(), "completion");
-  assert.deepEqual(made.env.toasts, ["The sort order was not saved"]);
-});
-
-test("a refusal of the server puts the order back as well", async () => {
-  const made = sorting([{ status: 400, body: {} }]);
-  made.choose("priority");
-  await settled();
-  assert.equal(made.first(), "completion");
-  assert.deepEqual(made.env.toasts, ["The sort order was not saved"]);
-});
-
-test("after an order was taken, a failed save goes back to that one", async () => {
+test("after an order was taken, a refused save goes back to that one", async () => {
   const made = sorting([
     { status: 200, body: { updated_at: 2 } },
-    "fails",
-    "fails",
+    { status: 500 },
+    { status: 500 },
   ]);
   made.choose("priority");
   await settled();
-  // Two changes at once, both lost: neither is what is gone back to.
+  // Two changes at once, both refused: neither is what is gone back to.
   made.choose("due_date");
   made.choose("name");
   await settled();
   assert.equal(made.first(), "priority");
   assert.deepEqual(
-    made.env.sent.map((tiers) => tiers[0]),
+    made.env.sent.map((sent) => sent[0]),
     ["priority", "due_date", "name"],
   );
 });
@@ -540,7 +559,7 @@ test("an order changed elsewhere is taken from the server, and is the confirmed 
   ];
   const made = sorting([
     { status: 409, body: { current: { sort_tiers: theirs, updated_at: 7 } } },
-    "fails",
+    { status: 400 },
   ]);
   made.choose("priority");
   await settled();
@@ -552,4 +571,43 @@ test("an order changed elsewhere is taken from the server, and is the confirmed 
   made.choose("priority");
   await settled();
   assert.equal(made.first(), "name");
+});
+
+test("the order read from the server, where it is another than the one on screen, is drawn", async () => {
+  // When the server is reached again after a save without an answer,
+  // and at a start where the list was drawn first.
+  const made = sorting(["no answer"], {
+    sort_tiers: tiers("name"),
+    updated_at: 9,
+  });
+  made.choose("priority");
+  await settled();
+  made.read();
+  await settled();
+  assert.equal(made.first(), "name");
+  assert.equal(made.stamp(), 9);
+  assert.deepEqual(made.env.shown, ["priority", "name"]);
+  assert.equal(made.env.synced, 1);
+  // It is the confirmed one: a refusal goes back to it.
+  made.env.answers.push({ status: 400 });
+  made.choose("priority");
+  await settled();
+  assert.equal(made.first(), "name");
+});
+
+test("the order read, where it is the one on screen, is not drawn again", async () => {
+  const made = sorting([], { sort_tiers: tiers("completion"), updated_at: 3 });
+  made.read();
+  await settled();
+  assert.deepEqual(made.env.shown, []);
+  assert.equal(made.env.labels, 1);
+  assert.equal(made.stamp(), 3);
+});
+
+test("a read of the order that gets no answer leaves the order alone", async () => {
+  const made = sorting([], null);
+  made.read();
+  await settled();
+  assert.equal(made.first(), "completion");
+  assert.deepEqual(made.env.shown, []);
 });
