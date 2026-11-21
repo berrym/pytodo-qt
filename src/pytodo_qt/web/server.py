@@ -18,6 +18,7 @@ from aiohttp import web
 from ..core.logger import Logger
 from ..core.private_files import make_private, write_private_file
 from .device_store import PairedDevice, WebDeviceStore, parse_device_name
+from .shared_port import SharedPortListener
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -200,6 +201,9 @@ class WebServer:
         self._main_window = main_window
         self._runner: web.AppRunner | None = None
         self._site: web.TCPSite | None = None
+        # With TLS: the listener that serves HTTPS and redirects plain
+        # HTTP on the same port (#82).
+        self._listener: SharedPortListener | None = None
         self._app: web.Application | None = None
         self._pairing_pin: str = ""
         self._pairing_pin_expiry: float = 0
@@ -824,8 +828,16 @@ class WebServer:
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         ssl_ctx = self._create_ssl_context()
-        self._site = web.TCPSite(self._runner, host, port, ssl_context=ssl_ctx)
-        await self._site.start()
+        server = self._runner.server
+        if ssl_ctx is not None and server is not None:
+            # An address typed without https:// reaches this port as plain
+            # HTTP: it is sent on to the HTTPS address, where TCPSite gave
+            # it a closed connection and no word.
+            self._listener = SharedPortListener(server, ssl_ctx, host, port)
+            await self._listener.start()
+        else:
+            self._site = web.TCPSite(self._runner, host, port, ssl_context=ssl_ctx)
+            await self._site.start()
         scheme = "https" if ssl_ctx else "http"
         logger.log.info("Web server started on %s://%s:%d", scheme, host, port)
 
@@ -852,6 +864,11 @@ class WebServer:
                 # An attribute of this one object: the next start makes
                 # a server object of its own.
                 stopped.connection_made = _abort_connection
+            # No connection is taken from here on, and none that is still
+            # being looked at is handed on.
+            if self._listener is not None:
+                await self._listener.close()
+                self._listener = None
             await self._runner.cleanup()
             self._runner = None
             self._site = None

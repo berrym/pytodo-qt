@@ -6931,3 +6931,246 @@ class TestListStamp:
         assert titles["Review"] == []
         pack = next(card for card in board["columns"]["Doing"] if card["reminder"] == "Pack")
         assert [sub["reminder"] for sub in pack["subtasks"]] == ["socks", "charger"]
+
+
+def _plain_request(port: int, request: bytes, wait: float = 10) -> bytes | None:
+    """Sends ``request`` as plain HTTP and gives all of the answer, once
+    the server has closed the connection; None where it was still open
+    after ``wait`` seconds."""
+    with socket.create_connection(("127.0.0.1", port), timeout=wait) as raw:
+        raw.sendall(request)
+        answer = b""
+        while True:
+            try:
+                chunk = raw.recv(4096)
+            except TimeoutError:
+                return None
+            except OSError:
+                break
+            if not chunk:
+                break
+            answer += chunk
+        return answer
+
+
+class TestPlainHttpOnTheHttpsPort:
+    """An address typed without https:// reaches the HTTPS port as plain
+    HTTP. The connection was closed without a word (Chrome:
+    ERR_EMPTY_RESPONSE); it is answered with a redirect (#82)."""
+
+    def _server(self, tmp_path: Path) -> WebServer:
+        manager = ConfigManager(config_dir=tmp_path, data_dir=tmp_path)
+        return WebServer(database=_make_db_with_data(), config=WebConfig(), config_manager=manager)
+
+    async def _ask(self, port: int, request: bytes, wait: float = 10) -> bytes:
+        answer = await asyncio.get_running_loop().run_in_executor(
+            None, _plain_request, port, request, wait
+        )
+        assert answer is not None, "the server left the connection open"
+        return answer
+
+    @pytest.mark.asyncio
+    async def test_plain_http_is_sent_on_to_the_same_address_over_https(self, tmp_path: Path):
+        server = self._server(tmp_path)
+        port = _free_port()
+        await server.start("127.0.0.1", port)
+        try:
+            answer = await self._ask(
+                port, b"GET /static/app.js?v=1 HTTP/1.1\r\nHost: phone.local:8443\r\n\r\n"
+            )
+        finally:
+            await server.stop()
+        head = answer.decode("ascii").split("\r\n")
+        assert head[0] == "HTTP/1.1 307 Temporary Redirect"
+        assert "Location: https://phone.local:8443/static/app.js?v=1" in head
+        # Not kept by the browser: a server without certificates serves
+        # plain HTTP on this port.
+        assert "Cache-Control: no-store" in head
+        assert "Connection: close" in head
+
+    @pytest.mark.asyncio
+    async def test_https_on_the_same_port_is_served_as_before(self, tmp_path: Path):
+        server = self._server(tmp_path)
+        port = _free_port()
+        await server.start("127.0.0.1", port)
+        try:
+            raw = socket.create_connection(("127.0.0.1", port))
+            answer = await asyncio.get_running_loop().run_in_executor(None, _ask_over_tls, raw)
+        finally:
+            await server.stop()
+        assert answer is not None and answer.startswith(b"HTTP/1.1 401")
+
+    @pytest.mark.asyncio
+    async def test_without_a_host_the_address_the_connection_came_in_on(self, tmp_path: Path):
+        server = self._server(tmp_path)
+        port = _free_port()
+        await server.start("127.0.0.1", port)
+        try:
+            answer = await self._ask(port, b"GET / HTTP/1.0\r\n\r\n")
+        finally:
+            await server.stop()
+        assert f"Location: https://127.0.0.1:{port}/\r\n".encode() in answer
+
+    @pytest.mark.asyncio
+    async def test_a_connection_that_sends_nothing_is_closed_at_its_deadline(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from pytodo_qt.web import shared_port
+
+        monkeypatch.setattr(shared_port, "FIRST_BYTE_DEADLINE", 0.3)
+        server = self._server(tmp_path)
+        port = _free_port()
+        await server.start("127.0.0.1", port)
+        try:
+            # Closed by the server well before the client would give up.
+            answer = await self._ask(port, b"", wait=3)
+        finally:
+            await server.stop()
+        assert answer == b""
+
+    @pytest.mark.asyncio
+    async def test_a_request_that_stops_half_way_is_closed_at_its_deadline(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from pytodo_qt.web import shared_port
+
+        monkeypatch.setattr(shared_port, "REQUEST_DEADLINE", 0.3)
+        server = self._server(tmp_path)
+        port = _free_port()
+        await server.start("127.0.0.1", port)
+        try:
+            answer = await self._ask(port, b"GET / HTTP/1.1\r\nHost: h", wait=3)
+        finally:
+            await server.stop()
+        assert answer == b""
+
+    @pytest.mark.asyncio
+    async def test_a_peer_that_closes_at_once_leaves_nothing_behind(self, tmp_path: Path):
+        server = self._server(tmp_path)
+        port = _free_port()
+        await server.start("127.0.0.1", port)
+        try:
+            socket.create_connection(("127.0.0.1", port)).close()
+            await asyncio.sleep(0.3)
+            assert server._listener is not None
+            assert server._listener._taking == set()
+            # It still answers the next one.
+            answer = await self._ask(port, b"GET / HTTP/1.1\r\nHost: h:1\r\n\r\n", wait=3)
+        finally:
+            await server.stop()
+        assert answer.startswith(b"HTTP/1.1 307")
+
+    @pytest.mark.asyncio
+    async def test_a_request_longer_than_the_limit_gets_no_answer(self, tmp_path: Path):
+        server = self._server(tmp_path)
+        port = _free_port()
+        await server.start("127.0.0.1", port)
+        try:
+            answer = await self._ask(port, b"GET /" + b"a" * 20000 + b" HTTP/1.1\r\n\r\n")
+        finally:
+            await server.stop()
+        assert answer == b""
+
+    @pytest.mark.asyncio
+    async def test_where_the_loop_cannot_watch_a_socket_the_first_byte_is_waited_for_in_a_thread(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """As on Windows, whose proactor loops have no add_reader."""
+        loop = asyncio.get_running_loop()
+
+        def no_reader(*args: object) -> None:
+            raise NotImplementedError
+
+        monkeypatch.setattr(loop, "add_reader", no_reader)
+        from pytodo_qt.web import shared_port
+
+        monkeypatch.setattr(shared_port, "FIRST_BYTE_DEADLINE", 0.5)
+        server = self._server(tmp_path)
+        port = _free_port()
+        await server.start("127.0.0.1", port)
+        try:
+            plain = await self._ask(port, b"GET /x HTTP/1.1\r\nHost: h:1\r\n\r\n")
+            raw = socket.create_connection(("127.0.0.1", port))
+            tls = await loop.run_in_executor(None, _ask_over_tls, raw)
+            # One that sends nothing is closed at the deadline here too.
+            silent = await self._ask(port, b"", wait=3)
+        finally:
+            await server.stop()
+        assert b"Location: https://h:1/x\r\n" in plain
+        assert tls is not None and tls.startswith(b"HTTP/1.1 401")
+        assert silent == b""
+
+    @pytest.mark.asyncio
+    async def test_a_connection_still_waiting_for_its_first_byte_is_closed_by_the_stop(
+        self, tmp_path: Path
+    ):
+        # What the loop watches without the server.
+        loop = asyncio.get_running_loop()
+        selector = getattr(loop, "_selector", None)
+        watched = len(selector.get_map()) if selector is not None else 0
+        server = self._server(tmp_path)
+        port = _free_port()
+        await server.start("127.0.0.1", port)
+        listener = server._listener
+        assert listener is not None and listener._listener is not None
+        listening = listener._listener
+        raw = socket.create_connection(("127.0.0.1", port))
+        try:
+            await asyncio.sleep(0.2)
+            await server.stop()
+            raw.settimeout(5)
+            assert raw.recv(1) == b""
+        finally:
+            raw.close()
+        assert server._listener is None
+        # The port is let go, and the loop watches none of its sockets.
+        assert listening.fileno() == -1
+        if selector is not None:
+            assert len(selector.get_map()) == watched
+        await asyncio.sleep(0.1)
+        left = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+        assert left == []
+
+    @pytest.mark.asyncio
+    async def test_without_certificates_the_server_serves_plain_http_as_before(self):
+        server = WebServer(database=_make_db_with_data())
+        port = _free_port()
+        await server.start("127.0.0.1", port)
+        try:
+            answer = await self._ask(
+                port, b"GET /api/status HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n"
+            )
+        finally:
+            await server.stop()
+        assert server._listener is None
+        assert answer.startswith(b"HTTP/1.1 200")
+
+
+class TestRedirectTarget:
+    """What a plain HTTP request is sent on to (#82)."""
+
+    def test_the_host_and_path_as_asked(self):
+        from pytodo_qt.web.shared_port import redirect_target
+
+        assert redirect_target("pc.local:8443", "/a?b=c", "10.0.0.1:8443") == (
+            "https://pc.local:8443/a?b=c"
+        )
+        assert redirect_target("[fe80::1]:8443", "/", "x") == "https://[fe80::1]:8443/"
+        assert redirect_target("192.168.1.20", "/", "x") == "https://192.168.1.20/"
+
+    def test_what_is_not_a_host_or_a_path_is_not_written_into_the_answer(self):
+        from pytodo_qt.web.shared_port import redirect_target
+
+        fallback = "10.0.0.1:8443"
+        for host in (None, "", "evil.example/x", "a b", "h\r\nSet-Cookie: x", "h:123456"):
+            assert redirect_target(host, "/", fallback) == f"https://{fallback}/"
+        for target in ("*", "http://other/", "/a\r\nX: y", "/a b", ""):
+            assert redirect_target("h", target, fallback) == "https://h/"
+
+    def test_the_answer_is_a_temporary_redirect_that_is_not_kept(self):
+        from pytodo_qt.web.shared_port import redirect_response
+
+        assert redirect_response("https://h/") == (
+            b"HTTP/1.1 307 Temporary Redirect\r\nLocation: https://h/\r\n"
+            b"Content-Length: 0\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+        )
