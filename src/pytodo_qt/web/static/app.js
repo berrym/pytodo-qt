@@ -29,6 +29,10 @@
   var listPending = false;
   // The list whose tasks are on screen; null where none are.
   var shownListId = null;
+  // How many reads of the list on screen have begun. What is drawn
+  // from a read reflects the stored queue as it is when the read
+  // answers, and the server as it is after the read began.
+  var listReadsBegun = 0;
   var cachedItems = [];
   var cachedBoardData = null;
   var allTags = [];
@@ -1264,12 +1268,33 @@
     clearOfflineUndo();
     updatePendingBadge();
     updateConnectionIndicator();
-    // A run that is sending the queue reloads the list when it ends.
-    if (replayRunning) return;
-    // A queue that got shorter may have been sent, and the server then
-    // has newer data than this copy: the list is read again, and drawn
-    // from the answer or, without the server, from the stored one.
-    // Otherwise what the server last sent stands, and is drawn now.
+    // A run that is sending the queue reads the list when it ends, and
+    // the notice is kept for then: the run may have begun that read
+    // already, with the queue as it was before this write, or may end
+    // without one (see replayOfflineQueue). Several notices are kept
+    // as one, shorter if any of them was.
+    if (replayRunning) {
+      queueNoticeKept = {
+        shorter:
+          shorter || (queueNoticeKept !== null && queueNoticeKept.shorter),
+        reads: listReadsBegun,
+      };
+      return;
+    }
+    showStoredQueue(shorter);
+  }
+
+  // A notice of another copy's write that came while a run was under
+  // way here: whether the queue got shorter, and how many reads of the
+  // list had begun by then (listReadsBegun). null where none came.
+  var queueNoticeKept = null;
+
+  // The list and the board follow the stored queue. A queue that got
+  // shorter may have been sent, and the server then has newer data
+  // than this copy: the list is read again, and drawn from the answer
+  // or, without the server, from the stored one. Otherwise what the
+  // server last sent stands, and is drawn now.
+  function showStoredQueue(shorter) {
     if (shorter) refreshCurrentList();
     else showQueuedChanges();
   }
@@ -1476,6 +1501,15 @@
       /* the list could not be read; the run has ended all the same */
     } finally {
       replayRunning = false;
+      // Another copy stored the queue during this run. A read of the
+      // list that began after that shows it; one that began before
+      // drew the queue as it was, and with none begun nothing has
+      // shown it: the notice is followed now.
+      var kept = queueNoticeKept;
+      queueNoticeKept = null;
+      if (kept !== null && kept.reads === listReadsBegun) {
+        showStoredQueue(kept.shorter);
+      }
       var again = replayAskedFor;
       replayAskedFor = false;
       if (
@@ -8544,6 +8578,7 @@
     // then no longer the list on screen, and the read begun for the
     // other list shows that one.
     var listId = currentListId;
+    listReadsBegun += 1;
     // Another list than the one on screen: what is stored of it is
     // shown at once, so that the tasks of the list shown before do not
     // stand under its name while it is read. Without the server that

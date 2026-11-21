@@ -381,6 +381,10 @@ function page(options) {
       "function renderItems() {}",
       "var listNotStored = false, boardNotStored = false;",
       "var listPending = false, shownListId = null;",
+      "var listReadsBegun = 0;",
+      // No other copy stores the queue in these tests (queue_send.test.js).
+      "var queueNoticeKept = null;",
+      "function showStoredQueue() { env.calls.push('showStoredQueue'); }",
       functionText("showStoredCopy"),
       "function storeListAnswer(id, data) { env.calls.push('storeListAnswer'); env.storedAs = id; }",
       "function storeLists(lists) { env.calls.push('storeLists'); }",
@@ -449,6 +453,7 @@ function page(options) {
       "  board: function () { return serverBoardData; },",
       "  notStored: function () { return { list: listNotStored, board: boardNotStored }; },",
       "  pending: function () { return listPending; },",
+      "  readsBegun: function () { return listReadsBegun; },",
       "  chooseList: function (id) { currentListId = id; },",
       "  replayOfflineQueue: replayOfflineQueue,",
       "  serverDoubted: serverDoubted,",
@@ -3524,4 +3529,28 @@ test("a page that started without the server shows a chosen list's stored copy a
   made.refreshCurrentList();
   await settled();
   assert.deepEqual(made.env.drawn, ["first", "second"]);
+});
+
+test("each read of the list is counted as it begins", async () => {
+  // A copy's queue run goes by this to tell whether the list was read
+  // after another copy stored the queue (#123, queue_send.test.js).
+  let answers = null;
+  const made = page({
+    ownRefresh: true,
+    fetch: () =>
+      new Promise((resolve) => {
+        answers = resolve;
+      }),
+  });
+  assert.equal(made.readsBegun(), 0);
+  const read = made.refreshCurrentList();
+  // Before its answer.
+  assert.equal(made.readsBegun(), 1);
+  answers(listWithBoard([]));
+  await read;
+  assert.equal(made.readsBegun(), 1);
+  // No list on screen: nothing is read.
+  made.chooseList(null);
+  await made.refreshCurrentList();
+  assert.equal(made.readsBegun(), 1);
 });

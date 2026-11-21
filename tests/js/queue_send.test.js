@@ -263,7 +263,13 @@ function page(disk, network, options) {
       "function authHeaders(extra) { return Object.assign({ Authorization: 'Bearer token' }, extra || {}); }",
       "async function serverFetch(url, opts) { return env.fetch(url, opts || {}); }",
       "function showToast(text) { env.toasts.push(text); }",
-      "async function refreshCurrentList() { env.calls.push('refreshCurrentList'); if (env.listRead) await env.listRead(); }",
+      // A read of the list is counted as it begins, as the page's own
+      // does (connection.test.js).
+      "var listReadsBegun = 0;",
+      "async function refreshCurrentList() { listReadsBegun += 1; env.calls.push('refreshCurrentList'); if (env.listRead) await env.listRead(); }",
+      "function showQueuedChanges() { env.calls.push('showQueuedChanges'); }",
+      "function updatePendingBadge() {}",
+      "function updateConnectionIndicator() {}",
       "function sendQueueAgainSoon() { env.calls.push('sendQueueAgainSoon'); }",
       "function takeBackQueuedStep(step) {",
       "  var there = env.disk.queue.some(function (e) { return e.timestamp === step; });",
@@ -275,6 +281,9 @@ function page(disk, network, options) {
       "var replayRunning = false;",
       "var replayAskedFor = false;",
       "var queuedSend = null;",
+      "var queueNoticeKept = null;",
+      functionText("followStoredQueue"),
+      functionText("showStoredQueue"),
       functionText("removeQueuedChange"),
       functionText("withQueueLock"),
       functionText("replayOfflineQueue"),
@@ -294,6 +303,9 @@ function page(disk, network, options) {
       "  drop: executeDrop,",
       "  undo: undoQueuedDelete,",
       "  running: function () { return replayRunning; },",
+      // The browser's word that another copy stored the queue.
+      "  notice: followStoredQueue,",
+      "  readList: refreshCurrentList,",
       "  onItsWay: function () { return queuedSend !== null; },",
       // As serverSilent and serverAnswered leave the page.
       "  silent: function () { serverConnected = false; giveUpQueuedSend(); },",
@@ -1496,4 +1508,157 @@ test("a drop with no card picked up does nothing", async () => {
   const made = page(device([]), network);
   await made.drop("Doing");
   assert.deepEqual(network.received, []);
+});
+
+// --- Another copy stores the queue while a run is under way (#123) ---
+
+const reads = (made) =>
+  made.env.calls.filter((call) => call === "refreshCurrentList").length;
+
+test("outside a run a notice is followed at once: a read for a shorter queue, a redraw for another", () => {
+  const made = page(device([]), server());
+  made.notice(true);
+  assert.deepEqual(made.env.calls, ["refreshCurrentList"]);
+  made.notice(false);
+  assert.deepEqual(made.env.calls, ["refreshCurrentList", "showQueuedChanges"]);
+});
+
+test("a notice while this copy waits for the lock is shown by the read at the run's end, once", async () => {
+  const disk = device([tick(1, ITEM_A)]);
+  const network = server();
+  network.slow = true;
+  const first = page(disk, network);
+  const second = page(disk, network);
+  const runs = [first.send(), second.send()];
+  await settled();
+  network.answer();
+  // The first copy stores the queue without the change.
+  second.notice(true);
+  assert.deepEqual(second.env.calls, []);
+  await Promise.all(runs);
+  assert.deepEqual(second.env.calls, [
+    "refreshCurrentList",
+    "sendQueueAgainSoon",
+  ]);
+});
+
+test("a notice after the run's read has begun is followed when the run ends", async () => {
+  // The read drew the queue as it was before the other copy's write;
+  // the run is still counted as under way while the read ends.
+  const disk = device([tick(1, ITEM_A)]);
+  const network = server();
+  network.slow = true;
+  const first = page(disk, network);
+  const second = page(disk, network);
+  let readEnds = null;
+  second.env.listRead = () =>
+    new Promise((resolve) => {
+      readEnds = resolve;
+    });
+  const runs = [first.send(), second.send()];
+  await settled();
+  network.answer();
+  await runs[0];
+  await settled();
+  // The second copy found the queue sent, and is reading the list.
+  assert.equal(reads(second), 1);
+  assert.equal(second.running(), true);
+  second.notice(true);
+  assert.equal(reads(second), 1);
+  second.env.listRead = null;
+  readEnds();
+  await runs[1];
+  assert.deepEqual(second.env.calls, [
+    "refreshCurrentList",
+    "refreshCurrentList",
+    "sendQueueAgainSoon",
+  ]);
+  assert.equal(second.running(), false);
+});
+
+// A change the server answers at once: its run ends without a read of
+// the list.
+const atOnce = (timestamp, item) => {
+  const entry = tick(timestamp, item);
+  delete entry.waiting;
+  return entry;
+};
+
+test("a notice during a run that ends without a read is followed when it ends", async () => {
+  for (const shorter of [true, false]) {
+    const disk = device([atOnce(1, ITEM_A)]);
+    const network = server();
+    network.slow = true;
+    const made = page(disk, network);
+    const run = made.send();
+    await settled();
+    made.notice(shorter);
+    assert.deepEqual(made.env.calls, []);
+    network.answer();
+    await run;
+    assert.equal(
+      made.env.calls[0],
+      shorter ? "refreshCurrentList" : "showQueuedChanges",
+    );
+    assert.equal(
+      made.env.calls.filter((call) => call !== "sendQueueAgainSoon").length,
+      1,
+    );
+  }
+});
+
+test("several notices in one run are followed as one, shorter if any of them was", async () => {
+  const disk = device([atOnce(1, ITEM_A)]);
+  const network = server();
+  network.slow = true;
+  const made = page(disk, network);
+  const run = made.send();
+  await settled();
+  made.notice(true);
+  made.notice(false);
+  network.answer();
+  await run;
+  assert.deepEqual(made.env.calls, [
+    "refreshCurrentList",
+    "sendQueueAgainSoon",
+  ]);
+});
+
+test("a run without a notice follows none, and a notice is followed once", async () => {
+  const disk = device([atOnce(1, ITEM_A)]);
+  const network = server();
+  network.slow = true;
+  const made = page(disk, network);
+  let run = made.send();
+  await settled();
+  made.notice(false);
+  network.answer();
+  await run;
+  assert.deepEqual(made.env.calls, ["showQueuedChanges", "sendQueueAgainSoon"]);
+  // The next run has no notice of its own.
+  disk.queue = [atOnce(2, ITEM_B)];
+  run = made.send();
+  await settled();
+  network.answer();
+  await run;
+  assert.deepEqual(made.env.calls, [
+    "showQueuedChanges",
+    "sendQueueAgainSoon",
+    "sendQueueAgainSoon",
+  ]);
+});
+
+test("a read of the list begun for another reason after the notice shows it as well", async () => {
+  // A change notice of the server's, for one.
+  const disk = device([atOnce(1, ITEM_A)]);
+  const network = server();
+  network.slow = true;
+  const made = page(disk, network);
+  const run = made.send();
+  await settled();
+  made.notice(true);
+  made.readList();
+  network.answer();
+  await run;
+  assert.equal(reads(made), 1);
 });

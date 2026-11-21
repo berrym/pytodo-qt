@@ -465,11 +465,15 @@ class TestQueuedChangesShown:
             "clearOfflineUndo();",
             "updatePendingBadge();",
             "updateConnectionIndicator();",
-            "if (replayRunning) return;",
-            "if (shorter) refreshCurrentList();",
-            "else showQueuedChanges();",
+            # A notice that comes during a run is kept for its end (#123).
+            "if (replayRunning) {",
+            "showStoredQueue(shorter);",
         ):
             assert call in follows
+        assert "if (replayRunning) return;" not in follows
+        shows = js.split("function showStoredQueue(shorter) {")[1].split("\n  }\n")[0]
+        assert "if (shorter) refreshCurrentList();" in shows
+        assert "else showQueuedChanges();" in shows
 
     def test_every_change_to_the_queue_redraws(self):
         js = self._app()
