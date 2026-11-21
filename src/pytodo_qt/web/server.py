@@ -175,6 +175,13 @@ def _verify_static_assets() -> None:
     raise RuntimeError(msg)
 
 
+def _abort_connection(handler: Any, transport: asyncio.Transport) -> None:
+    """Takes the place of ``web.Server.connection_made`` on a server that
+    is stopping or has stopped: the connection is closed at once, and is
+    not counted among the server's connections."""
+    transport.abort()
+
+
 class WebServer:
     """Embedded web server providing a REST API and mobile-friendly SPA."""
 
@@ -823,15 +830,35 @@ class WebServer:
         logger.log.info("Web server started on %s://%s:%d", scheme, host, port)
 
     async def stop(self) -> None:
-        """Stop the web server."""
-        if self._device_store:
-            self._device_store.close()
-            self._device_store = None
+        """Stop the web server.
+
+        When this returns no connection to the server is open or is
+        served, whenever it was made. The connections are closed first
+        and the device store last: a request under way while the server
+        stops is answered with the store open.
+        """
         if self._runner:
+            # The runner closes the connections aiohttp knows of, and it
+            # knows a connection once its TLS handshake is done. One that
+            # was accepted before the stop and ends its handshake after
+            # it was never closed: it went on being served, by an
+            # application whose device store was closed, for as long as
+            # it stayed open. Every connection is reported to the server
+            # object when its handshake is done
+            # (RequestHandler.connection_made); from here on that report
+            # aborts the connection.
+            stopped = self._runner.server
+            if stopped is not None:
+                # An attribute of this one object: the next start makes
+                # a server object of its own.
+                stopped.connection_made = _abort_connection
             await self._runner.cleanup()
             self._runner = None
             self._site = None
             logger.log.info("Web server stopped")
+        if self._device_store:
+            self._device_store.close()
+            self._device_store = None
 
     def regenerate_certs(self) -> bool:
         """Regenerate CA and server certificates with fresh keys.

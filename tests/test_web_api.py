@@ -16,6 +16,8 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import socket
+import ssl
 import subprocess
 from datetime import date, timedelta
 from pathlib import Path
@@ -764,6 +766,144 @@ class TestWebServerLifecycle:
         from pytodo_qt.web.api import save_callback_key
 
         assert app[save_callback_key] is not None
+
+
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def _ask_over_tls(raw: socket.socket) -> bytes | None:
+    """Makes the TLS handshake on a connection that is already open and
+    asks for the server's status. The first bytes of the answer; None
+    where the server closed the connection instead, at the handshake or
+    after it."""
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    raw.settimeout(10)
+    try:
+        with context.wrap_socket(raw, server_hostname="localhost") as tls:
+            tls.sendall(b"GET /api/status HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            return tls.recv(64) or None
+    except OSError:
+        return None
+
+
+class TestWebServerStop:
+    """After ``WebServer.stop()`` no connection to the server is open or
+    served, whenever it was made (#119). aiohttp closes the connections
+    it knows of, and it knows a connection once its TLS handshake is
+    done: one accepted before the stop that ended its handshake after it
+    went on being served."""
+
+    def _server(self, tmp_path: Path) -> WebServer:
+        manager = ConfigManager(config_dir=tmp_path, data_dir=tmp_path)
+        return WebServer(database=_make_db_with_data(), config=WebConfig(), config_manager=manager)
+
+    @pytest.mark.asyncio
+    async def test_a_connection_made_before_the_stop_is_served(self, tmp_path: Path):
+        """What the next test is measured against."""
+        server = self._server(tmp_path)
+        port = _free_port()
+        await server.start("127.0.0.1", port)
+        try:
+            raw = socket.create_connection(("127.0.0.1", port))
+            answer = await asyncio.get_running_loop().run_in_executor(None, _ask_over_tls, raw)
+        finally:
+            await server.stop()
+        # No token was sent: the server's own refusal.
+        assert answer is not None and answer.startswith(b"HTTP/1.1 401")
+
+    @pytest.mark.asyncio
+    async def test_a_connection_whose_handshake_ends_after_the_stop_is_closed(self, tmp_path: Path):
+        server = self._server(tmp_path)
+        port = _free_port()
+        await server.start("127.0.0.1", port)
+        # Accepted by the server, with no handshake yet.
+        raw = socket.create_connection(("127.0.0.1", port))
+        try:
+            await asyncio.sleep(0.2)
+            await server.stop()
+            answer = await asyncio.get_running_loop().run_in_executor(None, _ask_over_tls, raw)
+        finally:
+            raw.close()
+        assert answer is None
+        # Nothing of the stopped server is left to serve it.
+        await asyncio.sleep(0.1)
+        left = [task for task in asyncio.all_tasks() if task is not asyncio.current_task()]
+        assert left == []
+
+    @pytest.mark.asyncio
+    async def test_no_new_connection_is_taken_after_the_stop(self, tmp_path: Path):
+        server = self._server(tmp_path)
+        port = _free_port()
+        await server.start("127.0.0.1", port)
+        await server.stop()
+        with pytest.raises(OSError):
+            socket.create_connection(("127.0.0.1", port), timeout=5).close()
+
+    @pytest.mark.asyncio
+    async def test_the_stopped_server_object_aborts_what_is_reported_to_it(self, tmp_path: Path):
+        """The place the stop acts at: aiohttp reports a connection to
+        its server object when the handshake is done. From the stop on
+        that report aborts the connection and does not count it."""
+        server = self._server(tmp_path)
+        await server.start("127.0.0.1", _free_port())
+        assert server._runner is not None
+        stopped = server._runner.server
+        assert stopped is not None
+        await server.stop()
+
+        class Transport:
+            aborted = 0
+
+            def abort(self) -> None:
+                self.aborted += 1
+
+        transport = Transport()
+        stopped.connection_made(object(), transport)  # type: ignore[arg-type]
+        assert transport.aborted == 1
+        assert len(stopped.connections) == 0
+
+    @pytest.mark.asyncio
+    async def test_the_device_store_is_closed_after_the_connections(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A request under way while the server stops is answered with
+        the store open: it was closed first."""
+        from aiohttp import web
+
+        server = self._server(tmp_path)
+        await server.start("127.0.0.1", _free_port())
+        store = server._device_store
+        assert store is not None
+        order: list[str] = []
+        close_connections, close_store = web.AppRunner.cleanup, store.close
+
+        async def cleanup(runner: web.AppRunner) -> None:
+            # The store answers while the connections are being closed.
+            assert store.get_device_by_token("no such token") is None
+            order.append("connections")
+            await close_connections(runner)
+
+        def close() -> None:
+            order.append("device store")
+            close_store()
+
+        monkeypatch.setattr(web.AppRunner, "cleanup", cleanup)
+        monkeypatch.setattr(store, "close", close)
+        await server.stop()
+        assert order == ["connections", "device store"]
+        assert server._device_store is None
+        assert server._runner is None
+
+    @pytest.mark.asyncio
+    async def test_a_server_never_started_stops_without_a_word(self):
+        server = WebServer(database=Database())
+        await server.stop()
+        assert server._runner is None
 
 
 # ===========================================================================
