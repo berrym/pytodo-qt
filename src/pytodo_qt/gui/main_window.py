@@ -108,6 +108,31 @@ def _prefer_os_notification(*, notifier_available: bool, platform: str) -> bool:
     return platform != "darwin"
 
 
+def show_view(stack: QStackedWidget, index: int, list_view: QWidget) -> None:
+    """Show page ``index`` of the view stack.
+
+    With the keyboard focus in the page being left, the stack hands it
+    to the first widget of the new page that takes it: in the list view,
+    the first row's priority box, which would select the first task. The
+    list view takes that focus itself, with no row chosen.
+    """
+    leaving = stack.currentWidget()
+    window = stack.window()
+    focused = window.focusWidget() if window is not None else None
+    to_list_view = (
+        stack.widget(index) is list_view
+        and leaving is not None
+        and leaving is not list_view
+        and focused is not None
+        and leaving.isAncestorOf(focused)
+    )
+    if to_list_view and focused is not None:
+        focused.clearFocus()
+    stack.setCurrentIndex(index)
+    if to_list_view:
+        list_view.setFocus(Qt.FocusReason.OtherFocusReason)
+
+
 class MainWindow(QMainWindow):
     """Main application window."""
 
@@ -1351,7 +1376,7 @@ class MainWindow(QMainWindow):
 
     def _set_view_mode(self, view_id: int) -> None:
         """Set the view mode (0=list, 1=board, 2=calendar), syncing all UI controls."""
-        self._view_stack.setCurrentIndex(view_id)
+        show_view(self._view_stack, view_id, self.todo_table)
         # Sync inline toggle buttons
         self._list_view_btn.setChecked(view_id == 0)
         self._board_view_btn.setChecked(view_id == 1)

@@ -12,8 +12,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from PyQt6.QtCore import QDate, QEvent, QItemSelection, QPoint, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QKeyEvent, QMouseEvent, QPainter, QPixmap
+from PyQt6.QtCore import (
+    QDate,
+    QEvent,
+    QItemSelection,
+    QModelIndex,
+    QPoint,
+    Qt,
+    QTimer,
+    pyqtSignal,
+)
+from PyQt6.QtGui import QAction, QColor, QFocusEvent, QKeyEvent, QMouseEvent, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractButton,
     QAbstractItemView,
@@ -55,6 +64,19 @@ logger = Logger(__name__)
 
 # How often a refresh that is waiting for a row to be free looks again.
 _HELD_REFRESH_POLL_MS = 200
+
+# How a priority box takes the focus when its row is being chosen: a
+# click, Tab or Shift+Tab, a shortcut. It also takes it back when the
+# window becomes active again, when the list view is shown, and from
+# whatever had the focus before; its row is not chosen by that.
+_FOCUS_THAT_CHOOSES = frozenset(
+    {
+        Qt.FocusReason.MouseFocusReason,
+        Qt.FocusReason.TabFocusReason,
+        Qt.FocusReason.BacktabFocusReason,
+        Qt.FocusReason.ShortcutFocusReason,
+    }
+)
 
 
 def _sort_fragment(item: TodoItem, dimension: str, reverse: bool) -> tuple:
@@ -170,6 +192,10 @@ class _ViewState:
     horizontal: int = 0
     selected: list[UUID] = field(default_factory=list)
     current: tuple[UUID, int] | None = None
+    # The row of each selected task and of the current one, and whether
+    # it was finished, as last drawn.
+    rows_before: dict[UUID, int] = field(default_factory=dict)
+    complete_before: dict[UUID, bool] = field(default_factory=dict)
     # The cell whose widget has the keyboard focus: (task, column).
     focus: tuple[UUID, int] | None = None
     # The table itself has the keyboard focus.
@@ -444,6 +470,12 @@ class TodoTableWidget(QTableWidget):
         self._held_timer.timeout.connect(self._run_held_refresh)
         # Names to save once the event that ended their editing is over.
         self._names_to_save: list[tuple[UUID, str]] = []
+        # Whether each task shown was finished, as last drawn: a selected
+        # task that a tick moves is no longer selected.
+        self._complete_shown: dict[UUID, bool] = {}
+        # True while the table takes the keyboard focus with no current
+        # cell (focusInEvent): no first cell is made the current one.
+        self._taking_focus = False
 
         # What a row writes and draws straight on its own background, to
         # be recolored when the row is selected and filled with the
@@ -623,6 +655,55 @@ class TodoTableWidget(QTableWidget):
                     vp.installEventFilter(self)
                     self._v_header_filter_installed = True
 
+    def focusInEvent(self, e: QFocusEvent | None) -> None:  # noqa: N802
+        """Take the keyboard focus without choosing a row.
+
+        Qt makes the first cell the current one when the table takes the
+        focus with none, other than by a click. That cell has a priority
+        box, and the current cell gives its widget the focus: the first
+        task would be selected, and the arrow keys would change its
+        priority. The table keeps the focus itself; the first arrow key
+        goes to the first row.
+        """
+        self._taking_focus = not self.currentIndex().isValid()
+        try:
+            super().focusInEvent(e)
+        finally:
+            self._taking_focus = False
+
+    def moveCursor(  # noqa: N802
+        self,
+        cursorAction: QAbstractItemView.CursorAction,  # noqa: N803
+        modifiers: Qt.KeyboardModifier,
+    ) -> QModelIndex:
+        if self._taking_focus:
+            # focusInEvent asks for the first cell: there is none to give.
+            return QModelIndex()
+        return super().moveCursor(cursorAction, modifiers)
+
+    def _is_priority_box(self, widget: object) -> bool:
+        return isinstance(widget, QComboBox) and any(
+            self.cellWidget(row, 0) is widget for row in self._item_id_map
+        )
+
+    def _take_back_lost_focus(self) -> None:
+        """Give the table the focus that a row made again has left behind.
+
+        The focus stays on a widget of a row that is gone; when the window
+        looks for another, it takes the first in the table, the first
+        row's priority box.
+        """
+        window = self.window()
+        widget = window.focusWidget() if window is not None else None
+        if widget is None or widget is self or not self._owns(widget):
+            return
+        for row in self._item_id_map:
+            for column in range(self.columnCount()):
+                cell = self.cellWidget(row, column)
+                if cell is not None and (cell is widget or cell.isAncestorOf(widget)):
+                    return
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
+
     def resizeEvent(self, e) -> None:  # noqa: N802
         """Update ellipsis visibility when table resizes (e.g. scrollbar
         appears) and reposition the empty-state overlay so it stays
@@ -642,7 +723,23 @@ class TodoTableWidget(QTableWidget):
             self.selectAll()
 
     def eventFilter(self, object, event):  # noqa: N802, A002
-        """Toggle row selection when vertical header is clicked."""
+        """Toggle row selection when vertical header is clicked, and
+        choose the row of a priority box only when the box is chosen.
+
+        Qt filters the events of every cell widget through the table, and
+        makes the row of one that takes the focus the current one and the
+        only selected row, whatever gave it the focus. The focus also
+        comes back to a box when the window is active again, when a dialog
+        closes, when the list view is shown: the row is chosen only by a
+        click, Tab or a shortcut.
+        """
+        if (
+            isinstance(event, QFocusEvent)
+            and event.type() == QEvent.Type.FocusIn
+            and event.reason() not in _FOCUS_THAT_CHOOSES
+            and self._is_priority_box(object)
+        ):
+            return False
         v_header = self.verticalHeader()
         if (
             v_header
@@ -961,6 +1058,13 @@ class TodoTableWidget(QTableWidget):
         current_id = self._item_id_map.get(current.row()) if current.isValid() else None
         if current_id is not None:
             state.current = (current_id, current.column())
+        followed = set(state.selected)
+        if current_id is not None:
+            followed.add(current_id)
+        for row, item_id in self._item_id_map.items():
+            if item_id in followed and item_id in self._complete_shown:
+                state.rows_before[item_id] = row
+                state.complete_before[item_id] = self._complete_shown[item_id]
 
         window = self.window()
         state.table_focused = window is not None and window.focusWidget() is self
@@ -1002,6 +1106,7 @@ class TodoTableWidget(QTableWidget):
             self._rebuild()
             if state is not None:
                 self._restore_view_state(state)
+            self._take_back_lost_focus()
             self._draw_selected_rows()
         finally:
             self.blockSignals(blocked)
@@ -1017,13 +1122,22 @@ class TodoTableWidget(QTableWidget):
         model = self.model()
         selection = self.selectionModel()
 
+        # A task ticked or unticked that has moved to another row is no
+        # longer selected nor current: the next Delete or undo would act
+        # on a row that may be out of view.
+        moved = {
+            item_id
+            for item_id, before in state.complete_before.items()
+            if row_of.get(item_id, state.rows_before[item_id]) != state.rows_before[item_id]
+            and self._complete_shown.get(item_id, before) != before
+        }
+
         # The order matters. Qt ties the keyboard focus and the current cell
-        # together: a priority box that takes the focus becomes the current
-        # cell and the only selected row, and a current cell with a priority
-        # box gives it the focus. So the focus is put back first, then the
-        # current cell where that moves no focus, then the selection; the
-        # scroll position comes last, because making a cell the current one
-        # scrolls the view to it.
+        # together: a current cell with a priority box gives it the focus
+        # (which, given back here, chooses no row: eventFilter). So the
+        # focus is put back first, then the current cell where that moves
+        # no focus, then the selection; the scroll position comes last,
+        # because making a cell the current one scrolls the view to it.
         focus_row = row_of.get(state.focus[0]) if state.focus is not None else None
         focused: QWidget | None = None
         if state.focus is not None and focus_row is not None:
@@ -1047,6 +1161,7 @@ class TodoTableWidget(QTableWidget):
             if (
                 focused is None
                 and state.current is not None
+                and state.current[0] not in moved
                 and (state.table_focused or state.current[1] != 0)
             ):
                 row = row_of.get(state.current[0])
@@ -1055,7 +1170,7 @@ class TodoTableWidget(QTableWidget):
             chosen = QItemSelection()
             for item_id in state.selected:
                 row = row_of.get(item_id)
-                if row is not None:
+                if row is not None and item_id not in moved:
                     index = model.index(row, 0)
                     chosen.select(index, index)
             selection.select(chosen, flags.ClearAndSelect | flags.Rows)
@@ -1097,6 +1212,7 @@ class TodoTableWidget(QTableWidget):
         self._row_chips.clear()
         self._row_icons.clear()
         self._rows_drawn_selected.clear()
+        self._complete_shown.clear()
 
         if self._current_list is None:
             # No active list — most often this means the database has
@@ -1207,6 +1323,7 @@ class TodoTableWidget(QTableWidget):
             priority_combo.setToolTip(build_rich_tooltip(item, theme_colors=colors))
 
             self.setCellWidget(row, 0, priority_combo)
+            self._complete_shown[item.id] = item.complete
 
             # Reminder column: text field + optional tag chips
             reminder_container = QWidget()
@@ -1440,10 +1557,17 @@ class TodoTableWidget(QTableWidget):
         where the list shows no such row."""
         row = next((r for r, i in self._item_id_map.items() if i == item_id), None)
         model = self.model()
-        if row is None or model is None:
+        selection = self.selectionModel()
+        if row is None or model is None or selection is None:
             return False
-        self.selectRow(row)
-        self.scrollTo(model.index(row, 1))
+        # The name's cell is made the current one: the priority box's
+        # would take the keyboard focus, and the arrow keys would change
+        # the task's priority.
+        index = model.index(row, 1)
+        flags = selection.SelectionFlag
+        selection.setCurrentIndex(index, flags.NoUpdate)
+        selection.select(index, flags.ClearAndSelect | flags.Rows)
+        self.scrollTo(index)
         return True
 
     def get_item_id_at_row(self, row: int) -> UUID | None:
