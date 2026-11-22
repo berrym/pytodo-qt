@@ -485,13 +485,14 @@ class TestWebChangeIds:
             storage = DatabaseStorage(db_path)
             storage.open()
             try:
-                assert storage.get_schema_version() == 26
+                # Brought on to the current version, past 26.
+                assert storage.get_schema_version() == 27
                 loaded = storage.load_database()
                 assert loaded.total_items() == 2
                 assert loaded.web_added_ids == {first.id: 1795000000000}
                 assert loaded.web_change_ids == {}
                 storage._migrate_schema_to_26()
-                assert storage.get_schema_version() == 26
+                assert storage.get_schema_version() == 27
             finally:
                 storage.close()
 
@@ -1530,3 +1531,87 @@ class TestListWithItems:
             assert len(lists) == 1
             assert len(lists[0].items) == 1
             storage.close()
+
+
+class TestSnoozedReminders:
+    """Reminders put off with Snooze on their notification (#60): kept on
+    this device, by the key of the notification log, with the absolute
+    moment they come back."""
+
+    KEY = ("8c5d2b1e-0000-4000-8000-000000000001", "lead", "2026-11-23T14:30")
+
+    def _storage(self, tmpdir: str) -> DatabaseStorage:
+        storage = DatabaseStorage(Path(tmpdir) / "test.db")
+        storage.open()
+        return storage
+
+    def test_a_snooze_is_kept_and_read_back(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = self._storage(tmpdir)
+            try:
+                storage.snooze_reminder(self.KEY, 1795400000.5)
+                assert storage.get_snoozed_reminders() == {self.KEY: 1795400000.5}
+            finally:
+                storage.close()
+
+    def test_it_outlives_a_restart(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = self._storage(tmpdir)
+            storage.snooze_reminder(self.KEY, 1795400000.0)
+            storage.close()
+            storage = self._storage(tmpdir)
+            try:
+                assert storage.get_snoozed_reminders() == {self.KEY: 1795400000.0}
+            finally:
+                storage.close()
+
+    def test_a_second_snooze_of_the_same_reminder_replaces_the_first(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = self._storage(tmpdir)
+            try:
+                storage.snooze_reminder(self.KEY, 1795400000.0)
+                storage.snooze_reminder(self.KEY, 1795400600.0)
+                assert storage.get_snoozed_reminders() == {self.KEY: 1795400600.0}
+            finally:
+                storage.close()
+
+    def test_forgotten_snoozes_are_gone_and_the_others_kept(self):
+        other = (self.KEY[0], "due_now", self.KEY[2])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = self._storage(tmpdir)
+            try:
+                storage.snooze_reminder(self.KEY, 1.0)
+                storage.snooze_reminder(other, 2.0)
+                storage.forget_snoozed_reminders([self.KEY])
+                storage.forget_snoozed_reminders([])
+                assert storage.get_snoozed_reminders() == {other: 2.0}
+            finally:
+                storage.close()
+
+    def test_a_database_of_the_version_before_gains_the_table(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = self._storage(tmpdir)
+            storage.close()
+            raw = sqlite3.connect(Path(tmpdir) / "test.db")
+            raw.execute("DROP TABLE snoozed_reminders")
+            raw.execute("UPDATE metadata SET value = '26' WHERE key = 'schema_version'")
+            raw.commit()
+            raw.close()
+            storage = self._storage(tmpdir)
+            try:
+                assert storage.get_schema_version() == 27
+                assert storage.get_snoozed_reminders() == {}
+                storage._migrate_schema_to_27()
+                assert storage.get_schema_version() == 27
+            finally:
+                storage.close()
+
+    def test_clear_removes_them(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = self._storage(tmpdir)
+            try:
+                storage.snooze_reminder(self.KEY, 1.0)
+                storage.clear()
+                assert storage.get_snoozed_reminders() == {}
+            finally:
+                storage.close()

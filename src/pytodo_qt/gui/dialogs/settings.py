@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 from ...core import interface_scale
 from ...core.config import (
     LEAD_MINUTES_RANGE,
+    SNOOZE_MINUTES_CHOICES,
     AppConfig,
     NotificationConfig,
     get_config,
@@ -853,6 +854,17 @@ class SettingsDialog(QDialog):
             )
         )
         timed_form.addRow(self.tr("At the due time:"), self._notif_due_now)
+        # Snooze on a reminder's notification puts it off this long (#60).
+        self._notif_snooze_minutes = QComboBox()
+        for minutes in SNOOZE_MINUTES_CHOICES:
+            self._notif_snooze_minutes.addItem(
+                self.tr("{minutes} min").format(minutes=minutes), minutes
+            )
+        self._notif_snooze_minutes.setAccessibleName(self.tr("Snooze length in minutes"))
+        self._notif_snooze_minutes.setToolTip(
+            self.tr("How long Snooze on a reminder's notification puts it off")
+        )
+        timed_form.addRow(self.tr("Snooze for:"), self._notif_snooze_minutes)
         layout.addWidget(self._notif_timed_group)
 
         # Quiet time
@@ -1062,6 +1074,7 @@ class SettingsDialog(QDialog):
             quiet_end=clock(self._notif_quiet_end),
             quiet_allow_timed=self._notif_quiet_allow_timed.isChecked(),
             hold_during_focus=self._notif_hold_during_focus.isChecked(),
+            snooze_minutes=self._notif_snooze_minutes.currentData() or 10,
         )
 
     def _show_notification_settings(self, notifications: NotificationConfig) -> None:
@@ -1084,6 +1097,8 @@ class SettingsDialog(QDialog):
         self._notif_quiet_end.setTime(qtime(notifications.quiet_end))
         self._notif_quiet_allow_timed.setChecked(notifications.quiet_allow_timed)
         self._notif_hold_during_focus.setChecked(notifications.hold_during_focus)
+        snooze_index = self._notif_snooze_minutes.findData(notifications.snooze_minutes)
+        self._notif_snooze_minutes.setCurrentIndex(max(snooze_index, 0))
         self._update_notification_time_format()
 
     def _create_web_tab(self) -> QWidget:

@@ -260,6 +260,10 @@ class TimeBlockConfig:
 DUE_NOW_MODES = ("deadlines", "all", "off")
 LEAD_MINUTES_RANGE = (1, 120)
 
+# The lengths a reminder can be snoozed for from its notification, in
+# minutes (#60).
+SNOOZE_MINUTES_CHOICES = (5, 10, 15, 30, 60)
+
 
 def _clock_setting(section: dict[str, Any], key: str, default: time) -> time:
     """Read an "HH:MM" time of day from a config section.
@@ -319,6 +323,8 @@ class NotificationConfig:
     quiet_allow_timed: bool = True  # Timed reminders are delivered in quiet hours
     # The summary and the preview wait for a focus session to end
     hold_during_focus: bool = True
+    # How long Snooze on a reminder puts it off, one of SNOOZE_MINUTES_CHOICES
+    snooze_minutes: int = 10
 
     @classmethod
     def from_dict(cls, section: dict[str, Any]) -> NotificationConfig:
@@ -374,6 +380,19 @@ class NotificationConfig:
             )
             lead_minutes = min(max(lead_minutes, low), high)
 
+        snooze_minutes = section.get("snooze_minutes", defaults.snooze_minutes)
+        if (
+            isinstance(snooze_minutes, bool)
+            or not isinstance(snooze_minutes, int)
+            or snooze_minutes not in SNOOZE_MINUTES_CHOICES
+        ):
+            logger.log.warning(
+                "Ignoring [notifications] snooze_minutes = %r: expected one of %s",
+                snooze_minutes,
+                ", ".join(str(choice) for choice in SNOOZE_MINUTES_CHOICES),
+            )
+            snooze_minutes = defaults.snooze_minutes
+
         due_now = section.get("due_now", defaults.due_now)
         if due_now not in DUE_NOW_MODES:
             logger.log.warning(
@@ -403,6 +422,7 @@ class NotificationConfig:
             hold_during_focus=_flag_setting(
                 section, "hold_during_focus", defaults.hold_during_focus
             ),
+            snooze_minutes=snooze_minutes,
         )
 
     def to_toml_lines(self) -> list[str]:
@@ -428,6 +448,7 @@ class NotificationConfig:
             f"quiet_end = {clock(self.quiet_end)}",
             f"quiet_allow_timed = {flag(self.quiet_allow_timed)}",
             f"hold_during_focus = {flag(self.hold_during_focus)}",
+            f"snooze_minutes = {self.snooze_minutes}",
         ]
 
 

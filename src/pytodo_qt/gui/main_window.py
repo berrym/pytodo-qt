@@ -8,14 +8,16 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from PyQt6.QtCore import QDate, QPoint, Qt, QTimer, pyqtSlot
+from PyQt6.QtCore import QDate, QPoint, Qt, QTimer, QUrl, pyqtSlot
 from PyQt6.QtGui import (
     QAction,
     QActionGroup,
+    QDesktopServices,
     QIcon,
     QKeySequence,
     QPixmap,
@@ -44,6 +46,7 @@ from ..core import settings
 from ..core.config import get_config, get_config_manager
 from ..core.database import DatabaseStorage
 from ..core.logger import Logger
+from ..core.meeting_link import detect_meeting_link
 from ..core.models import Database, Device, PendingSync, TodoItem, TodoList
 from ..core.notification_policy import PolicySettings, settings_from_config
 from ..core.offline_queue import OfflineQueue
@@ -66,7 +69,7 @@ from .dialogs import (
 )
 from .styles import apply_current_theme
 from .styles.themes import Theme, get_current_theme
-from .task_notifier import TaskNotifier
+from .task_notifier import ReminderTarget, TaskNotifier
 from .widgets import (
     KanbanBoardWidget,
     ListSelectorWidget,
@@ -107,6 +110,13 @@ def _prefer_os_notification(*, notifier_available: bool, platform: str) -> bool:
 
 class MainWindow(QMainWindow):
     """Main application window."""
+
+    # Set once the window closes for good: a notification's button
+    # pressed after that does nothing.
+    _shutting_down = False
+    # At most this many notifications with buttons stay on screen; the
+    # oldest goes when another comes (#60).
+    _ACTIONABLE_KEPT = 3
 
     def __init__(self):
         super().__init__()
@@ -1672,6 +1682,10 @@ class MainWindow(QMainWindow):
         from .widgets.notification_overlay import NotificationManager
 
         self._notification_manager = NotificationManager()
+        # The notifications with buttons on screen, oldest first: the
+        # task's id, and the OS notification's identifier (None for a
+        # banner of the overlay).
+        self._actionable: list[tuple[str, str | None]] = []
 
     def _start_discovery(self) -> None:
         """Start the mDNS discovery service for peer discovery."""
@@ -1767,8 +1781,6 @@ class MainWindow(QMainWindow):
         Returns:
             The tracked Device object
         """
-        import time
-
         now = int(time.time() * 1000)
 
         # Check if device already exists
@@ -2401,8 +2413,166 @@ class MainWindow(QMainWindow):
             or self._stopwatch.state is StopwatchState.RUNNING
         )
 
-    def _deliver_task_notification(self, title: str, body: str) -> None:
-        asyncio.create_task(self._notify(title, body, timeout=10))
+    def _deliver_task_notification(
+        self, title: str, body: str, target: ReminderTarget | None = None
+    ) -> None:
+        if target is None:
+            asyncio.create_task(self._notify(title, body, timeout=10))
+        else:
+            asyncio.create_task(self._notify_actionable(title, body, target))
+
+    # ------------------------------------------------------------------
+    # Notification actions (#60)
+    # ------------------------------------------------------------------
+
+    def _actions_for(self, target: ReminderTarget) -> list[tuple[str, str]]:
+        """The buttons of a notification about one task, as (action,
+        label). Open is a click on the text, not a button: three
+        buttons at most, which notification servers show."""
+        actions = [("done", self.tr("Done")), ("snooze", self.tr("Snooze"))]
+        if target.join:
+            actions.append(("join", self.tr("Join")))
+        return actions
+
+    async def _notify_actionable(self, title: str, body: str, target: ReminderTarget) -> None:
+        """Deliver a notification about one task, with its buttons.
+
+        It stays on screen until a button is pressed, its text is
+        clicked or it is closed: on a desktop without a notification
+        history, a banner that leaves by itself takes its buttons with
+        it. The notification about the same task given before is taken
+        away, and beyond _ACTIONABLE_KEPT the oldest is.
+        """
+        actions = self._actions_for(target)
+        tag = str(target.item_id)
+        await self._withdraw_actionable(tag)
+        while len(self._actionable) >= self._ACTIONABLE_KEPT:
+            await self._withdraw_actionable(self._actionable[0][0])
+
+        def act(action: str) -> None:
+            self._forget_actionable(tag)
+            self._on_notification_action(action, target)
+
+        use_os_notification = _prefer_os_notification(
+            notifier_available=self._notifier is not None,
+            platform=sys.platform,
+        )
+        if use_os_notification:
+            try:
+                from desktop_notifier import Button
+
+                assert self._notifier is not None  # narrowed by use_os_notification guard
+                identifier = await self._notifier.send(
+                    title=title,
+                    message=body,
+                    buttons=[
+                        Button(title=label, on_pressed=lambda a=action: act(a))
+                        for action, label in actions
+                    ],
+                    on_clicked=lambda: act("open"),
+                    on_dismissed=lambda: act("dismiss"),
+                    # Not to leave by itself (the D-Bus "never expires").
+                    timeout=0,
+                )
+                self._actionable.append((tag, identifier))
+                return
+            except Exception as exc:
+                logger.log.debug("OS notification send failed; falling back to overlay: %s", exc)
+
+        self._notification_manager.show(
+            title,
+            body,
+            timeout_ms=0,
+            actions=actions,
+            on_action=act,
+            on_click=lambda: act("open"),
+            tag=tag,
+        )
+        self._actionable.append((tag, None))
+
+    async def _withdraw_actionable(self, tag: str) -> None:
+        """Take away the notification with buttons shown for ``tag``."""
+        for kept_tag, identifier in list(self._actionable):
+            if kept_tag != tag:
+                continue
+            self._forget_actionable(tag)
+            if identifier is None:
+                self._notification_manager.dismiss_tagged(tag)
+            elif self._notifier is not None:
+                try:
+                    await self._notifier.clear(identifier)
+                except Exception as exc:
+                    logger.log.debug("Could not take a notification away: %s", exc)
+
+    def _forget_actionable(self, tag: str) -> None:
+        self._actionable = [(t, i) for t, i in self._actionable if t != tag]
+
+    def _on_notification_action(self, action: str, target: ReminderTarget) -> None:
+        """What a notification's button, a click on its text, or its
+        closing does: every platform's notification comes here.
+
+        ``action`` is "done", "snooze", "join", "open" or "dismiss". A
+        task that is gone, done, or no longer the one the notification
+        was about is left alone, with a line in the status bar.
+        """
+        if self._shutting_down:
+            return
+        logger.log.info("Notification action %s for item %s", action, target.item_id)
+        if action == "dismiss":
+            return
+        found = self._find_item_anywhere(target.item_id)
+        if found is None:
+            self.status_bar_widget.show_message(self.tr("That task no longer exists"))
+            return
+        todo_list, item = found
+        if action == "open":
+            self._open_item(todo_list, item)
+        elif action == "join":
+            link = detect_meeting_link(item.reminder)
+            if link is None:
+                self.status_bar_widget.show_message(self.tr("That task has no meeting link now"))
+                return
+            QDesktopServices.openUrl(QUrl(link.url))
+        elif item.complete:
+            self.status_bar_widget.show_message(self.tr("That task is already done"))
+        elif action == "done":
+            for command in self._completion_commands(todo_list, [item.id]):
+                self._undo_stack.push(command)
+        elif action == "snooze":
+            minutes = self._config.notifications.snooze_minutes
+            self._storage.snooze_reminder(target.key, time.time() + minutes * 60)
+            self.status_bar_widget.show_message(
+                self.tr("Reminder snoozed for {minutes} min").format(minutes=minutes)
+            )
+
+    def _find_item_anywhere(self, item_id: UUID) -> tuple[TodoList, TodoItem] | None:
+        """The task and its list, in any list that is not deleted."""
+        for todo_list in self._database.lists.values():
+            if todo_list.deleted:
+                continue
+            item = todo_list.get_item(item_id)
+            if item is not None and not item.deleted:
+                return todo_list, item
+        return None
+
+    def _open_item(self, todo_list: TodoList, item: TodoItem) -> None:
+        """Bring the window forward on the task: its list, the task
+        selected in the list view, and the detail panel open on it."""
+        if self.isMinimized():
+            self.showNormal()
+        else:
+            self.show()
+        self.raise_()
+        self.activateWindow()
+        if self._database.active_list_id != todo_list.id:
+            self.list_selector.set_current_list(todo_list.id)
+        if self._view_stack.currentIndex() == 0:
+            self.todo_table.select_item(item.id)
+        if not self._detail_panel.isVisible():
+            self._on_detail_btn_toggled(True)
+            if hasattr(self, "_detail_btn"):
+                self._detail_btn.setChecked(True)
+        self._detail_panel.set_item(item, todo_list)
 
     def _check_lan_address(self) -> None:
         """Report a change of the machine's LAN address in the status bar."""
@@ -2719,6 +2889,17 @@ class MainWindow(QMainWindow):
         if active_list is None:
             return
 
+        for command in self._completion_commands(active_list, item_ids):
+            self._undo_stack.push(command)
+
+    def _completion_commands(self, todo_list: TodoList, item_ids: list[UUID]) -> list:
+        """The undo commands that tick or untick these tasks of
+        ``todo_list``: a recurring task that is not done moves to its
+        next occurrence. The task list's toggle and a notification's
+        Done both go through here."""
+        active_list = todo_list
+        commands = []
+
         # Split items into recurring (completing) and normal groups
         normal_states: list[tuple[UUID, bool]] = []
         recurring_commands = []
@@ -2763,11 +2944,10 @@ class MainWindow(QMainWindow):
         if normal_states:
             from .commands import ToggleCompleteCommand
 
-            cmd = ToggleCompleteCommand(self, active_list.id, normal_states)
-            self._undo_stack.push(cmd)
+            commands.append(ToggleCompleteCommand(self, active_list.id, normal_states))
 
-        for rcmd in recurring_commands:
-            self._undo_stack.push(rcmd)
+        commands.extend(recurring_commands)
+        return commands
 
     def _on_add_list(self) -> None:
         """Handle add list action."""
@@ -4978,6 +5158,8 @@ class MainWindow(QMainWindow):
                 a0.ignore()
             self.hide()
             return
+
+        self._shutting_down = True
 
         # Stop auto-sync scheduler
         self._auto_scheduler.stop()

@@ -14,7 +14,9 @@ driven in tests with a fixed clock and no window.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from uuid import UUID
 
 from PyQt6.QtCore import QObject
 
@@ -26,6 +28,7 @@ from ..core.models import TodoList, _format_time
 from ..core.notification_policy import (
     ComingUp,
     Evaluation,
+    FiredKey,
     Kind,
     PolicySettings,
     Preview,
@@ -49,8 +52,28 @@ _MAX_SUMMARY_COMING_UP = 3
 _LOG_RETENTION = timedelta(days=30)
 
 
+@dataclass(frozen=True)
+class ReminderTarget:
+    """What the buttons of a notification about one task act on (#60).
+
+    ``key`` is the reminder's key in the notification log, by which
+    Snooze puts it off. ``join`` is whether the task's text held a
+    meeting link when the notification was made; Join reads the link
+    again when it is pressed.
+    """
+
+    item_id: UUID
+    key: FiredKey
+    join: bool
+
+
 class TaskNotifier(QObject):
-    """Evaluates the notification policy and delivers what is due."""
+    """Evaluates the notification policy and delivers what is due.
+
+    ``deliver`` is given a title, a body, and a ``ReminderTarget`` for a
+    notification about one task (which carries its buttons), or None for
+    any other.
+    """
 
     def __init__(
         self,
@@ -60,7 +83,7 @@ class TaskNotifier(QObject):
         settings: Callable[[], PolicySettings],
         time_blocks: Callable[[], TimeBlockConfig],
         time_format: Callable[[], str],
-        deliver: Callable[[str, str], None],
+        deliver: Callable[[str, str, ReminderTarget | None], None],
         focus_active: Callable[[], bool] = lambda: False,
         clock: Callable[[], datetime] = datetime.now,
         parent: QObject | None = None,
@@ -88,6 +111,12 @@ class TaskNotifier(QObject):
         produces it once the wait is over.
         """
         now = self._clock()
+        # A snooze is kept as an absolute moment; the policy works in
+        # the local time of now.
+        snoozed = {
+            key: datetime.fromtimestamp(until)
+            for key, until in self._storage.get_snoozed_reminders().items()
+        }
         result = evaluate(
             self._lists(),
             self._settings(),
@@ -95,23 +124,40 @@ class TaskNotifier(QObject):
             self._storage.get_fired_notifications(),
             self._time_blocks(),
             focus_active=self._focus_active(),
+            snoozed=snoozed,
         )
         if result.fired:
             self._storage.record_notifications(result.fired)
+        if result.snoozes_done:
+            self._storage.forget_snoozed_reminders(result.snoozes_done)
         self._prune(now)
 
         if result.reminders:
-            self._deliver(*self.format_reminders(result.reminders))
+            self._deliver(*self.format_reminders(result.reminders), self.target_of(result))
         # The summary, the report of missed items and the evening
         # preview share one notification: a preview due together with
         # either of the others is a line in it.
         if result.summary is not None:
-            self._deliver(*self.format_summary(result.summary, result.preview))
+            self._deliver(*self.format_summary(result.summary, result.preview), None)
         elif result.missed:
-            self._deliver(*self.format_missed(result.missed, result.preview))
+            self._deliver(*self.format_missed(result.missed, result.preview), None)
         elif result.preview is not None:
-            self._deliver(*self.format_preview(result.preview))
+            self._deliver(*self.format_preview(result.preview), None)
         return result
+
+    @staticmethod
+    def target_of(result: Evaluation) -> ReminderTarget | None:
+        """What the buttons of the reminders' notification act on: the
+        task, where it is about one. Several reminders in one
+        notification have no task buttons; a click opens the window."""
+        if len(result.reminders) != 1:
+            return None
+        reminder = result.reminders[0]
+        return ReminderTarget(
+            reminder.item_id,
+            reminder.key,
+            detect_meeting_link(reminder.title) is not None,
+        )
 
     def _prune(self, now: datetime) -> None:
         """Delete old log entries, at most once per day."""
@@ -134,7 +180,13 @@ class TaskNotifier(QObject):
         if len(reminders) == 1:
             reminder = reminders[0]
             when = self._time(reminder.at)
-            if reminder.kind is Kind.DUE_NOW:
+            if reminder.snoozed and reminder.minutes_until == 0:
+                body = self.tr("Snoozed · was due at {time}").format(time=when)
+            elif reminder.snoozed:
+                body = self.tr("Snoozed · due at {time} · in {minutes} min").format(
+                    time=when, minutes=reminder.minutes_until
+                )
+            elif reminder.kind is Kind.DUE_NOW:
                 body = self.tr("Due now · {time}").format(time=when)
             elif reminder.block is not None:
                 body = self._block_window(reminder)
@@ -239,6 +291,10 @@ class TaskNotifier(QObject):
         return self.tr("Earlier today"), body
 
     def _what(self, reminder: Reminder) -> str:
+        if reminder.snoozed and reminder.minutes_until == 0:
+            return self.tr("snoozed, was due")
+        if reminder.snoozed:
+            return self.tr("snoozed, due in {minutes} min").format(minutes=reminder.minutes_until)
         if reminder.kind is Kind.DUE_NOW:
             return self.tr("due now")
         if reminder.block is not None:

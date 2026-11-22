@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from PyQt6.QtCore import (
@@ -196,10 +198,15 @@ class NotificationOverlay(QWidget):
     dismissed : emitted when the user clicks the close glyph OR when
         the auto-dismiss timer elapses. Either path triggers the
         slide-out animation and destruction.
+    action_pressed : emitted with an action's id when one of the
+        banner's buttons is pressed (``actions``: (id, label) pairs, in
+        order); the banner then leaves. A banner with buttons is one a
+        person acts on, and is usually given no timeout.
     """
 
     body_clicked = pyqtSignal()
     dismissed = pyqtSignal()
+    action_pressed = pyqtSignal(str)
 
     def __init__(
         self,
@@ -207,6 +214,7 @@ class NotificationOverlay(QWidget):
         body: str,
         *,
         timeout_ms: int = _DEFAULT_TIMEOUT_MS,
+        actions: Sequence[tuple[str, str]] = (),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(
@@ -218,6 +226,10 @@ class NotificationOverlay(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        # macOS hides a tool window while its application is not the
+        # active one: a banner shown while another application is in
+        # front would appear only once the window is clicked.
+        self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
         # Size to content between min and max so long bodies don't clip;
         # short bodies still settle at the original 88 px visual baseline.
         self.setMinimumHeight(_MIN_HEIGHT)
@@ -227,6 +239,7 @@ class NotificationOverlay(QWidget):
 
         self._title = title
         self._body = body
+        self._actions = tuple(actions)
         self._dismissing = False
         self._paused = False
 
@@ -252,9 +265,15 @@ class NotificationOverlay(QWidget):
     # ------------------------------------------------------------------
 
     def _build_layout(self) -> None:
-        outer = QHBoxLayout(self)
-        outer.setContentsMargins(16, 12, 10, 12)
+        # The text, the logo and the close glyph side by side; under
+        # them, the whole width of the banner, the action buttons.
+        frame = QVBoxLayout(self)
+        frame.setContentsMargins(16, 12, 10, 12)
+        frame.setSpacing(8)
+        outer = QHBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(10)
+        frame.addLayout(outer)
 
         text_column = QVBoxLayout()
         text_column.setContentsMargins(0, 0, 0, 0)
@@ -282,6 +301,23 @@ class NotificationOverlay(QWidget):
         text_column.addWidget(title_label)
         text_column.addWidget(body_scroll, 1)
         outer.addLayout(text_column, 1)
+
+        # The actions, in a row under the rest: buttons as the rest of
+        # the application draws them, given the banner's whole width.
+        self._action_buttons: list[QPushButton] = []
+        if self._actions:
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 6, 0)
+            row.setSpacing(8)
+            for action_id, label in self._actions:
+                button = QPushButton(label, self)
+                button.setCursor(Qt.CursorShape.PointingHandCursor)
+                button.setAccessibleName(label)
+                button.clicked.connect(lambda _=False, a=action_id: self._on_action(a))
+                row.addWidget(button)
+                self._action_buttons.append(button)
+            row.addStretch(1)
+            frame.addLayout(row)
 
         logo_label = QLabel(self)
         logo_label.setFixedSize(_LOGO_SIZE, _LOGO_SIZE)
@@ -321,6 +357,12 @@ class NotificationOverlay(QWidget):
         self._logo_label = logo_label
         self._body_label = body_label
         self._body_scroll = body_scroll
+
+    def _on_action(self, action_id: str) -> None:
+        if self._dismissing:
+            return
+        self.action_pressed.emit(action_id)
+        self._start_dismiss()
 
     def _on_body_area_clicked(self) -> None:
         # Body-click semantic preserved across the QScrollArea wrap: the
@@ -438,6 +480,19 @@ class NotificationOverlay(QWidget):
         self.deleteLater()
 
 
+@dataclass(frozen=True)
+class _Banner:
+    """A banner to be shown, as NotificationManager.show was given it."""
+
+    title: str
+    body: str
+    timeout_ms: int
+    actions: tuple[tuple[str, str], ...]
+    on_action: Callable[[str], None] | None
+    on_click: Callable[[], None] | None
+    tag: str | None
+
+
 class NotificationManager:
     """Owns the vertical stack of visible `NotificationOverlay` windows.
 
@@ -451,7 +506,7 @@ class NotificationManager:
     def __init__(self, max_visible: int = _MAX_VISIBLE_DEFAULT) -> None:
         self._max_visible = max(1, max_visible)
         self._visible: list[NotificationOverlay] = []
-        self._queue: deque[tuple[str, str, int]] = deque()
+        self._queue: deque[_Banner] = deque()
 
     # ------------------------------------------------------------------
     # Public
@@ -463,14 +518,31 @@ class NotificationManager:
         body: str,
         *,
         timeout_ms: int = _DEFAULT_TIMEOUT_MS,
+        actions: Sequence[tuple[str, str]] = (),
+        on_action: Callable[[str], None] | None = None,
+        on_click: Callable[[], None] | None = None,
+        tag: str | None = None,
     ) -> NotificationOverlay | None:
         """Display a banner immediately if there is room; otherwise
         queue it for display once a slot frees up. Returns the
-        overlay instance if shown immediately, None if queued."""
+        overlay instance if shown immediately, None if queued.
+
+        ``actions`` are (id, label) pairs shown as buttons; ``on_action``
+        is called with the id of the one pressed, ``on_click`` when the
+        text is clicked. ``tag`` names the banner for ``dismiss_tagged``.
+        """
+        banner = _Banner(title, body, timeout_ms, tuple(actions), on_action, on_click, tag)
         if len(self._visible) >= self._max_visible:
-            self._queue.append((title, body, timeout_ms))
+            self._queue.append(banner)
             return None
-        return self._spawn(title, body, timeout_ms)
+        return self._spawn(banner)
+
+    def dismiss_tagged(self, tag: str) -> None:
+        """Take away the banners shown or waiting under ``tag``."""
+        self._queue = deque(b for b in self._queue if b.tag != tag)
+        for overlay in list(self._visible):
+            if overlay.property("tag") == tag and not overlay._dismissing:
+                overlay._start_dismiss()
 
     def dismiss_all(self) -> None:
         """Start dismissal on every visible banner. The queue is
@@ -483,13 +555,20 @@ class NotificationManager:
     # Internals
     # ------------------------------------------------------------------
 
-    def _spawn(self, title: str, body: str, timeout_ms: int) -> NotificationOverlay | None:
+    def _spawn(self, shown: _Banner) -> NotificationOverlay | None:
         app = QApplication.instance()
         if app is None:
             _log.warning("NotificationManager._spawn: no QApplication instance; skip")
             return None
 
-        banner = NotificationOverlay(title, body, timeout_ms=timeout_ms)
+        banner = NotificationOverlay(
+            shown.title, shown.body, timeout_ms=shown.timeout_ms, actions=shown.actions
+        )
+        banner.setProperty("tag", shown.tag)
+        if shown.on_action is not None:
+            banner.action_pressed.connect(shown.on_action)
+        if shown.on_click is not None:
+            banner.body_clicked.connect(shown.on_click)
         banner.dismissed.connect(lambda b=banner: self._on_dismissed(b))
         banner.adjustSize()
 
@@ -530,8 +609,7 @@ class NotificationManager:
 
     def _promote_queued(self) -> None:
         while self._queue and len(self._visible) < self._max_visible:
-            title, body, timeout_ms = self._queue.popleft()
-            self._spawn(title, body, timeout_ms)
+            self._spawn(self._queue.popleft())
 
     # ------------------------------------------------------------------
     # Geometry

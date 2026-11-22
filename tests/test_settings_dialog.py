@@ -236,6 +236,7 @@ class TestNotificationsTab:
         quiet_end=time(6, 15),
         quiet_allow_timed=False,
         hold_during_focus=False,
+        snooze_minutes=30,
     )
 
     def test_shows_the_defaults(self, dialog):
@@ -262,6 +263,20 @@ class TestNotificationsTab:
     def test_unknown_due_now_mode_shows_the_first_choice(self, dialog):
         dialog._show_notification_settings(NotificationConfig(due_now="sometimes"))
         assert dialog._notif_due_now.currentData() == "deadlines"
+
+    def test_snooze_offers_the_lengths_with_their_minutes(self, dialog):
+        combo = dialog._notif_snooze_minutes
+        assert [combo.itemData(i) for i in range(combo.count())] == [5, 10, 15, 30, 60]
+        assert [combo.itemText(i) for i in range(combo.count())] == [
+            "5 min",
+            "10 min",
+            "15 min",
+            "30 min",
+            "60 min",
+        ]
+        assert combo.accessibleName()
+        dialog._show_notification_settings(self.CHANGED)
+        assert combo.currentData() == 30
 
     def test_lead_time_range(self, dialog):
         spin = dialog._notif_lead_minutes

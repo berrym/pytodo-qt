@@ -16,6 +16,7 @@ from pytodo_qt.core.database import DatabaseStorage
 from pytodo_qt.core.models import TodoItem, TodoList
 from pytodo_qt.core.notification_policy import (
     ComingUp,
+    FiredKey,
     Kind,
     PolicySettings,
     Preview,
@@ -55,7 +56,7 @@ class Harness:
             settings=lambda: self.settings,
             time_blocks=TimeBlockConfig,
             time_format=lambda: self.time_format,
-            deliver=lambda title, body: self.delivered.append((title, body)),
+            deliver=lambda title, body, target: self.delivered.append((title, body)),
             focus_active=lambda: self.focus_active,
             clock=lambda: self.now,
         )
@@ -140,7 +141,7 @@ class TestEvaluate:
         """A delivery that raises must not make the reminder fire again."""
         item = harness.add(make_item(due_date=DAY, due_time=time(15)))
 
-        def broken(title: str, body: str) -> None:
+        def broken(title: str, body: str, target: object) -> None:
             raise RuntimeError("notification service unavailable")
 
         harness.notifier._deliver = broken
@@ -242,7 +243,7 @@ class TestHolding:
                 settings=PolicySettings,
                 time_blocks=TimeBlockConfig,
                 time_format=lambda: "24h",
-                deliver=lambda title, body: delivered.append((title, body)),
+                deliver=lambda title, body, target: delivered.append((title, body)),
                 clock=lambda: at(9),
             )
             notifier.evaluate()
@@ -632,3 +633,68 @@ class TestPreviewDelivery:
         assert ("", "preview", DAY.isoformat()) not in harness.storage.get_fired_notifications()
         harness.focus_active = False
         assert harness.tick(at(20, 20)) == [("Tomorrow", "1 due tomorrow")]
+
+
+class TestSnoozeAndTargets:
+    """A notification about one task carries what its buttons act on;
+    a snoozed reminder comes back, said to be snoozed (#60)."""
+
+    def test_a_notification_about_one_task_has_a_target(self, harness):
+        targets = []
+        harness.notifier._deliver = lambda title, body, target: targets.append(target)
+        item = harness.add(make_item("Call the bank", due_date=DAY, due_time=time(15)))
+        harness.now = at(14, 45)
+        harness.notifier.evaluate()
+        (target,) = targets
+        assert target is not None
+        assert target.item_id == item.id
+        assert target.key == FiredKey(str(item.id), "lead", "2026-11-12T15:00")
+        assert target.join is False
+
+    def test_a_meeting_link_in_the_task_gives_join(self, harness):
+        targets = []
+        harness.notifier._deliver = lambda title, body, target: targets.append(target)
+        harness.add(
+            make_item(
+                "Stand-up https://meet.google.com/abc-defg-hij", due_date=DAY, due_time=time(15)
+            )
+        )
+        harness.now = at(14, 45)
+        harness.notifier.evaluate()
+        assert targets[0] is not None and targets[0].join is True
+
+    def test_several_reminders_and_the_summary_have_none(self, harness):
+        targets = []
+        harness.notifier._deliver = lambda title, body, target: targets.append(target)
+        harness.add(make_item("One", due_date=DAY, due_time=time(15)))
+        harness.add(make_item("Two", due_date=DAY, due_time=time(15, 5)))
+        harness.settings = PolicySettings(summary_enabled=True, summary_time=time(9))
+        harness.now = at(14, 50)
+        harness.notifier.evaluate()
+        assert targets == [None, None]
+
+    def test_a_snoozed_reminder_comes_back_once_and_is_forgotten(self, harness):
+        item = harness.add(make_item("Call the bank", due_date=DAY, due_time=time(15)))
+        assert harness.tick(at(14, 45)) == [("Call the bank", "Due at 15:00 · in 15 min")]
+        key = (str(item.id), "lead", "2026-11-12T15:00")
+        harness.storage.snooze_reminder(key, at(14, 55).timestamp())
+        assert harness.tick(at(14, 50)) == []
+        assert harness.tick(at(14, 55)) == [("Call the bank", "Snoozed · due at 15:00 · in 5 min")]
+        assert harness.storage.get_snoozed_reminders() == {}
+        assert harness.tick(at(14, 56)) == []
+
+    def test_a_snoozed_reminder_past_its_time_says_so(self, harness):
+        item = harness.add(make_item("Call the bank", due_date=DAY, due_time=time(15)))
+        harness.tick(at(15, 0))
+        key = (str(item.id), "due_now", "2026-11-12T15:00")
+        harness.storage.snooze_reminder(key, at(15, 10).timestamp())
+        assert harness.tick(at(15, 10)) == [("Call the bank", "Snoozed · was due at 15:00")]
+
+    def test_the_snooze_of_a_task_done_meanwhile_is_dropped_without_a_word(self, harness):
+        item = harness.add(make_item("Call the bank", due_date=DAY, due_time=time(15)))
+        harness.tick(at(14, 45))
+        key = (str(item.id), "lead", "2026-11-12T15:00")
+        harness.storage.snooze_reminder(key, at(14, 55).timestamp())
+        item.complete = True
+        assert harness.tick(at(14, 55)) == []
+        assert harness.storage.get_snoozed_reminders() == {}

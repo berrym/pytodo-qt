@@ -41,6 +41,7 @@ class TestDefaults:
         assert (n.quiet_start, n.quiet_end) == (time(22, 0), time(7, 0))
         assert n.quiet_allow_timed is True
         assert n.hold_during_focus is True
+        assert n.snooze_minutes == 10
 
     def test_defaults_match_the_policy_defaults(self):
         """The configuration and the policy state the defaults separately;
@@ -69,6 +70,7 @@ class TestRoundTrip:
         quiet_end=time(6, 15),
         quiet_allow_timed=False,
         hold_during_focus=False,
+        snooze_minutes=30,
     )
 
     def test_every_field_survives(self):
@@ -101,6 +103,7 @@ class TestRoundTrip:
             "quiet_end",
             "quiet_allow_timed",
             "hold_during_focus",
+            "snooze_minutes",
         }
 
 
@@ -206,6 +209,14 @@ class TestValuesOfTheWrongKind:
     @pytest.mark.parametrize("value", [1, 120])
     def test_lead_minutes_at_the_limits(self, value):
         assert load(f"lead_minutes = {value}").lead_minutes == value
+
+    @pytest.mark.parametrize("value", [5, 10, 15, 30, 60])
+    def test_every_snooze_length_offered_is_read(self, value):
+        assert load(f"snooze_minutes = {value}").snooze_minutes == value
+
+    @pytest.mark.parametrize("value", ["7", "0", "120", '"10"', "10.0", "true"])
+    def test_a_snooze_length_not_offered_falls_back(self, value):
+        assert load(f"snooze_minutes = {value}").snooze_minutes == 10
 
     @pytest.mark.parametrize("value", ['"always"', '"Deadlines"', "true", "1"])
     def test_unknown_due_now_mode_falls_back(self, value):

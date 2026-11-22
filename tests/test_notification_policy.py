@@ -1594,3 +1594,171 @@ class TestEveningPreviewAndFocus:
         assert session.tick(at(20), focus_active=True).preview is None
         assert session.tick(at(22, 5)).preview is None
         assert session.tick(at(7, 0, TOMORROW)).preview is None
+
+
+# ---------------------------------------------------------------------------
+# Snoozed reminders (#60)
+# ---------------------------------------------------------------------------
+
+
+class TestSnoozedReminders:
+    """A reminder put off with Snooze on its notification comes back at
+    its moment, as a reminder; one no longer about its item is dropped."""
+
+    def _snooze(self, item: TodoItem, kind: Kind, until: datetime, due: datetime):
+        key = (str(item.id), kind.value, due.isoformat(timespec="minutes"))
+        return {key: until}, FiredKey(*key)
+
+    def _evaluate(self, items, now, snoozed, settings=None, fired=()):
+        return evaluate(
+            [make_list(*items)],
+            settings or NO_SUMMARY,
+            now,
+            set(fired),
+            BLOCKS,
+            snoozed=snoozed,
+        )
+
+    def test_a_reminder_is_its_key(self):
+        item = make_item(due_date=DAY, due_time=time(14, 30))
+        result = run([item], at(14, 15))
+        (reminder,) = result.reminders
+        assert reminder.key == FiredKey(str(item.id), "lead", "2026-11-12T14:30")
+        assert reminder.key in result.fired
+
+    def test_before_its_moment_nothing_comes_back(self):
+        item = make_item(due_date=DAY, due_time=time(14, 30))
+        snoozed, key = self._snooze(item, Kind.LEAD, at(14, 25), at(14, 30))
+        lead = FiredKey(str(item.id), "lead", "2026-11-12T14:30")
+        result = self._evaluate([item], at(14, 24), snoozed, fired=[lead])
+        assert result.reminders == ()
+        assert result.snoozes_done == ()
+
+    def test_at_its_moment_it_is_a_reminder_again(self):
+        item = make_item("Call the bank", due_date=DAY, due_time=time(14, 30))
+        snoozed, key = self._snooze(item, Kind.LEAD, at(14, 25), at(14, 30))
+        lead = FiredKey(str(item.id), "lead", "2026-11-12T14:30")
+        result = self._evaluate([item], at(14, 25), snoozed, fired=[lead])
+        (reminder,) = result.reminders
+        assert reminder.snoozed is True
+        assert reminder.kind is Kind.LEAD
+        assert reminder.title == "Call the bank"
+        assert reminder.minutes_until == 5
+        assert reminder.key == key
+        assert result.snoozes_done == (key,)
+        # It is not recorded again: it fired the first time.
+        assert result.fired == ()
+
+    def test_a_snoozed_due_now_alert_comes_back_after_the_due_time(self):
+        item = make_item(due_date=DAY, due_time=time(14, 30))
+        snoozed, key = self._snooze(item, Kind.DUE_NOW, at(14, 40), at(14, 30))
+        fired = [
+            FiredKey(str(item.id), "lead", "2026-11-12T14:30"),
+            FiredKey(str(item.id), "due_now", "2026-11-12T14:30"),
+        ]
+        result = self._evaluate([item], at(14, 40), snoozed, fired=fired)
+        (reminder,) = result.reminders
+        assert reminder.kind is Kind.DUE_NOW
+        assert reminder.minutes_until == 0
+        assert reminder.snoozed is True
+        assert result.snoozes_done == (key,)
+
+    def test_a_snooze_of_an_item_that_is_done_is_dropped(self):
+        item = make_item(due_date=DAY, due_time=time(14, 30))
+        snoozed, key = self._snooze(item, Kind.LEAD, at(14, 25), at(14, 30))
+        item.complete = True
+        result = self._evaluate([item], at(14, 20), snoozed)
+        assert result.reminders == ()
+        assert result.snoozes_done == (key,)
+
+    def test_a_snooze_of_an_item_that_is_gone_is_dropped(self):
+        item = make_item(due_date=DAY, due_time=time(14, 30))
+        snoozed, key = self._snooze(item, Kind.LEAD, at(14, 25), at(14, 30))
+        result = self._evaluate([make_item("Other")], at(14, 20), snoozed)
+        assert result.snoozes_done == (key,)
+
+    def test_a_snooze_of_a_rescheduled_item_is_dropped(self):
+        """Its occurrence is another now: the reminders of the new time
+        are its own."""
+        item = make_item(due_date=DAY, due_time=time(14, 30))
+        snoozed, key = self._snooze(item, Kind.LEAD, at(14, 25), at(14, 30))
+        item.due_time = time(16, 0)
+        result = self._evaluate([item], at(14, 20), snoozed)
+        assert result.reminders == ()
+        assert result.snoozes_done == (key,)
+
+    def test_a_snooze_of_a_kind_the_item_no_longer_has_is_dropped(self):
+        """The due-now alert of a deadline, after the item became an event."""
+        item = make_item(due_date=DAY, due_time=time(14, 30))
+        snoozed, key = self._snooze(item, Kind.DUE_NOW, at(14, 40), at(14, 30))
+        item.due_time_end = time(15, 30)
+        result = self._evaluate([item], at(14, 35), snoozed)
+        assert result.snoozes_done == (key,)
+
+    def test_quiet_hours_hold_a_snoozed_reminder_as_any_timed_one(self):
+        settings = PolicySettings(
+            summary_enabled=False, quiet_allow_timed=False, quiet_start=time(22), quiet_end=time(7)
+        )
+        item = make_item(due_date=DAY, due_time=time(22, 40))
+        snoozed, key = self._snooze(item, Kind.LEAD, at(22, 30), at(22, 40))
+        result = self._evaluate([item], at(22, 30), snoozed, settings=settings)
+        assert result.reminders == ()
+        # Kept for when they end.
+        assert result.snoozes_done == ()
+
+    def test_a_focus_session_does_not_hold_it(self):
+        """Timed reminders are given during a focus session."""
+        item = make_item(due_date=DAY, due_time=time(14, 30))
+        snoozed, key = self._snooze(item, Kind.LEAD, at(14, 25), at(14, 30))
+        lead = FiredKey(str(item.id), "lead", "2026-11-12T14:30")
+        result = evaluate(
+            [make_list(item)],
+            NO_SUMMARY,
+            at(14, 25),
+            {lead},
+            BLOCKS,
+            focus_active=True,
+            snoozed=snoozed,
+        )
+        assert len(result.reminders) == 1
+
+    def test_an_item_with_a_reminder_of_its_own_now_is_not_reminded_twice(self):
+        """The lead reminder was snoozed into its due-now alert."""
+        item = make_item(due_date=DAY, due_time=time(14, 30))
+        snoozed, key = self._snooze(item, Kind.LEAD, at(14, 30), at(14, 30))
+        lead = FiredKey(str(item.id), "lead", "2026-11-12T14:30")
+        result = self._evaluate([item], at(14, 30), snoozed, fired=[lead])
+        assert [r.kind for r in result.reminders] == [Kind.DUE_NOW]
+        assert [r.snoozed for r in result.reminders] == [False]
+        assert result.snoozes_done == (key,)
+
+    def test_snoozed_and_fresh_reminders_share_one_notification_in_time_order(self):
+        early = make_item("Early", due_date=DAY, due_time=time(14, 30))
+        late = make_item("Late", due_date=DAY, due_time=time(14, 45))
+        snoozed, key = self._snooze(early, Kind.LEAD, at(14, 30), at(14, 30))
+        lead = FiredKey(str(early.id), "lead", "2026-11-12T14:30")
+        due = FiredKey(str(early.id), "due_now", "2026-11-12T14:30")
+        result = self._evaluate([early, late], at(14, 30), snoozed, fired=[lead, due])
+        assert [(r.title, r.snoozed) for r in result.reminders] == [
+            ("Early", True),
+            ("Late", False),
+        ]
+
+    def test_two_snoozes_of_one_item_back_together_give_one_reminder(self):
+        """Its lead reminder and its due-now alert were both snoozed to
+        the same moment."""
+        item = make_item(due_date=DAY, due_time=time(14, 30))
+        lead = (str(item.id), "lead", "2026-11-12T14:30")
+        due = (str(item.id), "due_now", "2026-11-12T14:30")
+        result = self._evaluate(
+            [item],
+            at(14, 40),
+            {lead: at(14, 40), due: at(14, 40)},
+            fired=[FiredKey(*lead), FiredKey(*due)],
+        )
+        assert len(result.reminders) == 1
+        assert set(result.snoozes_done) == {FiredKey(*lead), FiredKey(*due)}
+
+    def test_no_snoozes_given_is_as_before(self):
+        item = make_item(due_date=DAY, due_time=time(14, 30))
+        assert run([item], at(14, 15)).snoozes_done == ()

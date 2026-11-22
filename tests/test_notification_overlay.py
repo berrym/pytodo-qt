@@ -48,6 +48,15 @@ class TestNotificationOverlayConstruction:
         assert bool(flags & Qt.WindowType.WindowStaysOnTopHint)
         assert bool(flags & Qt.WindowType.WindowDoesNotAcceptFocus)
 
+    def test_shown_while_another_application_is_active(self, qtbot):
+        """macOS hides a tool window while its application is inactive;
+        a reminder must show while another application is in front."""
+        from PyQt6.QtCore import Qt
+
+        overlay = NotificationOverlay("t", "b")
+        qtbot.addWidget(overlay)
+        assert overlay.testAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
+
     def test_not_dismissed_at_construction(self, qtbot):
         overlay = NotificationOverlay("t", "b")
         qtbot.addWidget(overlay)
@@ -523,3 +532,127 @@ def _clean_manager_shutdown(qtbot):
     on the next event loop spin, so force one."""
     yield
     qtbot.wait(10)
+
+
+class TestNotificationOverlayActions:
+    """A banner about one task carries its buttons (#60): pressed, one
+    says which action it is and the banner leaves."""
+
+    ACTIONS = (("done", "Done"), ("snooze", "Snooze"), ("join", "Join"))
+
+    def test_a_banner_without_actions_has_no_buttons(self, qtbot):
+        overlay = NotificationOverlay("t", "b")
+        qtbot.addWidget(overlay)
+        assert overlay._action_buttons == []
+
+    def test_the_buttons_are_the_actions_in_order(self, qtbot):
+        overlay = NotificationOverlay("t", "b", timeout_ms=0, actions=self.ACTIONS)
+        qtbot.addWidget(overlay)
+        assert [button.text() for button in overlay._action_buttons] == ["Done", "Snooze", "Join"]
+        assert [button.accessibleName() for button in overlay._action_buttons] == [
+            "Done",
+            "Snooze",
+            "Join",
+        ]
+
+    def test_a_button_says_its_action_and_the_banner_leaves(self, qtbot):
+        overlay = NotificationOverlay("t", "b", timeout_ms=0, actions=self.ACTIONS)
+        qtbot.addWidget(overlay)
+        overlay.show()
+        with qtbot.waitSignal(overlay.action_pressed, timeout=500) as signal:
+            overlay._action_buttons[1].click()
+        assert signal.args == ["snooze"]
+        assert overlay._dismissing is True
+
+    def test_a_banner_already_leaving_says_nothing_more(self, qtbot):
+        overlay = NotificationOverlay("t", "b", timeout_ms=0, actions=self.ACTIONS)
+        qtbot.addWidget(overlay)
+        pressed = []
+        overlay.action_pressed.connect(pressed.append)
+        overlay._start_dismiss()
+        overlay._action_buttons[0].click()
+        assert pressed == []
+
+    @pytest.mark.parametrize(
+        "body",
+        ["Due at 14:30 · in 15 min", "Snoozed · due at 14:30\nsecond line\nthird line"],
+    )
+    def test_the_buttons_fit_under_the_whole_text(self, qtbot, body):
+        overlay = NotificationOverlay("Call the bank", body, timeout_ms=0, actions=self.ACTIONS)
+        qtbot.addWidget(overlay)
+        overlay.adjustSize()
+        overlay.show()
+        qtbot.wait(10)
+        assert overlay.height() <= _MAX_HEIGHT
+        # The text is shown whole, without a scroll bar, above the row.
+        assert overlay._body_scroll.viewport().height() >= overlay._body_label.sizeHint().height()
+        assert not overlay._body_scroll.verticalScrollBar().isVisible()
+        text_bottom = overlay._body_scroll.geometry().bottom()
+        for button in overlay._action_buttons:
+            assert overlay.rect().contains(button.geometry())
+            assert button.geometry().top() > text_bottom
+        # Side by side, apart: none overlaps the next.
+        buttons = overlay._action_buttons
+        for left, right in zip(buttons, buttons[1:], strict=False):
+            assert left.geometry().right() < right.geometry().left()
+
+
+class TestNotificationManagerActions:
+    """The manager connects a banner's buttons and text to the callers'
+    callbacks, also for a banner that waited in the queue, and takes
+    banners away by their tag."""
+
+    def test_the_callbacks_are_connected(self, qtbot):
+        mgr = NotificationManager(max_visible=3)
+        pressed: list[str] = []
+        clicked: list[bool] = []
+        banner = mgr.show(
+            "t",
+            "b",
+            timeout_ms=0,
+            actions=(("done", "Done"),),
+            on_action=pressed.append,
+            on_click=lambda: clicked.append(True),
+            tag="task-1",
+        )
+        assert banner is not None
+        banner._action_buttons[0].click()
+        banner.body_clicked.emit()
+        assert pressed == ["done"]
+        assert clicked == [True]
+        mgr.dismiss_all()
+        qtbot.wait(50)
+
+    def test_a_queued_banner_keeps_its_buttons_and_callbacks(self, qtbot):
+        mgr = NotificationManager(max_visible=1)
+        pressed: list[str] = []
+        first = mgr.show("1", "one", timeout_ms=0)
+        assert (
+            mgr.show(
+                "2", "two", timeout_ms=0, actions=(("snooze", "Snooze"),), on_action=pressed.append
+            )
+            is None
+        )
+        assert first is not None
+        with qtbot.waitSignal(first.dismissed, timeout=2000):
+            first._start_dismiss()
+        (promoted,) = mgr._visible
+        assert [b.text() for b in promoted._action_buttons] == ["Snooze"]
+        promoted._action_buttons[0].click()
+        assert pressed == ["snooze"]
+        mgr.dismiss_all()
+        qtbot.wait(50)
+
+    def test_dismiss_tagged_takes_away_that_banner_only_and_its_queued_twin(self, qtbot):
+        mgr = NotificationManager(max_visible=2)
+        one = mgr.show("1", "one", timeout_ms=0, tag="task-1")
+        two = mgr.show("2", "two", timeout_ms=0, tag="task-2")
+        mgr.show("3", "three", timeout_ms=0, tag="task-1")
+        assert one is not None and two is not None
+        assert mgr.queued_count == 1
+        mgr.dismiss_tagged("task-1")
+        assert one._dismissing is True
+        assert two._dismissing is False
+        assert mgr.queued_count == 0
+        mgr.dismiss_all()
+        qtbot.wait(50)

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 logger = Logger(__name__)
 
 # Schema version for SQLite database (continues from JSON schema_version=2)
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 
 # SQL statements for schema creation
 _CREATE_METADATA_TABLE = """
@@ -189,6 +189,21 @@ CREATE TABLE IF NOT EXISTS notified_items (
 )
 """
 
+# Reminders put off with Snooze on their notification (#60), keyed as
+# the notification log is, by item, kind and occurrence. ``until`` is an
+# absolute moment, seconds since the epoch: a change of clock or time
+# zone does not move it. Local to this device, as the log is: a snooze
+# is when this device reminds, not a change to the item.
+_CREATE_SNOOZED_REMINDERS_TABLE = """
+CREATE TABLE IF NOT EXISTS snoozed_reminders (
+    item_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    occurrence TEXT NOT NULL,
+    until REAL NOT NULL,
+    PRIMARY KEY (item_id, kind, occurrence)
+)
+"""
+
 # The id of every item the web page has added (Database.web_added_ids).
 # No row is ever removed: an id is created once, however late a second
 # delivery of its add arrives.
@@ -328,6 +343,7 @@ class DatabaseStorage:
         conn.execute(_CREATE_FOCUS_SESSIONS_TABLE)
         conn.execute(_CREATE_NOTIFICATION_LOG_TABLE)
         conn.execute(_CREATE_NOTIFIED_ITEMS_TABLE)
+        conn.execute(_CREATE_SNOOZED_REMINDERS_TABLE)
         conn.execute(_CREATE_WEB_ADDED_ITEMS_TABLE)
         conn.execute(_CREATE_WEB_APPLIED_CHANGES_TABLE)
 
@@ -365,6 +381,7 @@ class DatabaseStorage:
         self._migrate_schema_to_24()
         self._migrate_schema_to_25()
         self._migrate_schema_to_26()
+        self._migrate_schema_to_27()
 
         # Create v6+ indexes (after migration ensures due_date column exists)
         for index_sql in _CREATE_INDEXES_V6:
@@ -823,6 +840,18 @@ class DatabaseStorage:
             return
         self.set_schema_version(26)
         logger.log.info("Migrated schema -> 26: web_applied_changes")
+
+    def _migrate_schema_to_27(self) -> None:
+        """Migrate schema to version 27 (reminders put off with Snooze).
+
+        The snoozed_reminders table is created with the rest of the
+        schema and starts empty: nothing was snoozed before this version.
+        An earlier build opening the file leaves the table alone.
+        """
+        if self.get_schema_version() >= 27:
+            return
+        self.set_schema_version(27)
+        logger.log.info("Migrated schema -> 27: snoozed_reminders")
 
     def get_schema_version(self) -> int:
         """Get current schema version."""
@@ -1838,6 +1867,37 @@ class DatabaseStorage:
         cursor = self.connection.execute("SELECT item_id, kind, occurrence FROM notification_log")
         return {(row["item_id"], row["kind"], row["occurrence"]) for row in cursor}
 
+    def snooze_reminder(self, key: tuple[str, str, str], until: float) -> None:
+        """Put off the reminder ``key`` (item_id, kind, occurrence) until
+        the moment ``until``, seconds since the epoch. A second snooze of
+        the same reminder replaces the first."""
+        item_id, kind, occurrence = key
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO snoozed_reminders (item_id, kind, occurrence, until) "
+                "VALUES (?, ?, ?, ?)",
+                (item_id, kind, occurrence, until),
+            )
+
+    def get_snoozed_reminders(self) -> dict[tuple[str, str, str], float]:
+        """Every snoozed reminder, by key, with the moment it comes back."""
+        cursor = self.connection.execute(
+            "SELECT item_id, kind, occurrence, until FROM snoozed_reminders"
+        )
+        return {(row["item_id"], row["kind"], row["occurrence"]): row["until"] for row in cursor}
+
+    def forget_snoozed_reminders(self, keys: Iterable[tuple[str, str, str]]) -> None:
+        """Remove the given snoozes: delivered, or no longer about the
+        item as it is."""
+        rows = list(keys)
+        if not rows:
+            return
+        with self.transaction() as conn:
+            conn.executemany(
+                "DELETE FROM snoozed_reminders WHERE item_id = ? AND kind = ? AND occurrence = ?",
+                rows,
+            )
+
     def prune_notification_log(self, before: str) -> int:
         """Delete entries whose occurrence sorts before ``before``.
 
@@ -1855,6 +1915,7 @@ class DatabaseStorage:
         with self.transaction() as conn:
             conn.execute("DELETE FROM notification_log")
             conn.execute("DELETE FROM notified_items")
+            conn.execute("DELETE FROM snoozed_reminders")
             conn.execute("DELETE FROM focus_sessions")
             conn.execute("DELETE FROM pending_syncs")
             conn.execute("DELETE FROM list_sync_rules")

@@ -1435,6 +1435,17 @@ class TodoTableWidget(QTableWidget):
                 ids.append(self._item_id_map[row])
         return ids
 
+    def select_item(self, item_id: UUID) -> bool:
+        """Select the row of ``item_id``, and scroll it into view. False
+        where the list shows no such row."""
+        row = next((r for r, i in self._item_id_map.items() if i == item_id), None)
+        model = self.model()
+        if row is None or model is None:
+            return False
+        self.selectRow(row)
+        self.scrollTo(model.index(row, 1))
+        return True
+
     def get_item_id_at_row(self, row: int) -> UUID | None:
         """Get item ID for a specific row."""
         return self._item_id_map.get(row)

@@ -50,7 +50,7 @@ counts: a notification is visible to anyone who can see the screen.
 from __future__ import annotations
 
 import math
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from enum import Enum
@@ -134,6 +134,14 @@ class Reminder:
     """The named time block ``at`` was resolved from, if any."""
     minutes_until: int
     """Whole minutes from now until ``at``, rounded up; 0 for due-now."""
+    snoozed: bool = False
+    """Put off with Snooze on its notification, and back now."""
+
+    @property
+    def key(self) -> FiredKey:
+        """The reminder's key in the notification log: by this its
+        notification's Snooze puts it off (#60)."""
+        return FiredKey(str(self.item_id), self.kind.value, self.at.isoformat(timespec="minutes"))
 
 
 @dataclass(frozen=True)
@@ -222,6 +230,9 @@ class Evaluation:
     held_summary: bool = False
     preview: Preview | None = None
     held_preview: bool = False
+    snoozes_done: tuple[FiredKey, ...] = ()
+    """Snoozed reminders to forget: given now in ``reminders``, or no
+    longer about the item as it is."""
 
     @property
     def has_notifications(self) -> bool:
@@ -366,12 +377,20 @@ def evaluate(
     time_blocks: TimeBlockConfig,
     *,
     focus_active: bool = False,
+    snoozed: Mapping[tuple[str, str, str], datetime] | None = None,
 ) -> Evaluation:
     """Work out which notifications are due at ``now``.
 
     ``fired`` is the set of keys already recorded. The returned
     ``Evaluation.fired`` lists the keys this evaluation consumed; they
     must be recorded so the same notification is not produced again.
+
+    ``snoozed`` holds the reminders put off with Snooze, by key, with
+    the moment each comes back in the same time as ``now``. One whose
+    moment has come is a reminder again, held by quiet hours as any
+    timed reminder is. One that no longer matches its item (done,
+    deleted, rescheduled, or no longer the kind of reminder it was) is
+    dropped. Both are in ``Evaluation.snoozes_done``.
 
     ``focus_active`` is whether a focus session is running: a focus
     timer in its work phase, or a running stopwatch. A paused session
@@ -403,6 +422,8 @@ def evaluate(
     due_tomorrow = 0
     next_up: TimedItem | None = None
     first_tomorrow: TimedItem | None = None
+    # The reminder keys each item has as it is now, for the snoozes.
+    current: dict[FiredKey, TimedItem] = {}
 
     for item in _eligible_items(lists):
         assert item.due_date is not None  # narrowed by _eligible_items
@@ -447,6 +468,10 @@ def evaluate(
             or (settings.due_now is DueNowMode.DEADLINES and not event)
         )
         lead_at = anchor - lead
+        if lead_applies:
+            current[lead_key] = timed
+        if due_applies:
+            current[due_key] = timed
 
         if now < anchor:
             if anchor < day_end and (next_up is None or anchor < next_up.at):
@@ -504,6 +529,34 @@ def evaluate(
             newly_fired.append(lead_key)
             if wanted:
                 missed.append(timed)
+
+    snoozes_done: list[FiredKey] = []
+    reminded = {r.item_id for r in reminders}
+    for raw_key, until in (snoozed or {}).items():
+        key = FiredKey(*raw_key)
+        timed = current.get(key)
+        if timed is None or (timed.item_id in reminded and now >= until):
+            # Not about the item as it is now; or the item has a
+            # reminder of its own in this very notification.
+            snoozes_done.append(key)
+            continue
+        if now < until or timed_held:
+            continue
+        snoozes_done.append(key)
+        reminded.add(timed.item_id)
+        minutes_until = max(0, math.ceil((timed.at - now).total_seconds() / 60))
+        reminders.append(
+            Reminder(
+                timed.item_id,
+                timed.title,
+                Kind(key.kind),
+                timed.at,
+                timed.is_event,
+                timed.block,
+                minutes_until,
+                snoozed=True,
+            )
+        )
 
     reminders.sort(key=lambda r: (r.at, r.title))
     missed.sort(key=lambda m: (m.at, m.title))
@@ -565,4 +618,5 @@ def evaluate(
         held_summary=held_summary,
         preview=preview,
         held_preview=held_preview,
+        snoozes_done=tuple(snoozes_done),
     )
