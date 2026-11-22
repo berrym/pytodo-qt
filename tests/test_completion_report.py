@@ -504,7 +504,24 @@ class TestTheStatusBar:
             rooms.append(bar._message_label.width())
 
         assert rooms[1] - rooms[0] == 300
-        assert bar.message_fits("Done: " + "x" * 40)
+
+    def test_a_message_fits_as_wide_as_its_room(self, qtbot):
+        """Measured against the room, as each platform's fonts make it."""
+        bar = StatusBarWidget()
+        qtbot.addWidget(bar)
+        bar.resize(1400, bar.sizeHint().height())
+        bar.show()
+        qtbot.waitExposed(bar)
+        bar.show_message("Done", MESSAGE_MS)
+        QApplication.processEvents()
+        label = bar._message_label
+        assert label.width() > 0
+        widest = ""
+        while label.fontMetrics().horizontalAdvance(widest + "x") <= label.width():
+            widest += "x"
+
+        assert bar.message_fits(widest)
+        assert not bar.message_fits(widest + "x")
 
     def test_the_tooltip_goes_with_the_message(self, qtbot):
         bar = StatusBarWidget()
