@@ -23,6 +23,7 @@ from PyQt6.QtGui import (
     QPixmap,
     QShortcut,
     QTextDocument,
+    QUndoCommand,
     QUndoStack,
 )
 from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
@@ -57,6 +58,19 @@ from ..net.server import AsyncServer
 from ..net.sync_queue import SyncQueue, SyncStatus, create_pull_operation, create_push_operation
 from ..web.server import WebServer
 from .auto_sync import AutoSyncScheduler
+from .completion_report import MESSAGE_MS as COMPLETION_MESSAGE_MS
+from .completion_report import (
+    CompletionBefore,
+    Ticked,
+    fitted_line,
+    hidden_by_active_filter,
+    hidden_by_completed_filter,
+    in_column,
+    in_list,
+    to_finished_tasks,
+    to_open_tasks,
+    undo_hint,
+)
 from .dialogs import (
     AddListDialog,
     AddTodoDialog,
@@ -1050,10 +1064,10 @@ class MainWindow(QMainWindow):
             return
         if item.complete == checked:
             return
-        from .commands import ToggleCompleteCommand
+        from .commands import CompletionCommand, ToggleCompleteCommand
 
-        cmd = ToggleCompleteCommand(self, active_list.id, [(subtask_id, item.complete)])
-        self._undo_stack.push(cmd)
+        toggle = ToggleCompleteCommand(self, active_list.id, [(subtask_id, item.complete)])
+        self._undo_stack.push(CompletionCommand(self, active_list.id, [subtask_id], [toggle]))
 
     def _on_detail_panel_subtask_selected(self, item_id: UUID) -> None:
         """Re-focus the detail panel on the clicked subtask (or parent
@@ -1478,6 +1492,10 @@ class MainWindow(QMainWindow):
         cmd = MoveToColumnCommand(
             self, active_list.id, item_id, old_column, new_column, auto_complete
         )
+        if auto_complete is not None:
+            from .commands import CompletionCommand
+
+            cmd = CompletionCommand(self, active_list.id, [item_id], [cmd])
         self._undo_stack.push(cmd)
 
     def _on_layout_preset(self, columns: object) -> None:
@@ -2561,7 +2579,8 @@ class MainWindow(QMainWindow):
         elif item.complete:
             self.status_bar_widget.show_message(self.tr("That task is already done"))
         elif action == "done":
-            for command in self._completion_commands(todo_list, [item.id]):
+            command = self._completion_command(todo_list, [item.id])
+            if command is not None:
                 self._undo_stack.push(command)
         elif action == "snooze":
             minutes = self._config.notifications.snooze_minutes
@@ -2914,14 +2933,16 @@ class MainWindow(QMainWindow):
         if active_list is None:
             return
 
-        for command in self._completion_commands(active_list, item_ids):
+        command = self._completion_command(active_list, item_ids)
+        if command is not None:
             self._undo_stack.push(command)
 
-    def _completion_commands(self, todo_list: TodoList, item_ids: list[UUID]) -> list:
-        """The undo commands that tick or untick these tasks of
+    def _completion_command(self, todo_list: TodoList, item_ids: list[UUID]) -> QUndoCommand | None:
+        """The one undo step that ticks or unticks these tasks of
         ``todo_list``: a recurring task that is not done moves to its
         next occurrence. The task list's toggle and a notification's
-        Done both go through here."""
+        Done both go through here. None when none of the tasks is
+        in the list."""
         active_list = todo_list
         commands = []
 
@@ -2972,7 +2993,88 @@ class MainWindow(QMainWindow):
             commands.append(ToggleCompleteCommand(self, active_list.id, normal_states))
 
         commands.extend(recurring_commands)
-        return commands
+        if not commands:
+            return None
+        from .commands import CompletionCommand
+
+        return CompletionCommand(self, todo_list.id, list(item_ids), commands)
+
+    def _completion_snapshot(self, list_id: UUID, item_ids: list[UUID]) -> CompletionBefore:
+        """Where the tasks are before a tick changes them: their rows in
+        the list view and their columns on the board."""
+        columns: dict[UUID, str] = {}
+        todo_list = self._database.lists.get(list_id)
+        if todo_list is not None:
+            for item_id in item_ids:
+                item = todo_list.get_item(item_id)
+                if item is not None:
+                    columns[item_id] = item.board_column
+        return CompletionBefore(rows=self.todo_table.rows_of(item_ids), columns=columns)
+
+    def _report_completion(
+        self,
+        list_id: UUID,
+        item_ids: list[UUID],
+        before: CompletionBefore,
+        *,
+        undone: bool,
+    ) -> None:
+        """Say in the status bar which tasks a tick changed and where
+        they went; after a tick or a redo, also how to undo it."""
+        todo_list = self._database.lists.get(list_id)
+        if todo_list is None:
+            return
+        items = [todo_list.get_item(item_id) for item_id in item_ids]
+        changed = [item for item in items if item is not None]
+        if not changed:
+            return
+        line = fitted_line(
+            [Ticked(item.reminder, item.complete) for item in changed],
+            self._completion_place(todo_list, changed, before),
+            "" if undone else undo_hint(self._undo_native),
+            self.status_bar_widget.message_fits,
+        )
+        self.status_bar_widget.show_message(line, COMPLETION_MESSAGE_MS)
+
+    def _completion_place(
+        self, todo_list: TodoList, items: list[TodoItem], before: CompletionBefore
+    ) -> str:
+        """Where ticked tasks went, as the window now shows them.
+
+        The first that applies: a list other than the one shown; a
+        status filter that hides every one of them; on the board, the
+        column they all moved to; in the list view, the finished or the
+        open tasks, when a row moved. Otherwise nothing is said.
+        """
+        active = self._database.active_list
+        if active is None or active.id != todo_list.id:
+            return in_list(todo_list.name)
+        states = {item.complete for item in items}
+        if len(states) != 1:
+            return ""
+        complete = states.pop()
+        status = self.search_filter.get_filter().status
+        if status == 1 and complete:
+            return hidden_by_active_filter()
+        if status == 2 and not complete:
+            return hidden_by_completed_filter()
+        shown = self._view_stack.currentWidget()
+        if shown is self.kanban_board:
+            columns = {item.board_column for item in items}
+            moved = any(before.columns.get(item.id) != item.board_column for item in items)
+            if moved and len(columns) == 1:
+                return in_column(columns.pop())
+            return ""
+        if shown is self.todo_table:
+            after = self.todo_table.rows_of([item.id for item in items])
+            if any(
+                item.id in before.rows
+                and item.id in after
+                and before.rows[item.id] != after[item.id]
+                for item in items
+            ):
+                return to_finished_tasks() if complete else to_open_tasks()
+        return ""
 
     def _on_add_list(self) -> None:
         """Handle add list action."""

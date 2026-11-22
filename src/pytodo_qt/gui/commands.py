@@ -588,6 +588,44 @@ class ToggleCompleteRecurringCommand(QUndoCommand):
         self._window._refresh_ui()
 
 
+class CompletionCommand(QUndoCommand):
+    """One tick or untick of tasks, wherever it was made.
+
+    The commands that change the tasks (``ToggleCompleteCommand``,
+    ``ToggleCompleteRecurringCommand``, a ``MoveToColumnCommand`` into or
+    out of the last column) run inside it, so one Undo takes the whole
+    tick back. After each run the window's status bar says what changed
+    and where the tasks went (#126); an undo says it without the hint
+    to undo.
+    """
+
+    def __init__(
+        self,
+        window: MainWindow,
+        list_id: UUID,
+        item_ids: list[UUID],
+        commands: list[QUndoCommand],
+    ) -> None:
+        text = commands[0].text() if len(commands) == 1 else f"Toggle {len(item_ids)} item(s)"
+        super().__init__(text)
+        self._window = window
+        self._list_id = list_id
+        self._item_ids = list(item_ids)
+        self._commands = list(commands)
+
+    def redo(self) -> None:
+        before = self._window._completion_snapshot(self._list_id, self._item_ids)
+        for command in self._commands:
+            command.redo()
+        self._window._report_completion(self._list_id, self._item_ids, before, undone=False)
+
+    def undo(self) -> None:
+        before = self._window._completion_snapshot(self._list_id, self._item_ids)
+        for command in reversed(self._commands):
+            command.undo()
+        self._window._report_completion(self._list_id, self._item_ids, before, undone=True)
+
+
 class EditRecurrenceCommand(QUndoCommand):
     """Change an item's recurrence settings."""
 

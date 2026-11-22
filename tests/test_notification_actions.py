@@ -24,6 +24,7 @@ from pytodo_qt.core.database import DatabaseStorage
 from pytodo_qt.core.models import Database, create_todo_item, create_todo_list
 from pytodo_qt.core.notification_policy import FiredKey
 from pytodo_qt.gui import main_window as main_window_module
+from pytodo_qt.gui.completion_report import CompletionBefore
 from pytodo_qt.gui.main_window import MainWindow
 from pytodo_qt.gui.task_notifier import ReminderTarget
 
@@ -60,10 +61,12 @@ def _window(tmp_path: Path, *items) -> SimpleNamespace:
         _shutting_down=False,
         status_bar_widget=MagicMock(),
         _open_item=MagicMock(),
+        _completion_snapshot=MagicMock(return_value=CompletionBefore(rows={}, columns={})),
+        _report_completion=MagicMock(),
         tr=lambda text: text,
         list=todo_list,
     )
-    for name in ("_find_item_anywhere", "_completion_commands", "_on_notification_action"):
+    for name in ("_find_item_anywhere", "_completion_command", "_on_notification_action"):
         setattr(window, name, getattr(MainWindow, name).__get__(window))
     return window
 

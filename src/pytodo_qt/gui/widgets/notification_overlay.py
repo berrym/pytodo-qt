@@ -41,7 +41,6 @@ from PyQt6.QtGui import (
     QIcon,
     QPainter,
     QPainterPath,
-    QPalette,
     QPen,
 )
 from PyQt6.QtWidgets import (
@@ -56,6 +55,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from .elided_label import ElidedLabel
 
 _log = logging.getLogger(__name__)
 
@@ -145,40 +146,6 @@ class _BodyScrollArea(QScrollArea):
         if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
             self.body_clicked.emit()
         super().mousePressEvent(a0)
-
-
-class _ElidedLabel(QLabel):
-    """A single-line label that ends its text with an ellipsis when the
-    text is wider than the label.
-
-    A plain QLabel cuts an over-long line at the widget's edge, mid-letter.
-    The size hint is still that of the full text, so the banner grows to
-    its maximum width before any text is dropped; the minimum width is
-    zero, so the layout can then narrow the label to what is left.
-    """
-
-    def __init__(self, text: str, parent: QWidget | None = None) -> None:
-        super().__init__(text, parent)
-        self._full_text = text
-
-    def minimumSizeHint(self) -> QSize:  # noqa: N802
-        return QSize(0, super().minimumSizeHint().height())
-
-    def displayed_text(self) -> str:
-        """The text as drawn at the label's current width."""
-        return self.fontMetrics().elidedText(
-            self._full_text, Qt.TextElideMode.ElideRight, self.width()
-        )
-
-    def paintEvent(self, a0) -> None:  # noqa: N802
-        painter = QPainter(self)
-        painter.setPen(self.palette().color(QPalette.ColorRole.WindowText))
-        painter.drawText(
-            self.rect(),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            self.displayed_text(),
-        )
-        painter.end()
 
 
 class NotificationOverlay(QWidget):
@@ -279,7 +246,7 @@ class NotificationOverlay(QWidget):
         text_column.setContentsMargins(0, 0, 0, 0)
         text_column.setSpacing(3)
 
-        title_label = _ElidedLabel(self._title)
+        title_label = ElidedLabel(self._title)
         title_font = QFont()
         title_font.setBold(True)
         title_font.setPointSize(title_font.pointSize() + 1)

@@ -33,6 +33,7 @@ from pytodo_qt.core.models import (
     create_todo_item,
     create_todo_list,
 )
+from pytodo_qt.gui.completion_report import CompletionBefore
 from pytodo_qt.web.api import database_key, ws_clients_key
 from pytodo_qt.web.server import WebServer
 
@@ -3716,6 +3717,12 @@ class TestRestoreWithTheDesktopRunning:
             def _refresh_ui(self) -> None:
                 pass
 
+            def _completion_snapshot(self, list_id, item_ids) -> CompletionBefore:
+                return CompletionBefore(rows={}, columns={})
+
+            def _report_completion(self, list_id, item_ids, before, *, undone) -> None:
+                pass
+
         return Window()
 
     @staticmethod
@@ -6280,6 +6287,12 @@ class TestChangeIds:
             def _refresh_ui(self) -> None:
                 pass
 
+            def _completion_snapshot(self, list_id, item_ids) -> CompletionBefore:
+                return CompletionBefore(rows={}, columns={})
+
+            def _report_completion(self, list_id, item_ids, before, *, undone) -> None:
+                pass
+
         client = await _make_client(db)
         client.server.app[main_window_key] = Window()
         await client.start_server()
@@ -6294,6 +6307,100 @@ class TestChangeIds:
         assert len(pushed) == 1
         assert saves == [["tick-1"]]
         assert item.complete is True
+
+
+class TestATickFromThePageIsReported:
+    """A tick from the page, by its box or by a move into or out of the
+    board's last column, is one undo step that the window reports in its
+    status bar (#126). A move between other columns is not a tick."""
+
+    def _window(self, db):
+        pushed: list = []
+        reported: list = []
+
+        class Stack:
+            def push(self, command) -> None:
+                pushed.append(command)
+                command.redo()
+
+        class Window:
+            _database = db
+            _undo_stack = Stack()
+
+            def _save_database(self) -> None:
+                pass
+
+            def _refresh_ui(self) -> None:
+                pass
+
+            def _completion_snapshot(self, list_id, item_ids) -> CompletionBefore:
+                return CompletionBefore(rows={}, columns={})
+
+            def _report_completion(self, list_id, item_ids, before, *, undone) -> None:
+                reported.append((item_ids, undone))
+
+        return Window(), pushed, reported
+
+    async def _send(self, db, method, path, body):
+        from pytodo_qt.web.api import main_window_key
+
+        window, pushed, reported = self._window(db)
+        client = await _make_client(db)
+        client.server.app[main_window_key] = window
+        await client.start_server()
+        try:
+            resp = await client.request(method, path, json=body)
+            status = resp.status
+        finally:
+            await client.close()
+        return status, pushed, reported
+
+    def _setup(self):
+        db = _make_db_with_data()
+        lst = next(iter(db.lists.values()))
+        lst.board_columns = ["To Do", "Doing", "Done"]
+        item = next(iter(lst.items.values()))
+        item.complete = False
+        item.board_column = "To Do"
+        return db, item
+
+    @pytest.mark.asyncio
+    async def test_the_tick_box(self):
+        from pytodo_qt.gui.commands import CompletionCommand
+
+        db, item = self._setup()
+        status, pushed, reported = await self._send(
+            db, "PATCH", f"/api/items/{item.id}/toggle", {"updated_at": item.updated_at}
+        )
+        assert status == 200
+        assert [type(command) for command in pushed] == [CompletionCommand]
+        assert reported == [([item.id], False)]
+        assert item.complete is True
+
+    @pytest.mark.asyncio
+    async def test_a_move_into_the_last_column(self):
+        from pytodo_qt.gui.commands import CompletionCommand
+
+        db, item = self._setup()
+        status, pushed, reported = await self._send(
+            db, "PATCH", f"/api/items/{item.id}/move", {"column": "Done"}
+        )
+        assert status == 200
+        assert [type(command) for command in pushed] == [CompletionCommand]
+        assert reported == [([item.id], False)]
+        assert (item.complete, item.board_column) == (True, "Done")
+
+    @pytest.mark.asyncio
+    async def test_a_move_between_other_columns_is_not_reported(self):
+        from pytodo_qt.gui.commands import MoveToColumnCommand
+
+        db, item = self._setup()
+        status, pushed, reported = await self._send(
+            db, "PATCH", f"/api/items/{item.id}/move", {"column": "Doing"}
+        )
+        assert status == 200
+        assert [type(command) for command in pushed] == [MoveToColumnCommand]
+        assert reported == []
 
 
 # ===========================================================================

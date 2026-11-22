@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 
 from ...core.logger import Logger
 from ..styles.themes import font_px, get_colors
+from .elided_label import ElidedLabel
 
 _POMODORO_EMOJI = {"work": "\U0001f345", "break": "\u2615", "pause": "\u23f8\ufe0f"}
 _STOPWATCH_EMOJI = {"running": "\u23f1\ufe0f", "paused": "\u23f8\ufe0f"}
@@ -300,7 +301,8 @@ class StatusBarWidget(QStatusBar):
         self.pomodoro_label.installEventFilter(self)
         self.item_count_label = QLabel()
         self.total_label = QLabel()
-        self._message_label = QLabel()
+        # A long message is cut short rather than widening the window.
+        self._message_label = ElidedLabel()
         self.status_label = QLabel()
         self.server_status_label = QLabel()
         self.web_status_label = QLabel()
@@ -345,10 +347,9 @@ class StatusBarWidget(QStatusBar):
         layout.addWidget(self._total_separator)
         layout.addWidget(self.total_label)
         layout.addWidget(self._create_separator())
-        layout.addWidget(self._message_label)
-
-        # Spacer pushes right section to the far right
-        layout.addStretch(1)
+        # The message takes the room between the two sections, which
+        # pushes the right section to the far right.
+        layout.addWidget(self._message_label, 1)
 
         # Right section: sync and server info
         layout.addWidget(self.pending_sync_label)
@@ -488,13 +489,25 @@ class StatusBarWidget(QStatusBar):
             self.web_status_label.unsetCursor()
 
     def show_message(self, message: str, timeout: int = 3000) -> None:
-        """Show a temporary message without disrupting layout."""
+        """Show a temporary message without disrupting layout.
+
+        A newer message takes the place of the one shown and is given its
+        own time. A message wider than the room for it ends with an
+        ellipsis; its tooltip is the whole message.
+        """
         self._message_label.setText(message)
+        self._message_label.setToolTip(message)
         self._message_timer.start(timeout)
+
+    def message_fits(self, message: str) -> bool:
+        """Whether the message would be shown whole in the room for it."""
+        label = self._message_label
+        return label.fontMetrics().horizontalAdvance(message) <= label.width()
 
     def _clear_message(self) -> None:
         """Clear the temporary message."""
         self._message_label.setText("")
+        self._message_label.setToolTip("")
 
     def set_sync_status(self, state: str, auto: bool = False) -> None:
         """Set the sync status display.

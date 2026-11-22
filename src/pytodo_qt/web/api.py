@@ -1197,7 +1197,9 @@ async def handle_toggle_item(request: web.Request) -> web.Response:
             from ..gui.commands import ToggleCompleteCommand
 
             cmd = ToggleCompleteCommand(window, lst.id, [(item.id, item.complete)])
-        window._undo_stack.push(cmd)
+        from ..gui.commands import CompletionCommand
+
+        window._undo_stack.push(CompletionCommand(window, lst.id, [item.id], [cmd]))
     else:
         already_exhausted = (
             item.recurrence_end_count is not None
@@ -1264,6 +1266,10 @@ async def handle_move_item(request: web.Request) -> web.Response:
         elif old_column == lst.board_columns[-1]:
             auto_complete = False
         cmd = MoveToColumnCommand(window, lst.id, item.id, old_column, column, auto_complete)
+        if auto_complete is not None and auto_complete != item.complete:
+            from ..gui.commands import CompletionCommand
+
+            cmd = CompletionCommand(window, lst.id, [item.id], [cmd])
         window._undo_stack.push(cmd)
     else:
         item.board_column = column

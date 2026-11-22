@@ -1574,6 +1574,11 @@ class TodoTableWidget(QTableWidget):
         """Get item ID for a specific row."""
         return self._item_id_map.get(row)
 
+    def rows_of(self, item_ids: list[UUID]) -> dict[UUID, int]:
+        """The rows of those tasks that have one in the view."""
+        wanted = set(item_ids)
+        return {item_id: row for row, item_id in self._item_id_map.items() if item_id in wanted}
+
     def _on_priority_changed(self, row: int, combo_index: int) -> None:
         """Handle priority combo box change."""
         item_id = self._item_id_map.get(row)
