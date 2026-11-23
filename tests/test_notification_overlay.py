@@ -160,10 +160,10 @@ class TestNotificationOverlayDismissal:
     def test_second_dismiss_is_a_noop(self, qtbot):
         overlay = NotificationOverlay("t", "b")
         qtbot.addWidget(overlay)
-        overlay._start_dismiss()
+        overlay._start_dismiss("a test")
         # A second call must not restart the animation or re-emit.
         previous_anim = overlay._slide_anim
-        overlay._start_dismiss()
+        overlay._start_dismiss("a test")
         assert overlay._slide_anim is previous_anim
 
 
@@ -258,7 +258,7 @@ class TestNotificationManagerQueueing:
         # Trigger dismissal and let the animation complete so the
         # `dismissed` signal reaches the manager's slot.
         with qtbot.waitSignal(first.dismissed, timeout=2000):
-            first._start_dismiss()
+            first._start_dismiss("a test")
 
         assert mgr.queued_count == 0
         assert mgr.visible_count == 1
@@ -569,7 +569,7 @@ class TestNotificationOverlayActions:
         qtbot.addWidget(overlay)
         pressed = []
         overlay.action_pressed.connect(pressed.append)
-        overlay._start_dismiss()
+        overlay._start_dismiss("a test")
         overlay._action_buttons[0].click()
         assert pressed == []
 
@@ -635,7 +635,7 @@ class TestNotificationManagerActions:
         )
         assert first is not None
         with qtbot.waitSignal(first.dismissed, timeout=2000):
-            first._start_dismiss()
+            first._start_dismiss("a test")
         (promoted,) = mgr._visible
         assert [b.text() for b in promoted._action_buttons] == ["Snooze"]
         promoted._action_buttons[0].click()
@@ -656,3 +656,137 @@ class TestNotificationManagerActions:
         assert mgr.queued_count == 0
         mgr.dismiss_all()
         qtbot.wait(50)
+
+
+class TestOneClickIsOneOpen:
+    """A click on a banner is reported once, wherever on the banner it
+    lands: on the body text it used to reach the banner a second time,
+    and the task was opened twice."""
+
+    def _clicks(self, qtbot, target_of) -> int:
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtTest import QTest
+
+        overlay = NotificationOverlay("Call the bank", "Due at 14:30 · in 15 min", timeout_ms=0)
+        overlay.show()
+        clicks: list[bool] = []
+        overlay.body_clicked.connect(lambda: clicks.append(True))
+        QTest.mouseClick(target_of(overlay), Qt.MouseButton.LeftButton)
+        qtbot.wait(10)
+        return len(clicks)
+
+    def test_on_the_body_text(self, qtbot):
+        assert self._clicks(qtbot, lambda o: o._body_scroll.viewport()) == 1
+
+    def test_on_the_title(self, qtbot):
+        assert self._clicks(qtbot, lambda o: o._title_label) == 1
+
+
+class TestTheBannerLog:
+    """Each banner says in the log when it is shown and what closed it, so
+    that a banner gone from the screen can be accounted for."""
+
+    LOGGER = "pytodo_qt.gui.widgets.notification_overlay"
+    ACTIONS = (("done", "Done"), ("snooze", "Snooze"))
+
+    def _shown(self, qtbot, caplog, **kwargs) -> NotificationOverlay:
+        import logging
+
+        caplog.set_level(logging.INFO, logger=self.LOGGER)
+        overlay = NotificationOverlay("Call the bank", "Due at 14:30", **kwargs)
+        overlay.show()
+        qtbot.wait(10)
+        return overlay
+
+    @pytest.mark.parametrize(
+        ("kwargs", "lifetime"),
+        [
+            ({"timeout_ms": 0, "actions": ACTIONS}, "buttons Done, Snooze; stays until acted on"),
+            ({"timeout_ms": 10_000}, "leaves after 10 s"),
+            ({"timeout_ms": 0}, "stays until closed"),
+        ],
+    )
+    def test_the_showing(self, qtbot, caplog, kwargs, lifetime):
+        overlay = self._shown(qtbot, caplog, **kwargs)
+        assert f'Banner {overlay.number} shown: "Call the bank"; {lifetime}' in caplog.text
+        overlay._start_dismiss("a test")
+        qtbot.wait(400)
+
+    def test_banners_have_numbers_of_their_own(self, qtbot, caplog):
+        first = self._shown(qtbot, caplog)
+        second = self._shown(qtbot, caplog)
+        assert second.number == first.number + 1
+        for overlay in (first, second):
+            overlay._start_dismiss("a test")
+        qtbot.wait(400)
+
+    @pytest.mark.parametrize(
+        ("close", "reason"),
+        [
+            (lambda o: o._close_btn.click(), "its close mark"),
+            (lambda o: o._action_buttons[0].click(), "its Done button"),
+            (lambda o: o._action_buttons[1].click(), "its Snooze button"),
+            (lambda o: o._body_scroll.body_clicked.emit(), "a click on its text"),
+        ],
+    )
+    def test_what_closed_it(self, qtbot, caplog, close, reason):
+        overlay = self._shown(qtbot, caplog, timeout_ms=0, actions=self.ACTIONS)
+        with qtbot.waitSignal(overlay.dismissed, timeout=2000):
+            close(overlay)
+        assert f'Banner {overlay.number} closed by {reason}: "Call the bank"' in caplog.text
+
+    def test_closed_by_its_timeout(self, qtbot, caplog):
+        import logging
+
+        # Not shown: a pointer over a shown banner holds its timeout.
+        caplog.set_level(logging.INFO, logger=self.LOGGER)
+        overlay = NotificationOverlay("Call the bank", "Due at 14:30", timeout_ms=50)
+        with qtbot.waitSignal(overlay.dismissed, timeout=2000):
+            pass
+        assert f"Banner {overlay.number} closed by its timeout" in caplog.text
+
+    def test_closed_by_a_click_on_its_title(self, qtbot, caplog):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtTest import QTest
+
+        overlay = self._shown(qtbot, caplog, timeout_ms=0)
+        with qtbot.waitSignal(overlay.dismissed, timeout=2000):
+            QTest.mouseClick(overlay._title_label, Qt.MouseButton.LeftButton)
+        assert f"Banner {overlay.number} closed by a click on its text" in caplog.text
+
+    def test_withdrawn_and_cleared(self, qtbot, caplog):
+        import logging
+
+        caplog.set_level(logging.INFO, logger=self.LOGGER)
+        mgr = NotificationManager(max_visible=3)
+        one = mgr.show("one", "b", timeout_ms=0, tag="task-1")
+        two = mgr.show("two", "b", timeout_ms=0, tag="task-2")
+        assert one is not None and two is not None
+        mgr.dismiss_tagged("task-1")
+        mgr.dismiss_all()
+        qtbot.waitUntil(lambda: mgr.visible_count == 0, timeout=3000)
+        assert f'Banner {one.number} closed by being withdrawn: "one"' in caplog.text
+        assert f'Banner {two.number} closed by all banners being cleared: "two"' in caplog.text
+
+    def test_a_queued_banner(self, qtbot, caplog):
+        import logging
+
+        caplog.set_level(logging.INFO, logger=self.LOGGER)
+        mgr = NotificationManager(max_visible=1)
+        mgr.show("one", "b", timeout_ms=0)
+        assert mgr.show("two", "b", timeout_ms=0) is None
+        assert 'Banner queued behind the 1 shown: "two"' in caplog.text
+        mgr.dismiss_all()
+        qtbot.waitUntil(lambda: mgr.visible_count == 0, timeout=3000)
+
+    def test_hidden_while_still_open(self, qtbot, caplog):
+        overlay = self._shown(qtbot, caplog, timeout_ms=0)
+        qtbot.addWidget(overlay)
+        overlay.hide()
+        assert f'Banner {overlay.number} hidden while still open: "Call the bank"' in caplog.text
+
+    def test_a_closed_banner_is_not_said_to_be_hidden_while_open(self, qtbot, caplog):
+        overlay = self._shown(qtbot, caplog, timeout_ms=0)
+        with qtbot.waitSignal(overlay.dismissed, timeout=2000):
+            overlay._close_btn.click()
+        assert "hidden while still open" not in caplog.text

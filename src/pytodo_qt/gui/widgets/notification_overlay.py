@@ -18,6 +18,7 @@ enqueues or displays a banner; the manager handles the rest.
 
 from __future__ import annotations
 
+import itertools
 import logging
 from collections import deque
 from collections.abc import Callable, Sequence
@@ -56,9 +57,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..macos_window import window_number
 from .elided_label import ElidedLabel
 
 _log = logging.getLogger(__name__)
+
+# Each banner's number in the log, so that its lines can be told apart
+# from those of the other banners on screen.
+_banner_numbers = itertools.count(1)
 
 _MIN_WIDTH = 360
 _MAX_WIDTH = 420
@@ -145,6 +151,10 @@ class _BodyScrollArea(QScrollArea):
     def mousePressEvent(self, a0) -> None:  # noqa: N802
         if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
             self.body_clicked.emit()
+            # The press is the banner's click: accepted here, it is not
+            # passed on to the banner to be counted a second time.
+            a0.accept()
+            return
         super().mousePressEvent(a0)
 
 
@@ -204,6 +214,7 @@ class NotificationOverlay(QWidget):
         self.setMinimumWidth(_MIN_WIDTH)
         self.setMaximumWidth(_MAX_WIDTH)
 
+        self.number = next(_banner_numbers)
         self._title = title
         self._body = body
         self._actions = tuple(actions)
@@ -220,7 +231,7 @@ class NotificationOverlay(QWidget):
 
         self._timeout_timer = QTimer(self)
         self._timeout_timer.setSingleShot(True)
-        self._timeout_timer.timeout.connect(self._start_dismiss)
+        self._timeout_timer.timeout.connect(lambda: self._start_dismiss("its timeout"))
         if timeout_ms > 0:
             self._timeout_timer.start(timeout_ms)
         self._timeout_ms = timeout_ms
@@ -311,7 +322,7 @@ class NotificationOverlay(QWidget):
             " min-width: 22px; max-width: 22px; color: palette(placeholder-text); font-size: 14px; }"
             "QPushButton:hover { background: transparent; color: palette(window-text); }"
         )
-        close_btn.clicked.connect(self._start_dismiss)
+        close_btn.clicked.connect(lambda: self._start_dismiss("its close mark"))
 
         close_column = QVBoxLayout()
         close_column.setContentsMargins(0, 0, 0, 0)
@@ -329,7 +340,8 @@ class NotificationOverlay(QWidget):
         if self._dismissing:
             return
         self.action_pressed.emit(action_id)
-        self._start_dismiss()
+        label = dict(self._actions).get(action_id, action_id)
+        self._start_dismiss(f"its {label} button")
 
     def _on_body_area_clicked(self) -> None:
         # Body-click semantic preserved across the QScrollArea wrap: the
@@ -338,7 +350,7 @@ class NotificationOverlay(QWidget):
         if self._dismissing:
             return
         self.body_clicked.emit()
-        self._start_dismiss()
+        self._start_dismiss("a click on its text")
 
     # ------------------------------------------------------------------
     # Painting
@@ -374,10 +386,45 @@ class NotificationOverlay(QWidget):
             return
         if a0.button() != Qt.MouseButton.LeftButton:
             return
+        if self._dismissing:
+            return
         if self._close_btn.geometry().contains(a0.pos()):
             return
         self.body_clicked.emit()
-        self._start_dismiss()
+        self._start_dismiss("a click on its text")
+
+    def showEvent(self, a0) -> None:  # noqa: N802
+        super().showEvent(a0)
+        number = window_number(self)
+        _log.info(
+            'Banner %d shown%s: "%s"; %s',
+            self.number,
+            "" if number is None else f" (window {number})",
+            self._title,
+            self._lifetime(),
+        )
+
+    def hideEvent(self, a0) -> None:  # noqa: N802
+        # A banner leaves through _start_dismiss, which says why. One hidden
+        # any other way, by the window system or by a caller, is noted:
+        # it is gone from the screen while it is still one of the banners.
+        if not self._dismissing:
+            _log.info(
+                'Banner %d hidden while still open%s: "%s"',
+                self.number,
+                " (by the window system)" if a0 is not None and a0.spontaneous() else "",
+                self._title,
+            )
+        super().hideEvent(a0)
+
+    def _lifetime(self) -> str:
+        """How the banner is to leave, for the log."""
+        if self._actions:
+            buttons = ", ".join(label for _, label in self._actions)
+            return f"buttons {buttons}; stays until acted on"
+        if self._timeout_ms > 0:
+            return f"leaves after {self._timeout_ms / 1000:g} s"
+        return "stays until closed"
 
     def enterEvent(self, event) -> None:  # noqa: N802
         # Pause auto-dismiss while the cursor hovers — the user is
@@ -425,10 +472,13 @@ class NotificationOverlay(QWidget):
         anim.start()
         self._slide_anim = anim
 
-    def _start_dismiss(self) -> None:
+    def _start_dismiss(self, reason: str) -> None:
+        """Slide the banner away; ``reason`` says what closed it, for the
+        log ("its close mark", "its Done button", ...)."""
         if self._dismissing:
             return
         self._dismissing = True
+        _log.info('Banner %d closed by %s: "%s"', self.number, reason, self._title)
         self._timeout_timer.stop()
         current = self.pos()
         off_screen = QPoint(current.x() + self.width() + 60, current.y())
@@ -501,6 +551,7 @@ class NotificationManager:
         banner = _Banner(title, body, timeout_ms, tuple(actions), on_action, on_click, tag)
         if len(self._visible) >= self._max_visible:
             self._queue.append(banner)
+            _log.info('Banner queued behind the %d shown: "%s"', len(self._visible), title)
             return None
         return self._spawn(banner)
 
@@ -509,14 +560,14 @@ class NotificationManager:
         self._queue = deque(b for b in self._queue if b.tag != tag)
         for overlay in list(self._visible):
             if overlay.property("tag") == tag and not overlay._dismissing:
-                overlay._start_dismiss()
+                overlay._start_dismiss("being withdrawn")
 
     def dismiss_all(self) -> None:
         """Start dismissal on every visible banner. The queue is
         cleared so nothing new is promoted."""
         self._queue.clear()
         for banner in list(self._visible):
-            banner._start_dismiss()
+            banner._start_dismiss("all banners being cleared")
 
     # ------------------------------------------------------------------
     # Internals
