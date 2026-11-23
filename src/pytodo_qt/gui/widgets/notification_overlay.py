@@ -57,7 +57,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..macos_window import window_number
+from ..macos_window import show_on_every_space, window_number
 from .elided_label import ElidedLabel
 
 _log = logging.getLogger(__name__)
@@ -394,6 +394,13 @@ class NotificationOverlay(QWidget):
         self._start_dismiss("a click on its text")
 
     def showEvent(self, a0) -> None:  # noqa: N802
+        # Before the window is ordered in: macOS admits a panel to another
+        # application's full-screen Space only if it does not activate its
+        # application, and keeps it in view on a Space entered later only
+        # if it belongs to every Space (#128). A click on it then leaves
+        # pytodo-qt where it was; Open brings the main window forward
+        # itself.
+        show_on_every_space(self)
         super().showEvent(a0)
         number = window_number(self)
         _log.info(
